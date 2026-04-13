@@ -1,0 +1,3 @@
+ALTER TABLE statuses ADD COLUMN text_content TEXT NOT NULL DEFAULT '';
+ALTER TABLE statuses ADD COLUMN spoiler_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE statuses ADD COLUMN language TEXT;

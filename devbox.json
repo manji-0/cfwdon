@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.1/.schema/devbox.schema.json",
+  "packages": [
+    "rustup@latest",
+    "nodejs@22",
+    "wrangler@latest",
+    "binaryen@latest",
+    "wasm-bindgen-cli@latest",
+    "cargo-generate@latest",
+    "pkg-config@latest",
+    "openssl@latest",
+    "jq@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "export OPENSSL_NO_VENDOR=1",
+      "export RUSTUP_TOOLCHAIN=\"${RUSTUP_TOOLCHAIN:-stable}\"",
+      "rustup toolchain list | grep -q \"^${RUSTUP_TOOLCHAIN}\" || rustup toolchain install \"${RUSTUP_TOOLCHAIN}\" --profile minimal",
+      "rustup target list --installed --toolchain \"${RUSTUP_TOOLCHAIN}\" | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown --toolchain \"${RUSTUP_TOOLCHAIN}\"",
+      "export WASM_BINDGEN_BIN=\"$(command -v wasm-bindgen)\"",
+      "export WASM_OPT_BIN=\"$(command -v wasm-opt)\""
+    ],
+    "scripts": {
+      "fmt": [
+        "cargo fmt --all"
+      ],
+      "check": [
+        "RUSTC=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN:-stable}\" rustc)\" cargo check --workspace --target wasm32-unknown-unknown"
+      ],
+      "test": [
+        "cargo test --workspace"
+      ],
+      "worker:dev": [
+        "wrangler dev"
+      ]
+    }
+  }
+}

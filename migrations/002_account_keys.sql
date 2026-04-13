@@ -1,0 +1,2 @@
+ALTER TABLE accounts ADD COLUMN private_key_jwk TEXT NOT NULL DEFAULT '';
+ALTER TABLE accounts ADD COLUMN public_key_pem TEXT NOT NULL DEFAULT '';

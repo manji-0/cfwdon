@@ -1,0 +1,7 @@
+/target
+/.wrangler
+/node_modules
+/crates/cfwdon-worker/build
+/dist
+/.devbox
+/.direnv

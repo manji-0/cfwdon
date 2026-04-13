@@ -1,0 +1,89 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppConfig {
+    pub instance_domain: String,
+    pub instance_name: String,
+    pub instance_description: String,
+    pub source_url: Option<String>,
+    pub instance_languages: Vec<String>,
+    pub admin_emails: Vec<String>,
+    pub contact_email: Option<String>,
+    pub instance_thumbnail_url: Option<String>,
+    pub instance_extended_description_html: Option<String>,
+    pub instance_extended_description_updated_at: Option<String>,
+    pub privacy_policy_html: Option<String>,
+    pub privacy_policy_updated_at: Option<String>,
+    pub terms_of_service_html: Option<String>,
+    pub terms_of_service_effective_date: Option<String>,
+    pub database_binding: String,
+    pub media_binding: String,
+    pub media_public_base_url: Option<String>,
+    pub access_email_header: String,
+    pub access_jwt_header: String,
+    pub access_team_domain: String,
+    pub access_audience: String,
+}
+
+impl AppConfig {
+    pub fn new(
+        instance_domain: impl Into<String>,
+        instance_name: impl Into<String>,
+        instance_description: impl Into<String>,
+    ) -> Self {
+        Self {
+            instance_domain: instance_domain.into(),
+            instance_name: instance_name.into(),
+            instance_description: instance_description.into(),
+            source_url: None,
+            instance_languages: vec!["en".to_owned()],
+            admin_emails: Vec::new(),
+            contact_email: None,
+            instance_thumbnail_url: None,
+            instance_extended_description_html: None,
+            instance_extended_description_updated_at: None,
+            privacy_policy_html: None,
+            privacy_policy_updated_at: None,
+            terms_of_service_html: None,
+            terms_of_service_effective_date: None,
+            database_binding: "DB".to_owned(),
+            media_binding: "MEDIA".to_owned(),
+            media_public_base_url: None,
+            access_email_header: "Cf-Access-Authenticated-User-Email".to_owned(),
+            access_jwt_header: "Cf-Access-Jwt-Assertion".to_owned(),
+            access_team_domain: String::new(),
+            access_audience: String::new(),
+        }
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self::new(
+            "example.com",
+            "cfwdon",
+            "Cloudflare Workers + D1 + R2 based Mastodon-compatible server",
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuildMetadata {
+    pub service_name: &'static str,
+    pub version: &'static str,
+    pub runtime: &'static str,
+}
+
+impl BuildMetadata {
+    pub const fn new(
+        service_name: &'static str,
+        version: &'static str,
+        runtime: &'static str,
+    ) -> Self {
+        Self {
+            service_name,
+            version,
+            runtime,
+        }
+    }
+}

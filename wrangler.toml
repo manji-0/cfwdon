@@ -1,0 +1,35 @@
+name = "cfwdon"
+main = "crates/cfwdon-worker/build/index.js"
+compatibility_date = "2026-04-13"
+
+[build]
+command = "cargo install -q \"worker-build@^0.8\" && worker-build --release --manifest-path crates/cfwdon-worker/Cargo.toml"
+
+[vars]
+INSTANCE_DOMAIN = "example.com"
+INSTANCE_NAME = "cfwdon"
+INSTANCE_DESCRIPTION = "Cloudflare Workers + D1 + R2 based Mastodon-compatible server"
+SOURCE_URL = "https://example.com/your-cfwdon-repository"
+INSTANCE_LANGUAGES = "ja,en"
+CONTACT_EMAIL = "admin@example.com"
+INSTANCE_THUMBNAIL_URL = "https://media.example.com/site/thumbnail.png"
+MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
+# Protected routes are expected to sit behind Cloudflare Auth / Access.
+ACCESS_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email"
+ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
+ACCESS_TEAM_DOMAIN = "https://your-team.cloudflareaccess.com"
+ACCESS_AUD = "replace-with-your-access-aud"
+
+# Configure these before the first real deploy.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "cfwdon"
+# database_id = "replace-me"
+
+# [[r2_buckets]]
+# binding = "MEDIA"
+# bucket_name = "cfwdon-media"
+#
+# Configure the bucket behind a public custom domain and keep that domain
+# outside Cloudflare Access. Entity payloads will use MEDIA_PUBLIC_BASE_URL
+# directly; /media/:id remains as a fallback/redirect route.
