@@ -1,0 +1,64 @@
+use super::auth_account_store::find_account_by_email;
+use super::auth_jwt::verify_access_jwt;
+use cfwdon_core::{AppConfig, AuthenticatedUser};
+use cfwdon_domain::LocalAccount;
+use worker::{D1Database, Error, Request, Result};
+
+pub(crate) use super::auth_account_store::{
+    ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
+};
+
+pub(crate) async fn extract_authenticated_user(
+    req: &Request,
+    config: &AppConfig,
+) -> Result<Option<AuthenticatedUser>> {
+    let token = match req.headers().get(&config.access_jwt_header)? {
+        Some(value) if !value.trim().is_empty() => value.trim().to_owned(),
+        _ => return Ok(None),
+    };
+
+    if config.access_team_domain.is_empty() || config.access_audience.is_empty() {
+        return Err(Error::RustError(
+            "missing Cloudflare Access configuration: ACCESS_TEAM_DOMAIN and ACCESS_AUD are required"
+                .to_owned(),
+        ));
+    }
+
+    let claims = verify_access_jwt(&token, config).await?;
+    let header_email = req
+        .headers()
+        .get(&config.access_email_header)?
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+
+    let email = claims
+        .email
+        .map(|value| value.trim().to_ascii_lowercase())
+        .or(header_email.clone())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            Error::RustError("validated Access JWT did not include an email".to_owned())
+        })?;
+
+    if let Some(header_email) = header_email
+        && header_email != email
+    {
+        return Err(Error::RustError(
+            "Cloudflare Access email header did not match JWT email claim".to_owned(),
+        ));
+    }
+
+    Ok(Some(AuthenticatedUser::cloudflare_access(email, true)))
+}
+
+pub(crate) async fn find_authenticated_local_account(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<Option<LocalAccount>> {
+    let Some(user) = extract_authenticated_user(req, config).await? else {
+        return Ok(None);
+    };
+
+    find_account_by_email(db, &user.email).await
+}

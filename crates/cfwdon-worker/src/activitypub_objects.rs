@@ -1,0 +1,122 @@
+use crate::{
+    AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
+    count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
+    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
+    media_object_url,
+};
+use worker::{D1Database, Result};
+
+pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
+    matches!(visibility, "public" | "unlisted")
+}
+
+pub(crate) fn local_status_ap_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> String {
+    status.ap_id.clone().unwrap_or_else(|| {
+        format!(
+            "{}/statuses/{}",
+            actor_url(config, &account.username),
+            status.id
+        )
+    })
+}
+
+pub(crate) fn activitypub_audiences(
+    config: &AppConfig,
+    username: &str,
+    visibility: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let public = serde_json::json!(["https://www.w3.org/ns/activitystreams#Public"]);
+    let followers = serde_json::json!([format!("{}/followers", actor_url(config, username))]);
+
+    match visibility {
+        "unlisted" => (followers, public),
+        _ => (public, followers),
+    }
+}
+
+pub(crate) async fn build_activitypub_note(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+    include_context: bool,
+) -> Result<serde_json::Value> {
+    let actor = actor_url(config, &account.username);
+    let note_id = local_status_ap_id(config, account, status);
+    let audiences = activitypub_audiences(config, &account.username, &status.visibility);
+    let poll = find_status_poll_by_status_id(db, &status.id).await?;
+    let reply_uri = match status.in_reply_to_id.as_deref() {
+        Some(reply_id) => find_status_by_id(db, reply_id)
+            .await?
+            .and_then(|reply| reply.ap_id),
+        None => None,
+    };
+    let attachments = find_media_attachments_by_status_id(db, &status.id).await?;
+
+    let mut note = serde_json::json!({
+        "type": "Note",
+        "id": note_id.clone(),
+        "url": note_id.clone(),
+        "attributedTo": actor,
+        "content": status.content_html,
+        "published": status.created_at,
+        "to": audiences.0,
+        "cc": audiences.1,
+        "attachment": attachments
+            .iter()
+            .map(|attachment| {
+                serde_json::json!({
+                    "type": "Document",
+                    "mediaType": attachment.content_type,
+                    "url": media_object_url(config, &attachment.object_key),
+                    "name": if attachment.description.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(attachment.description.clone())
+                    },
+                })
+            })
+            .collect::<Vec<_>>(),
+    });
+
+    if include_context {
+        note["@context"] = serde_json::json!("https://www.w3.org/ns/activitystreams");
+    }
+    if !status.spoiler_text.is_empty() {
+        note["summary"] = serde_json::json!(status.spoiler_text.clone());
+        note["sensitive"] = serde_json::json!(true);
+    } else {
+        note["sensitive"] = serde_json::json!(status.sensitive != 0);
+    }
+    if let Some(language) = &status.language {
+        let mut content_map = serde_json::Map::new();
+        content_map.insert(
+            language.clone(),
+            serde_json::Value::String(status.content_html.clone()),
+        );
+        note["contentMap"] = serde_json::Value::Object(content_map);
+    }
+    if let Some(reply_uri) = reply_uri {
+        note["inReplyTo"] = serde_json::json!(reply_uri);
+    }
+    if let Some(poll) = poll {
+        let options = list_status_poll_options(db, &poll.id).await?;
+        let voters_count = count_poll_voters(db, &poll.id).await?;
+        let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
+        apply_activitypub_poll_fields(&mut note, &poll, &options, voters_count, expired);
+        if include_context {
+            note["@context"] = serde_json::json!([
+                "https://www.w3.org/ns/activitystreams",
+                {
+                    "votersCount": "http://joinmastodon.org/ns#votersCount"
+                }
+            ]);
+        }
+    }
+
+    Ok(note)
+}
