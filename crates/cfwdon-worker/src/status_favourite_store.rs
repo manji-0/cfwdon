@@ -15,6 +15,16 @@ pub(crate) struct InteractionActivityRow {
     pub(crate) ap_activity_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct InteractionAccountIdRow {
+    account_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InteractionActorUriRow {
+    remote_actor_uri: String,
+}
+
 pub(crate) async fn upsert_favourite_local_status(
     db: &D1Database,
     account_id: &str,
@@ -223,6 +233,67 @@ pub(crate) async fn find_favourite_activity_by_target_uri(
     .await
 }
 
+pub(crate) async fn list_local_favourite_account_ids_for_status(
+    db: &D1Database,
+    status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    list_interaction_account_ids(
+        db,
+        "SELECT account_id
+         FROM favourites
+         WHERE status_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+        status_id,
+        limit,
+    )
+    .await
+}
+
+pub(crate) async fn list_local_favourite_account_ids_for_remote_status(
+    db: &D1Database,
+    remote_status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    list_interaction_account_ids(
+        db,
+        "SELECT account_id
+         FROM favourites
+         WHERE remote_status_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+        remote_status_id,
+        limit,
+    )
+    .await
+}
+
+pub(crate) async fn list_remote_favourite_actor_uris_for_status(
+    db: &D1Database,
+    status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    let bindings = [D1Type::Text(status_id), D1Type::Integer(limit as i32)];
+    let result = db
+        .prepare(
+            "SELECT remote_actor_uri
+             FROM remote_favourites
+             WHERE status_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<InteractionActorUriRow>()?
+        .into_iter()
+        .map(|row| row.remote_actor_uri)
+        .collect())
+}
+
 async fn is_favourite_target_for_account(
     db: &D1Database,
     account_id: &str,
@@ -246,4 +317,20 @@ async fn is_favourite_target_for_account(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0)
         > 0)
+}
+
+async fn list_interaction_account_ids(
+    db: &D1Database,
+    sql: &str,
+    target_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<InteractionAccountIdRow>()?
+        .into_iter()
+        .map(|row| row.account_id)
+        .collect())
 }

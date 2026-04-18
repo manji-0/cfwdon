@@ -3,6 +3,7 @@ use crate::{
     configured_instance_languages, extended_description_url, instance_supported_mime_types,
     privacy_policy_url, render_status_html, terms_of_service_url,
 };
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub(crate) fn build_instance_v1_document(
     summary: &InstanceSummary,
@@ -114,7 +115,7 @@ pub(crate) fn build_instance_v2_document(
                 "terms_of_service": terms_of_service_url,
             },
             "accounts": {
-                "max_featured_tags": 0,
+                "max_featured_tags": 10,
                 "max_pinned_statuses": 0,
             },
             "statuses": {
@@ -194,4 +195,34 @@ pub(crate) fn build_instance_v2_document(
     }
 
     serde_json::Value::Object(response)
+}
+
+pub(crate) fn build_instance_activity_document(
+    week_floor: OffsetDateTime,
+    weekly_totals: &[(u64, u64, u64)],
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        weekly_totals
+            .iter()
+            .enumerate()
+            .map(|(index, (statuses, logins, registrations))| {
+                let week_start = week_floor - Duration::weeks((11 - index) as i64);
+                serde_json::json!({
+                    "week": week_start.unix_timestamp().to_string(),
+                    "statuses": statuses.to_string(),
+                    "logins": logins.to_string(),
+                    "registrations": registrations.to_string(),
+                })
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn build_default_privacy_policy_document(content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "updated_at": OffsetDateTime::UNIX_EPOCH
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+        "content": content,
+    })
 }

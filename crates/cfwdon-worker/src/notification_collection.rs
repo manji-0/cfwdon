@@ -2,9 +2,11 @@ use crate::{
     AppConfig, NotificationEntry, NotificationsQuery, collect_admin_report_notifications_entries,
     collect_admin_sign_up_notifications_entries, collect_favourite_notification_entries,
     collect_follow_notification_entries, collect_mention_notification_entries,
-    collect_poll_notification_entries, collect_reblog_notification_entries,
-    collect_status_notification_entries, load_dismissed_notification_ids,
-    load_notification_clear_marker, notification_sort_key, notification_timestamp_sort_token,
+    collect_poll_notification_entries, collect_quote_notification_entries,
+    collect_quoted_update_notification_entries, collect_reblog_notification_entries,
+    collect_status_notification_entries, collect_update_notification_entries,
+    load_dismissed_notification_ids, load_notification_clear_marker, notification_sort_key,
+    notification_timestamp_sort_token,
 };
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
@@ -76,6 +78,19 @@ pub(crate) async fn collect_notifications(
         .await?;
     collect_mention_notification_entries(&mut entries, db, config, viewer, query, per_type_limit)
         .await?;
+    collect_quote_notification_entries(&mut entries, db, config, viewer, query, per_type_limit)
+        .await?;
+    collect_update_notification_entries(&mut entries, db, config, viewer, query, per_type_limit)
+        .await?;
+    collect_quoted_update_notification_entries(
+        &mut entries,
+        db,
+        config,
+        viewer,
+        query,
+        per_type_limit,
+    )
+    .await?;
     collect_status_notification_entries(&mut entries, db, config, viewer, query, per_type_limit)
         .await?;
     collect_poll_notification_entries(&mut entries, db, config, viewer, query, per_type_limit)

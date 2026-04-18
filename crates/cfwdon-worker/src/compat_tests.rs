@@ -1,13 +1,18 @@
 use crate::account_store::AccountStats;
 use crate::build_activitypub_actor_document;
+use crate::build_featured_collection_document;
 use crate::relationships::RelationshipResponse;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::status_store::StatusRow;
-use crate::{build_instance_v1_document, build_instance_v2_document};
+use crate::{
+    build_default_privacy_policy_document, build_instance_activity_document,
+    build_instance_v1_document, build_instance_v2_document, build_preferences_document,
+};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo,
 };
+use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
 
 fn fixture_account() -> LocalAccount {
     LocalAccount {
@@ -61,6 +66,8 @@ fn fixture_status() -> StatusRow {
         account_id: "acct-1".to_owned(),
         ap_id: Some("https://social.example/users/alice/statuses/status-1".to_owned()),
         in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: None,
         content_html: "<p>Hello <span class=\"h-card\"><a href=\"https://social.example/@bob\" class=\"u-url mention\">@<span>bob</span></a></span> #Workers</p>".to_owned(),
         _text_content: "Hello @bob #Workers".to_owned(),
         spoiler_text: String::new(),
@@ -158,6 +165,8 @@ fn compatibility_activitypub_actor_shape_is_stable() {
         "/outbox",
         "/followers",
         "/following",
+        "/featured",
+        "/featuredTags",
         "/endpoints/sharedInbox",
         "/attachment/0/name",
         "/attachment/0/value",
@@ -189,6 +198,8 @@ fn compatibility_status_shape_is_stable() {
         "/uri",
         "/url",
         "/content",
+        "/muted",
+        "/pinned",
         "/account/id",
         "/account/acct",
         "/media_attachments",
@@ -237,6 +248,53 @@ fn compatibility_relationship_shape_is_stable() {
     ] {
         assert_has_pointer(&value, pointer);
     }
+}
+
+#[test]
+fn compatibility_preferences_shape_is_stable() {
+    let value = build_preferences_document(&fixture_account());
+
+    for pointer in [
+        "/posting:default:visibility",
+        "/posting:default:sensitive",
+        "/posting:default:language",
+        "/posting:default:privacy",
+        "/posting:default:media_sensitive",
+        "/posting:default:content_type",
+        "/notifications:follow",
+        "/notifications:mention",
+        "/web:theme",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_instance_activity_shape_is_stable() {
+    let week_floor = PrimitiveDateTime::new(
+        Date::from_calendar_date(2026, Month::March, 30).unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC);
+    let value = build_instance_activity_document(week_floor, &[(1, 0, 1); 12]);
+
+    let items = value
+        .as_array()
+        .expect("instance activity should be an array");
+    assert_eq!(items.len(), 12);
+    for item in items {
+        assert_has_pointer(item, "/week");
+        assert_has_pointer(item, "/statuses");
+        assert_has_pointer(item, "/logins");
+        assert_has_pointer(item, "/registrations");
+    }
+}
+
+#[test]
+fn compatibility_privacy_policy_fallback_shape_is_stable() {
+    let value = build_default_privacy_policy_document("test instance");
+    assert_has_pointer(&value, "/updated_at");
+    assert_has_pointer(&value, "/content");
 }
 
 #[test]
@@ -319,6 +377,29 @@ fn compatibility_instance_v2_shape_is_stable() {
         "/registrations/enabled",
         "/contact/email",
         "/rules",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_featured_collection_shape_is_stable() {
+    let value = build_featured_collection_document(
+        &fixture_config(),
+        "alice",
+        &[
+            "https://social.example/users/alice/statuses/1".to_owned(),
+            "https://social.example/users/alice/statuses/2".to_owned(),
+        ],
+    );
+
+    for pointer in [
+        "/@context",
+        "/id",
+        "/type",
+        "/totalItems",
+        "/orderedItems/0/id",
+        "/orderedItems/1/id",
     ] {
         assert_has_pointer(&value, pointer);
     }

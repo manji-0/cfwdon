@@ -6,7 +6,8 @@ use super::{
     find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
     is_public_activitypub_visibility, list_favourites_for_account, load_config,
     load_in_reply_to_account_id, local_status_target_uri, queue_remote_actor_activity,
-    status_id_from_context, upsert_favourite_local_status, upsert_favourite_remote_status,
+    resolve_action_status, status_id_from_context, upsert_favourite_local_status,
+    upsert_favourite_remote_status,
 };
 use serde::Deserialize;
 
@@ -27,59 +28,64 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
         Ok(status_id) => status_id,
         Err(_) => return Response::error("missing status id route parameter", 400),
     };
+    let action_query: crate::StatusActionQuery = req.query().unwrap_or_default();
+    if action_query.uri.is_some()
+        && crate::normalized_action_uri(action_query.uri.as_deref()).is_none()
+    {
+        return Response::error("uri query parameter must not be empty", 400);
+    }
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
-    if let Some(status) = find_status_by_id(&db, &status_id).await? {
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-            return Response::error("status not found", 404);
-        };
-        if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
-            return Response::error("status not found", 404);
-        }
-        upsert_favourite_local_status(&db, &viewer.id, &status).await?;
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        let response = build_local_status_response(
-            &db,
-            &config,
-            Some(&viewer),
-            &status,
-            &account,
-            load_in_reply_to_account_id(&db, &status).await?,
-            media,
-        )
-        .await?;
-        return Response::from_json(&response);
-    }
-
-    if let Some(status) = find_remote_status_by_id(&db, &status_id).await? {
-        if !is_public_activitypub_visibility(&status.visibility) {
-            return Response::error("status not found", 404);
-        }
-        let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
-            return Response::error("status not found", 404);
-        };
-        let existing =
-            find_favourite_activity_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
-        let mut outbound_activity_id = existing.and_then(|row| row.ap_activity_id);
-        if outbound_activity_id.is_none() {
-            let (_, payload_json) =
-                build_like_activity(&config, &viewer, &actor.actor_uri, &status.object_uri)?;
-            outbound_activity_id =
-                queue_remote_actor_activity(&db, &viewer.id, &actor.actor_uri, &payload_json)
-                    .await?;
-        }
-        upsert_favourite_remote_status(&db, &viewer.id, &status, outbound_activity_id.as_deref())
+    match resolve_action_status(&db, &config, &status_id, action_query.uri.as_deref()).await? {
+        Some(crate::ResolvedActionStatus::Local(status, account)) => {
+            if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
+                return Response::error("status not found", 404);
+            }
+            upsert_favourite_local_status(&db, &viewer.id, &status).await?;
+            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            let response = build_local_status_response(
+                &db,
+                &config,
+                Some(&viewer),
+                &status,
+                &account,
+                load_in_reply_to_account_id(&db, &status).await?,
+                media,
+            )
             .await?;
-        let response =
-            build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
-        return Response::from_json(&response);
+            Response::from_json(&response)
+        }
+        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
+            if !is_public_activitypub_visibility(&status.visibility) {
+                return Response::error("status not found", 404);
+            }
+            let existing =
+                find_favourite_activity_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
+            let mut outbound_activity_id = existing.and_then(|row| row.ap_activity_id);
+            if outbound_activity_id.is_none() {
+                let (_, payload_json) =
+                    build_like_activity(&config, &viewer, &actor.actor_uri, &status.object_uri)?;
+                outbound_activity_id =
+                    queue_remote_actor_activity(&db, &viewer.id, &actor.actor_uri, &payload_json)
+                        .await?;
+            }
+            upsert_favourite_remote_status(
+                &db,
+                &viewer.id,
+                &status,
+                outbound_activity_id.as_deref(),
+            )
+            .await?;
+            let response =
+                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
+            Response::from_json(&response)
+        }
+        None => Response::error("status not found", 404),
     }
-
-    Response::error("status not found", 404)
 }
 
 pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -88,62 +94,64 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
         Ok(status_id) => status_id,
         Err(_) => return Response::error("missing status id route parameter", 400),
     };
+    let action_query: crate::StatusActionQuery = req.query().unwrap_or_default();
+    if action_query.uri.is_some()
+        && crate::normalized_action_uri(action_query.uri.as_deref()).is_none()
+    {
+        return Response::error("uri query parameter must not be empty", 400);
+    }
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
-    if let Some(status) = find_status_by_id(&db, &status_id).await? {
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-            return Response::error("status not found", 404);
-        };
-        if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
-            return Response::error("status not found", 404);
-        }
-        delete_favourite_by_target_uri(&db, &viewer.id, &local_status_target_uri(&status)).await?;
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        let response = build_local_status_response(
-            &db,
-            &config,
-            Some(&viewer),
-            &status,
-            &account,
-            load_in_reply_to_account_id(&db, &status).await?,
-            media,
-        )
-        .await?;
-        return Response::from_json(&response);
-    }
-
-    if let Some(status) = find_remote_status_by_id(&db, &status_id).await? {
-        if !is_public_activitypub_visibility(&status.visibility) {
-            return Response::error("status not found", 404);
-        }
-        let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
-            return Response::error("status not found", 404);
-        };
-        if let Some(row) =
-            find_favourite_activity_by_target_uri(&db, &viewer.id, &status.object_uri).await?
-            && let Some(like_activity_id) = row.ap_activity_id.as_deref()
-        {
-            let (_, payload_json) = build_undo_like_activity(
-                &config,
-                &viewer,
-                like_activity_id,
-                &actor.actor_uri,
-                &status.object_uri,
-            )?;
-            let _ = queue_remote_actor_activity(&db, &viewer.id, &actor.actor_uri, &payload_json)
+    match resolve_action_status(&db, &config, &status_id, action_query.uri.as_deref()).await? {
+        Some(crate::ResolvedActionStatus::Local(status, account)) => {
+            if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
+                return Response::error("status not found", 404);
+            }
+            delete_favourite_by_target_uri(&db, &viewer.id, &local_status_target_uri(&status))
                 .await?;
+            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            let response = build_local_status_response(
+                &db,
+                &config,
+                Some(&viewer),
+                &status,
+                &account,
+                load_in_reply_to_account_id(&db, &status).await?,
+                media,
+            )
+            .await?;
+            Response::from_json(&response)
         }
-        delete_favourite_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
-        let response =
-            build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
-        return Response::from_json(&response);
+        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
+            if !is_public_activitypub_visibility(&status.visibility) {
+                return Response::error("status not found", 404);
+            }
+            if let Some(row) =
+                find_favourite_activity_by_target_uri(&db, &viewer.id, &status.object_uri).await?
+                && let Some(like_activity_id) = row.ap_activity_id.as_deref()
+            {
+                let (_, payload_json) = build_undo_like_activity(
+                    &config,
+                    &viewer,
+                    like_activity_id,
+                    &actor.actor_uri,
+                    &status.object_uri,
+                )?;
+                let _ =
+                    queue_remote_actor_activity(&db, &viewer.id, &actor.actor_uri, &payload_json)
+                        .await?;
+            }
+            delete_favourite_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
+            let response =
+                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
+            Response::from_json(&response)
+        }
+        None => Response::error("status not found", 404),
     }
-
-    Response::error("status not found", 404)
 }
 
 pub(crate) async fn favourites_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {

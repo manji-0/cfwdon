@@ -130,7 +130,7 @@ pub(crate) async fn resolve_remote_status_by_url(
         })?;
     let actor = fetch_remote_actor_profile(actor_uri).await?;
     upsert_remote_actor(db, &actor).await?;
-    upsert_remote_status(db, &actor, object).await?;
+    upsert_remote_status(db, _config, &actor, object).await?;
     let object_uri = object
         .get("id")
         .and_then(serde_json::Value::as_str)

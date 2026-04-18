@@ -1,13 +1,37 @@
 use crate::{
     AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url, count_local_status_favourites,
+    RemoteStatusRow, StatusRow, actor_url, can_view_local_status, count_local_status_favourites,
     count_local_status_reblogs, count_remote_status_favourites, count_remote_status_reblogs,
-    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_reblogged_by,
+    count_rows, find_account_by_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
+    has_remote_status_edit_snapshots, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
     is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
-    is_remote_status_reblogged_by, load_mastodon_poll_response, load_remote_mastodon_poll_response,
+    is_remote_status_reblogged_by, load_in_reply_to_account_id, load_mastodon_poll_response,
+    load_remote_mastodon_poll_response, load_remote_status_updated_at, load_status_updated_at,
     strip_html_tags,
 };
 use worker::{D1Database, Result};
+
+async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
+    Ok(count_rows(
+        db,
+        "SELECT COUNT(*) AS count
+             FROM statuses
+             WHERE quote_of_uri = ?1",
+        status_uri,
+    )
+    .await?
+        + count_rows(
+            db,
+            "SELECT COUNT(*) AS count
+                 FROM remote_statuses
+                 WHERE quote_of_uri = ?1",
+            status_uri,
+        )
+        .await?)
+}
 
 pub(crate) async fn build_status_mentions(
     db: &D1Database,
@@ -58,6 +82,43 @@ pub(crate) async fn build_local_status_response(
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
 ) -> Result<MastodonStatusResponse> {
+    build_local_status_response_inner(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        in_reply_to_account_id,
+        media_attachments,
+        true,
+    )
+    .await
+}
+
+async fn build_local_status_response_inner(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    media_attachments: Vec<MediaAttachmentRow>,
+    include_quote: bool,
+) -> Result<MastodonStatusResponse> {
+    if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
+        return build_local_reblog_wrapper_response(
+            db,
+            config,
+            viewer,
+            status,
+            account,
+            in_reply_to_account_id,
+            boost_of_uri,
+            include_quote,
+        )
+        .await;
+    }
+
     let mut response = MastodonStatusResponse::from_row(
         status,
         account,
@@ -73,6 +134,7 @@ pub(crate) async fn build_local_status_response(
         None => false,
     };
     response.reblogs_count = count_local_status_reblogs(db, &status.id).await?;
+    response.quotes_count = count_status_quotes_by_uri(db, &response.uri).await?;
     response.reblogged = match viewer {
         Some(viewer) => is_local_status_reblogged_by(db, &viewer.id, status).await?,
         None => false,
@@ -81,12 +143,22 @@ pub(crate) async fn build_local_status_response(
         Some(viewer) => is_local_status_bookmarked_by(db, &viewer.id, status).await?,
         None => false,
     };
-    response.muted = match viewer {
-        Some(viewer) => {
-            is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await?
-        }
+    response.pinned = match viewer {
+        Some(viewer) => is_local_status_pinned_by(db, &viewer.id, &status.id).await?,
         None => false,
     };
+    response.muted = match viewer {
+        Some(viewer) => is_local_status_thread_muted_by(db, &viewer.id, status).await?,
+        None => false,
+    };
+    response.edited_at = match load_status_updated_at(db, &status.id).await? {
+        Some(updated_at) if updated_at != status.created_at => Some(updated_at),
+        _ => None,
+    };
+    if include_quote {
+        response.quote =
+            build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
+    }
     Ok(response)
 }
 
@@ -97,8 +169,42 @@ pub(crate) async fn build_remote_status_response(
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
 ) -> Result<MastodonStatusResponse> {
+    build_remote_status_response_inner(db, config, viewer, status, actor, true).await
+}
+
+async fn build_remote_status_response_inner(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    actor: &RemoteActorRow,
+    include_quote: bool,
+) -> Result<MastodonStatusResponse> {
+    if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
+        return build_remote_reblog_wrapper_response(
+            db,
+            config,
+            viewer,
+            status,
+            actor,
+            boost_of_uri,
+            include_quote,
+        )
+        .await;
+    }
+
     let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
     let text_content = strip_html_tags(&status.content_html);
+    response.media_attachments = find_remote_status_attachments_by_status_id(db, &status.id)
+        .await?
+        .into_iter()
+        .map(|media| {
+            serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
+                &media,
+            ))
+            .unwrap_or(serde_json::Value::Null)
+        })
+        .collect();
     response.mentions = build_status_mentions(db, config, &text_content).await?;
     response.favourites_count = count_remote_status_favourites(db, &status.id).await?;
     response.favourited = match viewer {
@@ -106,6 +212,7 @@ pub(crate) async fn build_remote_status_response(
         None => false,
     };
     response.reblogs_count = count_remote_status_reblogs(db, &status.id).await?;
+    response.quotes_count = count_status_quotes_by_uri(db, &response.uri).await?;
     response.reblogged = match viewer {
         Some(viewer) => is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
         None => false,
@@ -119,5 +226,310 @@ pub(crate) async fn build_remote_status_response(
         None => false,
     };
     response.poll = load_remote_mastodon_poll_response(db, status, viewer).await?;
+    if has_remote_status_edit_snapshots(db, &status.id).await? {
+        response.edited_at = load_remote_status_updated_at(db, &status.id).await?;
+    }
+    if include_quote {
+        response.quote =
+            build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
+    }
+    Ok(response)
+}
+
+async fn build_quoted_status_value(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    quote_of_uri: Option<&str>,
+) -> Result<Option<serde_json::Value>> {
+    let Some(quote_of_uri) = quote_of_uri else {
+        return Ok(None);
+    };
+
+    if let Some(local_status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? {
+        let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
+            return Ok(None);
+        };
+        if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
+            return Ok(None);
+        }
+        let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+        let mut response = MastodonStatusResponse::from_row(
+            &local_status,
+            &local_account,
+            config,
+            load_in_reply_to_account_id(db, &local_status).await?,
+            media,
+        );
+        response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
+        response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
+        response.favourites_count = count_local_status_favourites(db, &local_status.id).await?;
+        response.favourited = match viewer {
+            Some(viewer) => is_local_status_favourited_by(db, &viewer.id, &local_status).await?,
+            None => false,
+        };
+        response.reblogs_count = count_local_status_reblogs(db, &local_status.id).await?;
+        response.reblogged = match viewer {
+            Some(viewer) => is_local_status_reblogged_by(db, &viewer.id, &local_status).await?,
+            None => false,
+        };
+        response.bookmarked = match viewer {
+            Some(viewer) => is_local_status_bookmarked_by(db, &viewer.id, &local_status).await?,
+            None => false,
+        };
+        response.pinned = match viewer {
+            Some(viewer) => is_local_status_pinned_by(db, &viewer.id, &local_status.id).await?,
+            None => false,
+        };
+        response.muted = match viewer {
+            Some(viewer) => is_local_status_thread_muted_by(db, &viewer.id, &local_status).await?,
+            None => false,
+        };
+        response.quote = None;
+        return Ok(Some(
+            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
+        ));
+    }
+
+    if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, quote_of_uri).await? {
+        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
+            return Ok(None);
+        }
+        let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
+        else {
+            return Ok(None);
+        };
+        let mut response = MastodonStatusResponse::from_remote_row(&remote_status, &actor, config);
+        let text_content = strip_html_tags(&remote_status.content_html);
+        response.media_attachments =
+            find_remote_status_attachments_by_status_id(db, &remote_status.id)
+                .await?
+                .into_iter()
+                .map(|media| {
+                    serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
+                        &media,
+                    ))
+                    .unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
+        response.mentions = build_status_mentions(db, config, &text_content).await?;
+        response.favourites_count = count_remote_status_favourites(db, &remote_status.id).await?;
+        response.favourited = match viewer {
+            Some(viewer) => {
+                is_remote_status_favourited_by(db, &viewer.id, &remote_status.id).await?
+            }
+            None => false,
+        };
+        response.reblogs_count = count_remote_status_reblogs(db, &remote_status.id).await?;
+        response.reblogged = match viewer {
+            Some(viewer) => {
+                is_remote_status_reblogged_by(db, &viewer.id, &remote_status.id).await?
+            }
+            None => false,
+        };
+        response.bookmarked = match viewer {
+            Some(viewer) => {
+                is_remote_status_bookmarked_by(db, &viewer.id, &remote_status.id).await?
+            }
+            None => false,
+        };
+        response.muted = match viewer {
+            Some(viewer) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
+            None => false,
+        };
+        response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
+        response.quote = None;
+        return Ok(Some(
+            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
+        ));
+    }
+
+    Ok(None)
+}
+
+async fn build_remote_reblog_wrapper_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    wrapper_status: &RemoteStatusRow,
+    wrapper_actor: &RemoteActorRow,
+    boost_of_uri: &str,
+    include_quote: bool,
+) -> Result<MastodonStatusResponse> {
+    let embedded = if let Some(local_status) =
+        find_local_status_by_object_uri(db, config, boost_of_uri).await?
+    {
+        if let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? {
+            if can_view_local_status(db, &local_status, viewer, &local_account).await? {
+                let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+                Some(
+                    Box::pin(build_local_status_response_inner(
+                        db,
+                        config,
+                        viewer,
+                        &local_status,
+                        &local_account,
+                        load_in_reply_to_account_id(db, &local_status).await?,
+                        media,
+                        include_quote,
+                    ))
+                    .await?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else if let Some(remote_status) =
+        find_remote_status_by_url_or_object_uri(db, boost_of_uri).await?
+    {
+        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
+            None
+        } else if let Some(actor) =
+            find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
+        {
+            Some(
+                Box::pin(build_remote_status_response_inner(
+                    db,
+                    config,
+                    viewer,
+                    &remote_status,
+                    &actor,
+                    include_quote,
+                ))
+                .await?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut response = embedded.clone().unwrap_or_else(|| {
+        MastodonStatusResponse::from_remote_row(wrapper_status, wrapper_actor, config)
+    });
+    response.id = wrapper_status.id.clone();
+    response.created_at = wrapper_status.published_at.clone();
+    response.in_reply_to_id = wrapper_status.in_reply_to_uri.clone();
+    response.in_reply_to_account_id = None;
+    response.visibility = wrapper_status.visibility.clone();
+    response.uri = wrapper_status.object_uri.clone();
+    response.url = wrapper_status
+        .url
+        .clone()
+        .unwrap_or_else(|| wrapper_status.object_uri.clone());
+    response.account = crate::MastodonAccountResponse::from_remote_actor(wrapper_actor);
+    response.reblog =
+        embedded.map(|status| serde_json::to_value(status).unwrap_or(serde_json::Value::Null));
+    response.content.clear();
+    response.text = None;
+    response.media_attachments.clear();
+    response.mentions.clear();
+    response.tags.clear();
+    response.emojis.clear();
+    response.card = None;
+    response.poll = None;
+    response.quote = None;
+    Ok(response)
+}
+
+async fn build_local_reblog_wrapper_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    wrapper_status: &StatusRow,
+    wrapper_account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    boost_of_uri: &str,
+    include_quote: bool,
+) -> Result<MastodonStatusResponse> {
+    let embedded = if let Some(local_status) =
+        find_local_status_by_object_uri(db, config, boost_of_uri).await?
+    {
+        if let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? {
+            if can_view_local_status(db, &local_status, viewer, &local_account).await? {
+                let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+                Some(
+                    Box::pin(build_local_status_response_inner(
+                        db,
+                        config,
+                        viewer,
+                        &local_status,
+                        &local_account,
+                        load_in_reply_to_account_id(db, &local_status).await?,
+                        media,
+                        include_quote,
+                    ))
+                    .await?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else if let Some(remote_status) =
+        find_remote_status_by_url_or_object_uri(db, boost_of_uri).await?
+    {
+        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
+            None
+        } else if let Some(actor) =
+            find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
+        {
+            Some(
+                build_remote_status_response_inner(
+                    db,
+                    config,
+                    viewer,
+                    &remote_status,
+                    &actor,
+                    include_quote,
+                )
+                .await?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut response = embedded.clone().unwrap_or_else(|| {
+        MastodonStatusResponse::from_row(
+            wrapper_status,
+            wrapper_account,
+            config,
+            in_reply_to_account_id.clone(),
+            Vec::new(),
+        )
+    });
+    response.id = wrapper_status.id.clone();
+    response.created_at = wrapper_status.created_at.clone();
+    response.in_reply_to_id = wrapper_status.in_reply_to_id.clone();
+    response.in_reply_to_account_id = in_reply_to_account_id;
+    response.visibility = wrapper_status.visibility.clone();
+    response.uri = wrapper_status.ap_id.clone().unwrap_or_else(|| {
+        format!(
+            "{}/statuses/{}",
+            actor_url(config, &wrapper_account.username),
+            wrapper_status.id
+        )
+    });
+    response.url = response.uri.clone();
+    response.account = crate::MastodonAccountResponse::from_account(wrapper_account, config);
+    response.reblog = embedded
+        .clone()
+        .map(|status| serde_json::to_value(status).unwrap_or(serde_json::Value::Null));
+    response.content.clear();
+    response.text = None;
+    response.media_attachments.clear();
+    response.mentions.clear();
+    response.tags.clear();
+    response.emojis.clear();
+    response.card = None;
+    response.poll = None;
+    response.quote = None;
     Ok(response)
 }

@@ -1,7 +1,8 @@
 use crate::{
     AppConfig, LocalAccount, MastodonMediaAttachmentResponse, MastodonStatusResponse,
     MastodonTagResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusRow, StatusRow, actor_url,
-    extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
+    extract_hashtags_from_html, extract_hashtags_from_text, strip_html_tags, tag_history_stub,
+    tag_rest_id, tag_url,
 };
 
 impl MastodonStatusResponse {
@@ -34,13 +35,14 @@ impl MastodonStatusResponse {
             replies_count: 0,
             reblogs_count: 0,
             favourites_count: 0,
+            quotes_count: 0,
             favourited: false,
             reblogged: false,
             muted: false,
             bookmarked: false,
             pinned: false,
             content: row.content_html.clone(),
-            text: None,
+            text: Some(row._text_content.clone()),
             reblog: None,
             application: None,
             account: crate::MastodonAccountResponse::from_account(account, config),
@@ -69,6 +71,9 @@ impl MastodonStatusResponse {
             emojis: Vec::new(),
             card: None,
             poll: None,
+            edited_at: None,
+            filtered: Vec::new(),
+            quote: None,
         }
     }
 
@@ -112,13 +117,14 @@ impl MastodonStatusResponse {
             replies_count: 0,
             reblogs_count: 0,
             favourites_count: 0,
+            quotes_count: 0,
             favourited: false,
             reblogged: false,
             muted: false,
             bookmarked: false,
             pinned: false,
             content: row.content_html.clone(),
-            text: None,
+            text: Some(strip_html_tags(&row.content_html)),
             reblog: None,
             application: None,
             account: crate::MastodonAccountResponse::from_remote_actor(actor),
@@ -141,6 +147,9 @@ impl MastodonStatusResponse {
             emojis: Vec::new(),
             card: None,
             poll: None,
+            edited_at: None,
+            filtered: Vec::new(),
+            quote: None,
         }
     }
 }

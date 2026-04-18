@@ -12,6 +12,7 @@ pub(crate) async fn insert_status(
     config: &AppConfig,
     account: &LocalAccount,
     draft: &StatusDraft,
+    quote_of_uri: Option<&str>,
 ) -> Result<StatusRow> {
     let status_id = generate_entity_id(16)?;
     let ap_id = format!(
@@ -45,6 +46,8 @@ pub(crate) async fn insert_status(
         account_id,
         ap_id_binding,
         in_reply_to_id,
+        D1Type::Null,
+        quote_of_uri.map_or(D1Type::Null, D1Type::Text),
         content_html_binding,
         text_content,
         spoiler_text,
@@ -60,6 +63,8 @@ pub(crate) async fn insert_status(
             account_id,
             ap_id,
             in_reply_to_id,
+            boost_of_uri,
+            quote_of_uri,
             content_html,
             text_content,
             spoiler_text,
@@ -80,7 +85,9 @@ pub(crate) async fn insert_status(
             ?9,
             ?10,
             ?11,
-            ?11
+            ?12,
+            ?13,
+            ?13
         )",
     )
     .bind_refs(bindings.iter())?
@@ -94,7 +101,133 @@ pub(crate) async fn insert_status(
     require_status_by_id(db, &status_id).await
 }
 
-async fn insert_status_poll(
+pub(crate) async fn upsert_reblog_wrapper_status(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    target_uri: &str,
+    visibility: &str,
+) -> Result<StatusRow> {
+    if let Some(existing) =
+        find_reblog_wrapper_status_by_target_uri(db, &account.id, target_uri).await?
+    {
+        let updated_at = now_iso_string()?;
+        let bindings = [
+            D1Type::Text(existing.id.as_str()),
+            D1Type::Text(visibility),
+            D1Type::Text(updated_at.as_str()),
+        ];
+        db.prepare(
+            "UPDATE statuses
+             SET visibility = ?2,
+                 updated_at = ?3
+             WHERE id = ?1",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+        return require_status_by_id(db, &existing.id).await;
+    }
+
+    let status_id = generate_entity_id(16)?;
+    let ap_id = format!(
+        "{}/statuses/{}",
+        actor_url(config, &account.username),
+        status_id
+    );
+    let created_at = now_iso_string()?;
+    let bindings = [
+        D1Type::Text(status_id.as_str()),
+        D1Type::Text(account.id.as_str()),
+        D1Type::Text(ap_id.as_str()),
+        D1Type::Null,
+        D1Type::Text(target_uri),
+        D1Type::Null,
+        D1Type::Text(""),
+        D1Type::Text(""),
+        D1Type::Text(""),
+        D1Type::Text(visibility),
+        D1Type::Integer(0),
+        D1Type::Null,
+        D1Type::Text(created_at.as_str()),
+    ];
+    db.prepare(
+        "INSERT INTO statuses (
+            id,
+            account_id,
+            ap_id,
+            in_reply_to_id,
+            boost_of_uri,
+            quote_of_uri,
+            content_html,
+            text_content,
+            spoiler_text,
+            visibility,
+            sensitive,
+            language,
+            created_at,
+            updated_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            ?5,
+            ?6,
+            ?7,
+            ?8,
+            ?9,
+            ?10,
+            ?11,
+            ?12,
+            ?13,
+            ?13
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    require_status_by_id(db, &status_id).await
+}
+
+pub(crate) async fn find_reblog_wrapper_status_by_target_uri(
+    db: &D1Database,
+    account_id: &str,
+    target_uri: &str,
+) -> Result<Option<StatusRow>> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(target_uri)];
+    db.prepare(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+         FROM statuses
+         WHERE account_id = ?1
+           AND boost_of_uri = ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind_refs(bindings.iter())?
+    .first::<StatusRow>(None)
+    .await
+}
+
+pub(crate) async fn delete_reblog_wrapper_status_by_target_uri(
+    db: &D1Database,
+    account_id: &str,
+    target_uri: &str,
+) -> Result<()> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(target_uri)];
+    db.prepare(
+        "DELETE FROM statuses
+         WHERE account_id = ?1
+           AND boost_of_uri = ?2",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn insert_status_poll(
     db: &D1Database,
     status_id: &str,
     poll: &PollDraft,
@@ -166,7 +299,7 @@ async fn insert_status_poll(
     Ok(())
 }
 
-pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
+pub(crate) async fn delete_status_poll(db: &D1Database, status_id: &str) -> Result<()> {
     let status_binding = D1Type::Text(status_id);
     db.prepare(
         "DELETE FROM status_poll_options
@@ -189,6 +322,22 @@ pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Res
     .run()
     .await?;
 
+    Ok(())
+}
+
+pub(crate) async fn replace_status_poll(
+    db: &D1Database,
+    status_id: &str,
+    poll: &PollDraft,
+    updated_at: &str,
+) -> Result<()> {
+    delete_status_poll(db, status_id).await?;
+    insert_status_poll(db, status_id, poll, updated_at).await
+}
+
+pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
+    delete_status_poll(db, status_id).await?;
+
     let status_id = D1Type::Text(status_id);
     db.prepare(
         "DELETE FROM statuses
@@ -199,4 +348,43 @@ pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Res
     .await?;
 
     Ok(())
+}
+
+pub(crate) async fn update_local_status(
+    db: &D1Database,
+    status: &StatusRow,
+    text: &str,
+    spoiler_text: &str,
+    sensitive: bool,
+    language: Option<&str>,
+    updated_at: &str,
+) -> Result<StatusRow> {
+    let content_html = render_status_html(text);
+    let bindings = [
+        D1Type::Text(content_html.as_str()),
+        D1Type::Text(text),
+        D1Type::Text(spoiler_text),
+        D1Type::Integer(if sensitive { 1 } else { 0 }),
+        match language {
+            Some(value) => D1Type::Text(value),
+            None => D1Type::Null,
+        },
+        D1Type::Text(updated_at),
+        D1Type::Text(status.id.as_str()),
+    ];
+    db.prepare(
+        "UPDATE statuses
+         SET content_html = ?1,
+             text_content = ?2,
+             spoiler_text = ?3,
+             sensitive = ?4,
+             language = ?5,
+             updated_at = ?6
+         WHERE id = ?7",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    require_status_by_id(db, &status.id).await
 }

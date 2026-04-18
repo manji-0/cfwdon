@@ -10,6 +10,8 @@ pub(crate) struct RemoteStatusNotificationRow {
     pub(crate) object_uri: String,
     pub(crate) url: Option<String>,
     pub(crate) in_reply_to_uri: Option<String>,
+    pub(crate) boost_of_uri: Option<String>,
+    pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
     pub(crate) spoiler_text: String,
     pub(crate) visibility: String,
@@ -26,7 +28,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
     let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
+            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
              FROM statuses s
              JOIN follows f
                ON f.target_account_id = s.account_id
@@ -53,7 +55,7 @@ pub(crate) async fn list_remote_status_notifications_for_account(
     let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.published_at
+            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.published_at
              FROM remote_statuses rs
              JOIN follows f
                ON f.target_actor_uri = rs.actor_uri

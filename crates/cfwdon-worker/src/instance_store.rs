@@ -6,6 +6,7 @@ use crate::{
 };
 use serde::Deserialize;
 use worker::Result;
+use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct InstanceSettingsRow {
@@ -84,6 +85,46 @@ pub(crate) async fn load_total_local_accounts(db: &D1Database) -> Result<u64> {
 pub(crate) async fn load_total_local_statuses(db: &D1Database) -> Result<u64> {
     let row = db
         .prepare("SELECT COUNT(*) AS count FROM statuses")
+        .first::<ActiveMonthCountRow>(None)
+        .await?;
+
+    Ok(row.map(|value| value.count).unwrap_or(0))
+}
+
+pub(crate) async fn count_local_statuses_between(
+    db: &D1Database,
+    start: &str,
+    end: &str,
+) -> Result<u64> {
+    let bindings = [D1Type::Text(start), D1Type::Text(end)];
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM statuses
+             WHERE datetime(created_at) >= datetime(?1)
+               AND datetime(created_at) < datetime(?2)",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<ActiveMonthCountRow>(None)
+        .await?;
+
+    Ok(row.map(|value| value.count).unwrap_or(0))
+}
+
+pub(crate) async fn count_accounts_created_between(
+    db: &D1Database,
+    start: &str,
+    end: &str,
+) -> Result<u64> {
+    let bindings = [D1Type::Text(start), D1Type::Text(end)];
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM accounts
+             WHERE datetime(created_at) >= datetime(?1)
+               AND datetime(created_at) < datetime(?2)",
+        )
+        .bind_refs(bindings.iter())?
         .first::<ActiveMonthCountRow>(None)
         .await?;
 

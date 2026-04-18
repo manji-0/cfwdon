@@ -182,3 +182,75 @@ pub(crate) fn build_undo_announce_activity(
         })?,
     ))
 }
+
+pub(crate) fn build_add_featured_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let target = format!("{actor}/collections/featured");
+    build_add_featured_activity_with_id(
+        config,
+        account,
+        status_uri,
+        &format!("{target}/add/{}", generate_entity_id(12)?),
+    )
+}
+
+pub(crate) fn build_add_featured_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_uri: &str,
+    activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let target = format!("{actor}/collections/featured");
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": "Add",
+        "actor": actor,
+        "object": status_uri,
+        "target": target,
+        "to": [format!("{}/followers", actor_url(config, &account.username))],
+    });
+    serde_json::to_string(&activity)
+        .map_err(|error| Error::RustError(format!("failed to serialize Add activity: {error}")))
+}
+
+pub(crate) fn build_remove_featured_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let target = format!("{actor}/collections/featured");
+    build_remove_featured_activity_with_id(
+        config,
+        account,
+        status_uri,
+        &format!("{target}/remove/{}", generate_entity_id(12)?),
+    )
+}
+
+pub(crate) fn build_remove_featured_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_uri: &str,
+    activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let target = format!("{actor}/collections/featured");
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": activity_id,
+        "type": "Remove",
+        "actor": actor,
+        "object": status_uri,
+        "target": target,
+        "to": [format!("{}/followers", actor_url(config, &account.username))],
+    });
+    serde_json::to_string(&activity)
+        .map_err(|error| Error::RustError(format!("failed to serialize Remove activity: {error}")))
+}

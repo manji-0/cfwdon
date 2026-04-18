@@ -1,6 +1,6 @@
 use super::{
-    AppConfig, MediaAttachmentRow, MediaKind, classify_media_kind, instance_base_url,
-    media_kind_label,
+    AppConfig, MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind,
+    instance_base_url, media_kind_label,
 };
 use serde::Serialize;
 
@@ -83,6 +83,41 @@ impl MastodonMediaAttachmentResponse {
                 Some(row.description.clone())
             },
             blurhash: None,
+        }
+    }
+
+    pub(crate) fn from_remote_row(row: &RemoteStatusAttachmentRow) -> Self {
+        let url = row.remote_url.clone();
+        let preview_url = row.preview_url.clone().unwrap_or_else(|| url.clone());
+        let aspect = row
+            .width
+            .zip(row.height)
+            .and_then(|(width, height)| (height != 0).then_some(width as f64 / height as f64));
+
+        Self {
+            id: row.id.clone(),
+            media_type: media_kind_label(
+                classify_media_kind(&row.content_type).unwrap_or(MediaKind::Image),
+            ),
+            url: url.clone(),
+            preview_url,
+            remote_url: Some(url),
+            text_url: None,
+            meta: MastodonMediaMeta {
+                original: Some(MastodonMediaMetaDetails {
+                    width: row.width,
+                    height: row.height,
+                    size: row
+                        .width
+                        .zip(row.height)
+                        .map(|(width, height)| format!("{width}x{height}")),
+                    aspect,
+                }),
+                small: None,
+                focus: None,
+            },
+            description: row.description.clone(),
+            blurhash: row.blurhash.clone(),
         }
     }
 }

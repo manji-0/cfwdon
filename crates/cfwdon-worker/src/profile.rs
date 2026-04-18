@@ -1,8 +1,8 @@
 use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
-    Result, RouteContext, UpdateCredentialsField, extract_authenticated_user, load_account_stats,
-    load_config, parse_update_credentials_request, resolve_account_reference,
-    resolve_local_account, resolve_lookup_account,
+    Result, RouteContext, UpdateCredentialsField, build_preferences_document,
+    extract_authenticated_user, load_account_stats, load_config, parse_update_credentials_request,
+    resolve_account_reference, resolve_local_account, resolve_lookup_account,
 };
 use serde::Deserialize;
 use worker::D1Database;
@@ -71,6 +71,18 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
     Response::from_json(&MastodonAccountResponse::from_credentials_account(
         &account, &config, &stats,
     ))
+}
+
+pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+    Response::from_json(&build_preferences_document(&account))
 }
 
 pub(crate) async fn update_credentials(

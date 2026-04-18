@@ -38,6 +38,38 @@ pub(crate) fn activitypub_audiences(
     }
 }
 
+fn quote_context_mapping() -> serde_json::Value {
+    serde_json::json!({
+        "_misskey_quote": {
+            "@id": "https://misskey-hub.net/ns#_misskey_quote",
+            "@type": "@id"
+        }
+    })
+}
+
+fn note_context(include_quote: bool, include_poll: bool) -> serde_json::Value {
+    match (include_quote, include_poll) {
+        (false, false) => serde_json::json!("https://www.w3.org/ns/activitystreams"),
+        (true, false) => serde_json::json!([
+            "https://www.w3.org/ns/activitystreams",
+            quote_context_mapping()
+        ]),
+        (false, true) => serde_json::json!([
+            "https://www.w3.org/ns/activitystreams",
+            {
+                "votersCount": "http://joinmastodon.org/ns#votersCount"
+            }
+        ]),
+        (true, true) => serde_json::json!([
+            "https://www.w3.org/ns/activitystreams",
+            quote_context_mapping(),
+            {
+                "votersCount": "http://joinmastodon.org/ns#votersCount"
+            }
+        ]),
+    }
+}
+
 pub(crate) async fn build_activitypub_note(
     db: &D1Database,
     config: &AppConfig,
@@ -56,6 +88,7 @@ pub(crate) async fn build_activitypub_note(
         None => None,
     };
     let attachments = find_media_attachments_by_status_id(db, &status.id).await?;
+    let has_quote = status.quote_of_uri.is_some();
 
     let mut note = serde_json::json!({
         "type": "Note",
@@ -84,7 +117,7 @@ pub(crate) async fn build_activitypub_note(
     });
 
     if include_context {
-        note["@context"] = serde_json::json!("https://www.w3.org/ns/activitystreams");
+        note["@context"] = note_context(has_quote, false);
     }
     if !status.spoiler_text.is_empty() {
         note["summary"] = serde_json::json!(status.spoiler_text.clone());
@@ -103,18 +136,18 @@ pub(crate) async fn build_activitypub_note(
     if let Some(reply_uri) = reply_uri {
         note["inReplyTo"] = serde_json::json!(reply_uri);
     }
+    if let Some(quote_uri) = status.quote_of_uri.as_deref() {
+        note["quoteUri"] = serde_json::json!(quote_uri);
+        note["quoteUrl"] = serde_json::json!(quote_uri);
+        note["_misskey_quote"] = serde_json::json!(quote_uri);
+    }
     if let Some(poll) = poll {
         let options = list_status_poll_options(db, &poll.id).await?;
         let voters_count = count_poll_voters(db, &poll.id).await?;
         let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
         apply_activitypub_poll_fields(&mut note, &poll, &options, voters_count, expired);
         if include_context {
-            note["@context"] = serde_json::json!([
-                "https://www.w3.org/ns/activitystreams",
-                {
-                    "votersCount": "http://joinmastodon.org/ns#votersCount"
-                }
-            ]);
+            note["@context"] = note_context(has_quote, true);
         }
     }
 

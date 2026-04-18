@@ -26,6 +26,7 @@ pub(crate) fn root_document() -> RootDocument {
             "/api/v1/timelines/home",
             "/api/v1/timelines/public",
             "/api/v1/timelines/tag/:hashtag",
+            "/api/v1/timelines/list/:id",
             "/api/v1/statuses/:id",
             "/api/v1/statuses/:id/favourite",
             "/api/v1/statuses/:id/unfavourite",

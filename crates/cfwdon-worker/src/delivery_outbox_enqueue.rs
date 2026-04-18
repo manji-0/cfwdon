@@ -4,6 +4,22 @@ use super::{
 };
 use worker::d1::D1Type;
 
+fn create_activity_context(status: &StatusRow) -> serde_json::Value {
+    if status.quote_of_uri.is_some() {
+        serde_json::json!([
+            "https://www.w3.org/ns/activitystreams",
+            {
+                "_misskey_quote": {
+                    "@id": "https://misskey-hub.net/ns#_misskey_quote",
+                    "@type": "@id"
+                }
+            }
+        ])
+    } else {
+        serde_json::json!("https://www.w3.org/ns/activitystreams")
+    }
+}
+
 pub(crate) async fn enqueue_outbox_activity(
     db: &D1Database,
     config: &AppConfig,
@@ -21,7 +37,7 @@ pub(crate) async fn enqueue_outbox_activity(
         .ok_or_else(|| Error::RustError("activitypub note id missing".to_owned()))?;
     let activity_id = format!("{note_id}/activity");
     let activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": create_activity_context(status),
         "type": "Create",
         "id": activity_id,
         "actor": actor_url(config, &account.username),

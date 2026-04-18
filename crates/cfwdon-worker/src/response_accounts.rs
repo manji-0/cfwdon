@@ -35,6 +35,29 @@ pub(crate) fn render_profile_field_value_html(value: &str) -> String {
     escape_html(trimmed)
 }
 
+pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::Value {
+    serde_json::json!({
+        "posting:default:visibility": account.default_post_visibility,
+        "posting:default:sensitive": account.default_sensitive,
+        "posting:default:language": account.default_language,
+        "posting:default:privacy": account.default_post_visibility,
+        "posting:default:media_sensitive": account.default_sensitive,
+        "posting:default:content_type": "text/plain",
+        "reading:expand:media": "default",
+        "reading:expand:spoilers": false,
+        "reading:autoplay:gifs": true,
+        "reading:display:media": "default",
+        "reading:display:expand_media": "default",
+        "reading:display:expand_spoilers": false,
+        "notifications:follow": true,
+        "notifications:favourite": true,
+        "notifications:reblog": true,
+        "notifications:mention": true,
+        "notifications:poll": true,
+        "web:theme": "default",
+    })
+}
+
 fn account_avatar_url(config: &AppConfig, account: &LocalAccount) -> String {
     account
         .avatar_object_key

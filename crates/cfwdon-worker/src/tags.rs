@@ -5,7 +5,10 @@ use crate::content_helpers::{
 };
 use crate::db_utils::count_rows_like;
 use crate::responses::{MastodonTagHistoryEntry, MastodonTagResponse};
-use crate::{list_local_public_timeline_statuses, list_remote_public_timeline_statuses};
+use crate::{
+    ResolvedTimelineCursor, list_local_public_timeline_statuses,
+    list_remote_public_timeline_statuses,
+};
 use cfwdon_core::AppConfig;
 use url::Url;
 use worker::{D1Database, Result};
@@ -89,7 +92,8 @@ pub(crate) async fn search_tags_for_v2(
     let mut matches = Vec::new();
     let mut seen = HashSet::new();
 
-    for status in list_local_public_timeline_statuses(db, 200).await? {
+    let cursor = ResolvedTimelineCursor::default();
+    for status in list_local_public_timeline_statuses(db, &cursor, 200).await? {
         for tag in extract_hashtags_from_text(&status._text_content) {
             if tag.contains(&needle) && seen.insert(tag.clone()) {
                 matches.push(tag);
@@ -97,7 +101,7 @@ pub(crate) async fn search_tags_for_v2(
         }
     }
 
-    for (status, _) in list_remote_public_timeline_statuses(db, 200).await? {
+    for (status, _) in list_remote_public_timeline_statuses(db, &cursor, 200).await? {
         for tag in extract_hashtags_from_html(&status.content_html) {
             if tag.contains(&needle) && seen.insert(tag.clone()) {
                 matches.push(tag);

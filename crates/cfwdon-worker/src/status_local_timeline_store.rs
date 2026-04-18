@@ -1,31 +1,54 @@
-use crate::{D1Database, Result, StatusRow, normalize_hashtag};
+use crate::{D1Database, ResolvedTimelineCursor, Result, StatusRow, normalize_hashtag};
 use worker::d1::D1Type;
 
 pub(crate) async fn list_local_home_timeline_statuses(
     db: &D1Database,
     viewer_account_id: &str,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
     let bindings = [
         D1Type::Text(viewer_account_id),
         D1Type::Text(viewer_account_id),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
+            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
              FROM statuses s
              LEFT JOIN follows f
                ON f.target_account_id = s.account_id
               AND f.follower_account_id = ?1
               AND f.state = 'accepted'
-             WHERE s.account_id = ?2
-                OR (
+             WHERE (
+                    s.account_id = ?2
+                    OR (
                     f.follower_account_id IS NOT NULL
                     AND s.visibility IN ('public', 'unlisted', 'private')
-                )
-             ORDER BY s.created_at DESC
-             LIMIT ?3",
+                    )
+               )
+               AND (
+                    ?3 IS NULL
+                    OR s.created_at < ?3
+                    OR (s.created_at = ?3 AND s.id < ?4)
+               )
+               AND (
+                    ?5 IS NULL
+                    OR s.created_at > ?5
+                    OR (s.created_at = ?5 AND s.id > ?6)
+               )
+             ORDER BY s.created_at DESC, s.id DESC
+             LIMIT ?7",
         )
         .bind_refs(bindings.iter())?
         .all()
@@ -36,18 +59,41 @@ pub(crate) async fn list_local_home_timeline_statuses(
 
 pub(crate) async fn list_local_public_timeline_statuses(
     db: &D1Database,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let limit = D1Type::Integer(limit as i32);
+    let bindings = [
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
              FROM statuses
              WHERE visibility = 'public'
-             ORDER BY created_at DESC
-             LIMIT ?1",
+               AND (
+                    ?1 IS NULL
+                    OR created_at < ?1
+                    OR (created_at = ?1 AND id < ?2)
+               )
+               AND (
+                    ?3 IS NULL
+                    OR created_at > ?3
+                    OR (created_at = ?3 AND id > ?4)
+               )
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?5",
         )
-        .bind_refs(&limit)?
+        .bind_refs(bindings.iter())?
         .all()
         .await?;
 
@@ -57,21 +103,42 @@ pub(crate) async fn list_local_public_timeline_statuses(
 pub(crate) async fn list_local_public_statuses_by_tag(
     db: &D1Database,
     tag: &str,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
     let pattern = format!("%#{}%", normalize_hashtag(tag));
     let bindings = [
         D1Type::Text(pattern.as_str()),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
              FROM statuses
              WHERE visibility = 'public'
                AND lower(text_content) LIKE ?1
-             ORDER BY created_at DESC
-             LIMIT ?2",
+               AND (
+                    ?2 IS NULL
+                    OR created_at < ?2
+                    OR (created_at = ?2 AND id < ?3)
+               )
+               AND (
+                    ?4 IS NULL
+                    OR created_at > ?4
+                    OR (created_at = ?4 AND id > ?5)
+               )
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?6",
         )
         .bind_refs(bindings.iter())?
         .all()

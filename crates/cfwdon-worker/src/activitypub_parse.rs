@@ -31,10 +31,21 @@ pub(crate) fn extract_inbox_target_username(
                             .and_then(|uri| local_username_from_status_uri(config, uri))
                     })
             }),
-        Some("Like") | Some("Announce") => activity
+        Some("Like") => activity
             .get("object")
             .and_then(|object| activity_object_id(Some(object)))
             .and_then(|uri| local_username_from_status_uri(config, uri)),
+        Some("Announce") => activity
+            .get("object")
+            .and_then(|object| {
+                activity_object_id(Some(object))
+                    .and_then(|uri| local_username_from_status_uri(config, uri))
+                    .or_else(|| {
+                        quote_target_uri_from_object(object)
+                            .and_then(|uri| local_username_from_status_uri(config, &uri))
+                    })
+            })
+            .or_else(|| first_local_audience_username(config, activity)),
         Some("Create") | Some("Update") => first_local_audience_username(config, activity),
         _ => None,
     }
@@ -170,6 +181,26 @@ pub(crate) fn is_activitypub_actor_type(actor_type: Option<&str>) -> bool {
 
 pub(crate) fn is_supported_remote_status_object_type(value: Option<&str>) -> bool {
     matches!(value, Some("Note" | "Question"))
+}
+
+pub(crate) fn object_attributed_to_remote_actor(
+    object: &serde_json::Value,
+    activity: &serde_json::Value,
+    canonical_actor_uri: &str,
+) -> bool {
+    object
+        .get("attributedTo")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| activity.get("actor").and_then(serde_json::Value::as_str))
+        .map(|value| value == canonical_actor_uri)
+        .unwrap_or(false)
+}
+
+pub(crate) fn quote_target_uri_from_object(object: &serde_json::Value) -> Option<String> {
+    ["quoteUri", "quoteUrl", "_misskey_quote"]
+        .into_iter()
+        .find_map(|field| object.get(field).and_then(serde_json::Value::as_str))
+        .map(ToOwned::to_owned)
 }
 
 pub(crate) fn extract_remote_note_object(

@@ -4,6 +4,14 @@ use worker::{D1Database, Result};
 pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
     let bindings = [D1Type::Text(status_id)];
     db.prepare(
+        "DELETE FROM remote_status_attachments
+         WHERE status_id = ?1",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    db.prepare(
         "DELETE FROM remote_status_poll_options
          WHERE poll_id IN (
             SELECT id
@@ -31,6 +39,30 @@ pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str)
     .bind_refs(&status_id)?
     .run()
     .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn delete_remote_status_by_object_uri(
+    db: &D1Database,
+    object_uri: &str,
+) -> Result<()> {
+    let object_uri_binding = D1Type::Text(object_uri);
+    let status_ids = db
+        .prepare(
+            "SELECT id
+             FROM remote_statuses
+             WHERE object_uri = ?1",
+        )
+        .bind_refs(&object_uri_binding)?
+        .all()
+        .await?;
+
+    for value in status_ids.results::<serde_json::Value>()? {
+        if let Some(status_id) = value.get("id").and_then(serde_json::Value::as_str) {
+            delete_remote_status_by_id(db, status_id).await?;
+        }
+    }
 
     Ok(())
 }

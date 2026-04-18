@@ -88,6 +88,8 @@ pub(crate) async fn collect_status_notification_entries(
             object_uri: status.object_uri.clone(),
             url: status.url.clone(),
             in_reply_to_uri: status.in_reply_to_uri.clone(),
+            boost_of_uri: status.boost_of_uri.clone(),
+            quote_of_uri: status.quote_of_uri.clone(),
             content_html: status.content_html.clone(),
             spoiler_text: status.spoiler_text.clone(),
             visibility: status.visibility.clone(),

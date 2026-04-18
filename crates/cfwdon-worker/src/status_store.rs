@@ -10,6 +10,10 @@ pub(crate) struct StatusRow {
     pub(crate) account_id: String,
     pub(crate) ap_id: Option<String>,
     pub(crate) in_reply_to_id: Option<String>,
+    #[serde(default)]
+    pub(crate) boost_of_uri: Option<String>,
+    #[serde(default)]
+    pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
     #[serde(rename = "text_content")]
     pub(crate) _text_content: String,

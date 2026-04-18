@@ -4,6 +4,22 @@ use crate::{
 };
 use worker::D1Database;
 
+fn status_activity_context(object: &serde_json::Value) -> serde_json::Value {
+    if object.get("_misskey_quote").is_some() {
+        serde_json::json!([
+            "https://www.w3.org/ns/activitystreams",
+            {
+                "_misskey_quote": {
+                    "@id": "https://misskey-hub.net/ns#_misskey_quote",
+                    "@type": "@id"
+                }
+            }
+        ])
+    } else {
+        serde_json::json!("https://www.w3.org/ns/activitystreams")
+    }
+}
+
 pub(crate) fn build_update_person_activity_with_id(
     config: &AppConfig,
     account: &LocalAccount,
@@ -74,7 +90,7 @@ pub(crate) fn build_status_update_activity_with_id(
         .cloned()
         .unwrap_or_else(|| serde_json::json!([]));
     let activity = serde_json::json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": status_activity_context(&object),
         "id": activity_id,
         "type": "Update",
         "actor": actor,

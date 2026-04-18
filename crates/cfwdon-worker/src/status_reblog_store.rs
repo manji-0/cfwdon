@@ -9,6 +9,16 @@ pub(crate) struct ReblogActivityRow {
     pub(crate) visibility: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct InteractionAccountIdRow {
+    account_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InteractionActorUriRow {
+    remote_actor_uri: String,
+}
+
 pub(crate) async fn upsert_reblog_local_status(
     db: &D1Database,
     account_id: &str,
@@ -206,6 +216,67 @@ pub(crate) async fn is_remote_status_reblogged_by(
         > 0)
 }
 
+pub(crate) async fn list_local_reblog_account_ids_for_status(
+    db: &D1Database,
+    status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    list_interaction_account_ids(
+        db,
+        "SELECT account_id
+         FROM reblogs
+         WHERE status_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+        status_id,
+        limit,
+    )
+    .await
+}
+
+pub(crate) async fn list_local_reblog_account_ids_for_remote_status(
+    db: &D1Database,
+    remote_status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    list_interaction_account_ids(
+        db,
+        "SELECT account_id
+         FROM reblogs
+         WHERE remote_status_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+        remote_status_id,
+        limit,
+    )
+    .await
+}
+
+pub(crate) async fn list_remote_reblog_actor_uris_for_status(
+    db: &D1Database,
+    status_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    let bindings = [D1Type::Text(status_id), D1Type::Integer(limit as i32)];
+    let result = db
+        .prepare(
+            "SELECT remote_actor_uri
+             FROM remote_reblogs
+             WHERE status_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<InteractionActorUriRow>()?
+        .into_iter()
+        .map(|row| row.remote_actor_uri)
+        .collect())
+}
+
 async fn is_reblog_target_for_account(
     db: &D1Database,
     account_id: &str,
@@ -229,4 +300,20 @@ async fn is_reblog_target_for_account(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0)
         > 0)
+}
+
+async fn list_interaction_account_ids(
+    db: &D1Database,
+    sql: &str,
+    target_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<InteractionAccountIdRow>()?
+        .into_iter()
+        .map(|row| row.account_id)
+        .collect())
 }

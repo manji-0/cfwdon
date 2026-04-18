@@ -1,8 +1,11 @@
-use crate::{D1Database, RemoteActorRow, RemoteStatusRow, Result, normalize_hashtag};
+use crate::{
+    D1Database, RemoteActorRow, RemoteStatusRow, ResolvedTimelineCursor, Result, normalize_hashtag,
+};
 use worker::d1::D1Type;
 
 pub(crate) async fn list_remote_public_timeline_statuses(
     db: &D1Database,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     query_remote_statuses_with_actor(
@@ -13,6 +16,8 @@ pub(crate) async fn list_remote_public_timeline_statuses(
             rs.object_uri,
             rs.url,
             rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
             rs.content_html,
             rs.spoiler_text,
             rs.visibility,
@@ -29,9 +34,31 @@ pub(crate) async fn list_remote_public_timeline_statuses(
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
-         ORDER BY rs.published_at DESC
-         LIMIT ?1",
-        &[D1Type::Integer(limit as i32)],
+           AND (
+                ?1 IS NULL
+                OR rs.published_at < ?1
+                OR (rs.published_at = ?1 AND rs.id < ?2)
+           )
+           AND (
+                ?3 IS NULL
+                OR rs.published_at > ?3
+                OR (rs.published_at = ?3 AND rs.id > ?4)
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?5",
+        &[
+            cursor
+                .max_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            cursor
+                .min_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            D1Type::Integer(limit as i32),
+        ],
     )
     .await
 }
@@ -39,6 +66,7 @@ pub(crate) async fn list_remote_public_timeline_statuses(
 pub(crate) async fn list_remote_home_timeline_statuses(
     db: &D1Database,
     viewer_account_id: &str,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     query_remote_statuses_with_actor(
@@ -49,6 +77,8 @@ pub(crate) async fn list_remote_home_timeline_statuses(
             rs.object_uri,
             rs.url,
             rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
             rs.content_html,
             rs.spoiler_text,
             rs.visibility,
@@ -69,10 +99,30 @@ pub(crate) async fn list_remote_home_timeline_statuses(
           AND f.follower_account_id = ?1
           AND f.state = 'accepted'
          WHERE rs.visibility IN ('public', 'unlisted', 'private')
-         ORDER BY rs.published_at DESC
-         LIMIT ?2",
+           AND (
+                ?2 IS NULL
+                OR rs.published_at < ?2
+                OR (rs.published_at = ?2 AND rs.id < ?3)
+           )
+           AND (
+                ?4 IS NULL
+                OR rs.published_at > ?4
+                OR (rs.published_at = ?4 AND rs.id > ?5)
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?6",
         &[
             D1Type::Text(viewer_account_id),
+            cursor
+                .max_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            cursor
+                .min_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
             D1Type::Integer(limit as i32),
         ],
     )
@@ -82,6 +132,7 @@ pub(crate) async fn list_remote_home_timeline_statuses(
 pub(crate) async fn list_remote_public_statuses_by_tag(
     db: &D1Database,
     tag: &str,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     let pattern = format!("%#{}%", normalize_hashtag(tag));
@@ -93,6 +144,8 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
             rs.object_uri,
             rs.url,
             rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
             rs.content_html,
             rs.spoiler_text,
             rs.visibility,
@@ -110,10 +163,30 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
            AND lower(rs.content_html) LIKE ?1
-         ORDER BY rs.published_at DESC
-         LIMIT ?2",
+           AND (
+                ?2 IS NULL
+                OR rs.published_at < ?2
+                OR (rs.published_at = ?2 AND rs.id < ?3)
+           )
+           AND (
+                ?4 IS NULL
+                OR rs.published_at > ?4
+                OR (rs.published_at = ?4 AND rs.id > ?5)
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?6",
         &[
             D1Type::Text(pattern.as_str()),
+            cursor
+                .max_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            cursor
+                .min_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
             D1Type::Integer(limit as i32),
         ],
     )
@@ -128,7 +201,7 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
     let bindings = [D1Type::Text(actor_uri), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
              FROM remote_statuses
              WHERE actor_uri = ?1
              ORDER BY published_at DESC
@@ -153,6 +226,8 @@ pub(crate) async fn list_direct_remote_replies_by_uri(
             rs.object_uri,
             rs.url,
             rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
             rs.content_html,
             rs.spoiler_text,
             rs.visibility,
@@ -216,6 +291,14 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
             .map(ToOwned::to_owned),
         in_reply_to_uri: value
             .get("in_reply_to_uri")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned),
+        boost_of_uri: value
+            .get("boost_of_uri")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned),
+        quote_of_uri: value
+            .get("quote_of_uri")
             .and_then(|v| v.as_str())
             .map(ToOwned::to_owned),
         content_html: value

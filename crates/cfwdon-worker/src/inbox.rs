@@ -8,6 +8,8 @@ use super::{
 };
 use worker::Error;
 
+const ACTIVITYPUB_UNAUTHORIZED_PREFIX: &str = "activitypub unauthorized:";
+
 pub(crate) async fn shared_inbox_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -135,6 +137,12 @@ pub(crate) async fn handle_inbox_request(
             }
         }
     }
-    result?;
-    Ok(Response::empty()?.with_status(202))
+
+    match result {
+        Ok(()) => Ok(Response::empty()?.with_status(202)),
+        Err(Error::RustError(message)) if message.starts_with(ACTIVITYPUB_UNAUTHORIZED_PREFIX) => {
+            Response::error("unauthorized activitypub object attribution", 401)
+        }
+        Err(error) => Err(error),
+    }
 }

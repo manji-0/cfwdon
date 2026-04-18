@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct MastodonAccountResponse {
     pub(crate) id: String,
     pub(crate) username: String,
@@ -23,7 +23,7 @@ pub(crate) struct MastodonAccountResponse {
     pub(crate) source: Option<MastodonAccountSource>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct MastodonAccountSource {
     pub(crate) note: String,
     pub(crate) fields: Vec<serde_json::Value>,
@@ -35,7 +35,7 @@ pub(crate) struct MastodonAccountSource {
     pub(crate) discoverable: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct MastodonStatusResponse {
     pub(crate) id: String,
     pub(crate) created_at: String,
@@ -50,6 +50,7 @@ pub(crate) struct MastodonStatusResponse {
     pub(crate) replies_count: u64,
     pub(crate) reblogs_count: u64,
     pub(crate) favourites_count: u64,
+    pub(crate) quotes_count: u64,
     pub(crate) favourited: bool,
     pub(crate) reblogged: bool,
     pub(crate) muted: bool,
@@ -67,6 +68,11 @@ pub(crate) struct MastodonStatusResponse {
     pub(crate) emojis: Vec<serde_json::Value>,
     pub(crate) card: Option<serde_json::Value>,
     pub(crate) poll: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) edited_at: Option<String>,
+    pub(crate) filtered: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) quote: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]

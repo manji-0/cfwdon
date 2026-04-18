@@ -1,0 +1,450 @@
+use std::collections::{HashMap, HashSet};
+
+use crate::{
+    Request, Response, Result, RouteContext, actor_url, extract_authenticated_user,
+    extract_hashtags_from_text, find_account_by_username, instance_base_url, load_config,
+    normalize_hashtag, resolve_local_account,
+};
+use serde::Deserialize;
+use worker::d1::D1Type;
+
+const MAX_FEATURED_TAGS: usize = 10;
+
+#[derive(Debug, Deserialize)]
+struct FeaturedTagRow {
+    tag_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeaturedTagStatusMetricsRow {
+    statuses_count: u64,
+    last_status_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OwnedStatusRow {
+    text_content: String,
+    created_at: String,
+}
+
+fn featured_tag_profile_url(config: &cfwdon_core::AppConfig, username: &str, tag: &str) -> String {
+    format!(
+        "{}/tagged/{}",
+        actor_url(config, username),
+        normalize_hashtag(tag)
+    )
+}
+
+async fn count_featured_tags(db: &worker::D1Database, account_id: &str) -> Result<u64> {
+    let account_id = D1Type::Text(account_id);
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM featured_tags
+             WHERE account_id = ?1",
+        )
+        .bind_refs(&account_id)?
+        .first::<serde_json::Value>(None)
+        .await?;
+    Ok(row
+        .as_ref()
+        .and_then(|row| row.get("count"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0))
+}
+
+async fn is_featured_tag_present(
+    db: &worker::D1Database,
+    account_id: &str,
+    tag: &str,
+) -> Result<bool> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
+    Ok(db
+        .prepare(
+            "SELECT tag_name
+             FROM featured_tags
+             WHERE account_id = ?1
+               AND tag_name = ?2
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?
+        .is_some())
+}
+
+async fn list_featured_tags_for_account(
+    db: &worker::D1Database,
+    account_id: &str,
+) -> Result<Vec<FeaturedTagRow>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT tag_name
+             FROM featured_tags
+             WHERE account_id = ?1
+             ORDER BY created_at DESC, tag_name ASC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+    result.results::<FeaturedTagRow>()
+}
+
+async fn featured_tag_metrics(
+    db: &worker::D1Database,
+    account_id: &str,
+    tag: &str,
+) -> Result<FeaturedTagStatusMetricsRow> {
+    let pattern = format!("%#{}%", normalize_hashtag(tag));
+    let bindings = [
+        D1Type::Text(account_id),
+        D1Type::Text(pattern.as_str()),
+        D1Type::Text(pattern.as_str()),
+    ];
+    Ok(db
+        .prepare(
+            "SELECT COUNT(*) AS statuses_count,
+                    MAX(CASE
+                        WHEN lower(text_content) LIKE ?2 THEN created_at
+                        ELSE NULL
+                    END) AS last_status_at
+             FROM statuses
+             WHERE account_id = ?1
+               AND lower(text_content) LIKE ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<FeaturedTagStatusMetricsRow>(None)
+        .await?
+        .unwrap_or(FeaturedTagStatusMetricsRow {
+            statuses_count: 0,
+            last_status_at: None,
+        }))
+}
+
+fn featured_tag_api_document(
+    config: &cfwdon_core::AppConfig,
+    username: &str,
+    tag: &str,
+    statuses_count: u64,
+    last_status_at: Option<String>,
+) -> serde_json::Value {
+    let normalized = normalize_hashtag(tag);
+    serde_json::json!({
+        "id": normalized,
+        "name": normalized,
+        "url": featured_tag_profile_url(config, username, tag),
+        "statuses_count": statuses_count,
+        "last_status_at": last_status_at,
+    })
+}
+
+fn featured_tag_suggestion_document(
+    config: &cfwdon_core::AppConfig,
+    tag: &str,
+) -> serde_json::Value {
+    let normalized = normalize_hashtag(tag);
+    serde_json::json!({
+        "id": normalized,
+        "name": normalized,
+        "url": format!("{}/tags/{}", instance_base_url(config), normalized),
+        "history": [],
+        "following": false,
+    })
+}
+
+fn build_featured_tags_collection_document(
+    config: &cfwdon_core::AppConfig,
+    username: &str,
+    tags: &[String],
+) -> serde_json::Value {
+    serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{}/collections/tags", actor_url(config, username)),
+        "type": "OrderedCollection",
+        "totalItems": tags.len(),
+        "orderedItems": tags.iter().map(|tag| {
+            let normalized = normalize_hashtag(tag);
+            serde_json::json!({
+                "type": "Hashtag",
+                "name": format!("#{normalized}"),
+                "href": featured_tag_profile_url(config, username, &normalized),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn build_featured_collection_document(
+    config: &cfwdon_core::AppConfig,
+    username: &str,
+    pinned_status_uris: &[String],
+) -> serde_json::Value {
+    serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{}/collections/featured", actor_url(config, username)),
+        "type": "OrderedCollection",
+        "totalItems": pinned_status_uris.len(),
+        "orderedItems": pinned_status_uris.iter().map(|uri| serde_json::json!({ "id": uri })).collect::<Vec<_>>(),
+    })
+}
+
+async fn insert_featured_tag(db: &worker::D1Database, account_id: &str, tag: &str) -> Result<()> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
+    db.prepare(
+        "INSERT INTO featured_tags (account_id, tag_name)
+         VALUES (?1, ?2)
+         ON CONFLICT(account_id, tag_name) DO NOTHING",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+async fn delete_featured_tag(db: &worker::D1Database, account_id: &str, tag: &str) -> Result<bool> {
+    if !is_featured_tag_present(db, account_id, tag).await? {
+        return Ok(false);
+    }
+    let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
+    db.prepare(
+        "DELETE FROM featured_tags
+         WHERE account_id = ?1
+           AND tag_name = ?2",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(true)
+}
+
+async fn suggested_featured_tag_names(
+    db: &worker::D1Database,
+    account_id: &str,
+) -> Result<Vec<String>> {
+    let featured = list_featured_tags_for_account(db, account_id)
+        .await?
+        .into_iter()
+        .map(|row| row.tag_name)
+        .collect::<HashSet<_>>();
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT text_content, created_at
+             FROM statuses
+             WHERE account_id = ?1
+             ORDER BY created_at DESC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+
+    let mut tag_scores = HashMap::<String, (u64, String)>::new();
+    for row in result.results::<OwnedStatusRow>()? {
+        for tag in extract_hashtags_from_text(&row.text_content) {
+            if featured.contains(&tag) {
+                continue;
+            }
+            let entry = tag_scores.entry(tag).or_insert((0, row.created_at.clone()));
+            entry.0 += 1;
+            if row.created_at > entry.1 {
+                entry.1 = row.created_at.clone();
+            }
+        }
+    }
+
+    let mut tags = tag_scores.into_iter().collect::<Vec<_>>();
+    tags.sort_by(
+        |(left_tag, (left_count, left_last)), (right_tag, (right_count, right_last))| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| right_last.cmp(left_last))
+                .then_with(|| left_tag.cmp(right_tag))
+        },
+    );
+    tags.truncate(MAX_FEATURED_TAGS);
+    Ok(tags.into_iter().map(|(tag, _)| tag).collect())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FeatureTagRequest {
+    name: Option<String>,
+}
+
+async fn parse_feature_tag_request(req: &mut Request) -> std::result::Result<String, String> {
+    let content_type = req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let raw_name = if content_type.contains("application/json") {
+        req.json::<FeatureTagRequest>()
+            .await
+            .map_err(|error| format!("invalid featured tag JSON payload: {error}"))?
+            .name
+    } else {
+        req.form_data()
+            .await
+            .map_err(|error| format!("invalid featured tag form payload: {error}"))?
+            .get_field("name")
+    };
+
+    let normalized = normalize_hashtag(raw_name.as_deref().unwrap_or_default());
+    if normalized.is_empty() {
+        return Err("featured tag name must not be empty".to_owned());
+    }
+
+    Ok(normalized)
+}
+
+pub(crate) async fn featured_tags_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+
+    let mut documents = Vec::new();
+    for row in list_featured_tags_for_account(&db, &account.id).await? {
+        let metrics = featured_tag_metrics(&db, &account.id, &row.tag_name).await?;
+        documents.push(featured_tag_api_document(
+            &config,
+            &account.username,
+            &row.tag_name,
+            metrics.statuses_count,
+            metrics.last_status_at,
+        ));
+    }
+
+    Response::from_json(&documents)
+}
+
+pub(crate) async fn featured_tag_suggestions_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+
+    let documents = suggested_featured_tag_names(&db, &account.id)
+        .await?
+        .into_iter()
+        .map(|tag| featured_tag_suggestion_document(&config, &tag))
+        .collect::<Vec<_>>();
+    Response::from_json(&documents)
+}
+
+pub(crate) async fn feature_tag_response(
+    req: &mut Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let tag = parse_feature_tag_request(req)
+        .await
+        .map_err(worker::Error::RustError)?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+
+    if count_featured_tags(&db, &account.id).await? >= MAX_FEATURED_TAGS as u64
+        && !is_featured_tag_present(&db, &account.id, &tag).await?
+    {
+        return Response::error("featured tags limit reached", 422);
+    }
+
+    insert_featured_tag(&db, &account.id, &tag).await?;
+    let metrics = featured_tag_metrics(&db, &account.id, &tag).await?;
+    Response::from_json(&featured_tag_api_document(
+        &config,
+        &account.username,
+        &tag,
+        metrics.statuses_count,
+        metrics.last_status_at,
+    ))
+}
+
+pub(crate) async fn unfeature_tag_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let tag = ctx
+        .param("id")
+        .map(|value| normalize_hashtag(&value))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+
+    if !delete_featured_tag(&db, &account.id, &tag).await? {
+        return Response::error("featured tag not found", 404);
+    }
+
+    Response::from_json(&serde_json::json!({}))
+}
+
+pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let username = ctx
+        .param("username")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = find_account_by_username(&db, &username)
+        .await?
+        .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
+    let tags = list_featured_tags_for_account(&db, &account.id)
+        .await?
+        .into_iter()
+        .map(|row| row.tag_name)
+        .collect::<Vec<_>>();
+
+    Response::from_json(&build_featured_tags_collection_document(
+        &config,
+        &account.username,
+        &tags,
+    ))
+}
+
+pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let username = ctx
+        .param("username")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = find_account_by_username(&db, &username)
+        .await?
+        .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
+    let pinned_status_uris = crate::list_pinned_statuses_for_account(&db, &account.id)
+        .await?
+        .into_iter()
+        .filter_map(|status| status.ap_id)
+        .collect::<Vec<_>>();
+
+    Response::from_json(&build_featured_collection_document(
+        &config,
+        &account.username,
+        &pinned_status_uris,
+    ))
+}

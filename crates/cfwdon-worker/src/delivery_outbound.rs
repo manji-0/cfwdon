@@ -1,6 +1,7 @@
 use crate::{
-    AppConfig, D1Database, Error, LocalAccount, StatusRow, build_status_update_activity,
-    is_public_activitypub_visibility, list_follower_actor_uris, load_remote_actor_delivery_inbox,
+    AppConfig, D1Database, Error, LocalAccount, StatusRow, build_add_featured_activity,
+    build_remove_featured_activity, build_status_update_activity, is_public_activitypub_visibility,
+    list_follower_actor_uris, load_remote_actor_delivery_inbox, local_status_target_uri,
 };
 use worker::Result;
 use worker::d1::D1Type;
@@ -161,6 +162,44 @@ pub(crate) async fn enqueue_status_update_activity(
     }
 
     let payload_json = build_status_update_activity(db, config, account, status).await?;
+    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
+        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn enqueue_add_featured_status_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> Result<()> {
+    if !is_public_activitypub_visibility(&status.visibility) {
+        return Ok(());
+    }
+
+    let payload_json =
+        build_add_featured_activity(config, account, &local_status_target_uri(status))?;
+    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
+        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn enqueue_remove_featured_status_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> Result<()> {
+    if !is_public_activitypub_visibility(&status.visibility) {
+        return Ok(());
+    }
+
+    let payload_json =
+        build_remove_featured_activity(config, account, &local_status_target_uri(status))?;
     for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
         queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
     }

@@ -18,6 +18,9 @@ pub(crate) struct ActivityPubActorResponse {
     pub(crate) outbox: String,
     pub(crate) followers: String,
     pub(crate) following: String,
+    pub(crate) featured: String,
+    #[serde(rename = "featuredTags")]
+    pub(crate) featured_tags: String,
     pub(crate) url: String,
     pub(crate) endpoints: ActivityPubActorEndpoints,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,6 +98,8 @@ pub(crate) fn build_activitypub_actor_document(
         outbox: format!("{actor_url}/outbox"),
         followers: format!("{actor_url}/followers"),
         following: format!("{actor_url}/following"),
+        featured: format!("{actor_url}/collections/featured"),
+        featured_tags: format!("{actor_url}/collections/tags"),
         url: actor_url.clone(),
         endpoints: ActivityPubActorEndpoints {
             shared_inbox: shared_inbox_url(config),

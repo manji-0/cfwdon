@@ -12,6 +12,7 @@ pub(crate) struct MentionNotificationRow {
     pub(crate) account_id: String,
     pub(crate) ap_id: Option<String>,
     pub(crate) in_reply_to_id: Option<String>,
+    pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
     #[serde(rename = "text_content")]
     pub(crate) text_content: String,
@@ -29,6 +30,8 @@ pub(crate) struct RemoteMentionNotificationRow {
     pub(crate) object_uri: String,
     pub(crate) url: Option<String>,
     pub(crate) in_reply_to_uri: Option<String>,
+    pub(crate) boost_of_uri: Option<String>,
+    pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
     pub(crate) spoiler_text: String,
     pub(crate) visibility: String,
@@ -51,7 +54,7 @@ pub(crate) async fn list_local_mention_notifications_for_account(
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
              FROM statuses
              WHERE account_id != ?1
                AND lower(text_content) LIKE ?2
@@ -92,7 +95,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
     ];
     let result = db
         .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
              FROM remote_statuses
              WHERE lower(content_html) LIKE ?1
                 OR lower(spoiler_text) LIKE ?1

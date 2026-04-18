@@ -16,7 +16,7 @@ pub(crate) async fn search_local_status_rows(
             D1Type::Integer(limit as i32),
         ];
         db.prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
              FROM statuses
              WHERE account_id = ?1
                AND (lower(text_content) LIKE ?2 OR lower(spoiler_text) LIKE ?2)
@@ -32,7 +32,7 @@ pub(crate) async fn search_local_status_rows(
             D1Type::Integer(limit as i32),
         ];
         db.prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
              FROM statuses
              WHERE lower(text_content) LIKE ?1
                 OR lower(spoiler_text) LIKE ?1
@@ -67,6 +67,8 @@ pub(crate) async fn search_remote_status_rows(
                 rs.object_uri,
                 rs.url,
                 rs.in_reply_to_uri,
+                rs.boost_of_uri,
+                rs.quote_of_uri,
                 rs.content_html,
                 rs.spoiler_text,
                 rs.visibility,
@@ -102,6 +104,8 @@ pub(crate) async fn search_remote_status_rows(
                 rs.object_uri,
                 rs.url,
                 rs.in_reply_to_uri,
+                rs.boost_of_uri,
+                rs.quote_of_uri,
                 rs.content_html,
                 rs.spoiler_text,
                 rs.visibility,
@@ -153,6 +157,14 @@ pub(crate) async fn search_remote_status_rows(
                     .map(ToOwned::to_owned),
                 in_reply_to_uri: value
                     .get("in_reply_to_uri")
+                    .and_then(|field| field.as_str())
+                    .map(ToOwned::to_owned),
+                boost_of_uri: value
+                    .get("boost_of_uri")
+                    .and_then(|field| field.as_str())
+                    .map(ToOwned::to_owned),
+                quote_of_uri: value
+                    .get("quote_of_uri")
                     .and_then(|field| field.as_str())
                     .map(ToOwned::to_owned),
                 content_html: value

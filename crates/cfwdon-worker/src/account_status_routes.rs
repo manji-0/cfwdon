@@ -2,8 +2,9 @@ use super::{
     AccountReference, AccountStatusesQuery, Error, Request, Response, Result, RouteContext,
     build_local_status_response, build_remote_status_response, can_view_local_status,
     find_authenticated_local_account, find_media_attachments_by_status_id,
-    is_public_activitypub_visibility, list_account_statuses, list_remote_statuses_by_actor_uri,
-    load_config, load_in_reply_to_account_id, resolve_account_reference, status_contains_tag,
+    is_public_activitypub_visibility, list_account_statuses, list_pinned_statuses_for_account,
+    list_remote_statuses_by_actor_uri, load_config, load_in_reply_to_account_id,
+    remote_status_has_media, resolve_account_reference, status_contains_tag,
     status_is_reply_to_other_account,
 };
 
@@ -24,14 +25,15 @@ pub(crate) async fn account_statuses_response(
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let statuses = list_account_statuses(&db, &account.id, limit).await?;
+            let statuses = if query.pinned.unwrap_or(false) {
+                list_pinned_statuses_for_account(&db, &account.id).await?
+            } else {
+                list_account_statuses(&db, &account.id, limit).await?
+            };
             let mut response = Vec::new();
 
-            for status in statuses {
+            for status in statuses.into_iter().take(limit as usize) {
                 if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
-                    continue;
-                }
-                if query.pinned.unwrap_or(false) {
                     continue;
                 }
                 if let Some(tag) = query.tagged.as_deref()
@@ -40,7 +42,9 @@ pub(crate) async fn account_statuses_response(
                     continue;
                 }
                 if query.exclude_reblogs.unwrap_or(false) {
-                    // Local reblog support does not exist yet, so this filter is effectively a no-op.
+                    if status.boost_of_uri.is_some() {
+                        continue;
+                    }
                 }
                 if query.exclude_replies.unwrap_or(false)
                     && status_is_reply_to_other_account(&db, &status, &account.id).await?
@@ -86,13 +90,15 @@ pub(crate) async fn account_statuses_response(
                 {
                     continue;
                 }
-                if query.exclude_reblogs.unwrap_or(false) {
-                    // Remote reblog parsing is not implemented yet.
+                if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+                    continue;
                 }
                 if query.exclude_replies.unwrap_or(false) && status.in_reply_to_uri.is_some() {
                     continue;
                 }
-                if query.only_media.unwrap_or(false) {
+                if query.only_media.unwrap_or(false)
+                    && !remote_status_has_media(&db, &status.id).await?
+                {
                     continue;
                 }
 
