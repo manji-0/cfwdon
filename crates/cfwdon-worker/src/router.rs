@@ -4,17 +4,18 @@ use super::{
     block_account, bookmark_status, bookmarks_response, conversations_response,
     create_list_response, create_media_attachment, create_report, create_status,
     custom_emojis_response, delete_conversation_response, delete_list_response, delete_status,
-    favourite_status, favourites_response, feature_tag_response, featured_collection_response,
-    featured_tag_suggestions_response, featured_tags_collection_response, featured_tags_response,
-    follow_account, followers_collection_response, following_collection_response,
-    home_timeline_response, inbox_response, instance_activity_response,
-    instance_extended_description_response, instance_peers_response,
-    instance_privacy_policy_response, instance_rules_response, instance_summary_response,
-    instance_terms_of_service_response, instance_translation_languages_response,
-    instance_v2_response, list_accounts_response, list_response, list_timeline_response,
-    lists_response, markers_response, media_content_response, media_metadata_response,
-    mute_account, mute_status_response, mutes_response, nodeinfo_links_response, nodeinfo_response,
-    notification_dismiss_response, notification_response, notifications_clear_response,
+    familiar_followers_response, favourite_status, favourites_response, feature_tag_response,
+    featured_collection_response, featured_tag_suggestions_response,
+    featured_tags_collection_response, featured_tags_response, follow_account,
+    followers_collection_response, following_collection_response, home_timeline_response,
+    inbox_response, instance_activity_response, instance_extended_description_response,
+    instance_peers_response, instance_privacy_policy_response, instance_rules_response,
+    instance_summary_response, instance_terms_of_service_response,
+    instance_translation_languages_response, instance_v2_response, list_accounts_response,
+    list_response, list_timeline_response, lists_response, markers_response,
+    media_content_response, media_metadata_response, mute_account, mute_status_response,
+    mutes_response, nodeinfo_links_response, nodeinfo_response, notification_dismiss_response,
+    notification_response, notifications_clear_response, notifications_policy_response,
     notifications_response, notifications_unread_count_response, notifications_v2_response,
     outbox_response, pin_status_response, poll_response, preferences_response,
     process_expired_polls, process_outbox_deliveries, prune_orphan_media, public_timeline_response,
@@ -25,8 +26,9 @@ use super::{
     trending_links_response, trending_statuses_response, trending_tags_response, unblock_account,
     unbookmark_status, unfavourite_status, unfeature_tag_response, unfollow_account,
     unmute_account, unmute_status_response, unpin_status_response, unreblog_status,
-    update_credentials, update_list_response, update_media_attachment, update_status,
-    verify_credentials, vote_in_poll, webfinger_response,
+    update_credentials, update_list_response, update_media_attachment,
+    update_notifications_policy_response, update_status, verify_credentials, vote_in_poll,
+    webfinger_response,
 };
 use worker::{Env, Request, Response, Result, Router};
 
@@ -247,6 +249,10 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/api/v1/accounts/relationships", |req, ctx| async move {
             account_relationships(req, ctx).await
         })
+        .get_async(
+            "/api/v1/accounts/familiar_followers",
+            |req, ctx| async move { familiar_followers_response(req, ctx).await },
+        )
         .get_async("/api/v1/accounts/lookup", |req, ctx| async move {
             account_lookup(req, ctx).await
         })
@@ -270,6 +276,12 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         })
         .get_async("/api/v2/notifications", |req, ctx| async move {
             notifications_v2_response(req, ctx).await
+        })
+        .get_async("/api/v2/notifications/policy", |req, ctx| async move {
+            notifications_policy_response(req, ctx).await
+        })
+        .patch_async("/api/v2/notifications/policy", |mut req, ctx| async move {
+            update_notifications_policy_response(&mut req, ctx).await
         })
         .get_async(
             "/api/v1/notifications/unread_count",

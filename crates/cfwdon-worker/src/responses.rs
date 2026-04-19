@@ -33,6 +33,7 @@ pub(crate) struct MastodonAccountSource {
     pub(crate) follow_requests_count: u64,
     pub(crate) hide_collections: Option<bool>,
     pub(crate) discoverable: Option<bool>,
+    pub(crate) quote_policy: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -66,6 +67,7 @@ pub(crate) struct MastodonStatusResponse {
     pub(crate) mentions: Vec<serde_json::Value>,
     pub(crate) tags: Vec<serde_json::Value>,
     pub(crate) emojis: Vec<serde_json::Value>,
+    pub(crate) quote_approval: Option<serde_json::Value>,
     pub(crate) card: Option<serde_json::Value>,
     pub(crate) poll: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

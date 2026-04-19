@@ -113,6 +113,7 @@ fn compatibility_verify_credentials_shape_is_stable() {
         "/source/language",
         "/source/follow_requests_count",
         "/source/discoverable",
+        "/source/quote_policy",
     ] {
         assert_has_pointer(&value, pointer);
     }
@@ -206,6 +207,7 @@ fn compatibility_status_shape_is_stable() {
         "/mentions",
         "/tags/0/name",
         "/emojis",
+        "/quote_approval",
     ] {
         assert_has_pointer(&value, pointer);
     }
@@ -258,6 +260,7 @@ fn compatibility_preferences_shape_is_stable() {
         "/posting:default:visibility",
         "/posting:default:sensitive",
         "/posting:default:language",
+        "/posting:default:quote_policy",
         "/posting:default:privacy",
         "/posting:default:media_sensitive",
         "/posting:default:content_type",

@@ -1,4 +1,4 @@
-use super::{AccountRow, FollowerTargetRow, LocalAccount, UsernameRow, count_rows};
+use super::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, UsernameRow, count_rows};
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -201,4 +201,110 @@ pub(crate) async fn is_local_follower_authorized(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0)
         > 0)
+}
+
+pub(crate) async fn list_familiar_local_accounts_for_local_target(
+    db: &D1Database,
+    viewer_account_id: &str,
+    target_account_id: &str,
+    limit: u32,
+) -> Result<Vec<LocalAccount>> {
+    let bindings = [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(target_account_id),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+             FROM follows viewer_follows
+             JOIN follows familiar_follows
+               ON familiar_follows.follower_account_id = viewer_follows.target_account_id
+             JOIN accounts a
+               ON a.id = familiar_follows.follower_account_id
+             WHERE viewer_follows.follower_account_id = ?1
+               AND viewer_follows.state = 'accepted'
+               AND familiar_follows.target_account_id = ?2
+               AND familiar_follows.state = 'accepted'
+             ORDER BY a.username ASC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<AccountRow>()?
+        .into_iter()
+        .map(LocalAccount::from)
+        .collect())
+}
+
+pub(crate) async fn list_familiar_remote_actors_for_local_target(
+    db: &D1Database,
+    viewer_account_id: &str,
+    target_account_id: &str,
+    limit: u32,
+) -> Result<Vec<RemoteActorRow>> {
+    let bindings = [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(target_account_id),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT DISTINCT ra.actor_uri, ra.username, ra.domain, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+             FROM follows viewer_follows
+             JOIN followers remote_followers
+               ON remote_followers.actor_uri = viewer_follows.target_actor_uri
+             JOIN remote_actors ra
+               ON ra.actor_uri = remote_followers.actor_uri
+             WHERE viewer_follows.follower_account_id = ?1
+               AND viewer_follows.state = 'accepted'
+               AND remote_followers.account_id = ?2
+             ORDER BY ra.username ASC, ra.domain ASC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result.results::<RemoteActorRow>()?)
+}
+
+pub(crate) async fn list_familiar_local_accounts_for_remote_target(
+    db: &D1Database,
+    viewer_account_id: &str,
+    target_actor_uri: &str,
+    limit: u32,
+) -> Result<Vec<LocalAccount>> {
+    let bindings = [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(target_actor_uri),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+             FROM follows viewer_follows
+             JOIN follows familiar_follows
+               ON familiar_follows.follower_account_id = viewer_follows.target_account_id
+             JOIN accounts a
+               ON a.id = familiar_follows.follower_account_id
+             WHERE viewer_follows.follower_account_id = ?1
+               AND viewer_follows.state = 'accepted'
+               AND familiar_follows.target_actor_uri = ?2
+               AND familiar_follows.state = 'accepted'
+             ORDER BY a.username ASC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<AccountRow>()?
+        .into_iter()
+        .map(LocalAccount::from)
+        .collect())
 }

@@ -69,6 +69,7 @@ impl MastodonStatusResponse {
                 })
                 .collect(),
             emojis: Vec::new(),
+            quote_approval: None,
             card: None,
             poll: None,
             edited_at: None,
@@ -145,6 +146,7 @@ impl MastodonStatusResponse {
                 })
                 .collect(),
             emojis: Vec::new(),
+            quote_approval: None,
             card: None,
             poll: None,
             edited_at: None,
