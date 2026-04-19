@@ -1,37 +1,71 @@
 use super::{
     CreateStatusPollRequest, MastodonAccountResponse, MastodonReportResponse, NotificationEntry,
-    RemoteActorRow, RemoteStatusPollOptionRow, RemoteStatusPollVoteRow, SearchCategoryFlags,
-    SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow, TagTimelineQuery,
-    TimelinePaginationQuery, activitypub_profile_attachments, apply_activitypub_poll_fields,
+    NotificationsQuery, RemoteActorRow, RemoteStatusPollOptionRow, RemoteStatusPollVoteRow,
+    SearchCategoryFlags, SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow,
+    TagTimelineQuery, TimelinePaginationQuery, activitypub_profile_attachments,
+    apply_activitypub_poll_fields, build_activitypub_actor_document,
     build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
-    build_poll_vote_activity_with_ids, build_remove_featured_activity_with_id,
-    build_status_card_value, build_status_update_activity_with_id,
-    build_timeline_link_header_for_url, build_update_person_activity_with_id, classify_media_kind,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_donation_campaign_document, build_instance_v1_document, build_instance_v2_document,
+    build_internal_cursor_link_for_url, build_nodeinfo_document, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    build_remove_featured_activity_with_id, build_status_card_value,
+    build_status_update_activity_with_id, build_timeline_link_header_for_url,
+    build_translation_document, build_update_person_activity_with_id, classify_media_kind,
     configured_html_document, delivery_retry_delay_modifier, describe_outbound_activity,
     directory_order, extract_account_handles_from_text, extract_hashtags_from_html,
     extract_hashtags_from_text, extract_inbox_target_username, extract_mentions_from_text,
     extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
-    first_url_from_text, follow_targets_local_actor, include_local_source, include_remote_source,
-    instance_base_url, is_activitypub_actor_type, is_admin_account, is_follow_undo,
-    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
-    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
-    nodeinfo_url, normalize_status_history_entry, normalize_status_poll, normalized_action_uri,
-    notification_sort_key, notification_timestamp_sort_token, object_attributed_to_remote_actor,
-    outbound_terminal_failure_follow_state, parse_csv_list, parse_http_url_parts,
-    parse_internal_pagination_id, parse_lookup_handle, parse_media_focus,
+    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
+    include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
+    is_admin_account, is_follow_undo, local_username_from_actor_uri,
+    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
+    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
+    normalize_quote_approval_policy, normalize_status_history_entry, normalize_status_poll,
+    normalized_action_uri, notification_sort_key, notification_timestamp_sort_token,
+    object_attributed_to_remote_actor, outbound_terminal_failure_follow_state, parse_csv_list,
+    parse_http_url_parts, parse_internal_pagination_id, parse_lookup_handle, parse_media_focus,
     parse_remote_actor_profile_document, parse_webfinger_resource, peer_authority_from_uri,
     quote_target_uri_from_object, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, resolve_search_tag_name, search_category_flags,
-    search_text_match_rank, search_v2_limit, search_v2_requires_auth, tag_search_rank,
-    timeline_fetch_limit, timeline_limit, visibility_from_activitypub_object,
+    remote_actor_uri_from_rest_id, resolve_search_tag_name, scheduled_status_document,
+    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    tag_search_rank, timeline_fetch_limit, timeline_limit, visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo,
 };
+use std::collections::{HashMap, HashSet};
 use url::Url;
+
+fn actor_fixture_account() -> LocalAccount {
+    LocalAccount {
+        id: "acct-1".to_owned(),
+        username: "alice".to_owned(),
+        access_email: "alice@example.com".to_owned(),
+        display_name: "Alice".to_owned(),
+        bio_html: "<p>Hello</p>".to_owned(),
+        bio_text: "Hello".to_owned(),
+        fields: vec![ProfileField {
+            name: "Website".to_owned(),
+            value: "https://example.com".to_owned(),
+        }],
+        locked: false,
+        bot: false,
+        discoverable: true,
+        default_post_visibility: "public".to_owned(),
+        default_sensitive: false,
+        default_language: Some("ja".to_owned()),
+        avatar_object_key: Some("media/account/avatar/alice".to_owned()),
+        avatar_content_type: Some("image/png".to_owned()),
+        header_object_key: Some("media/account/header/alice".to_owned()),
+        header_content_type: Some("image/jpeg".to_owned()),
+        private_key_jwk: "{}".to_owned(),
+        public_key_pem: "pem".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    }
+}
 
 #[test]
 fn parse_webfinger_resource_extracts_local_handle() {
@@ -44,6 +78,283 @@ fn parse_webfinger_resource_extracts_local_handle() {
 fn parse_webfinger_resource_rejects_non_acct_scheme() {
     let error = parse_webfinger_resource("https://example.com/users/alice").unwrap_err();
     assert!(error.to_string().contains("acct"));
+}
+
+#[test]
+fn oauth_authorization_server_document_matches_mastodon_discovery_shape() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let document = build_oauth_authorization_server_document(&config);
+
+    assert_eq!(
+        document.pointer("/issuer"),
+        Some(&serde_json::json!("https://social.example/"))
+    );
+    assert_eq!(
+        document.pointer("/app_registration_endpoint"),
+        Some(&serde_json::json!("https://social.example/api/v1/apps"))
+    );
+    assert_eq!(
+        document.pointer("/response_modes_supported/2"),
+        Some(&serde_json::json!("form_post"))
+    );
+    assert_eq!(
+        document.pointer("/code_challenge_methods_supported/0"),
+        Some(&serde_json::json!("S256"))
+    );
+    assert_eq!(
+        document.pointer("/service_documentation"),
+        Some(&serde_json::json!("https://docs.joinmastodon.org/"))
+    );
+}
+
+#[test]
+fn oauth_userinfo_document_exposes_standard_claims() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.media_public_base_url = Some("https://media.example.com".to_owned());
+    let account = actor_fixture_account();
+    let document = build_oauth_userinfo_document(&config, &account);
+
+    assert_eq!(
+        document.pointer("/preferred_username"),
+        Some(&serde_json::json!("alice"))
+    );
+    assert_eq!(
+        document.pointer("/profile"),
+        Some(&serde_json::json!("https://social.example/@alice"))
+    );
+    assert_eq!(
+        document.pointer("/website"),
+        Some(&serde_json::json!("https://example.com"))
+    );
+    assert_eq!(
+        document.pointer("/picture"),
+        Some(&serde_json::json!(
+            "https://media.example.com/media/account/avatar/alice"
+        ))
+    );
+    assert_eq!(
+        document.pointer("/email_verified"),
+        Some(&serde_json::json!(true))
+    );
+}
+
+#[test]
+fn donation_campaign_document_uses_configured_upstream_shape() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.donation_campaign_json = Some(
+        serde_json::json!({
+            "id": "campaign-1",
+            "banner_message": "Hi",
+            "banner_button_text": "Donate!",
+            "donation_message": "Hi!",
+            "donation_button_text": "Money",
+            "donation_success_post": "Success post",
+            "amounts": {
+                "one_time": {
+                    "EUR": [1, 2, 3],
+                    "USD": [4, 5, 6],
+                },
+                "monthly": {
+                    "EUR": [1],
+                    "USD": [2],
+                },
+            },
+            "default_currency": "EUR",
+            "donation_url": "https://sponsor.joinmastodon.org/donate/new",
+            "locale": "en",
+        })
+        .to_string(),
+    );
+
+    let document = build_donation_campaign_document(&config).unwrap();
+
+    assert_eq!(
+        document.pointer("/id"),
+        Some(&serde_json::json!("campaign-1"))
+    );
+    assert_eq!(
+        document.pointer("/amounts/one_time/USD/2"),
+        Some(&serde_json::json!(6))
+    );
+    assert_eq!(
+        document.pointer("/donation_url"),
+        Some(&serde_json::json!(
+            "https://sponsor.joinmastodon.org/donate/new"
+        ))
+    );
+}
+
+#[test]
+fn announcements_document_applies_read_and_reaction_state() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.announcements_json = Some(
+        serde_json::json!([
+            {
+                "id": "announcement-1",
+                "content": "<p>Hello</p>",
+                "starts_at": serde_json::Value::Null,
+                "ends_at": serde_json::Value::Null,
+                "all_day": false,
+                "published_at": "2026-04-20T00:00:00Z",
+                "updated_at": serde_json::Value::Null,
+                "mentions": [],
+                "statuses": [],
+                "tags": [],
+                "emojis": [],
+                "reactions": [
+                    {
+                        "name": "thumbsup",
+                        "count": 0,
+                        "me": false
+                    }
+                ]
+            }
+        ])
+        .to_string(),
+    );
+    let read_ids = HashSet::from(["announcement-1".to_owned()]);
+    let reaction_state = HashMap::from([(
+        ("announcement-1".to_owned(), "thumbsup".to_owned()),
+        (3, true),
+    )]);
+
+    let document = build_announcements_document(&config, &read_ids, &reaction_state);
+
+    assert_eq!(document.len(), 1);
+    assert_eq!(document[0].pointer("/read"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        document[0].pointer("/reactions/0/count"),
+        Some(&serde_json::json!(3))
+    );
+    assert_eq!(
+        document[0].pointer("/reactions/0/me"),
+        Some(&serde_json::json!(true))
+    );
+}
+
+#[test]
+fn app_verify_credentials_document_matches_mastodon_shape_without_secrets() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let document = build_app_verify_credentials_document(&config);
+
+    assert_eq!(document.pointer("/id"), Some(&serde_json::json!("0")));
+    assert_eq!(
+        document.pointer("/name"),
+        Some(&serde_json::json!("cfwdon"))
+    );
+    assert_eq!(
+        document.pointer("/scopes/0"),
+        Some(&serde_json::json!("read"))
+    );
+    assert_eq!(
+        document.pointer("/redirect_uris/0"),
+        Some(&serde_json::json!("urn:ietf:wg:oauth:2.0:oob"))
+    );
+    assert_eq!(document.pointer("/client_id"), None);
+    assert_eq!(document.pointer("/client_secret"), None);
+}
+
+#[test]
+fn app_verify_credentials_document_uses_configured_vapid_key() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.web_push_vapid_public_key = Some("BExamplePublicKey".to_owned());
+
+    let document = build_app_verify_credentials_document(&config);
+
+    assert_eq!(
+        document.pointer("/vapid_key"),
+        Some(&serde_json::json!("BExamplePublicKey"))
+    );
+}
+
+#[test]
+fn scheduled_status_document_matches_upstream_shape() {
+    let document = scheduled_status_document("sched-1");
+
+    assert_eq!(document.pointer("/id"), Some(&serde_json::json!("sched-1")));
+    assert_eq!(
+        document.pointer("/scheduled_at"),
+        Some(&serde_json::json!("2099-01-01T00:00:00.000Z"))
+    );
+    assert_eq!(
+        document.pointer("/params/poll"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        document.pointer("/params/text"),
+        Some(&serde_json::json!(""))
+    );
+    assert_eq!(
+        document.pointer("/params/application_id"),
+        Some(&serde_json::json!(0))
+    );
+    assert_eq!(
+        document.pointer("/params/with_rate_limit"),
+        Some(&serde_json::json!(false))
+    );
+}
+
+#[test]
+fn translation_document_matches_upstream_shape() {
+    let document = build_translation_document(&serde_json::json!({
+        "content": "<p>Hello world</p>",
+        "spoiler_text": "cw",
+        "language": "ja",
+        "media_attachments": [
+            {
+                "id": "media-1",
+                "description": "alt text",
+                "url": "https://media.example/media-1"
+            }
+        ],
+        "poll": {
+            "id": "poll-1",
+            "options": [
+                { "title": "One", "votes_count": 1 },
+                { "title": "Two", "votes_count": 2 }
+            ]
+        }
+    }));
+
+    assert_eq!(
+        document.pointer("/language"),
+        Some(&serde_json::json!("ja"))
+    );
+    assert_eq!(
+        document.pointer("/detected_source_language"),
+        Some(&serde_json::json!("ja"))
+    );
+    assert_eq!(
+        document.pointer("/media_attachments/0/id"),
+        Some(&serde_json::json!("media-1"))
+    );
+    assert_eq!(
+        document.pointer("/media_attachments/0/description"),
+        Some(&serde_json::json!("alt text"))
+    );
+    assert_eq!(
+        document.pointer("/poll/id"),
+        Some(&serde_json::json!("poll-1"))
+    );
+    assert_eq!(
+        document.pointer("/poll/options/1/title"),
+        Some(&serde_json::json!("Two"))
+    );
+}
+
+#[test]
+fn normalize_quote_approval_policy_accepts_supported_values() {
+    assert_eq!(
+        normalize_quote_approval_policy(Some(" followers ".to_owned())).unwrap(),
+        Some("followers".to_owned())
+    );
+    assert_eq!(normalize_quote_approval_policy(None).unwrap(), None);
+}
+
+#[test]
+fn normalize_quote_approval_policy_rejects_unknown_values() {
+    let error = normalize_quote_approval_policy(Some("friends".to_owned())).unwrap_err();
+    assert!(error.contains("quote_approval_policy"));
 }
 
 #[test]
@@ -341,6 +652,8 @@ fn build_poll_vote_activity_uses_question_reply_shape() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -389,6 +702,8 @@ fn build_status_update_activity_wraps_question_object() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -440,6 +755,8 @@ fn build_featured_collection_activities_target_followers_collection() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -1098,6 +1415,8 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -1169,6 +1488,8 @@ fn build_status_update_activity_includes_quote_context_when_present() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -1337,9 +1658,19 @@ fn mastodon_report_response_serializes_forwarded_and_nullable_status_ids() {
         id: "acct-1".to_owned(),
         username: "alice".to_owned(),
         acct: "alice".to_owned(),
+        uri: "https://social.example/users/alice".to_owned(),
         display_name: "Alice".to_owned(),
         locked: false,
         bot: false,
+        group: false,
+        discoverable: true,
+        indexable: true,
+        noindex: None,
+        hide_collections: None,
+        show_media: Some(true),
+        show_media_replies: Some(true),
+        show_featured: Some(true),
+        last_status_at: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         note: String::new(),
         url: "https://social.example/@alice".to_owned(),
@@ -1347,7 +1678,9 @@ fn mastodon_report_response_serializes_forwarded_and_nullable_status_ids() {
         avatar_static: String::new(),
         header: String::new(),
         header_static: String::new(),
+        emojis: Vec::new(),
         fields: Vec::new(),
+        roles: Vec::new(),
         followers_count: 0,
         following_count: 0,
         statuses_count: 0,
@@ -1410,6 +1743,10 @@ fn remote_account_response_uses_cached_profile_media() {
         actor_uri: "https://remote.example/users/alice".to_owned(),
         username: "alice".to_owned(),
         domain: "remote.example".to_owned(),
+        locked: true,
+        bot: true,
+        discoverable: false,
+        indexable: false,
         display_name: "Alice".to_owned(),
         summary_html: "<p>hello</p>".to_owned(),
         profile_url: Some("https://remote.example/@alice".to_owned()),
@@ -1421,6 +1758,10 @@ fn remote_account_response_uses_cached_profile_media() {
     assert_eq!(response.avatar, "https://cdn.remote.example/avatar.png");
     assert_eq!(response.header, "https://cdn.remote.example/header.png");
     assert_eq!(response.url, "https://remote.example/@alice");
+    assert!(response.locked);
+    assert!(response.bot);
+    assert!(!response.discoverable);
+    assert!(!response.indexable);
 }
 
 #[test]
@@ -1452,6 +1793,31 @@ fn activitypub_profile_attachments_use_property_value_shape() {
 }
 
 #[test]
+fn mastodon_account_response_reflects_locked_and_bot_flags() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let mut account = actor_fixture_account();
+    account.locked = true;
+    account.bot = true;
+
+    let response = MastodonAccountResponse::from_account(&account, &config);
+    assert!(response.locked);
+    assert!(response.bot);
+    assert_eq!(response.discoverable, account.discoverable);
+}
+
+#[test]
+fn activitypub_actor_document_reflects_locked_and_bot_flags() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let mut account = actor_fixture_account();
+    account.locked = true;
+    account.bot = true;
+
+    let actor = build_activitypub_actor_document(&config, &account);
+    assert_eq!(actor.actor_type, "Service");
+    assert!(actor.manually_approves_followers);
+}
+
+#[test]
 fn build_update_person_activity_wraps_actor_document() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     let account = LocalAccount {
@@ -1465,6 +1831,8 @@ fn build_update_person_activity_wraps_actor_document() {
             name: "Website".to_owned(),
             value: "https://example.com".to_owned(),
         }],
+        locked: false,
+        bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -1507,10 +1875,11 @@ fn build_update_person_activity_wraps_actor_document() {
 fn parse_remote_actor_profile_document_extracts_profile_fields() {
     let actor = serde_json::json!({
         "id": "https://remote.example/users/alice",
-        "type": "Person",
+        "type": "Service",
         "preferredUsername": "Alice",
         "name": "Alice Example",
         "summary": "<p>remote bio</p>",
+        "manuallyApprovesFollowers": true,
         "inbox": "https://remote.example/users/alice/inbox",
         "endpoints": {
             "sharedInbox": "https://remote.example/inbox"
@@ -1562,6 +1931,10 @@ fn parse_remote_actor_profile_document_extracts_profile_fields() {
         profile.header_url.as_deref(),
         Some("https://cdn.remote.example/header.png")
     );
+    assert!(profile.locked);
+    assert!(profile.bot);
+    assert!(profile.discoverable);
+    assert!(profile.indexable);
 }
 
 #[test]
@@ -1687,6 +2060,8 @@ fn is_admin_account_matches_configured_emails() {
         bio_html: String::new(),
         bio_text: String::new(),
         fields: Vec::new(),
+        locked: false,
+        bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -1744,6 +2119,57 @@ fn notification_sort_key_orders_newer_timestamps_higher() {
 }
 
 #[test]
+fn filter_notification_entries_by_query_applies_max_and_min_cursor() {
+    let entries = vec![
+        NotificationEntry {
+            id: "notif-new".to_owned(),
+            created_at: "2026-04-19T12:00:00.000Z".to_owned(),
+            value: serde_json::json!({"id": "notif-new"}),
+        },
+        NotificationEntry {
+            id: "notif-mid".to_owned(),
+            created_at: "2026-04-19T11:00:00.000Z".to_owned(),
+            value: serde_json::json!({"id": "notif-mid"}),
+        },
+        NotificationEntry {
+            id: "notif-old".to_owned(),
+            created_at: "2026-04-19T10:00:00.000Z".to_owned(),
+            value: serde_json::json!({"id": "notif-old"}),
+        },
+    ];
+
+    let older_than_mid = filter_notification_entries_by_query(
+        entries.clone(),
+        &NotificationsQuery {
+            max_id: Some("notif-mid".to_owned()),
+            ..NotificationsQuery::default()
+        },
+    );
+    assert_eq!(
+        older_than_mid
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec!["notif-old".to_owned()]
+    );
+
+    let newer_than_mid = filter_notification_entries_by_query(
+        entries,
+        &NotificationsQuery {
+            min_id: Some("notif-mid".to_owned()),
+            ..NotificationsQuery::default()
+        },
+    );
+    assert_eq!(
+        newer_than_mid
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec!["notif-new".to_owned()]
+    );
+}
+
+#[test]
 fn instance_v2_document_uses_conservative_defaults() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     config.source_url = Some("https://codeberg.example/cfwdon".to_owned());
@@ -1784,11 +2210,31 @@ fn instance_v2_document_uses_conservative_defaults() {
     );
     assert_eq!(
         document.pointer("/api_versions/mastodon"),
-        Some(&serde_json::json!(1))
+        Some(&serde_json::json!(6))
+    );
+    assert_eq!(
+        document.pointer("/configuration/urls/streaming"),
+        Some(&serde_json::json!("wss://social.example"))
+    );
+    assert_eq!(
+        document.pointer("/configuration/vapid/public_key"),
+        Some(&serde_json::json!(""))
+    );
+    assert_eq!(
+        document.pointer("/configuration/accounts/max_display_name_length"),
+        Some(&serde_json::json!(30))
+    );
+    assert_eq!(
+        document.pointer("/configuration/accounts/max_pinned_statuses"),
+        Some(&serde_json::json!(5))
     );
     assert_eq!(
         document.pointer("/configuration/polls/max_options"),
-        Some(&serde_json::json!(0))
+        Some(&serde_json::json!(4))
+    );
+    assert_eq!(
+        document.pointer("/configuration/media_attachments/image_matrix_limit"),
+        Some(&serde_json::json!(16_777_216))
     );
     assert_eq!(
         document.pointer("/registrations/enabled"),
@@ -1797,6 +2243,44 @@ fn instance_v2_document_uses_conservative_defaults() {
     assert_eq!(
         document.pointer("/contact/email"),
         Some(&serde_json::json!("admin@example.com"))
+    );
+    assert_eq!(
+        document.pointer("/thumbnail/versions/@1x"),
+        Some(&serde_json::json!("https://media.example.com/site.png"))
+    );
+    assert_eq!(
+        document.pointer("/icon/0/src"),
+        Some(&serde_json::json!("https://media.example.com/site.png"))
+    );
+}
+
+#[test]
+fn instance_v2_document_uses_configured_vapid_key() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.web_push_vapid_public_key = Some("BExamplePublicKey".to_owned());
+
+    let document = build_instance_v2_document(
+        &InstanceSummary {
+            domain: "social.example".to_owned(),
+            title: "cfwdon".to_owned(),
+            description: "test instance".to_owned(),
+            software: SoftwareInfo {
+                name: "cfwdon".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            capabilities: InstanceCapabilities {
+                federation: true,
+                local_timeline: true,
+                media_uploads: true,
+            },
+        },
+        &config,
+        1,
+    );
+
+    assert_eq!(
+        document.pointer("/configuration/vapid/public_key"),
+        Some(&serde_json::json!("BExamplePublicKey"))
     );
 }
 
@@ -1893,6 +2377,22 @@ fn instance_v1_document_reports_mastodon_compatible_shape() {
     assert_eq!(
         document.pointer("/contact_account"),
         Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        document.pointer("/urls/streaming_api"),
+        Some(&serde_json::json!("wss://social.example"))
+    );
+    assert_eq!(
+        document.pointer("/configuration/accounts/max_featured_tags"),
+        Some(&serde_json::json!(10))
+    );
+    assert_eq!(
+        document.pointer("/configuration/media_attachments/image_matrix_limit"),
+        Some(&serde_json::json!(16_777_216))
+    );
+    assert_eq!(
+        document.pointer("/configuration/polls/max_options"),
+        Some(&serde_json::json!(4))
     );
 }
 

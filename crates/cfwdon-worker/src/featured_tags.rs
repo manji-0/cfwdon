@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Request, Response, Result, RouteContext, actor_url, extract_authenticated_user,
-    extract_hashtags_from_text, find_account_by_username, instance_base_url, load_config,
-    normalize_hashtag, resolve_local_account,
+    AccountReference, Request, Response, Result, RouteContext, actor_url,
+    extract_authenticated_user, extract_hashtags_from_text, find_account_by_username,
+    instance_base_url, load_config, normalize_hashtag, resolve_account_reference,
+    resolve_local_account,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -323,6 +324,35 @@ pub(crate) async fn featured_tags_response(
     }
 
     Response::from_json(&documents)
+}
+
+pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let account_id = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+
+    match resolve_account_reference(&db, &account_id).await? {
+        Some(AccountReference::Local(account)) => {
+            let mut documents = Vec::new();
+            for row in list_featured_tags_for_account(&db, &account.id).await? {
+                let metrics = featured_tag_metrics(&db, &account.id, &row.tag_name).await?;
+                documents.push(featured_tag_api_document(
+                    &config,
+                    &account.username,
+                    &row.tag_name,
+                    metrics.statuses_count,
+                    metrics.last_status_at,
+                ));
+            }
+            Response::from_json(&documents)
+        }
+        Some(AccountReference::Remote(_)) => Response::from_json(&Vec::<serde_json::Value>::new()),
+        None => Response::error("account not found", 404),
+    }
 }
 
 pub(crate) async fn featured_tag_suggestions_response(

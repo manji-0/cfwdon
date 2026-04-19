@@ -293,6 +293,29 @@ async fn add_accounts_to_list(
     Ok(())
 }
 
+async fn remove_accounts_from_list(
+    db: &worker::D1Database,
+    list_id: &str,
+    account_refs: &[String],
+) -> Result<()> {
+    for account_ref in account_refs {
+        let trimmed = account_ref.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let bindings = [D1Type::Text(list_id), D1Type::Text(trimmed)];
+        db.prepare(
+            "DELETE FROM account_list_memberships
+             WHERE list_id = ?1
+               AND target_account_ref = ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    }
+    Ok(())
+}
+
 async fn resolve_list_member_document(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
@@ -679,6 +702,37 @@ pub(crate) async fn add_list_accounts_response(
     Response::from_json(&serde_json::json!({}))
 }
 
+pub(crate) async fn delete_list_accounts_response(
+    req: &mut Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let list_id = list_id_from_context(&ctx)?;
+    let request = parse_list_accounts_request(req)
+        .await
+        .map_err(worker::Error::RustError)?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+    if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
+        return Response::error("list not found", 404);
+    }
+
+    for account_ref in request.account_ids.unwrap_or_default() {
+        let Some(variants) =
+            requested_account_membership_variants(&db, &config, &account_ref).await?
+        else {
+            continue;
+        };
+        remove_accounts_from_list(&db, &list_id, &variants).await?;
+    }
+
+    Response::from_json(&serde_json::json!({}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +750,8 @@ mod tests {
                 name: "website".to_owned(),
                 value: "https://example.com".to_owned(),
             }],
+            locked: false,
+            bot: false,
             discoverable: true,
             default_post_visibility: "public".to_owned(),
             default_sensitive: false,
@@ -766,6 +822,10 @@ mod tests {
             actor_uri: "https://remote.example/users/alice".to_owned(),
             username: "alice".to_owned(),
             domain: "remote.example".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
             display_name: String::new(),
             summary_html: String::new(),
             profile_url: None,

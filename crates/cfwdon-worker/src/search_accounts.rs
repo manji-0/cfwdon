@@ -32,7 +32,7 @@ pub(crate) async fn search_local_accounts(
 ) -> Result<Vec<LocalAccount>> {
     let pattern = format!("%{}%", query.trim().to_ascii_lowercase());
     let sql = if following_only {
-        "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+        "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
          FROM accounts a
          JOIN follows f
            ON f.target_account_id = a.id
@@ -44,7 +44,7 @@ pub(crate) async fn search_local_accounts(
          LIMIT ?3
          OFFSET ?4"
     } else {
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
          FROM accounts
          WHERE lower(username) LIKE ?1
             OR lower(display_name) LIKE ?1
@@ -90,7 +90,7 @@ pub(crate) async fn search_remote_accounts(
 ) -> Result<Vec<RemoteActorRow>> {
     let pattern = format!("%{}%", query.trim().to_ascii_lowercase());
     let sql = if following_only {
-        "SELECT ra.actor_uri, ra.username, ra.domain, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+        "SELECT ra.actor_uri, ra.username, ra.domain, ra.locked, ra.bot, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
          FROM remote_actors ra
          JOIN follows f
            ON f.target_actor_uri = ra.actor_uri
@@ -103,7 +103,7 @@ pub(crate) async fn search_remote_accounts(
          LIMIT ?3
          OFFSET ?4"
     } else {
-        "SELECT actor_uri, username, domain, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
          WHERE lower(username) LIKE ?1
             OR lower(display_name) LIKE ?1

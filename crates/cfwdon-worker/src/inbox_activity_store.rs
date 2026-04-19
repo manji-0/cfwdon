@@ -75,16 +75,18 @@ pub(crate) async fn release_inbox_activity_processing(
     Ok(())
 }
 
-pub(crate) async fn upsert_follower(
+pub(crate) async fn upsert_follower_by_inbox(
     db: &worker::D1Database,
     account_id: &str,
-    remote_actor: &RemoteActorProfile,
+    actor_uri: &str,
+    inbox_uri: &str,
+    shared_inbox_uri: Option<&str>,
 ) -> Result<()> {
     let bindings = [
         D1Type::Text(account_id),
-        D1Type::Text(remote_actor.actor_uri.as_str()),
-        D1Type::Text(remote_actor.inbox_uri.as_str()),
-        match remote_actor.shared_inbox_uri.as_deref() {
+        D1Type::Text(actor_uri),
+        D1Type::Text(inbox_uri),
+        match shared_inbox_uri {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
@@ -117,6 +119,21 @@ pub(crate) async fn upsert_follower(
     .await?;
 
     Ok(())
+}
+
+pub(crate) async fn upsert_follower(
+    db: &worker::D1Database,
+    account_id: &str,
+    remote_actor: &RemoteActorProfile,
+) -> Result<()> {
+    upsert_follower_by_inbox(
+        db,
+        account_id,
+        &remote_actor.actor_uri,
+        &remote_actor.inbox_uri,
+        remote_actor.shared_inbox_uri.as_deref(),
+    )
+    .await
 }
 
 pub(crate) async fn delete_follower_by_actor(

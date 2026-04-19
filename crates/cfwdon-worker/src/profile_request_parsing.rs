@@ -8,6 +8,15 @@ pub(crate) struct UpdateCredentialsRequest {
     pub(crate) note: Option<String>,
     pub(crate) fields_attributes: Option<Vec<UpdateCredentialsField>>,
     pub(crate) discoverable: Option<bool>,
+    pub(crate) locked: Option<bool>,
+    pub(crate) bot: Option<bool>,
+    pub(crate) hide_collections: Option<bool>,
+    pub(crate) indexable: Option<bool>,
+    pub(crate) show_media: Option<bool>,
+    pub(crate) show_media_replies: Option<bool>,
+    pub(crate) show_featured: Option<bool>,
+    pub(crate) avatar_description: Option<String>,
+    pub(crate) header_description: Option<String>,
     pub(crate) source: Option<UpdateCredentialsSource>,
     #[serde(skip_deserializing)]
     pub(crate) avatar: Option<ProfileMediaUpload>,
@@ -52,6 +61,17 @@ pub(crate) async fn parse_update_credentials_request(
             note: form.get_field("note"),
             fields_attributes: Some(parse_profile_fields_from_form(&form)),
             discoverable: parse_optional_bool(form.get_field("discoverable").as_deref())?,
+            locked: parse_optional_bool(form.get_field("locked").as_deref())?,
+            bot: parse_optional_bool(form.get_field("bot").as_deref())?,
+            hide_collections: parse_optional_bool(form.get_field("hide_collections").as_deref())?,
+            indexable: parse_optional_bool(form.get_field("indexable").as_deref())?,
+            show_media: parse_optional_bool(form.get_field("show_media").as_deref())?,
+            show_media_replies: parse_optional_bool(
+                form.get_field("show_media_replies").as_deref(),
+            )?,
+            show_featured: parse_optional_bool(form.get_field("show_featured").as_deref())?,
+            avatar_description: form.get_field("avatar_description"),
+            header_description: form.get_field("header_description"),
             source: Some(UpdateCredentialsSource {
                 privacy: form.get_field("source[privacy]"),
                 sensitive: parse_optional_bool(form.get_field("source[sensitive]").as_deref())?,
@@ -64,16 +84,10 @@ pub(crate) async fn parse_update_credentials_request(
         request
     };
 
-    if let Some(display_name) = request.display_name.as_mut() {
-        *display_name = display_name.trim().to_owned();
-        if display_name.is_empty() {
-            request.display_name = None;
-        }
-    }
-
-    if let Some(note) = request.note.as_mut() {
-        *note = note.trim().to_owned();
-    }
+    normalize_optional_text(&mut request.display_name, true);
+    normalize_optional_text(&mut request.note, false);
+    normalize_optional_text(&mut request.avatar_description, false);
+    normalize_optional_text(&mut request.header_description, false);
 
     if let Some(fields) = request.fields_attributes.as_mut() {
         *fields = normalize_profile_fields(std::mem::take(fields));
@@ -103,6 +117,15 @@ pub(crate) async fn parse_update_credentials_request(
     }
 
     Ok(request)
+}
+
+fn normalize_optional_text(value: &mut Option<String>, clear_if_empty: bool) {
+    if let Some(current) = value.as_mut() {
+        *current = current.trim().to_owned();
+        if clear_if_empty && current.is_empty() {
+            *value = None;
+        }
+    }
 }
 
 fn parse_profile_fields_from_form(form: &FormData) -> Vec<UpdateCredentialsField> {

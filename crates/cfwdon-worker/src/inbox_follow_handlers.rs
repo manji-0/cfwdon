@@ -1,7 +1,8 @@
 use crate::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, actor_url,
-    build_accept_activity, follow_targets_local_actor, queue_remote_actor_activity_required,
-    update_follow_state_from_response, upsert_follower,
+    build_accept_activity, delete_remote_follow_request_by_actor, follow_targets_local_actor,
+    queue_remote_actor_activity_required, update_follow_state_from_response, upsert_follower,
+    upsert_remote_follow_request,
 };
 
 pub(crate) async fn handle_inbox_follow(
@@ -18,6 +19,21 @@ pub(crate) async fn handle_inbox_follow(
         return Ok(());
     }
 
+    let locked = account.locked;
+    let follow_activity_id = activity.get("id").and_then(serde_json::Value::as_str);
+
+    if locked {
+        upsert_remote_follow_request(db, &account.id, remote_actor, follow_activity_id).await?;
+        return Ok(());
+    }
+
+    delete_remote_follow_request_by_actor(
+        db,
+        &account.id,
+        &remote_actor.actor_uri,
+        &remote_actor.actor_uri,
+    )
+    .await?;
     upsert_follower(db, &account.id, remote_actor).await?;
 
     let accept_activity =

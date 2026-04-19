@@ -10,19 +10,67 @@ use crate::{
 use worker::{Request, Response, Result, RouteContext};
 
 pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
+    let response = match search_impl(&req, &ctx).await {
+        Ok(response) => response,
+        Err(response) => return Ok(response),
+    };
+    Response::from_json(&response)
+}
+
+pub(crate) async fn search_v1(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let response = match search_impl(&req, &ctx).await {
+        Ok(response) => response,
+        Err(response) => return Ok(response),
+    };
+    let mut value = serde_json::to_value(response).map_err(|error| {
+        worker::Error::RustError(format!("failed to serialize search response: {error}"))
+    })?;
+
+    if let Some(object) = value.as_object_mut()
+        && let Some(hashtags) = object
+            .get_mut("hashtags")
+            .and_then(serde_json::Value::as_array_mut)
+    {
+        let names = hashtags
+            .drain(..)
+            .filter_map(|value| match value {
+                serde_json::Value::String(name) => Some(serde_json::Value::String(name)),
+                serde_json::Value::Object(object) => object
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|name| serde_json::Value::String(name.to_owned())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        *hashtags = names;
+    }
+
+    Response::from_json(&value)
+}
+
+async fn search_impl(
+    req: &Request,
+    ctx: &RouteContext<()>,
+) -> std::result::Result<MastodonSearchResponse, Response> {
+    let config = load_config(ctx);
     let query: SearchV2Query = req.query().unwrap_or_default();
     let q = query.q.trim();
     if q.is_empty() {
-        return Response::from_json(&MastodonSearchResponse::default());
+        return Ok(MastodonSearchResponse::default());
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = match ctx.d1(&config.database_binding) {
+        Ok(db) => db,
+        Err(error) => return Err(Response::error(error.to_string(), 500).unwrap()),
+    };
     let requires_auth = search_v2_requires_auth(&query);
-    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(req, &db, &config)
+        .await
+        .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
+    {
         Some(account) => Some(account),
         None if requires_auth => {
-            return Response::error("Cloudflare Access authentication required", 401);
+            return Err(Response::error("Cloudflare Access authentication required", 401).unwrap());
         }
         None => None,
     };
@@ -43,10 +91,13 @@ pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Res
             offset,
             query.following.unwrap_or(false),
         )
-        .await?;
+        .await
+        .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
         if resolve_enabled
             && response.accounts.is_empty()
-            && let Some(account) = resolve_search_account(&db, &config, q).await?
+            && let Some(account) = resolve_search_account(&db, &config, q)
+                .await
+                .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
         {
             response.accounts.push(account);
             response.accounts.truncate(limit as usize);
@@ -65,10 +116,13 @@ pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Res
             offset,
             query.account_id.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
         if resolve_enabled
             && response.statuses.is_empty()
-            && let Some(status) = resolve_search_status(&db, &config, viewer, q).await?
+            && let Some(status) = resolve_search_status(&db, &config, viewer, q)
+                .await
+                .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
         {
             response.statuses.push(status);
             response.statuses.truncate(limit as usize);
@@ -76,15 +130,19 @@ pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Res
     }
 
     if search_flags.hashtags {
-        response.hashtags = search_tags_for_v2(&db, &config, q, limit).await?;
+        response.hashtags = search_tags_for_v2(&db, &config, q, limit)
+            .await
+            .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
         if resolve_enabled
             && response.hashtags.is_empty()
-            && let Some(tag) = resolve_search_tag(&db, &config, q).await?
+            && let Some(tag) = resolve_search_tag(&db, &config, q)
+                .await
+                .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
         {
             response.hashtags.push(tag);
             response.hashtags.truncate(limit as usize);
         }
     }
 
-    Response::from_json(&response)
+    Ok(response)
 }

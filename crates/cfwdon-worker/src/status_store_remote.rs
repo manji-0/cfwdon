@@ -30,7 +30,11 @@ pub(crate) async fn list_remote_public_timeline_statuses(
             ra.summary_html,
             ra.profile_url,
             ra.avatar_url,
-            ra.header_url
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
@@ -91,7 +95,11 @@ pub(crate) async fn list_remote_home_timeline_statuses(
             ra.summary_html,
             ra.profile_url,
             ra.avatar_url,
-            ra.header_url
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          JOIN follows f
@@ -158,11 +166,84 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
             ra.summary_html,
             ra.profile_url,
             ra.avatar_url,
-            ra.header_url
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
            AND lower(rs.content_html) LIKE ?1
+           AND (
+                ?2 IS NULL
+                OR rs.published_at < ?2
+                OR (rs.published_at = ?2 AND rs.id < ?3)
+           )
+           AND (
+                ?4 IS NULL
+                OR rs.published_at > ?4
+                OR (rs.published_at = ?4 AND rs.id > ?5)
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?6",
+        &[
+            D1Type::Text(pattern.as_str()),
+            cursor
+                .max_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            cursor
+                .min_timestamp
+                .as_deref()
+                .map_or(D1Type::Null, D1Type::Text),
+            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+            D1Type::Integer(limit as i32),
+        ],
+    )
+    .await
+}
+
+pub(crate) async fn list_remote_public_statuses_by_link(
+    db: &D1Database,
+    url: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let pattern = format!("%{url}%");
+    query_remote_statuses_with_actor(
+        db,
+        "SELECT
+            rs.id,
+            rs.actor_uri,
+            rs.object_uri,
+            rs.url,
+            rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
+            rs.content_html,
+            rs.spoiler_text,
+            rs.visibility,
+            rs.sensitive,
+            rs.language,
+            rs.published_at,
+            ra.username,
+            ra.domain,
+            ra.display_name,
+            ra.summary_html,
+            ra.profile_url,
+            ra.avatar_url,
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
+         FROM remote_statuses rs
+         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         WHERE rs.visibility = 'public'
+           AND ra.discoverable = 1
+           AND (rs.content_html LIKE ?1 OR rs.url LIKE ?1 OR rs.object_uri LIKE ?1)
            AND (
                 ?2 IS NULL
                 OR rs.published_at < ?2
@@ -240,7 +321,11 @@ pub(crate) async fn list_direct_remote_replies_by_uri(
             ra.summary_html,
             ra.profile_url,
             ra.avatar_url,
-            ra.header_url
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.in_reply_to_uri = ?1

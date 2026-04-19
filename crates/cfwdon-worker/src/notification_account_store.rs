@@ -17,6 +17,18 @@ pub(crate) struct RemoteFollowNotificationRow {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct LocalFollowRequestNotificationRow {
+    pub(crate) follower_account_id: String,
+    pub(crate) created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RemoteFollowRequestNotificationRow {
+    pub(crate) actor_uri: String,
+    pub(crate) created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct FavouriteNotificationRow {
     pub(crate) account_id: String,
     pub(crate) status_id: String,
@@ -28,6 +40,49 @@ pub(crate) struct RemoteStatusInteractionRow {
     pub(crate) remote_actor_uri: String,
     pub(crate) status_id: String,
     pub(crate) created_at: String,
+}
+
+pub(crate) async fn list_local_follow_request_notifications_for_account(
+    db: &D1Database,
+    account_id: &str,
+    limit: u32,
+) -> Result<Vec<LocalFollowRequestNotificationRow>> {
+    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let result = db
+        .prepare(
+            "SELECT follower_account_id, created_at
+             FROM follows
+             WHERE target_account_id = ?1
+               AND state = 'pending'
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<LocalFollowRequestNotificationRow>()
+}
+
+pub(crate) async fn list_remote_follow_request_notifications_for_account(
+    db: &D1Database,
+    account_id: &str,
+    limit: u32,
+) -> Result<Vec<RemoteFollowRequestNotificationRow>> {
+    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let result = db
+        .prepare(
+            "SELECT requester_actor_uri AS actor_uri, created_at
+             FROM follow_requests
+             WHERE account_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<RemoteFollowRequestNotificationRow>()
 }
 
 pub(crate) async fn list_local_follow_notifications_for_account(
@@ -63,7 +118,7 @@ pub(crate) async fn list_admin_sign_up_notifications(
     ];
     let result = db
         .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
              FROM accounts
              WHERE id != ?1
              ORDER BY created_at DESC

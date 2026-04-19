@@ -113,10 +113,12 @@ pub(crate) async fn upsert_local_follow(
         .map_err(|error| {
             Error::RustError(format!("failed to serialize follow languages: {error}"))
         })?;
+    let state = if target.locked { "pending" } else { "accepted" };
     let bindings = [
         D1Type::Text(follower.id.as_str()),
         D1Type::Text(target.id.as_str()),
         D1Type::Text(target_actor_uri.as_str()),
+        D1Type::Text(state),
         D1Type::Integer(if request.reblogs.unwrap_or(true) {
             1
         } else {
@@ -155,16 +157,16 @@ pub(crate) async fn upsert_local_follow(
             NULL,
             NULL,
             NULL,
-            'accepted',
             ?4,
             ?5,
             ?6,
+            ?7,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         ON CONFLICT(follower_account_id, target_actor_uri) DO UPDATE SET
             target_account_id = excluded.target_account_id,
-            state = 'accepted',
+            state = excluded.state,
             show_reblogs = excluded.show_reblogs,
             notify = excluded.notify,
             languages_json = excluded.languages_json,

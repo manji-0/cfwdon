@@ -44,6 +44,13 @@ pub(crate) struct HomeTimelineQuery {
     pub(crate) pagination: TimelinePaginationQuery,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct LinkTimelineQuery {
+    #[serde(flatten)]
+    pub(crate) pagination: TimelinePaginationQuery,
+    pub(crate) url: Option<String>,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedTimelineCursor {
     pub(crate) max_id: Option<String>,

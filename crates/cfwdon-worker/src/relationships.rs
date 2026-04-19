@@ -1,9 +1,11 @@
 use super::{
     AppConfig, FollowAccountRequest, LocalAccount, RemoteActorRow, actor_url,
     build_follow_activity, build_undo_follow_activity, count_followers_by_actor,
-    delete_follow_by_target, find_active_mute, find_follow_by_target, is_blocking_actor,
-    load_follow_activity_id, queue_remote_actor_activity, queue_remote_actor_activity_required,
-    remote_account_rest_id, upsert_remote_follow,
+    delete_follow_by_target, find_active_mute, find_follow_by_target,
+    has_pending_follow_request_from_account, has_pending_follow_request_from_actor,
+    is_blocking_actor, load_account_social_metadata, load_follow_activity_id,
+    queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
+    upsert_remote_follow,
 };
 use js_sys::Date;
 use serde::Serialize;
@@ -55,6 +57,12 @@ pub(crate) async fn build_relationship_for_target(
         is_blocking_actor(db, target_id, &actor_url(config, &viewer.username)).await?
     };
     let mute = find_active_mute(db, &viewer.id, target_actor_uri).await?;
+    let requested_by = if target_id.starts_with("r_") {
+        has_pending_follow_request_from_actor(db, &viewer.id, target_actor_uri).await?
+    } else {
+        has_pending_follow_request_from_account(db, &viewer.id, target_id).await?
+    };
+    let social_metadata = load_account_social_metadata(db, &viewer.id, target_actor_uri).await?;
 
     Ok(RelationshipResponse {
         id: target_id.to_owned(),
@@ -79,10 +87,13 @@ pub(crate) async fn build_relationship_for_target(
             .unwrap_or(false),
         muting_expires_at: mute.and_then(|row| row.expires_at),
         requested: state == "pending",
-        requested_by: false,
+        requested_by,
         domain_blocking: false,
-        endorsed: false,
-        note: String::new(),
+        endorsed: social_metadata
+            .as_ref()
+            .map(|row| row.endorsed != 0)
+            .unwrap_or(false),
+        note: social_metadata.map(|row| row.note).unwrap_or_default(),
     })
 }
 

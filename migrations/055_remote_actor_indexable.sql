@@ -1,0 +1,2 @@
+ALTER TABLE remote_actors
+    ADD COLUMN indexable INTEGER NOT NULL DEFAULT 1;

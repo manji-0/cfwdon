@@ -1,10 +1,16 @@
-use crate::account_store::{directory_order, list_discoverable_accounts, load_account_stats};
+use crate::account_store::{
+    DirectoryOrder, directory_order, list_discoverable_accounts, load_account_stats,
+};
 use crate::auth::extract_authenticated_user;
 use crate::auth::resolve_local_account;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::{resolve_search_account, search_cached_accounts};
+use crate::{
+    find_remote_actor_by_actor_uri, load_remote_actor_status_summary, resolve_search_account,
+    search_cached_accounts,
+};
 use serde::Deserialize;
+use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
@@ -22,6 +28,53 @@ pub(crate) struct DirectoryQuery {
     pub(crate) offset: Option<u32>,
     pub(crate) local: Option<bool>,
     pub(crate) order: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DirectoryRemoteActorRow {
+    actor_uri: String,
+    sort_key: String,
+}
+
+async fn list_discoverable_remote_actor_rows(
+    db: &worker::D1Database,
+    limit: u32,
+    offset: u32,
+    order: DirectoryOrder,
+) -> Result<Vec<DirectoryRemoteActorRow>> {
+    let sql = match order {
+        DirectoryOrder::Active => {
+            "SELECT ra.actor_uri,
+                    COALESCE(MAX(rs.published_at), ra.created_at) AS sort_key
+             FROM remote_actors ra
+             LEFT JOIN remote_statuses rs
+               ON rs.actor_uri = ra.actor_uri
+             WHERE ra.discoverable = 1
+             GROUP BY ra.actor_uri
+             ORDER BY sort_key DESC, ra.username ASC, ra.domain ASC
+             LIMIT ?1
+             OFFSET ?2"
+        }
+        DirectoryOrder::New => {
+            "SELECT actor_uri,
+                    created_at AS sort_key
+             FROM remote_actors
+             WHERE discoverable = 1
+             ORDER BY created_at DESC, username ASC, domain ASC
+             LIMIT ?1
+             OFFSET ?2"
+        }
+    };
+    let bindings = [
+        D1Type::Integer(limit as i32),
+        D1Type::Integer(offset as i32),
+    ];
+    Ok(db
+        .prepare(sql)
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+        .results::<DirectoryRemoteActorRow>()?)
 }
 
 pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -67,22 +120,51 @@ pub(crate) async fn account_directory(req: Request, ctx: RouteContext<()>) -> Re
     let query: DirectoryQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let offset = query.offset.unwrap_or(0);
+    let order = directory_order(query.order.as_deref());
     let db = ctx.d1(&config.database_binding)?;
+    let include_local = query.local.unwrap_or(true);
+    let include_remote = !query.local.unwrap_or(false);
+    let fetch_limit = limit.saturating_add(offset).clamp(limit, 160);
+    let mut entries = Vec::<(String, String, MastodonAccountResponse)>::new();
 
-    if matches!(query.local, Some(false)) {
-        return Response::from_json(&Vec::<MastodonAccountResponse>::new());
+    if include_local {
+        for account in list_discoverable_accounts(&db, fetch_limit, 0, order).await? {
+            let stats = load_account_stats(&db, &account.id).await?;
+            let sort_key = match order {
+                DirectoryOrder::Active => stats
+                    .last_status_at
+                    .clone()
+                    .unwrap_or_else(|| account.created_at.clone()),
+                DirectoryOrder::New => account.created_at.clone(),
+            };
+            entries.push((
+                sort_key,
+                account.username.clone(),
+                MastodonAccountResponse::from_account_with_stats(&account, &config, &stats),
+            ));
+        }
     }
 
-    let mut response = Vec::new();
-    for account in
-        list_discoverable_accounts(&db, limit, offset, directory_order(query.order.as_deref()))
-            .await?
-    {
-        let stats = load_account_stats(&db, &account.id).await?;
-        response.push(MastodonAccountResponse::from_account_with_stats(
-            &account, &config, &stats,
-        ));
+    if include_remote {
+        for row in list_discoverable_remote_actor_rows(&db, fetch_limit, 0, order).await? {
+            let Some(actor) = find_remote_actor_by_actor_uri(&db, &row.actor_uri).await? else {
+                continue;
+            };
+            let mut response = MastodonAccountResponse::from_remote_actor(&actor);
+            let stats = load_remote_actor_status_summary(&db, &actor.actor_uri).await?;
+            response.statuses_count = stats.statuses_count;
+            response.last_status_at = stats.last_status_at;
+            entries.push((row.sort_key, response.acct.clone(), response));
+        }
     }
+
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let response = entries
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|(_, _, response)| response)
+        .collect::<Vec<_>>();
 
     Response::from_json(&response)
 }

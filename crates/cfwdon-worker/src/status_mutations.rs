@@ -388,3 +388,22 @@ pub(crate) async fn update_local_status(
 
     require_status_by_id(db, &status.id).await
 }
+
+pub(crate) async fn clear_local_status_quote(
+    db: &D1Database,
+    status: &StatusRow,
+    updated_at: &str,
+) -> Result<StatusRow> {
+    let bindings = [D1Type::Text(updated_at), D1Type::Text(status.id.as_str())];
+    db.prepare(
+        "UPDATE statuses
+         SET quote_of_uri = NULL,
+             updated_at = ?1
+         WHERE id = ?2",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    require_status_by_id(db, &status.id).await
+}

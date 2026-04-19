@@ -60,6 +60,7 @@ pub(crate) async fn upsert_remote_follow(
     follow_activity_id: &str,
 ) -> Result<()> {
     let (inbox_uri, shared_inbox_uri) = load_remote_actor_inbox_uris(db, &actor.actor_uri).await?;
+    let follow_state = if actor.locked { "pending" } else { "accepted" };
     let languages_json = request
         .languages
         .as_ref()
@@ -80,6 +81,7 @@ pub(crate) async fn upsert_remote_follow(
             None => D1Type::Null,
         },
         D1Type::Text(follow_activity_id),
+        D1Type::Text(follow_state),
         D1Type::Integer(if request.reblogs.unwrap_or(true) {
             1
         } else {
@@ -118,10 +120,10 @@ pub(crate) async fn upsert_remote_follow(
             ?3,
             ?4,
             ?5,
-            'pending',
             ?6,
             ?7,
             ?8,
+            ?9,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -129,7 +131,7 @@ pub(crate) async fn upsert_remote_follow(
             target_inbox_uri = excluded.target_inbox_uri,
             target_shared_inbox_uri = excluded.target_shared_inbox_uri,
             follow_activity_id = excluded.follow_activity_id,
-            state = 'pending',
+            state = excluded.state,
             show_reblogs = excluded.show_reblogs,
             notify = excluded.notify,
             languages_json = excluded.languages_json,

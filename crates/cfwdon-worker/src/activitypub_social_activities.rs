@@ -21,6 +21,58 @@ pub(crate) fn build_accept_activity(
         .map_err(|error| Error::RustError(format!("failed to serialize Accept activity: {error}")))
 }
 
+fn build_follow_response_object(
+    config: &AppConfig,
+    account: &LocalAccount,
+    follow_activity_id: &str,
+    remote_actor_uri: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": follow_activity_id,
+        "type": "Follow",
+        "actor": remote_actor_uri,
+        "object": actor_url(config, &account.username),
+    })
+}
+
+pub(crate) fn build_stored_accept_follow_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    follow_activity_id: &str,
+    remote_actor_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{actor}/accepts/{}", generate_entity_id(12)?),
+        "type": "Accept",
+        "actor": actor,
+        "to": [remote_actor_uri],
+        "object": build_follow_response_object(config, account, follow_activity_id, remote_actor_uri),
+    });
+    serde_json::to_string(&activity)
+        .map_err(|error| Error::RustError(format!("failed to serialize Accept activity: {error}")))
+}
+
+pub(crate) fn build_reject_follow_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    follow_activity_id: &str,
+    remote_actor_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{actor}/rejects/{}", generate_entity_id(12)?),
+        "type": "Reject",
+        "actor": actor,
+        "to": [remote_actor_uri],
+        "object": build_follow_response_object(config, account, follow_activity_id, remote_actor_uri),
+    });
+    serde_json::to_string(&activity)
+        .map_err(|error| Error::RustError(format!("failed to serialize Reject activity: {error}")))
+}
+
 pub(crate) fn build_follow_activity(
     config: &AppConfig,
     account: &LocalAccount,

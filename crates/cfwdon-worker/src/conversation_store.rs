@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::{
     AppConfig, LocalAccount, StatusDraft, StatusRow, extract_account_handles_from_text,
-    find_account_by_username, find_remote_actor_by_username_domain, generate_entity_id,
-    now_iso_string,
+    find_account_by_id, find_account_by_username, find_remote_actor_by_username_domain,
+    generate_entity_id, now_iso_string,
 };
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
@@ -66,14 +66,23 @@ pub(crate) async fn ensure_direct_conversation_for_status(
         participants.insert(participant_ref);
     }
 
-    upsert_conversation_state(db, &conversation_id, &author.id, &status.id, false).await?;
-    add_conversation_participants(
-        db,
-        &conversation_id,
-        participants.into_iter().collect::<Vec<_>>().as_slice(),
-    )
-    .await?;
+    let participant_refs = participants.into_iter().collect::<Vec<_>>();
+    add_conversation_participants(db, &conversation_id, &participant_refs).await?;
     attach_status_to_conversation(db, &conversation_id, &status.id).await?;
+
+    for participant_ref in &participant_refs {
+        if let Some(account) = find_account_by_id(db, participant_ref).await? {
+            upsert_conversation_state(
+                db,
+                &conversation_id,
+                &account.id,
+                &status.id,
+                account.id != author.id,
+            )
+            .await?;
+        }
+    }
+
     Ok(Some(conversation_id))
 }
 
@@ -182,27 +191,41 @@ pub(crate) async fn attach_status_to_conversation(
 pub(crate) async fn upsert_conversation_state(
     db: &D1Database,
     conversation_id: &str,
-    owner_account_id: &str,
+    account_id: &str,
     last_status_id: &str,
     unread: bool,
 ) -> Result<()> {
     let updated_at = now_iso_string()?;
     let bindings = [
         D1Type::Text(conversation_id),
-        D1Type::Text(owner_account_id),
+        D1Type::Text(account_id),
         D1Type::Text(last_status_id),
         D1Type::Integer(if unread { 1 } else { 0 }),
         D1Type::Text(updated_at.as_str()),
     ];
     db.prepare(
-        "INSERT INTO conversations (id, owner_account_id, last_status_id, unread, deleted_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5)
-         ON CONFLICT(id) DO UPDATE SET
-             owner_account_id = excluded.owner_account_id,
-             last_status_id = excluded.last_status_id,
-             unread = excluded.unread,
-             deleted_at = NULL,
-             updated_at = excluded.updated_at",
+        "INSERT INTO conversation_states (
+            conversation_id,
+            account_id,
+            last_status_id,
+            unread,
+            deleted_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            NULL,
+            CURRENT_TIMESTAMP,
+            ?5
+        )
+        ON CONFLICT(conversation_id, account_id) DO UPDATE SET
+            last_status_id = excluded.last_status_id,
+            unread = excluded.unread,
+            deleted_at = NULL,
+            updated_at = excluded.updated_at",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -219,13 +242,13 @@ pub(crate) async fn list_conversations_for_account(
 ) -> Result<Vec<ConversationRow>> {
     let result = db
         .prepare(
-            "SELECT id, last_status_id, unread
-             FROM conversations
-             WHERE owner_account_id = ?1
+            "SELECT conversation_id AS id, last_status_id, unread
+             FROM conversation_states
+             WHERE account_id = ?1
                AND deleted_at IS NULL
-               AND (?2 IS NULL OR id < ?2)
-               AND (?3 IS NULL OR id > ?3)
-             ORDER BY updated_at DESC, id DESC
+               AND (?2 IS NULL OR conversation_id < ?2)
+               AND (?3 IS NULL OR conversation_id > ?3)
+             ORDER BY updated_at DESC, conversation_id DESC
              LIMIT ?4",
         )
         .bind_refs(&[
@@ -246,10 +269,10 @@ pub(crate) async fn find_conversation_for_account(
 ) -> Result<Option<ConversationRow>> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(conversation_id)];
     db.prepare(
-        "SELECT id, last_status_id, unread
-         FROM conversations
-         WHERE owner_account_id = ?1
-           AND id = ?2
+        "SELECT conversation_id AS id, last_status_id, unread
+         FROM conversation_states
+         WHERE account_id = ?1
+           AND conversation_id = ?2
            AND deleted_at IS NULL
          LIMIT 1",
     )
@@ -276,11 +299,41 @@ pub(crate) async fn mark_conversation_read(
         D1Type::Text(updated_at.as_str()),
     ];
     db.prepare(
-        "UPDATE conversations
+        "UPDATE conversation_states
          SET unread = 0,
              updated_at = ?3
-         WHERE owner_account_id = ?1
-           AND id = ?2",
+         WHERE account_id = ?1
+           AND conversation_id = ?2",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(true)
+}
+
+pub(crate) async fn mark_conversation_unread(
+    db: &D1Database,
+    account_id: &str,
+    conversation_id: &str,
+) -> Result<bool> {
+    if find_conversation_for_account(db, account_id, conversation_id)
+        .await?
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let updated_at = now_iso_string()?;
+    let bindings = [
+        D1Type::Text(account_id),
+        D1Type::Text(conversation_id),
+        D1Type::Text(updated_at.as_str()),
+    ];
+    db.prepare(
+        "UPDATE conversation_states
+         SET unread = 1,
+             updated_at = ?3
+         WHERE account_id = ?1
+           AND conversation_id = ?2",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -306,11 +359,11 @@ pub(crate) async fn delete_conversation_for_account(
         D1Type::Text(deleted_at.as_str()),
     ];
     db.prepare(
-        "UPDATE conversations
+        "UPDATE conversation_states
          SET deleted_at = ?3,
              updated_at = ?3
-         WHERE owner_account_id = ?1
-           AND id = ?2",
+         WHERE account_id = ?1
+           AND conversation_id = ?2",
     )
     .bind_refs(bindings.iter())?
     .run()

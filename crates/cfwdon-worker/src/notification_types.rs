@@ -15,7 +15,7 @@ pub(crate) struct MastodonNotificationResponse {
     pub(crate) report: Option<serde_json::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct NotificationEntry {
     pub(crate) id: String,
     pub(crate) created_at: String,

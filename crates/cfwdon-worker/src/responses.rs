@@ -5,9 +5,24 @@ pub(crate) struct MastodonAccountResponse {
     pub(crate) id: String,
     pub(crate) username: String,
     pub(crate) acct: String,
+    pub(crate) uri: String,
     pub(crate) display_name: String,
     pub(crate) locked: bool,
     pub(crate) bot: bool,
+    pub(crate) group: bool,
+    pub(crate) discoverable: bool,
+    pub(crate) indexable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) noindex: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hide_collections: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_media: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_media_replies: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_featured: Option<bool>,
+    pub(crate) last_status_at: Option<String>,
     pub(crate) created_at: String,
     pub(crate) note: String,
     pub(crate) url: String,
@@ -15,7 +30,9 @@ pub(crate) struct MastodonAccountResponse {
     pub(crate) avatar_static: String,
     pub(crate) header: String,
     pub(crate) header_static: String,
+    pub(crate) emojis: Vec<serde_json::Value>,
     pub(crate) fields: Vec<serde_json::Value>,
+    pub(crate) roles: Vec<serde_json::Value>,
     pub(crate) followers_count: u64,
     pub(crate) following_count: u64,
     pub(crate) statuses_count: u64,
@@ -27,12 +44,14 @@ pub(crate) struct MastodonAccountResponse {
 pub(crate) struct MastodonAccountSource {
     pub(crate) note: String,
     pub(crate) fields: Vec<serde_json::Value>,
+    pub(crate) attribution_domains: Vec<String>,
     pub(crate) privacy: String,
     pub(crate) sensitive: bool,
     pub(crate) language: String,
     pub(crate) follow_requests_count: u64,
     pub(crate) hide_collections: Option<bool>,
     pub(crate) discoverable: Option<bool>,
+    pub(crate) indexable: bool,
     pub(crate) quote_policy: String,
 }
 

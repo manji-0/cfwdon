@@ -8,6 +8,20 @@ use super::{
 use std::collections::HashSet;
 use worker::Result;
 
+fn local_context_object_uri(
+    config: &AppConfig,
+    owner: &LocalAccount,
+    status: &StatusRow,
+) -> String {
+    status.ap_id.clone().unwrap_or_else(|| {
+        format!(
+            "{}/statuses/{}",
+            actor_url(config, &owner.username),
+            status.id
+        )
+    })
+}
+
 pub(crate) async fn build_local_status_context(
     db: &D1Database,
     config: &AppConfig,
@@ -50,13 +64,7 @@ pub(crate) async fn build_local_status_context(
     }
     ancestors.reverse();
 
-    let root_uri = root.ap_id.clone().unwrap_or_else(|| {
-        format!(
-            "{}/statuses/{}",
-            actor_url(config, &root_owner.username),
-            root.id
-        )
-    });
+    let root_uri = local_context_object_uri(config, root_owner, root);
     let descendants =
         collect_descendants_for_local_root(db, config, viewer, root, &root_uri).await?;
 
@@ -74,16 +82,16 @@ async fn collect_descendants_for_local_root(
     root_uri: &str,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let mut descendants = Vec::new();
-    let mut queued_local_ids = vec![root.id.clone()];
-    let mut queued_uris = vec![root_uri.to_owned()];
-    let mut seen_local_ids = HashSet::new();
+    let mut queued_local_nodes = vec![(root.id.clone(), root_uri.to_owned())];
+    let mut queued_remote_uris = Vec::new();
+    let mut seen_local_ids = HashSet::from([root.id.clone()]);
     let mut seen_remote_ids = HashSet::new();
 
-    while let Some(status_id) = queued_local_ids.pop() {
-        if !seen_local_ids.insert(status_id.clone()) {
-            continue;
-        }
+    while let Some((status_id, object_uri)) = queued_local_nodes.pop() {
         for status in list_direct_local_replies(db, &status_id).await? {
+            if !seen_local_ids.insert(status.id.clone()) {
+                continue;
+            }
             let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
                 continue;
             };
@@ -105,11 +113,11 @@ async fn collect_descendants_for_local_root(
                 )
                 .await?,
             ));
-            queued_local_ids.push(status.id.clone());
+            queued_local_nodes.push((
+                status.id.clone(),
+                local_context_object_uri(config, &owner, &status),
+            ));
         }
-    }
-
-    while let Some(object_uri) = queued_uris.pop() {
         for (status, actor) in list_direct_remote_replies_by_uri(db, &object_uri).await? {
             if !seen_remote_ids.insert(status.id.clone()) {
                 continue;
@@ -121,7 +129,23 @@ async fn collect_descendants_for_local_root(
                 status.published_at.clone(),
                 build_remote_status_response(db, config, viewer, &status, &actor).await?,
             ));
-            queued_uris.push(status.object_uri.clone());
+            queued_remote_uris.push(status.object_uri.clone());
+        }
+    }
+
+    while let Some(object_uri) = queued_remote_uris.pop() {
+        for (status, actor) in list_direct_remote_replies_by_uri(db, &object_uri).await? {
+            if !seen_remote_ids.insert(status.id.clone()) {
+                continue;
+            }
+            if !is_public_activitypub_visibility(&status.visibility) {
+                continue;
+            }
+            descendants.push((
+                status.published_at.clone(),
+                build_remote_status_response(db, config, viewer, &status, &actor).await?,
+            ));
+            queued_remote_uris.push(status.object_uri.clone());
         }
     }
 

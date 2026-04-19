@@ -146,3 +146,103 @@ pub(crate) async fn list_local_public_statuses_by_tag(
 
     result.results::<StatusRow>()
 }
+
+pub(crate) async fn list_local_public_statuses_by_link(
+    db: &D1Database,
+    url: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let pattern = format!("%{url}%");
+    let bindings = [
+        D1Type::Text(pattern.as_str()),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
+             FROM statuses s
+             JOIN accounts a ON a.id = s.account_id
+             WHERE s.visibility = 'public'
+               AND a.discoverable = 1
+               AND (s.text_content LIKE ?1 OR s.content_html LIKE ?1)
+               AND (
+                    ?2 IS NULL
+                    OR s.created_at < ?2
+                    OR (s.created_at = ?2 AND s.id < ?3)
+               )
+               AND (
+                    ?4 IS NULL
+                    OR s.created_at > ?4
+                    OR (s.created_at = ?4 AND s.id > ?5)
+               )
+             ORDER BY s.created_at DESC, s.id DESC
+             LIMIT ?6",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<StatusRow>()
+}
+
+pub(crate) async fn list_local_direct_timeline_statuses(
+    db: &D1Database,
+    viewer_account_id: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let bindings = [
+        D1Type::Text(viewer_account_id),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
+             FROM statuses s
+             JOIN conversation_statuses cs
+               ON cs.status_id = s.id
+             JOIN conversation_states cst
+               ON cst.conversation_id = cs.conversation_id
+              AND cst.account_id = ?1
+              AND cst.deleted_at IS NULL
+             WHERE s.visibility = 'direct'
+               AND (
+                    ?2 IS NULL
+                    OR s.created_at < ?2
+                    OR (s.created_at = ?2 AND s.id < ?3)
+               )
+               AND (
+                    ?4 IS NULL
+                    OR s.created_at > ?4
+                    OR (s.created_at = ?4 AND s.id > ?5)
+               )
+             ORDER BY s.created_at DESC, s.id DESC
+             LIMIT ?6",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<StatusRow>()
+}

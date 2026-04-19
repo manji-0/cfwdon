@@ -4,15 +4,19 @@ use crate::find_media_attachments_by_status_id;
 use crate::instance_identity::actor_url;
 use crate::runtime_config::load_config;
 use crate::{
-    HomeTimelineQuery, PublicTimelineQuery, TagTimelineQuery, build_local_status_response,
-    build_remote_status_response, build_timeline_link_header, include_local_source,
-    include_remote_source, list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
-    list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
+    HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
+    TimelinePaginationQuery, build_local_status_response, build_remote_status_response,
+    build_timeline_link_header, include_local_source, include_remote_source,
+    list_followed_tag_names, list_local_direct_timeline_statuses,
+    list_local_home_timeline_statuses, list_local_public_statuses_by_link,
+    list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
+    list_remote_home_timeline_statuses, list_remote_public_statuses_by_link,
     list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
     load_in_reply_to_account_id, matches_tag_timeline_filters, normalize_hashtag,
     remote_status_has_media, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
+use std::collections::HashSet;
 use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn home_timeline_response(
@@ -31,8 +35,12 @@ pub(crate) async fn home_timeline_response(
     let viewer = resolve_local_account(&db, &user).await?;
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
     let mut entries = Vec::new();
+    let mut seen_status_ids = HashSet::new();
 
     for status in list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await? {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
+        }
         let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
             continue;
         };
@@ -62,6 +70,9 @@ pub(crate) async fn home_timeline_response(
     for (status, actor) in
         list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?
     {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
+        }
         if is_muted_actor(&db, &viewer.id, &actor.actor_uri).await? {
             continue;
         }
@@ -70,6 +81,54 @@ pub(crate) async fn home_timeline_response(
             status.id.clone(),
             build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
         ));
+    }
+
+    for tag in list_followed_tag_names(&db, &viewer.id).await? {
+        for status in list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await? {
+            if !seen_status_ids.insert(status.id.clone()) {
+                continue;
+            }
+            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+                continue;
+            };
+            if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
+                continue;
+            }
+            if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
+                continue;
+            }
+            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            entries.push((
+                status.created_at.clone(),
+                status.id.clone(),
+                build_local_status_response(
+                    &db,
+                    &config,
+                    Some(&viewer),
+                    &status,
+                    &account,
+                    load_in_reply_to_account_id(&db, &status).await?,
+                    media,
+                )
+                .await?,
+            ));
+        }
+
+        for (status, actor) in
+            list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
+        {
+            if !seen_status_ids.insert(status.id.clone()) {
+                continue;
+            }
+            if is_muted_actor(&db, &viewer.id, &actor.actor_uri).await? {
+                continue;
+            }
+            entries.push((
+                status.published_at.clone(),
+                status.id.clone(),
+                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
+            ));
+        }
     }
 
     entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
@@ -274,6 +333,161 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let response = entries
         .into_iter()
         .map(|(_, _, status)| status)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let mut builder = Response::from_json(&response)?;
+    if let Some(link) =
+        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
+    {
+        builder.headers_mut().set("Link", &link)?;
+    }
+    Ok(builder)
+}
+
+pub(crate) async fn link_timeline_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: LinkTimelineQuery = req.query().unwrap_or_default();
+    let target_url = query
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing url query parameter".to_owned()))?;
+    let limit = timeline_limit(&query.pagination);
+    let query_limit = timeline_fetch_limit(limit);
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => Some(resolve_local_account(&db, &user).await?),
+        None => None,
+    };
+    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    let mut entries = Vec::new();
+
+    for status in list_local_public_statuses_by_link(&db, target_url, &cursor, query_limit).await? {
+        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+            continue;
+        };
+        if let Some(viewer) = viewer.as_ref()
+            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+        {
+            continue;
+        }
+        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+        entries.push((
+            status.created_at.clone(),
+            status.id.clone(),
+            serde_json::to_value(
+                build_local_status_response(
+                    &db,
+                    &config,
+                    viewer.as_ref(),
+                    &status,
+                    &account,
+                    load_in_reply_to_account_id(&db, &status).await?,
+                    media,
+                )
+                .await?,
+            )
+            .unwrap_or(serde_json::Value::Null),
+        ));
+    }
+
+    for (status, actor) in
+        list_remote_public_statuses_by_link(&db, target_url, &cursor, query_limit).await?
+    {
+        entries.push((
+            status.published_at.clone(),
+            status.id.clone(),
+            serde_json::to_value(
+                build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
+                    .await?,
+            )
+            .unwrap_or(serde_json::Value::Null),
+        ));
+    }
+
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    if entries.is_empty() {
+        return Response::error("Record not found", 404);
+    }
+    let first_id = entries
+        .first()
+        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
+    let last_id = entries
+        .last()
+        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
+    let response = entries
+        .into_iter()
+        .map(|(_, _, value)| value)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let mut builder = Response::from_json(&response)?;
+    if let Some(link) =
+        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
+    {
+        builder.headers_mut().set("Link", &link)?;
+    }
+    Ok(builder)
+}
+
+pub(crate) async fn direct_timeline_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let query: TimelinePaginationQuery = req.query().unwrap_or_default();
+    let limit = timeline_limit(&query);
+    let query_limit = timeline_fetch_limit(limit);
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = resolve_local_account(&db, &user).await?;
+    let cursor = resolve_timeline_cursor(&db, &query).await?;
+    let mut entries = Vec::new();
+
+    for status in list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?
+    {
+        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+            continue;
+        };
+        if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
+            continue;
+        }
+        if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
+            continue;
+        }
+        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+        entries.push((
+            status.created_at.clone(),
+            status.id.clone(),
+            build_local_status_response(
+                &db,
+                &config,
+                Some(&viewer),
+                &status,
+                &account,
+                load_in_reply_to_account_id(&db, &status).await?,
+                media,
+            )
+            .await?,
+        ));
+    }
+
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    let first_id = entries
+        .first()
+        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
+    let last_id = entries
+        .last()
+        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
+    let response = entries
+        .into_iter()
+        .map(|(_, _, value)| value)
         .take(limit as usize)
         .collect::<Vec<_>>();
     let mut builder = Response::from_json(&response)?;

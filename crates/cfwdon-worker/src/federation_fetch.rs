@@ -9,6 +9,10 @@ pub(crate) struct RemoteActorProfile {
     pub(crate) actor_uri: String,
     pub(crate) username: String,
     pub(crate) domain: String,
+    pub(crate) locked: bool,
+    pub(crate) bot: bool,
+    pub(crate) discoverable: bool,
+    pub(crate) indexable: bool,
     pub(crate) inbox_uri: String,
     pub(crate) shared_inbox_uri: Option<String>,
     pub(crate) public_key_id: String,
@@ -108,6 +112,22 @@ pub(crate) fn parse_remote_actor_profile_document(
         .host_str()
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let locked = actor
+        .get("manuallyApprovesFollowers")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let bot = actor
+        .get("bot")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| remote_actor_type_is_bot(actor.get("type")));
+    let discoverable = actor
+        .get("discoverable")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let indexable = actor
+        .get("indexable")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
     let public_key_id = actor
         .get("publicKey")
         .and_then(|value| value.get("id"))
@@ -129,6 +149,10 @@ pub(crate) fn parse_remote_actor_profile_document(
         actor_uri: canonical_actor_uri,
         username,
         domain,
+        locked,
+        bot,
+        discoverable,
+        indexable,
         inbox_uri,
         shared_inbox_uri,
         public_key_id,
@@ -182,6 +206,20 @@ pub(crate) async fn fetch_remote_activitypub_document(url: &str) -> Result<serde
     }
 
     response.json().await
+}
+
+fn remote_actor_type_is_bot(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::String(actor_type)) => {
+            matches!(actor_type.as_str(), "Application" | "Service")
+        }
+        Some(serde_json::Value::Array(values)) => values.iter().any(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|actor_type| matches!(actor_type, "Application" | "Service"))
+        }),
+        _ => false,
+    }
 }
 
 fn extract_remote_profile_url(value: &serde_json::Value) -> Option<String> {

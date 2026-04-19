@@ -90,7 +90,7 @@ pub(crate) fn build_activitypub_actor_document(
             "https://w3id.org/security/v1",
         ],
         id: actor_url.clone(),
-        actor_type: "Person",
+        actor_type: if account.bot { "Service" } else { "Person" },
         preferred_username: account.username.clone(),
         name: account.display_name.clone(),
         summary: account.bio_html.clone(),
@@ -112,7 +112,7 @@ pub(crate) fn build_activitypub_actor_document(
             owner: actor_url.clone(),
             public_key_pem: account.public_key_pem.clone(),
         },
-        manually_approves_followers: false,
+        manually_approves_followers: account.locked,
         discoverable: account.discoverable,
         published: account.created_at.clone(),
     }

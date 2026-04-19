@@ -2,6 +2,16 @@ use crate::RemoteActorProfile;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
+fn json_boolish(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(|field| {
+            field
+                .as_bool()
+                .or_else(|| field.as_i64().map(|number| number != 0))
+        })
+        .unwrap_or(false)
+}
+
 fn remote_actor_profile_from_value(value: &serde_json::Value) -> RemoteActorProfile {
     RemoteActorProfile {
         actor_uri: value
@@ -19,6 +29,10 @@ fn remote_actor_profile_from_value(value: &serde_json::Value) -> RemoteActorProf
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        locked: json_boolish(value.get("locked")),
+        bot: json_boolish(value.get("bot")),
+        discoverable: json_boolish(value.get("discoverable")),
+        indexable: json_boolish(value.get("indexable")),
         inbox_uri: value
             .get("inbox_uri")
             .and_then(serde_json::Value::as_str)
@@ -70,7 +84,7 @@ pub(crate) async fn find_cached_remote_actor_profile_by_actor_uri(
     let actor_uri = D1Type::Text(actor_uri);
     let row = db
         .prepare(
-            "SELECT actor_uri, username, domain, inbox_uri, shared_inbox_uri, public_key_id, public_key_pem, display_name, summary_html, profile_url, avatar_url, header_url
+            "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, inbox_uri, shared_inbox_uri, public_key_id, public_key_pem, display_name, summary_html, profile_url, avatar_url, header_url
              FROM remote_actors
              WHERE actor_uri = ?1
              LIMIT 1",
@@ -87,6 +101,10 @@ pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProf
         D1Type::Text(actor.actor_uri.as_str()),
         D1Type::Text(actor.username.as_str()),
         D1Type::Text(actor.domain.as_str()),
+        D1Type::Integer(if actor.locked { 1 } else { 0 }),
+        D1Type::Integer(if actor.bot { 1 } else { 0 }),
+        D1Type::Integer(if actor.discoverable { 1 } else { 0 }),
+        D1Type::Integer(if actor.indexable { 1 } else { 0 }),
         D1Type::Text(actor.inbox_uri.as_str()),
         match actor.shared_inbox_uri.as_deref() {
             Some(value) => D1Type::Text(value),
@@ -114,6 +132,10 @@ pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProf
             actor_uri,
             username,
             domain,
+            locked,
+            bot,
+            discoverable,
+            indexable,
             inbox_uri,
             shared_inbox_uri,
             public_key_id,
@@ -126,13 +148,17 @@ pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProf
             created_at,
             updated_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         ON CONFLICT(actor_uri) DO UPDATE SET
             username = excluded.username,
             domain = excluded.domain,
+            locked = excluded.locked,
+            bot = excluded.bot,
+            discoverable = excluded.discoverable,
+            indexable = excluded.indexable,
             inbox_uri = excluded.inbox_uri,
             shared_inbox_uri = excluded.shared_inbox_uri,
             public_key_id = excluded.public_key_id,

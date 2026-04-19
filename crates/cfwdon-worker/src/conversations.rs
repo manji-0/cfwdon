@@ -4,7 +4,8 @@ use crate::{
     find_account_by_id, find_conversation_for_account, find_media_attachments_by_status_id,
     find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, find_status_by_id,
     list_conversation_participants, list_conversations_for_account, load_account_stats,
-    load_config, mark_conversation_read, parse_lookup_handle, resolve_local_account,
+    load_config, mark_conversation_read, mark_conversation_unread, parse_lookup_handle,
+    resolve_local_account,
 };
 use serde::Deserialize;
 
@@ -222,6 +223,33 @@ pub(crate) async fn read_conversation_response(
     let db = ctx.d1(&config.database_binding)?;
     let owner = resolve_local_account(&db, &user).await?;
     if !mark_conversation_read(&db, &owner.id, &conversation_id).await? {
+        return Response::error("conversation not found", 404);
+    }
+    let Some(row) = find_conversation_for_account(&db, &owner.id, &conversation_id).await? else {
+        return Response::error("conversation not found", 404);
+    };
+    Response::from_json(&conversation_document(&db, &config, &owner, &row).await?)
+}
+
+pub(crate) async fn unread_conversation_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let conversation_id = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            worker::Error::RustError("missing conversation id route parameter".to_owned())
+        })?;
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = resolve_local_account(&db, &user).await?;
+    if !mark_conversation_unread(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
     let Some(row) = find_conversation_for_account(&db, &owner.id, &conversation_id).await? else {

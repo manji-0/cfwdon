@@ -1,6 +1,7 @@
 use crate::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, delete_follower_by_actor,
-    handle_inbox_interaction_undo, handle_inbox_poll_vote_undo, is_follow_undo,
+    delete_remote_follow_request_by_actor, handle_inbox_interaction_undo,
+    handle_inbox_poll_vote_undo, is_follow_undo,
 };
 use worker::Result;
 
@@ -21,5 +22,6 @@ pub(crate) async fn handle_inbox_undo(
         return handle_inbox_interaction_undo(db, activity, remote_actor).await;
     }
 
-    delete_follower_by_actor(db, &account.id, actor_uri, &remote_actor.actor_uri).await
+    delete_follower_by_actor(db, &account.id, actor_uri, &remote_actor.actor_uri).await?;
+    delete_remote_follow_request_by_actor(db, &account.id, actor_uri, &remote_actor.actor_uri).await
 }

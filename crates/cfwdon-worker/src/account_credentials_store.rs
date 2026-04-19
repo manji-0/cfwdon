@@ -38,6 +38,8 @@ pub(crate) async fn apply_account_credentials_update(
     let fields_json = serde_json::to_string(&fields).map_err(|error| {
         Error::RustError(format!("failed to serialize account fields: {error}"))
     })?;
+    let locked = update.locked.unwrap_or(account.locked);
+    let bot = update.bot.unwrap_or(account.bot);
     let discoverable = update.discoverable.unwrap_or(account.discoverable);
     let default_post_visibility = update
         .source
@@ -87,6 +89,8 @@ pub(crate) async fn apply_account_credentials_update(
         D1Type::Text(bio_html.as_str()),
         D1Type::Text(bio_text.as_str()),
         D1Type::Text(fields_json.as_str()),
+        D1Type::Integer(if locked { 1 } else { 0 }),
+        D1Type::Integer(if bot { 1 } else { 0 }),
         D1Type::Integer(if discoverable { 1 } else { 0 }),
         D1Type::Text(default_post_visibility.as_str()),
         D1Type::Integer(if default_sensitive { 1 } else { 0 }),
@@ -131,16 +135,18 @@ pub(crate) async fn apply_account_credentials_update(
              bio_html = ?2,
              bio_text = ?3,
              fields_json = ?4,
-             discoverable = ?5,
-             default_post_visibility = ?6,
-             default_sensitive = ?7,
-             default_language = ?8,
-             avatar_object_key = ?9,
-             avatar_content_type = ?10,
-             header_object_key = ?11,
-             header_content_type = ?12,
+             locked = ?5,
+             bot = ?6,
+             discoverable = ?7,
+             default_post_visibility = ?8,
+             default_sensitive = ?9,
+             default_language = ?10,
+             avatar_object_key = ?11,
+             avatar_content_type = ?12,
+             header_object_key = ?13,
+             header_content_type = ?14,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?13",
+         WHERE id = ?15",
     )
     .bind_refs(bindings.iter())?
     .run()

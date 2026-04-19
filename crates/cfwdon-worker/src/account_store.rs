@@ -1,5 +1,5 @@
 use super::{
-    count_accepted_following, count_local_followers, count_remote_followers, count_rows,
+    count_accepted_following, count_local_followers, count_remote_followers,
     parse_profile_fields_json,
 };
 use cfwdon_domain::LocalAccount;
@@ -16,6 +16,8 @@ pub(crate) struct AccountRow {
     pub(crate) bio_html: String,
     pub(crate) bio_text: String,
     pub(crate) fields_json: String,
+    pub(crate) locked: i32,
+    pub(crate) bot: i32,
     pub(crate) discoverable: i32,
     pub(crate) default_post_visibility: String,
     pub(crate) default_sensitive: i32,
@@ -34,6 +36,7 @@ pub(crate) struct AccountStats {
     pub(crate) followers_count: u64,
     pub(crate) following_count: u64,
     pub(crate) statuses_count: u64,
+    pub(crate) last_status_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,7 +60,7 @@ pub(crate) async fn list_discoverable_accounts(
 ) -> Result<Vec<LocalAccount>> {
     let sql = match order {
         DirectoryOrder::Active => {
-            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
              FROM accounts a
              LEFT JOIN statuses s
                ON s.account_id = a.id
@@ -68,7 +71,7 @@ pub(crate) async fn list_discoverable_accounts(
              OFFSET ?2"
         }
         DirectoryOrder::New => {
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
              FROM accounts
              WHERE discoverable = 1
              ORDER BY created_at DESC, username ASC
@@ -90,17 +93,35 @@ pub(crate) async fn list_discoverable_accounts(
         .collect())
 }
 
+#[derive(Debug, Deserialize)]
+struct AccountStatusSummaryRow {
+    statuses_count: u64,
+    last_status_at: Option<String>,
+}
+
 pub(crate) async fn load_account_stats(db: &D1Database, account_id: &str) -> Result<AccountStats> {
+    let account_id_binding = D1Type::Text(account_id);
+    let status_summary = db
+        .prepare(
+            "SELECT COUNT(*) AS statuses_count,
+                    MAX(substr(created_at, 1, 10)) AS last_status_at
+             FROM statuses
+             WHERE account_id = ?1",
+        )
+        .bind_refs(&account_id_binding)?
+        .first::<AccountStatusSummaryRow>(None)
+        .await?
+        .unwrap_or(AccountStatusSummaryRow {
+            statuses_count: 0,
+            last_status_at: None,
+        });
+
     Ok(AccountStats {
         followers_count: count_remote_followers(db, account_id).await?
             + count_local_followers(db, account_id).await?,
         following_count: count_accepted_following(db, account_id).await?,
-        statuses_count: count_rows(
-            db,
-            "SELECT COUNT(*) AS count FROM statuses WHERE account_id = ?1",
-            account_id,
-        )
-        .await?,
+        statuses_count: status_summary.statuses_count,
+        last_status_at: status_summary.last_status_at,
     })
 }
 
@@ -114,6 +135,8 @@ impl From<AccountRow> for LocalAccount {
             bio_html: value.bio_html,
             bio_text: value.bio_text,
             fields: parse_profile_fields_json(&value.fields_json),
+            locked: value.locked != 0,
+            bot: value.bot != 0,
             discoverable: value.discoverable != 0,
             default_post_visibility: value.default_post_visibility,
             default_sensitive: value.default_sensitive != 0,

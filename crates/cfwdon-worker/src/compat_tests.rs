@@ -1,17 +1,22 @@
 use crate::account_store::AccountStats;
 use crate::build_activitypub_actor_document;
+use crate::build_announcements_document;
+use crate::build_app_verify_credentials_document;
 use crate::build_featured_collection_document;
 use crate::relationships::RelationshipResponse;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::status_store::StatusRow;
 use crate::{
-    build_default_privacy_policy_document, build_instance_activity_document,
-    build_instance_v1_document, build_instance_v2_document, build_preferences_document,
+    build_default_privacy_policy_document, build_donation_campaign_document,
+    build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
+    build_oauth_authorization_server_document, build_oauth_userinfo_document,
+    build_preferences_document, build_translation_document, scheduled_status_document,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo,
 };
+use std::collections::{HashMap, HashSet};
 use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
 
 fn fixture_account() -> LocalAccount {
@@ -26,6 +31,8 @@ fn fixture_account() -> LocalAccount {
             name: "Website".to_owned(),
             value: "https://example.com".to_owned(),
         }],
+        locked: false,
+        bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
         default_sensitive: false,
@@ -57,6 +64,7 @@ fn fixture_stats() -> AccountStats {
         followers_count: 3,
         following_count: 5,
         statuses_count: 8,
+        last_status_at: Some("2026-01-02".to_owned()),
     }
 }
 
@@ -98,21 +106,34 @@ fn compatibility_verify_credentials_shape_is_stable() {
         "/id",
         "/username",
         "/acct",
+        "/uri",
         "/display_name",
+        "/group",
+        "/discoverable",
+        "/indexable",
         "/note",
         "/url",
         "/avatar",
         "/header",
+        "/emojis",
         "/followers_count",
         "/following_count",
         "/statuses_count",
+        "/show_media",
+        "/show_media_replies",
+        "/show_featured",
+        "/roles",
+        "/last_status_at",
+        "/last_status_at",
         "/fields/0/name",
         "/fields/0/value",
         "/source/privacy",
         "/source/sensitive",
         "/source/language",
+        "/source/attribution_domains",
         "/source/follow_requests_count",
         "/source/discoverable",
+        "/source/indexable",
         "/source/quote_policy",
     ] {
         assert_has_pointer(&value, pointer);
@@ -132,7 +153,11 @@ fn compatibility_public_account_shape_is_stable() {
         "/id",
         "/username",
         "/acct",
+        "/uri",
         "/display_name",
+        "/group",
+        "/discoverable",
+        "/indexable",
         "/note",
         "/url",
         "/avatar",
@@ -142,6 +167,12 @@ fn compatibility_public_account_shape_is_stable() {
         "/followers_count",
         "/following_count",
         "/statuses_count",
+        "/show_media",
+        "/show_media_replies",
+        "/show_featured",
+        "/roles",
+        "/last_status_at",
+        "/last_status_at",
     ] {
         assert_has_pointer(&value, pointer);
     }
@@ -301,6 +332,234 @@ fn compatibility_privacy_policy_fallback_shape_is_stable() {
 }
 
 #[test]
+fn compatibility_oauth_authorization_server_shape_is_stable() {
+    let value = build_oauth_authorization_server_document(&fixture_config());
+
+    for pointer in [
+        "/issuer",
+        "/authorization_endpoint",
+        "/token_endpoint",
+        "/userinfo_endpoint",
+        "/revocation_endpoint",
+        "/app_registration_endpoint",
+        "/response_types_supported/0",
+        "/response_modes_supported/0",
+        "/grant_types_supported/0",
+        "/scopes_supported/0",
+        "/token_endpoint_auth_methods_supported/0",
+        "/code_challenge_methods_supported/0",
+        "/service_documentation",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_oauth_userinfo_shape_is_stable() {
+    let value = build_oauth_userinfo_document(&fixture_config(), &fixture_account());
+
+    for pointer in [
+        "/sub",
+        "/preferred_username",
+        "/name",
+        "/nickname",
+        "/profile",
+        "/website",
+        "/picture",
+        "/email",
+        "/email_verified",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_app_verify_credentials_shape_is_stable() {
+    let value = build_app_verify_credentials_document(&fixture_config());
+
+    for pointer in [
+        "/id",
+        "/name",
+        "/website",
+        "/scopes/0",
+        "/redirect_uris/0",
+        "/redirect_uri",
+        "/vapid_key",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+
+    assert_eq!(value.pointer("/client_id"), None);
+    assert_eq!(value.pointer("/client_secret"), None);
+}
+
+#[test]
+fn compatibility_scheduled_status_shape_is_stable() {
+    let value = scheduled_status_document("sched-1");
+
+    for pointer in [
+        "/id",
+        "/scheduled_at",
+        "/params/poll",
+        "/params/text",
+        "/params/language",
+        "/params/media_ids",
+        "/params/sensitive",
+        "/params/visibility",
+        "/params/idempotency",
+        "/params/scheduled_at",
+        "/params/spoiler_text",
+        "/params/application_id",
+        "/params/in_reply_to_id",
+        "/params/with_rate_limit",
+        "/media_attachments",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_translation_shape_is_stable() {
+    let value = build_translation_document(&serde_json::json!({
+        "content": "<p>Hello world</p>",
+        "spoiler_text": "cw",
+        "language": "ja",
+        "media_attachments": [
+            {
+                "id": "media-1",
+                "description": "alt text"
+            }
+        ],
+        "poll": {
+            "id": "poll-1",
+            "options": [
+                { "title": "One" }
+            ]
+        }
+    }));
+
+    for pointer in [
+        "/content",
+        "/spoiler_text",
+        "/language",
+        "/poll/id",
+        "/poll/options/0/title",
+        "/media_attachments/0/id",
+        "/media_attachments/0/description",
+        "/detected_source_language",
+        "/provider",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_donation_campaign_shape_is_stable() {
+    let mut config = fixture_config();
+    config.donation_campaign_json = Some(
+        serde_json::json!({
+            "id": "campaign-1",
+            "banner_message": "Hi",
+            "banner_button_text": "Donate!",
+            "donation_message": "Hi!",
+            "donation_button_text": "Money",
+            "donation_success_post": "Success post",
+            "amounts": {
+                "one_time": {
+                    "EUR": [1, 2, 3],
+                    "USD": [4, 5, 6],
+                },
+                "monthly": {
+                    "EUR": [1],
+                    "USD": [2],
+                },
+            },
+            "default_currency": "EUR",
+            "donation_url": "https://sponsor.joinmastodon.org/donate/new",
+            "locale": "en",
+        })
+        .to_string(),
+    );
+    let value = build_donation_campaign_document(&config).unwrap();
+
+    for pointer in [
+        "/id",
+        "/banner_message",
+        "/banner_button_text",
+        "/donation_message",
+        "/donation_button_text",
+        "/donation_success_post",
+        "/amounts/one_time/EUR/0",
+        "/amounts/monthly/USD/0",
+        "/default_currency",
+        "/donation_url",
+        "/locale",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
+fn compatibility_announcements_shape_is_stable() {
+    let mut config = fixture_config();
+    config.announcements_json = Some(
+        serde_json::json!([
+            {
+                "id": "announcement-1",
+                "content": "<p>Hello</p>",
+                "starts_at": serde_json::Value::Null,
+                "ends_at": serde_json::Value::Null,
+                "all_day": false,
+                "published_at": "2026-04-20T00:00:00Z",
+                "updated_at": serde_json::Value::Null,
+                "mentions": [],
+                "statuses": [],
+                "tags": [],
+                "emojis": [],
+                "reactions": [
+                    {
+                        "name": "thumbsup",
+                        "count": 0,
+                        "me": false
+                    }
+                ]
+            }
+        ])
+        .to_string(),
+    );
+    let read_ids = HashSet::from(["announcement-1".to_owned()]);
+    let reaction_state = HashMap::from([(
+        ("announcement-1".to_owned(), "thumbsup".to_owned()),
+        (2, true),
+    )]);
+    let value = serde_json::Value::Array(build_announcements_document(
+        &config,
+        &read_ids,
+        &reaction_state,
+    ));
+
+    for pointer in [
+        "/0/id",
+        "/0/content",
+        "/0/starts_at",
+        "/0/ends_at",
+        "/0/all_day",
+        "/0/published_at",
+        "/0/updated_at",
+        "/0/read",
+        "/0/mentions",
+        "/0/statuses",
+        "/0/tags",
+        "/0/emojis",
+        "/0/reactions/0/name",
+        "/0/reactions/0/count",
+        "/0/reactions/0/me",
+    ] {
+        assert_has_pointer(&value, pointer);
+    }
+}
+
+#[test]
 fn compatibility_instance_v1_shape_is_stable() {
     let value = build_instance_v1_document(
         &InstanceSummary {
@@ -333,7 +592,10 @@ fn compatibility_instance_v1_shape_is_stable() {
         "/stats/user_count",
         "/stats/status_count",
         "/stats/domain_count",
+        "/configuration/accounts/max_featured_tags",
         "/configuration/statuses/max_characters",
+        "/configuration/media_attachments/image_matrix_limit",
+        "/configuration/polls/max_options",
         "/urls/streaming_api",
         "/contact_account",
         "/rules",
@@ -370,13 +632,21 @@ fn compatibility_instance_v2_shape_is_stable() {
         "/source_url",
         "/usage/users/active_month",
         "/thumbnail/url",
+        "/thumbnail/versions/@1x",
+        "/icon/0/src",
         "/configuration/urls/streaming",
         "/configuration/urls/about",
         "/configuration/urls/privacy_policy",
         "/configuration/urls/terms_of_service",
+        "/configuration/vapid/public_key",
+        "/configuration/accounts/max_display_name_length",
+        "/configuration/accounts/max_pinned_statuses",
         "/configuration/statuses/max_characters",
         "/configuration/media_attachments/image_size_limit",
+        "/configuration/media_attachments/image_matrix_limit",
         "/configuration/polls/max_options",
+        "/configuration/timelines_access/trending_link_feeds/local",
+        "/api_versions/mastodon",
         "/registrations/enabled",
         "/contact/email",
         "/rules",

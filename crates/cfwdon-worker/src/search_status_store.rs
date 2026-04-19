@@ -81,7 +81,11 @@ pub(crate) async fn search_remote_status_rows(
                 ra.summary_html,
                 ra.profile_url,
                 ra.avatar_url,
-                ra.header_url
+                ra.header_url,
+                ra.locked,
+                ra.bot,
+                ra.discoverable,
+                ra.indexable
              FROM remote_statuses rs
              JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
              WHERE rs.actor_uri = ?1
@@ -118,7 +122,11 @@ pub(crate) async fn search_remote_status_rows(
                 ra.summary_html,
                 ra.profile_url,
                 ra.avatar_url,
-                ra.header_url
+                ra.header_url,
+                ra.locked,
+                ra.bot,
+                ra.discoverable,
+                ra.indexable
              FROM remote_statuses rs
              JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
              WHERE lower(rs.content_html) LIKE ?1

@@ -39,7 +39,7 @@ pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -
     let mut relationships = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {
-        match resolve_account_reference(&db, &account_id).await? {
+        match resolve_requested_account_reference(&db, &config, &account_id).await? {
             Some(AccountReference::Local(target)) => {
                 relationships.push(
                     build_relationship_for_target(

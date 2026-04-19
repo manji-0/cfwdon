@@ -21,7 +21,7 @@ struct StatusInteractionAccountsQuery {
     limit: Option<u32>,
 }
 
-enum ResolvedStatus {
+pub(crate) enum ResolvedStatus {
     Local(crate::StatusRow),
     Remote(crate::RemoteStatusRow),
 }
@@ -123,7 +123,7 @@ pub(crate) fn build_status_card_value(text: &str) -> Option<serde_json::Value> {
     }))
 }
 
-async fn resolve_status_reference(
+pub(crate) async fn resolve_status_reference(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     id: &str,
@@ -177,18 +177,12 @@ async fn build_remote_interaction_account_response(
     db: &worker::D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
-    let observed_statuses = crate::count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM remote_statuses
-         WHERE actor_uri = ?1",
-        actor_uri,
-    )
-    .await?;
+    let status_summary = crate::load_remote_actor_status_summary(db, actor_uri).await?;
 
     if let Some(actor) = find_remote_actor_by_actor_uri(db, actor_uri).await? {
         let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-        response.statuses_count = observed_statuses;
+        response.statuses_count = status_summary.statuses_count;
+        response.last_status_at = status_summary.last_status_at.clone();
         return Ok(Some(response));
     }
 
@@ -212,9 +206,19 @@ async fn build_remote_interaction_account_response(
         id: remote_account_rest_id(actor_uri),
         username: username.clone(),
         acct: format!("{username}@{domain}"),
+        uri: actor_uri.to_owned(),
         display_name: username.clone(),
         locked: false,
         bot: false,
+        group: false,
+        discoverable: true,
+        indexable: true,
+        noindex: None,
+        hide_collections: None,
+        show_media: None,
+        show_media_replies: None,
+        show_featured: None,
+        last_status_at: status_summary.last_status_at,
         created_at: String::new(),
         note: String::new(),
         url: actor_uri.to_owned(),
@@ -222,10 +226,12 @@ async fn build_remote_interaction_account_response(
         avatar_static: String::new(),
         header: String::new(),
         header_static: String::new(),
+        emojis: Vec::new(),
         fields: Vec::new(),
+        roles: Vec::new(),
         followers_count: 0,
         following_count: 0,
-        statuses_count: observed_statuses,
+        statuses_count: status_summary.statuses_count,
         source: None,
     }))
 }

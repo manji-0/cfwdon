@@ -1,8 +1,9 @@
 use super::{
     Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext,
-    apply_media_update, delete_orphan_media, extract_authenticated_user,
-    find_media_attachment_by_id, list_orphan_media, load_config, media_object_url,
-    parse_media_update_request, parse_media_upload, resolve_local_account, store_media_attachment,
+    apply_media_update, delete_media_attachment_row, delete_orphan_media,
+    extract_authenticated_user, find_media_attachment_by_id, list_orphan_media, load_config,
+    media_object_url, parse_media_update_request, parse_media_upload, resolve_local_account,
+    store_media_attachment,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -170,4 +171,38 @@ pub(crate) async fn update_media_attachment(
 
     let media = apply_media_update(&db, &media, update).await?;
     Response::from_json(&MastodonMediaAttachmentResponse::from_row(&media, &config))
+}
+
+pub(crate) async fn delete_media_attachment(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let media_id = match ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        Some(media_id) => media_id,
+        None => return Response::error("missing media id route parameter", 400),
+    };
+
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+    let media = match find_media_attachment_by_id(&db, &media_id).await? {
+        Some(media) if media.account_id == account.id => media,
+        _ => return Response::error("media not found", 404),
+    };
+    if media.status_id.is_some() {
+        return Response::error("media is already attached", 422);
+    }
+
+    let bucket = ctx.bucket(&config.media_binding)?;
+    bucket.delete(&media.object_key).await?;
+    delete_media_attachment_row(&db, &media.id).await?;
+    Response::from_json(&serde_json::json!({}))
 }

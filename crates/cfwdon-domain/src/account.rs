@@ -47,6 +47,8 @@ pub struct LocalAccount {
     pub bio_html: String,
     pub bio_text: String,
     pub fields: Vec<ProfileField>,
+    pub locked: bool,
+    pub bot: bool,
     pub discoverable: bool,
     pub default_post_visibility: String,
     pub default_sensitive: bool,

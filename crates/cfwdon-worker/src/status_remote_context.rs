@@ -2,8 +2,9 @@ use super::{
     AppConfig, D1Database, MastodonContextResponse, MastodonStatusResponse, RemoteActorRow,
     RemoteStatusRow, build_local_status_response, build_remote_status_response, find_account_by_id,
     find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    find_remote_status_by_object_uri, find_status_by_ap_id, is_public_activitypub_visibility,
-    list_direct_remote_replies_by_uri, load_in_reply_to_account_id,
+    find_remote_status_by_object_uri, find_status_by_ap_id, find_status_by_id,
+    is_public_activitypub_visibility, list_direct_remote_replies_by_uri,
+    load_in_reply_to_account_id,
 };
 use std::collections::HashSet;
 use worker::Result;
@@ -16,30 +17,41 @@ pub(crate) async fn build_remote_status_context(
 ) -> Result<MastodonContextResponse> {
     let mut ancestors = Vec::new();
     let mut current = root.in_reply_to_uri.clone();
+    let mut seen_local_ids = HashSet::new();
     let mut seen_remote_ids = HashSet::new();
 
     while let Some(object_uri) = current {
         if let Some(local_status) = find_status_by_ap_id(db, &object_uri).await? {
-            let Some(owner) = find_account_by_id(db, &local_status.account_id).await? else {
-                break;
-            };
-            if !is_public_activitypub_visibility(&local_status.visibility) {
-                break;
+            let mut current_local = Some(local_status);
+            while let Some(status) = current_local {
+                if !seen_local_ids.insert(status.id.clone()) {
+                    break;
+                }
+                let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
+                    break;
+                };
+                if !is_public_activitypub_visibility(&status.visibility) {
+                    break;
+                }
+                let media = find_media_attachments_by_status_id(db, &status.id).await?;
+                let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
+                ancestors.push(
+                    build_local_status_response(
+                        db,
+                        config,
+                        None,
+                        &status,
+                        &owner,
+                        in_reply_to_account_id,
+                        media,
+                    )
+                    .await?,
+                );
+                current_local = match status.in_reply_to_id.as_deref() {
+                    Some(parent_id) => find_status_by_id(db, parent_id).await?,
+                    None => None,
+                };
             }
-            let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
-            let in_reply_to_account_id = load_in_reply_to_account_id(db, &local_status).await?;
-            ancestors.push(
-                build_local_status_response(
-                    db,
-                    config,
-                    None,
-                    &local_status,
-                    &owner,
-                    in_reply_to_account_id,
-                    media,
-                )
-                .await?,
-            );
             break;
         }
 
