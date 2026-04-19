@@ -9,8 +9,8 @@ use crate::{
     is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
     is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
     is_remote_status_reblogged_by, load_in_reply_to_account_id, load_mastodon_poll_response,
-    load_remote_mastodon_poll_response, load_remote_status_updated_at, load_status_updated_at,
-    strip_html_tags,
+    load_remote_mastodon_poll_response, load_remote_status_updated_at, load_status_filtered,
+    load_status_updated_at, strip_html_tags,
 };
 use worker::{D1Database, Result};
 
@@ -155,6 +155,19 @@ async fn build_local_status_response_inner(
         Some(updated_at) if updated_at != status.created_at => Some(updated_at),
         _ => None,
     };
+    response.filtered = match viewer {
+        Some(viewer) => {
+            load_status_filtered(
+                db,
+                &viewer.id,
+                &status.id,
+                &status._text_content,
+                &status.spoiler_text,
+            )
+            .await?
+        }
+        None => Vec::new(),
+    };
     if include_quote {
         response.quote =
             build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
@@ -229,6 +242,19 @@ async fn build_remote_status_response_inner(
     if has_remote_status_edit_snapshots(db, &status.id).await? {
         response.edited_at = load_remote_status_updated_at(db, &status.id).await?;
     }
+    response.filtered = match viewer {
+        Some(viewer) => {
+            load_status_filtered(
+                db,
+                &viewer.id,
+                &status.id,
+                &text_content,
+                &status.spoiler_text,
+            )
+            .await?
+        }
+        None => Vec::new(),
+    };
     if include_quote {
         response.quote =
             build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
@@ -262,6 +288,19 @@ async fn build_quoted_status_value(
             media,
         );
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
+        response.filtered = match viewer {
+            Some(viewer) => {
+                load_status_filtered(
+                    db,
+                    &viewer.id,
+                    &local_status.id,
+                    &local_status._text_content,
+                    &local_status.spoiler_text,
+                )
+                .await?
+            }
+            None => Vec::new(),
+        };
         response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
         response.favourites_count = count_local_status_favourites(db, &local_status.id).await?;
         response.favourited = match viewer {
@@ -312,6 +351,19 @@ async fn build_quoted_status_value(
                     .unwrap_or(serde_json::Value::Null)
                 })
                 .collect();
+        response.filtered = match viewer {
+            Some(viewer) => {
+                load_status_filtered(
+                    db,
+                    &viewer.id,
+                    &remote_status.id,
+                    &text_content,
+                    &remote_status.spoiler_text,
+                )
+                .await?
+            }
+            None => Vec::new(),
+        };
         response.mentions = build_status_mentions(db, config, &text_content).await?;
         response.favourites_count = count_remote_status_favourites(db, &remote_status.id).await?;
         response.favourited = match viewer {
