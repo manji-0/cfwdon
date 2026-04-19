@@ -1,11 +1,13 @@
 use crate::{
-    Request, Response, Result, RouteContext, TimelinePaginationQuery, build_local_status_response,
-    build_remote_status_response, build_timeline_link_header, extract_authenticated_user,
-    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
+    AccountReference, Request, Response, Result, RouteContext, TimelinePaginationQuery,
+    build_local_status_response, build_remote_status_response, build_timeline_link_header,
+    extract_authenticated_user, find_account_by_id, find_account_by_username,
+    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     find_remote_actor_by_username_domain, generate_entity_id, is_local_status_thread_muted_by,
     is_muted_actor, list_local_public_timeline_statuses, list_remote_public_timeline_statuses,
     load_account_stats, load_config, load_in_reply_to_account_id, parse_lookup_handle,
-    resolve_local_account, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
+    resolve_account_reference, resolve_local_account, resolve_timeline_cursor,
+    timeline_fetch_limit, timeline_limit,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -16,6 +18,7 @@ struct AccountListRow {
     id: String,
     title: String,
     replies_policy: String,
+    exclusive: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +30,7 @@ struct AccountListMembershipRow {
 struct ListRequest {
     title: Option<String>,
     replies_policy: Option<String>,
+    exclusive: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -45,6 +49,14 @@ fn normalize_replies_policy(value: Option<&str>) -> std::result::Result<String, 
     match normalized.as_str() {
         "followed" | "list" | "none" => Ok(normalized),
         _ => Err("replies_policy must be one of: followed, list, none".to_owned()),
+    }
+}
+
+fn parse_form_bool(value: Option<String>) -> Option<bool> {
+    match value.as_deref().map(str::trim) {
+        Some("true" | "1" | "on") => Some(true),
+        Some("false" | "0" | "off") => Some(false),
+        _ => None,
     }
 }
 
@@ -68,6 +80,7 @@ async fn parse_list_request(req: &mut Request) -> std::result::Result<ListReques
         ListRequest {
             title: form.get_field("title"),
             replies_policy: form.get_field("replies_policy"),
+            exclusive: parse_form_bool(form.get_field("exclusive")),
         }
     };
 
@@ -120,7 +133,7 @@ async fn list_rows_for_account(
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
-            "SELECT id, title, replies_policy
+            "SELECT id, title, replies_policy, exclusive
              FROM account_lists
              WHERE account_id = ?1
              ORDER BY created_at DESC, id DESC",
@@ -138,7 +151,7 @@ async fn list_row_by_id(
 ) -> Result<Option<AccountListRow>> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(list_id)];
     db.prepare(
-        "SELECT id, title, replies_policy
+        "SELECT id, title, replies_policy, exclusive
          FROM account_lists
          WHERE account_id = ?1
            AND id = ?2
@@ -154,6 +167,7 @@ fn list_document(row: &AccountListRow) -> serde_json::Value {
         "id": row.id,
         "title": row.title,
         "replies_policy": row.replies_policy,
+        "exclusive": row.exclusive != 0,
     })
 }
 
@@ -168,10 +182,15 @@ async fn create_list_row(
         D1Type::Text(account_id),
         D1Type::Text(request.title.as_deref().unwrap_or_default()),
         D1Type::Text(request.replies_policy.as_deref().unwrap_or("list")),
+        D1Type::Integer(if request.exclusive.unwrap_or(false) {
+            1
+        } else {
+            0
+        }),
     ];
     db.prepare(
-        "INSERT INTO account_lists (id, account_id, title, replies_policy)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO account_lists (id, account_id, title, replies_policy, exclusive)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -187,12 +206,18 @@ async fn update_list_row(
     list_id: &str,
     request: &ListRequest,
 ) -> Result<Option<AccountListRow>> {
-    if list_row_by_id(db, account_id, list_id).await?.is_none() {
+    let existing = list_row_by_id(db, account_id, list_id).await?;
+    let Some(existing) = existing else {
         return Ok(None);
-    }
+    };
     let bindings = [
         D1Type::Text(request.title.as_deref().unwrap_or_default()),
         D1Type::Text(request.replies_policy.as_deref().unwrap_or("list")),
+        D1Type::Integer(if request.exclusive.unwrap_or(existing.exclusive != 0) {
+            1
+        } else {
+            0
+        }),
         D1Type::Text(account_id),
         D1Type::Text(list_id),
     ];
@@ -200,9 +225,10 @@ async fn update_list_row(
         "UPDATE account_lists
          SET title = ?1,
              replies_policy = ?2,
+             exclusive = ?3,
              updated_at = CURRENT_TIMESTAMP
-         WHERE account_id = ?3
-           AND id = ?4",
+         WHERE account_id = ?4
+           AND id = ?5",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -322,6 +348,86 @@ fn list_membership_variants_for_remote_actor(actor: &crate::RemoteActorRow) -> [
         actor.actor_uri.clone(),
         format!("{}@{}", actor.username, actor.domain),
     ]
+}
+
+async fn requested_account_membership_variants(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    account_ref: &str,
+) -> Result<Option<Vec<String>>> {
+    match resolve_account_reference(db, account_ref).await? {
+        Some(AccountReference::Local(account)) => {
+            return Ok(Some(
+                list_membership_variants_for_local_account(&account, config).into(),
+            ));
+        }
+        Some(AccountReference::Remote(actor)) => {
+            return Ok(Some(
+                list_membership_variants_for_remote_actor(&actor).into(),
+            ));
+        }
+        None => {}
+    }
+
+    let handle = match parse_lookup_handle(account_ref, config) {
+        Ok(handle) => handle,
+        Err(_) => return Ok(None),
+    };
+
+    if handle.is_local_to(&config.instance_domain) {
+        if let Some(account) = find_account_by_username(db, &handle.username).await? {
+            return Ok(Some(
+                list_membership_variants_for_local_account(&account, config).into(),
+            ));
+        }
+        return Ok(None);
+    }
+
+    let Some(domain) = handle.domain.as_deref() else {
+        return Ok(None);
+    };
+    Ok(
+        find_remote_actor_by_username_domain(db, &handle.username, domain)
+            .await?
+            .map(|actor| list_membership_variants_for_remote_actor(&actor).into()),
+    )
+}
+
+pub(crate) async fn account_lists_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let user = match extract_authenticated_user(&req, &config).await? {
+        Some(user) => user,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
+    let account_ref = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+    let account = resolve_local_account(&db, &user).await?;
+    let Some(target_refs) =
+        requested_account_membership_variants(&db, &config, &account_ref).await?
+    else {
+        return Response::error("account not found", 404);
+    };
+
+    let target_refs = target_refs.into_iter().collect::<HashSet<_>>();
+    let mut documents = Vec::new();
+    for row in list_rows_for_account(&db, &account.id).await? {
+        let memberships = list_membership_refs(&db, &row.id).await?;
+        if memberships
+            .into_iter()
+            .any(|membership| target_refs.contains(&membership.target_account_ref))
+        {
+            documents.push(list_document(&row));
+        }
+    }
+
+    Response::from_json(&documents)
 }
 
 pub(crate) async fn list_timeline_response(
@@ -618,6 +724,30 @@ mod tests {
     #[test]
     fn normalize_replies_policy_rejects_unknown_value() {
         assert!(normalize_replies_policy(Some("all")).is_err());
+    }
+
+    #[test]
+    fn parse_form_bool_accepts_expected_variants() {
+        assert_eq!(parse_form_bool(Some("true".to_owned())), Some(true));
+        assert_eq!(parse_form_bool(Some("1".to_owned())), Some(true));
+        assert_eq!(parse_form_bool(Some("on".to_owned())), Some(true));
+        assert_eq!(parse_form_bool(Some("false".to_owned())), Some(false));
+        assert_eq!(parse_form_bool(Some("0".to_owned())), Some(false));
+        assert_eq!(parse_form_bool(Some("off".to_owned())), Some(false));
+        assert_eq!(parse_form_bool(Some("maybe".to_owned())), None);
+    }
+
+    #[test]
+    fn list_document_includes_exclusive_flag() {
+        let row = AccountListRow {
+            id: "list-1".to_owned(),
+            title: "Friends".to_owned(),
+            replies_policy: "list".to_owned(),
+            exclusive: 1,
+        };
+
+        let document = list_document(&row);
+        assert_eq!(document["exclusive"], serde_json::json!(true));
     }
 
     #[test]

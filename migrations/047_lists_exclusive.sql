@@ -1,0 +1,2 @@
+ALTER TABLE account_lists
+    ADD COLUMN exclusive INTEGER NOT NULL DEFAULT 0;

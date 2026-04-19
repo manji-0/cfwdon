@@ -1,34 +1,35 @@
 use super::{
-    account_directory, account_lookup, account_relationships, account_response, account_search,
-    account_statuses_response, actor_response, add_list_accounts_response, announcements_response,
-    block_account, bookmark_status, bookmarks_response, conversations_response,
-    create_list_response, create_media_attachment, create_report, create_status,
-    custom_emojis_response, delete_conversation_response, delete_list_response, delete_status,
-    familiar_followers_response, favourite_status, favourites_response, feature_tag_response,
-    featured_collection_response, featured_tag_suggestions_response,
+    account_directory, account_followers_response, account_following_response,
+    account_lists_response, account_lookup, account_relationships, account_response,
+    account_search, account_statuses_response, actor_response, add_list_accounts_response,
+    announcements_response, block_account, blocks_response, bookmark_status, bookmarks_response,
+    conversations_response, create_list_response, create_media_attachment, create_report,
+    create_status, custom_emojis_response, delete_conversation_response, delete_list_response,
+    delete_status, familiar_followers_response, favourite_status, favourites_response,
+    feature_tag_response, featured_collection_response, featured_tag_suggestions_response,
     featured_tags_collection_response, featured_tags_response, follow_account,
     followers_collection_response, following_collection_response, home_timeline_response,
-    inbox_response, instance_activity_response, instance_extended_description_response,
-    instance_peers_response, instance_privacy_policy_response, instance_rules_response,
-    instance_summary_response, instance_terms_of_service_response,
-    instance_translation_languages_response, instance_v2_response, list_accounts_response,
-    list_response, list_timeline_response, lists_response, markers_response,
-    media_content_response, media_metadata_response, mute_account, mute_status_response,
-    mutes_response, nodeinfo_links_response, nodeinfo_response, notification_dismiss_response,
-    notification_response, notifications_clear_response, notifications_policy_response,
-    notifications_response, notifications_unread_count_response, notifications_v2_response,
-    outbox_response, pin_status_response, poll_response, preferences_response,
-    process_expired_polls, process_outbox_deliveries, prune_orphan_media, public_timeline_response,
-    read_conversation_response, reblog_status, root_document, save_markers_response, search_v2,
-    shared_inbox_response, status_api_response, status_card_response, status_context_response,
-    status_favourited_by_response, status_history_response, status_object_response,
-    status_reblogged_by_response, status_source_response, tag_response, tag_timeline_response,
-    trending_links_response, trending_statuses_response, trending_tags_response, unblock_account,
-    unbookmark_status, unfavourite_status, unfeature_tag_response, unfollow_account,
-    unmute_account, unmute_status_response, unpin_status_response, unreblog_status,
-    update_credentials, update_list_response, update_media_attachment,
-    update_notifications_policy_response, update_status, verify_credentials, vote_in_poll,
-    webfinger_response,
+    identity_proofs_response, inbox_response, instance_activity_response,
+    instance_extended_description_response, instance_peers_response,
+    instance_privacy_policy_response, instance_rules_response, instance_summary_response,
+    instance_terms_of_service_response, instance_translation_languages_response,
+    instance_v2_response, list_accounts_response, list_response, list_timeline_response,
+    lists_response, markers_response, media_content_response, media_metadata_response,
+    mute_account, mute_status_response, mutes_response, nodeinfo_links_response, nodeinfo_response,
+    notification_dismiss_response, notification_response, notifications_clear_response,
+    notifications_policy_response, notifications_response, notifications_unread_count_response,
+    notifications_v2_response, outbox_response, pin_status_response, poll_response,
+    preferences_response, process_expired_polls, process_outbox_deliveries, prune_orphan_media,
+    public_timeline_response, read_conversation_response, reblog_status, root_document,
+    save_markers_response, search_v2, shared_inbox_response, status_api_response,
+    status_card_response, status_context_response, status_favourited_by_response,
+    status_history_response, status_object_response, status_reblogged_by_response,
+    status_source_response, tag_response, tag_timeline_response, trending_links_response,
+    trending_statuses_response, trending_tags_response, unblock_account, unbookmark_status,
+    unfavourite_status, unfeature_tag_response, unfollow_account, unmute_account,
+    unmute_status_response, unpin_status_response, unreblog_status, update_credentials,
+    update_list_response, update_media_attachment, update_notifications_policy_response,
+    update_status, verify_credentials, vote_in_poll, webfinger_response,
 };
 use worker::{Env, Request, Response, Result, Router};
 
@@ -210,6 +211,9 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .post_async("/internal/polls/process-expired", |req, ctx| async move {
             process_expired_polls(req, ctx).await
         })
+        .post_async("/api/v1/media", |req, ctx| async move {
+            create_media_attachment(req, ctx).await
+        })
         .post_async("/api/v2/media", |req, ctx| async move {
             create_media_attachment(req, ctx).await
         })
@@ -253,6 +257,22 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             "/api/v1/accounts/familiar_followers",
             |req, ctx| async move { familiar_followers_response(req, ctx).await },
         )
+        .get_async("/api/v1/accounts/:id/followers", |req, ctx| async move {
+            account_followers_response(req, ctx).await
+        })
+        .get_async("/api/v1/accounts/:id/following", |req, ctx| async move {
+            account_following_response(req, ctx).await
+        })
+        .get_async("/api/v1/accounts/:id/lists", |req, ctx| async move {
+            account_lists_response(req, ctx).await
+        })
+        .get_async(
+            "/api/v1/accounts/:id/identity_proofs",
+            |req, ctx| async move { identity_proofs_response(req, ctx).await },
+        )
+        .get_async("/api/v1/blocks", |req, ctx| async move {
+            blocks_response(req, ctx).await
+        })
         .get_async("/api/v1/accounts/lookup", |req, ctx| async move {
             account_lookup(req, ctx).await
         })

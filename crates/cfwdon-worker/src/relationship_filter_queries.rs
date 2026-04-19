@@ -15,6 +15,13 @@ pub(crate) struct MuteEntryRow {
     pub(crate) target_actor_uri: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct BlockEntryRow {
+    pub(crate) cursor_id: i64,
+    pub(crate) target_account_id: Option<String>,
+    pub(crate) target_actor_uri: String,
+}
+
 pub(crate) async fn is_blocking_actor(
     db: &D1Database,
     blocker_account_id: &str,
@@ -136,4 +143,38 @@ pub(crate) async fn list_mutes_for_account(
         .await?;
 
     result.results::<MuteEntryRow>()
+}
+
+pub(crate) async fn list_blocks_for_account(
+    db: &D1Database,
+    account_id: &str,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> Result<Vec<BlockEntryRow>> {
+    let bindings = [
+        D1Type::Text(account_id),
+        max_id
+            .map(|value| D1Type::Integer(value as i32))
+            .unwrap_or(D1Type::Null),
+        since_id
+            .map(|value| D1Type::Integer(value as i32))
+            .unwrap_or(D1Type::Null),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, target_account_id, target_actor_uri
+             FROM blocks
+             WHERE blocker_account_id = ?1
+               AND (?2 IS NULL OR rowid < ?2)
+               AND (?3 IS NULL OR rowid > ?3)
+             ORDER BY rowid DESC
+             LIMIT ?4",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<BlockEntryRow>()
 }

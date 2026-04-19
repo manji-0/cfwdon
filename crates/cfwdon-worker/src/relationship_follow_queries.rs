@@ -2,6 +2,20 @@ use super::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, Usernam
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct LocalFollowAccountEntryRow {
+    pub(crate) cursor_id: i64,
+    pub(crate) account_id: String,
+    pub(crate) created_at: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct RemoteFollowAccountEntryRow {
+    pub(crate) cursor_id: i64,
+    pub(crate) actor_uri: String,
+    pub(crate) created_at: String,
+}
+
 pub(crate) async fn count_followers_by_actor(
     db: &D1Database,
     account_id: &str,
@@ -307,4 +321,118 @@ pub(crate) async fn list_familiar_local_accounts_for_remote_target(
         .into_iter()
         .map(LocalAccount::from)
         .collect())
+}
+
+pub(crate) async fn list_local_followers_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<LocalFollowAccountEntryRow>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, follower_account_id AS account_id, created_at
+             FROM follows
+             WHERE target_account_id = ?1
+               AND state = 'accepted'
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+    result.results::<LocalFollowAccountEntryRow>()
+}
+
+pub(crate) async fn list_remote_followers_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<RemoteFollowAccountEntryRow>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, actor_uri, created_at
+             FROM followers
+             WHERE account_id = ?1
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+    result.results::<RemoteFollowAccountEntryRow>()
+}
+
+pub(crate) async fn list_local_following_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<LocalFollowAccountEntryRow>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, target_account_id AS account_id, created_at
+             FROM follows
+             WHERE follower_account_id = ?1
+               AND target_account_id IS NOT NULL
+               AND state = 'accepted'
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+    result.results::<LocalFollowAccountEntryRow>()
+}
+
+pub(crate) async fn list_remote_following_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<RemoteFollowAccountEntryRow>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, target_actor_uri AS actor_uri, created_at
+             FROM follows
+             WHERE follower_account_id = ?1
+               AND target_account_id IS NULL
+               AND state = 'accepted'
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+    result.results::<RemoteFollowAccountEntryRow>()
+}
+
+pub(crate) async fn list_local_followers_for_remote_actor(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<Vec<LocalFollowAccountEntryRow>> {
+    let actor_uri = D1Type::Text(actor_uri);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, follower_account_id AS account_id, created_at
+             FROM follows
+             WHERE target_actor_uri = ?1
+               AND state = 'accepted'
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&actor_uri)?
+        .all()
+        .await?;
+    result.results::<LocalFollowAccountEntryRow>()
+}
+
+pub(crate) async fn list_local_following_for_remote_actor(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<Vec<LocalFollowAccountEntryRow>> {
+    let actor_uri = D1Type::Text(actor_uri);
+    let result = db
+        .prepare(
+            "SELECT rowid AS cursor_id, account_id, created_at
+             FROM followers
+             WHERE actor_uri = ?1
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .bind_refs(&actor_uri)?
+        .all()
+        .await?;
+    result.results::<LocalFollowAccountEntryRow>()
 }
