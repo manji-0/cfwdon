@@ -1,40 +1,66 @@
+use base64::Engine;
+
 use super::{
-    CreateStatusPollRequest, MastodonAccountResponse, MastodonReportResponse, NotificationEntry,
-    NotificationsQuery, RemoteActorRow, RemoteStatusPollOptionRow, RemoteStatusPollVoteRow,
-    SearchCategoryFlags, SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow,
-    TagTimelineQuery, TimelinePaginationQuery, activitypub_profile_attachments,
-    apply_activitypub_poll_fields, build_activitypub_actor_document,
-    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
-    build_announcements_document, build_app_verify_credentials_document,
-    build_donation_campaign_document, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_nodeinfo_document, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
+    AUTH_CONTEXT_LIMIT, CreateStatusPollRequest, MastodonAccountResponse, MastodonReportResponse,
+    NotificationEntry, NotificationsQuery, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
+    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
+    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
+    StatusRow, TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery,
+    account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
+    account_search_rank, account_search_sort_key, account_search_term,
+    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
+    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
+    build_add_featured_activity_with_id, build_announcements_document,
+    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
+    build_delete_quote_authorization_activity, build_donation_campaign_document,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_nodeinfo_document,
+    build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
     build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
-    build_remove_featured_activity_with_id, build_status_card_value,
-    build_status_update_activity_with_id, build_timeline_link_header_for_url,
-    build_translation_document, build_update_person_activity_with_id, classify_media_kind,
-    configured_html_document, delivery_retry_delay_modifier, describe_outbound_activity,
-    directory_order, extract_account_handles_from_text, extract_hashtags_from_html,
-    extract_hashtags_from_text, extract_inbox_target_username, extract_mentions_from_text,
-    extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
-    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
-    include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
-    is_admin_account, is_follow_undo, local_username_from_actor_uri,
-    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
-    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
-    normalize_quote_approval_policy, normalize_status_history_entry, normalize_status_poll,
+    build_remote_status_card_value, build_remove_featured_activity_with_id,
+    build_status_card_value, build_status_update_activity_with_id,
+    build_timeline_link_header_for_url, build_translation_document,
+    build_translation_document_for_language, build_update_person_activity_with_id,
+    classify_media_kind, configured_html_document, context_async_refresh_id,
+    delivery_retry_delay_modifier, derive_link_timeline_match_urls, describe_outbound_activity,
+    directory_order, effective_local_quote_approval_policy, effective_remote_status_quote_state,
+    effective_status_quote_state, extract_account_handles_from_text, extract_hashtags_from_html,
+    extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
+    extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
+    extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
+    follow_targets_local_actor, format_async_refresh_header_value, include_local_source,
+    include_remote_source, initial_local_quote_approval_policy, instance_base_url,
+    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
+    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
+    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
+    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    normalize_status_history_entry, normalize_status_poll, normalized_account_search_query,
     normalized_action_uri, notification_sort_key, notification_timestamp_sort_token,
-    object_attributed_to_remote_actor, outbound_terminal_failure_follow_state, parse_csv_list,
+    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
+    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
+    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
     parse_http_url_parts, parse_internal_pagination_id, parse_lookup_handle, parse_media_focus,
-    parse_remote_actor_profile_document, parse_webfinger_resource, peer_authority_from_uri,
-    quote_target_uri_from_object, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, resolve_search_tag_name, scheduled_status_document,
+    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
+    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
+    quote_placeholder_document, quote_target_uri_from_object, remap_remote_poll_vote_positions,
+    remote_account_rest_id, remote_actor_uri_from_rest_id,
+    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
+    remote_poll_should_refresh, remote_quote_state_for_local_target,
+    remote_status_has_active_quote, remote_status_targets_local_viewer,
+    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
+    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
     search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
-    tag_search_rank, timeline_fetch_limit, timeline_limit, visibility_from_activitypub_object,
+    search_v2_unauthenticated_error, search_v2_url_query_mode, status_has_active_quote,
+    status_matches_search_metadata, status_matches_search_syntax, status_search_rank,
+    tag_search_rank, tag_search_sort_key, timeline_fetch_limit, timeline_limit,
+    trim_context_ancestors, trim_context_descendants, validate_poll_vote_submission,
+    validate_scheduled_at_minimum_offset, visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo,
+    InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo, StatusDraft,
+    Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use url::Url;
@@ -55,6 +81,7 @@ fn actor_fixture_account() -> LocalAccount {
         bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("ja".to_owned()),
         avatar_object_key: Some("media/account/avatar/alice".to_owned()),
@@ -115,6 +142,14 @@ fn oauth_userinfo_document_exposes_standard_claims() {
     let document = build_oauth_userinfo_document(&config, &account);
 
     assert_eq!(
+        document.pointer("/iss"),
+        Some(&serde_json::json!("https://social.example/"))
+    );
+    assert_eq!(
+        document.pointer("/sub"),
+        Some(&serde_json::json!("https://social.example/users/alice"))
+    );
+    assert_eq!(
         document.pointer("/preferred_username"),
         Some(&serde_json::json!("alice"))
     );
@@ -123,18 +158,10 @@ fn oauth_userinfo_document_exposes_standard_claims() {
         Some(&serde_json::json!("https://social.example/@alice"))
     );
     assert_eq!(
-        document.pointer("/website"),
-        Some(&serde_json::json!("https://example.com"))
-    );
-    assert_eq!(
         document.pointer("/picture"),
         Some(&serde_json::json!(
             "https://media.example.com/media/account/avatar/alice"
         ))
-    );
-    assert_eq!(
-        document.pointer("/email_verified"),
-        Some(&serde_json::json!(true))
     );
 }
 
@@ -268,6 +295,88 @@ fn app_verify_credentials_document_uses_configured_vapid_key() {
 }
 
 #[test]
+fn app_verify_credentials_document_from_parts_omits_client_secrets() {
+    let document = build_app_verify_credentials_document_from_parts(
+        "42",
+        "Test Application",
+        Some("https://app.example"),
+        &[String::from("read"), String::from("write")],
+        &[
+            String::from("https://app.example/callback"),
+            String::from("https://app.example/register"),
+        ],
+        "https://app.example/callback\nhttps://app.example/register",
+        "BExamplePublicKey",
+    );
+
+    assert_eq!(document.pointer("/id"), Some(&serde_json::json!("42")));
+    assert_eq!(
+        document.pointer("/website"),
+        Some(&serde_json::json!("https://app.example"))
+    );
+    assert_eq!(
+        document.pointer("/scopes/1"),
+        Some(&serde_json::json!("write"))
+    );
+    assert_eq!(
+        document.pointer("/redirect_uris/1"),
+        Some(&serde_json::json!("https://app.example/register"))
+    );
+    assert_eq!(document.pointer("/client_id"), None);
+    assert_eq!(document.pointer("/client_secret"), None);
+}
+
+#[test]
+fn parse_bearer_authorization_header_extracts_bearer_value() {
+    assert_eq!(
+        parse_bearer_authorization_header("Bearer secret-token"),
+        Some("secret-token".to_owned())
+    );
+}
+
+#[test]
+fn parse_bearer_authorization_header_rejects_non_bearer_header() {
+    assert_eq!(parse_bearer_authorization_header("Basic abc123"), None);
+}
+
+#[test]
+fn parse_basic_authorization_header_extracts_client_credentials() {
+    let header = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("client-id:client-secret")
+    );
+
+    assert_eq!(
+        parse_basic_authorization_header(&header),
+        Some(("client-id".to_owned(), "client-secret".to_owned()))
+    );
+}
+
+#[test]
+fn oauth_token_document_matches_upstream_shape() {
+    let document = build_oauth_token_document("token-1", "read write");
+
+    assert_eq!(
+        document.pointer("/access_token"),
+        Some(&serde_json::json!("token-1"))
+    );
+    assert_eq!(
+        document.pointer("/token_type"),
+        Some(&serde_json::json!("Bearer"))
+    );
+    assert_eq!(
+        document.pointer("/scope"),
+        Some(&serde_json::json!("read write"))
+    );
+    assert!(
+        document
+            .pointer("/created_at")
+            .and_then(serde_json::Value::as_i64)
+            .is_some()
+    );
+}
+
+#[test]
 fn scheduled_status_document_matches_upstream_shape() {
     let document = scheduled_status_document("sched-1");
 
@@ -292,6 +401,76 @@ fn scheduled_status_document_matches_upstream_shape() {
         document.pointer("/params/with_rate_limit"),
         Some(&serde_json::json!(false))
     );
+}
+
+#[test]
+fn scheduled_status_document_with_params_reflects_draft_values() {
+    let draft = StatusDraft {
+        text: "scheduled hello".to_owned(),
+        visibility: Visibility::Unlisted,
+        spoiler_text: "cw".to_owned(),
+        sensitive: true,
+        language: Some("ja".to_owned()),
+        quote_approval_policy: None,
+        in_reply_to_id: Some("status-1".to_owned()),
+        media_ids: vec!["media-1".to_owned()],
+        poll: None,
+    };
+    let document =
+        scheduled_status_document_with_params("sched-2", "2099-02-03T04:05:06Z", Some(&draft));
+
+    assert_eq!(
+        document.pointer("/scheduled_at"),
+        Some(&serde_json::json!("2099-02-03T04:05:06Z"))
+    );
+    assert_eq!(
+        document.pointer("/params/text"),
+        Some(&serde_json::json!("scheduled hello"))
+    );
+    assert_eq!(
+        document.pointer("/params/visibility"),
+        Some(&serde_json::json!("unlisted"))
+    );
+    assert_eq!(
+        document.pointer("/params/media_ids/0"),
+        Some(&serde_json::json!("media-1"))
+    );
+    assert_eq!(
+        document.pointer("/params/in_reply_to_id"),
+        Some(&serde_json::json!("status-1"))
+    );
+}
+
+#[test]
+fn normalize_scheduled_at_accepts_rfc3339() {
+    assert_eq!(
+        normalize_scheduled_at(Some("2099-02-03T04:05:06Z")).unwrap(),
+        Some("2099-02-03T04:05:06Z".to_owned())
+    );
+}
+
+#[test]
+fn normalize_scheduled_at_rejects_invalid_timestamp() {
+    assert!(normalize_scheduled_at(Some("2099/02/03 04:05:06")).is_err());
+}
+
+#[test]
+fn validate_scheduled_at_minimum_offset_rejects_too_soon_timestamp() {
+    let soon = (time::OffsetDateTime::now_utc() + time::Duration::minutes(4))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let error = validate_scheduled_at_minimum_offset(&soon).unwrap_err();
+
+    assert!(error.contains("Scheduled at"));
+}
+
+#[test]
+fn validate_scheduled_at_minimum_offset_accepts_future_timestamp() {
+    let later = (time::OffsetDateTime::now_utc() + time::Duration::minutes(6))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    validate_scheduled_at_minimum_offset(&later).unwrap();
 }
 
 #[test]
@@ -339,6 +518,30 @@ fn translation_document_matches_upstream_shape() {
     assert_eq!(
         document.pointer("/poll/options/1/title"),
         Some(&serde_json::json!("Two"))
+    );
+}
+
+#[test]
+fn translation_document_for_language_overrides_target_language() {
+    let document = build_translation_document_for_language(
+        &serde_json::json!({
+            "content": "<p>Hello</p>",
+            "spoiler_text": "",
+            "language": "ja",
+            "media_attachments": [],
+            "poll": null
+        }),
+        "en",
+        "cfwdon-placeholder",
+    );
+
+    assert_eq!(
+        document.pointer("/language"),
+        Some(&serde_json::json!("en"))
+    );
+    assert_eq!(
+        document.pointer("/detected_source_language"),
+        Some(&serde_json::json!("ja"))
     );
 }
 
@@ -448,6 +651,21 @@ fn internal_cursor_link_header_preserves_other_query_params() {
     assert!(prev.contains("foo=bar"));
     assert!(prev.contains("limit=10"));
     assert!(prev.contains("since_id=200"));
+    assert!(prev.contains("rel=\"prev\""));
+}
+
+#[test]
+fn internal_cursor_link_header_supports_min_id_cursor() {
+    let url =
+        Url::parse("https://social.example/api/v1/scheduled_statuses?foo=bar&max_id=5").unwrap();
+    let prev =
+        build_internal_cursor_link_for_url_with_min_id(&url, 10, None, None, Some(200), "prev")
+            .unwrap();
+
+    assert!(prev.contains("foo=bar"));
+    assert!(prev.contains("limit=10"));
+    assert!(prev.contains("min_id=200"));
+    assert!(!prev.contains("max_id=5"));
     assert!(prev.contains("rel=\"prev\""));
 }
 
@@ -642,6 +860,211 @@ fn remap_remote_poll_vote_positions_drops_unresolvable_stale_votes() {
 }
 
 #[test]
+fn optimistic_remote_poll_vote_deltas_increment_multi_voter_once() {
+    assert_eq!(
+        optimistic_remote_poll_vote_deltas(true, false, 2),
+        (2, Some(1))
+    );
+    assert_eq!(optimistic_remote_poll_vote_deltas(true, true, 1), (1, None));
+}
+
+#[test]
+fn optimistic_remote_poll_vote_deltas_do_not_set_single_choice_voters_count() {
+    assert_eq!(
+        optimistic_remote_poll_vote_deltas(false, false, 1),
+        (1, None)
+    );
+}
+
+#[test]
+fn remote_poll_draft_acknowledges_vote_accepts_matching_or_newer_totals() {
+    let poll = RemoteStatusPollRow {
+        id: "poll-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        multiple: 1,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(2),
+        votes_count: 3,
+        expired: 0,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let options = vec![
+        RemoteStatusPollOptionRow {
+            title: "rust".to_owned(),
+            votes_count: 2,
+        },
+        RemoteStatusPollOptionRow {
+            title: "workers".to_owned(),
+            votes_count: 1,
+        },
+    ];
+    let fetched = RemotePollDraft {
+        multiple: true,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(3),
+        votes_count: 4,
+        expired: false,
+        options: vec![
+            RemotePollOptionDraft {
+                title: "rust".to_owned(),
+                votes_count: 3,
+            },
+            RemotePollOptionDraft {
+                title: "workers".to_owned(),
+                votes_count: 1,
+            },
+        ],
+    };
+
+    assert!(remote_poll_draft_acknowledges_vote(
+        &poll,
+        &options,
+        &fetched,
+        false,
+        &[0]
+    ));
+}
+
+#[test]
+fn remote_poll_draft_acknowledges_vote_rejects_stale_totals() {
+    let poll = RemoteStatusPollRow {
+        id: "poll-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        multiple: 0,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(3),
+        votes_count: 3,
+        expired: 0,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let options = vec![
+        RemoteStatusPollOptionRow {
+            title: "yes".to_owned(),
+            votes_count: 2,
+        },
+        RemoteStatusPollOptionRow {
+            title: "no".to_owned(),
+            votes_count: 1,
+        },
+    ];
+    let fetched = RemotePollDraft {
+        multiple: false,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(3),
+        votes_count: 3,
+        expired: false,
+        options: vec![
+            RemotePollOptionDraft {
+                title: "yes".to_owned(),
+                votes_count: 2,
+            },
+            RemotePollOptionDraft {
+                title: "no".to_owned(),
+                votes_count: 1,
+            },
+        ],
+    };
+
+    assert!(!remote_poll_draft_acknowledges_vote(
+        &poll,
+        &options,
+        &fetched,
+        false,
+        &[0]
+    ));
+}
+
+#[test]
+fn remote_poll_draft_acknowledges_local_snapshot_accepts_matching_or_newer_totals() {
+    let poll = RemoteStatusPollRow {
+        id: "poll-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        multiple: 1,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(4),
+        votes_count: 6,
+        expired: 0,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let options = vec![
+        RemoteStatusPollOptionRow {
+            title: "rust".to_owned(),
+            votes_count: 4,
+        },
+        RemoteStatusPollOptionRow {
+            title: "workers".to_owned(),
+            votes_count: 2,
+        },
+    ];
+    let fetched = RemotePollDraft {
+        multiple: true,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(5),
+        votes_count: 7,
+        expired: false,
+        options: vec![
+            RemotePollOptionDraft {
+                title: "rust".to_owned(),
+                votes_count: 4,
+            },
+            RemotePollOptionDraft {
+                title: "workers".to_owned(),
+                votes_count: 3,
+            },
+        ],
+    };
+
+    assert!(remote_poll_draft_acknowledges_local_snapshot(
+        &poll, &options, &fetched
+    ));
+}
+
+#[test]
+fn remote_poll_draft_acknowledges_local_snapshot_rejects_stale_option_totals() {
+    let poll = RemoteStatusPollRow {
+        id: "poll-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        multiple: 0,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(3),
+        votes_count: 3,
+        expired: 0,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let options = vec![
+        RemoteStatusPollOptionRow {
+            title: "yes".to_owned(),
+            votes_count: 2,
+        },
+        RemoteStatusPollOptionRow {
+            title: "no".to_owned(),
+            votes_count: 1,
+        },
+    ];
+    let fetched = RemotePollDraft {
+        multiple: false,
+        expires_at: Some("2026-03-01T00:00:00Z".to_owned()),
+        voters_count: Some(4),
+        votes_count: 4,
+        expired: false,
+        options: vec![
+            RemotePollOptionDraft {
+                title: "yes".to_owned(),
+                votes_count: 1,
+            },
+            RemotePollOptionDraft {
+                title: "no".to_owned(),
+                votes_count: 3,
+            },
+        ],
+    };
+
+    assert!(!remote_poll_draft_acknowledges_local_snapshot(
+        &poll, &options, &fetched
+    ));
+}
+
+#[test]
 fn build_poll_vote_activity_uses_question_reply_shape() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     let account = LocalAccount {
@@ -656,6 +1079,7 @@ fn build_poll_vote_activity_uses_question_reply_shape() {
         bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("en".to_owned()),
         avatar_object_key: None,
@@ -706,6 +1130,7 @@ fn build_status_update_activity_wraps_question_object() {
         bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("en".to_owned()),
         avatar_object_key: None,
@@ -759,6 +1184,7 @@ fn build_featured_collection_activities_target_followers_collection() {
         bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: None,
         avatar_object_key: None,
@@ -1186,7 +1612,7 @@ fn local_username_from_actor_uri_matches_local_users_only() {
     );
     assert_eq!(
         local_username_from_actor_uri(&config, "https://social.example/@alice"),
-        None
+        Some("alice".to_owned())
     );
 }
 
@@ -1206,6 +1632,14 @@ fn local_username_from_status_uri_matches_local_statuses_only() {
             "https://remote.example/users/alice/statuses/status-1"
         ),
         None
+    );
+    assert_eq!(
+        local_username_from_status_uri(&config, "https://social.example/@alice/status-1"),
+        Some("alice".to_owned())
+    );
+    assert_eq!(
+        local_username_from_status_uri(&config, "https://social.example/@alice/statuses/status-1"),
+        Some("alice".to_owned())
     );
 }
 
@@ -1296,14 +1730,41 @@ fn search_v2_requires_auth_for_resolve_following_and_offset() {
         ..SearchV2Query::default()
     }));
     assert!(search_v2_requires_auth(&SearchV2Query {
-        following: Some(true),
-        ..SearchV2Query::default()
-    }));
-    assert!(search_v2_requires_auth(&SearchV2Query {
         offset: Some(1),
         ..SearchV2Query::default()
     }));
+    assert!(!search_v2_requires_auth(&SearchV2Query {
+        following: Some(true),
+        ..SearchV2Query::default()
+    }));
     assert!(!search_v2_requires_auth(&SearchV2Query::default()));
+}
+
+#[test]
+fn search_v2_unauthenticated_error_matches_upstream_messages() {
+    assert_eq!(
+        search_v2_unauthenticated_error(&SearchV2Query {
+            offset: Some(1),
+            ..SearchV2Query::default()
+        }),
+        Some("Search queries pagination is not supported without authentication")
+    );
+    assert_eq!(
+        search_v2_unauthenticated_error(&SearchV2Query {
+            resolve: Some(true),
+            ..SearchV2Query::default()
+        }),
+        Some(
+            "Search queries that resolve remote resources are not supported without authentication"
+        )
+    );
+    assert_eq!(
+        search_v2_unauthenticated_error(&SearchV2Query {
+            following: Some(true),
+            ..SearchV2Query::default()
+        }),
+        None
+    );
 }
 
 #[test]
@@ -1315,6 +1776,140 @@ fn search_v2_limit_matches_mastodon_bounds() {
 }
 
 #[test]
+fn search_v2_url_query_mode_matches_mastodon_url_resolution_rules() {
+    assert_eq!(
+        search_v2_url_query_mode("https://remote.example/@alice", true, 0),
+        SearchUrlQueryMode::ResolveOnly
+    );
+    assert_eq!(
+        search_v2_url_query_mode("https://remote.example/@alice", true, 1),
+        SearchUrlQueryMode::EmptyResults
+    );
+    assert_eq!(
+        search_v2_url_query_mode("https://remote.example/@alice", false, 0),
+        SearchUrlQueryMode::None
+    );
+    assert_eq!(
+        search_v2_url_query_mode("@alice@remote.example", true, 0),
+        SearchUrlQueryMode::None
+    );
+}
+
+#[test]
+fn remote_poll_should_refresh_only_for_signed_in_active_polls() {
+    let active = RemoteStatusPollRow {
+        id: "poll-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        multiple: 0,
+        expires_at: None,
+        voters_count: None,
+        votes_count: 0,
+        expired: 0,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let expired = RemoteStatusPollRow {
+        id: "poll-2".to_owned(),
+        status_id: "status-2".to_owned(),
+        multiple: 0,
+        expires_at: None,
+        voters_count: None,
+        votes_count: 0,
+        expired: 1,
+        updated_at: "2026-01-01 00:00:00".to_owned(),
+    };
+    let viewer = actor_fixture_account();
+
+    assert!(remote_poll_should_refresh(&active, Some(&viewer)));
+    assert!(!remote_poll_should_refresh(&active, None));
+    assert!(!remote_poll_should_refresh(&expired, Some(&viewer)));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_matches_direct_audience() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Question",
+        "to": ["https://social.example/users/alice"],
+        "cc": []
+    });
+
+    assert!(remote_status_targets_local_viewer(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_rejects_other_audience() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Question",
+        "to": ["https://social.example/users/bob"],
+        "cc": []
+    });
+
+    assert!(!remote_status_targets_local_viewer(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_account_rejects_followers_audience() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Question",
+        "to": ["https://social.example/users/alice/followers"],
+        "cc": []
+    });
+
+    assert!(!remote_status_targets_local_viewer_account(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_followers_matches_followers_audience() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Question",
+        "to": ["https://social.example/users/alice/followers"],
+        "cc": []
+    });
+
+    assert!(remote_status_targets_local_viewer_followers(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_followers_rejects_direct_audience() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Question",
+        "to": ["https://social.example/users/alice"],
+        "cc": []
+    });
+
+    assert!(!remote_status_targets_local_viewer_followers(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
 fn search_text_match_rank_prefers_exact_then_prefix_then_contains() {
     assert_eq!(search_text_match_rank("alice", "alice"), 0);
     assert_eq!(search_text_match_rank("ali", "alice"), 1);
@@ -1323,9 +1918,328 @@ fn search_text_match_rank_prefers_exact_then_prefix_then_contains() {
 }
 
 #[test]
+fn normalized_account_search_query_supports_handles() {
+    assert_eq!(normalized_account_search_query("@alice"), "alice");
+    assert_eq!(
+        normalized_account_search_query("acct:alice@remote.example"),
+        "alice@remote.example"
+    );
+    assert_eq!(
+        normalized_account_search_query("@alice@remote.example"),
+        "alice@remote.example"
+    );
+}
+
+#[test]
+fn account_search_is_complete_handle_requires_domain_form() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    assert!(account_search_is_complete_handle(
+        "@alice@remote.example",
+        &config
+    ));
+    assert!(account_search_is_complete_handle(
+        "acct:alice@remote.example",
+        &config
+    ));
+    assert!(!account_search_is_complete_handle("alice", &config));
+    assert!(!account_search_is_complete_handle("@alice", &config));
+}
+
+#[test]
+fn account_search_term_treats_local_domain_handles_as_usernames() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    assert_eq!(account_search_term("alice", &config), "alice");
+    assert_eq!(
+        account_search_term("@alice@social.example", &config),
+        "alice"
+    );
+    assert_eq!(
+        account_search_term("acct:alice@remote.example", &config),
+        "alice@remote.example"
+    );
+}
+
+#[test]
+fn account_search_non_exact_limit_matches_mastodon_rules() {
+    let viewer = actor_fixture_account();
+    assert_eq!(account_search_non_exact_limit("ab", None, 20, false), 0);
+    assert_eq!(
+        account_search_non_exact_limit("@alice@remote.example", None, 20, true),
+        19
+    );
+    assert_eq!(
+        account_search_non_exact_limit("ab", Some(&viewer), 20, false),
+        20
+    );
+}
+
+#[test]
+fn account_search_rank_prefers_exact_acct_for_handle_queries() {
+    assert!(
+        account_search_rank(
+            "alice@remote.example",
+            "alice",
+            "alice@remote.example",
+            "Alice",
+            ""
+        ) < account_search_rank(
+            "alice@remote.example",
+            "alice",
+            "alice@another.example",
+            "Alice",
+            ""
+        )
+    );
+}
+
+#[test]
+fn account_relationship_rank_prefers_self_then_following() {
+    assert!(account_relationship_rank(true, false) < account_relationship_rank(false, true));
+    assert!(account_relationship_rank(false, true) < account_relationship_rank(false, false));
+}
+
+#[test]
+fn account_search_sort_key_uses_relationship_rank_as_tiebreaker() {
+    assert!(
+        account_search_sort_key("alice", "alice", "alice", "Alice", "", 0, 0, 0)
+            < account_search_sort_key("alice", "alice", "alice", "Alice", "", 1, 0, 0)
+    );
+    assert!(
+        account_search_sort_key("alice", "alice", "alice", "Alice", "", 1, 0, 0)
+            < account_search_sort_key("alice", "alice", "alice", "Alice", "", 2, 0, 0)
+    );
+}
+
+#[test]
+fn account_search_sort_key_prefers_more_popular_accounts_on_tie() {
+    assert!(
+        account_search_sort_key("alice", "alice", "alice", "Alice", "", 2, 100, 5)
+            < account_search_sort_key("alice", "alice", "alice", "Alice", "", 2, 10, 5)
+    );
+    assert!(
+        account_search_sort_key("alice", "alice", "alice", "Alice", "", 2, 10, 20)
+            < account_search_sort_key("alice", "alice", "alice", "Alice", "", 2, 10, 5)
+    );
+}
+
+#[test]
+fn account_search_rank_considers_profile_note_after_names() {
+    assert!(
+        account_search_rank("workers", "alice", "alice", "Alice", "workers and rust")
+            < account_search_rank("workers", "alice", "alice", "Alice", "")
+    );
+    assert!(
+        account_search_rank("alice", "alice", "alice", "Alice", "alice in bio")
+            < account_search_rank("alice", "zzz", "zzz", "zzz", "alice in bio")
+    );
+}
+
+#[test]
 fn tag_search_rank_prefers_exact_matches() {
     assert!(tag_search_rank("rust", "rust") < tag_search_rank("rust", "rustlang"));
     assert!(tag_search_rank("rust", "rustlang") < tag_search_rank("rust", "fedirust"));
+}
+
+#[test]
+fn tag_search_sort_key_prefers_usage_then_recency_on_match_ties() {
+    assert!(
+        tag_search_sort_key("rust", "rustacean", 100, Some("2026-04-21"))
+            < tag_search_sort_key("rust", "rustlang", 10, Some("2026-04-22"))
+    );
+    assert!(
+        tag_search_sort_key("rust", "rustacean", 10, Some("2026-04-21"))
+            < tag_search_sort_key("rust", "rustlang", 10, Some("2026-04-20"))
+    );
+}
+
+#[test]
+fn paginate_tag_search_matches_applies_offset_after_usage_aware_ranking() {
+    let tags = vec![
+        (
+            "fedirust".to_owned(),
+            TagSearchMetrics {
+                statuses_count: 5,
+                accounts_count: 2,
+                last_status_at: Some("2026-04-18".to_owned()),
+            },
+        ),
+        (
+            "rust".to_owned(),
+            TagSearchMetrics {
+                statuses_count: 1,
+                accounts_count: 1,
+                last_status_at: Some("2026-04-17".to_owned()),
+            },
+        ),
+        (
+            "rustlang".to_owned(),
+            TagSearchMetrics {
+                statuses_count: 20,
+                accounts_count: 5,
+                last_status_at: Some("2026-04-20".to_owned()),
+            },
+        ),
+        (
+            "rustacean".to_owned(),
+            TagSearchMetrics {
+                statuses_count: 20,
+                accounts_count: 4,
+                last_status_at: Some("2026-04-21".to_owned()),
+            },
+        ),
+    ];
+
+    assert_eq!(
+        paginate_tag_search_matches("rust", tags.clone(), 2, 0),
+        vec![
+            (
+                "rust".to_owned(),
+                TagSearchMetrics {
+                    statuses_count: 1,
+                    accounts_count: 1,
+                    last_status_at: Some("2026-04-17".to_owned()),
+                },
+            ),
+            (
+                "rustacean".to_owned(),
+                TagSearchMetrics {
+                    statuses_count: 20,
+                    accounts_count: 4,
+                    last_status_at: Some("2026-04-21".to_owned()),
+                },
+            ),
+        ]
+    );
+    assert_eq!(
+        paginate_tag_search_matches("rust", tags, 2, 1),
+        vec![
+            (
+                "rustacean".to_owned(),
+                TagSearchMetrics {
+                    statuses_count: 20,
+                    accounts_count: 4,
+                    last_status_at: Some("2026-04-21".to_owned()),
+                },
+            ),
+            (
+                "rustlang".to_owned(),
+                TagSearchMetrics {
+                    statuses_count: 20,
+                    accounts_count: 5,
+                    last_status_at: Some("2026-04-20".to_owned()),
+                },
+            ),
+        ]
+    );
+}
+
+#[test]
+fn status_search_rank_prefers_content_matches_before_spoilers() {
+    assert!(
+        status_search_rank("rust", "rust release notes", "cw")
+            < status_search_rank("rust", "cw", "rust release notes")
+    );
+    assert!(
+        status_search_rank("rust", "rust release notes", "cw")
+            < status_search_rank("rust", "fedi post", "cw")
+    );
+}
+
+#[test]
+fn parse_status_search_query_extracts_basic_status_syntax_filters() {
+    assert_eq!(
+        parse_status_search_query("rust release from:me before:\"2025-03-01\" after:2025-02-01"),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust release".to_owned(),
+            from: Some("me".to_owned()),
+            before: Some("2025-03-01T00:00:00Z".to_owned()),
+            after: Some("2025-02-01T00:00:00Z".to_owned()),
+            language: None,
+            is_reply: None,
+            is_sensitive: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_expands_during_into_day_bounds() {
+    assert_eq!(
+        parse_status_search_query("\"rust release\" during:2025-03-01"),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust release".to_owned(),
+            from: None,
+            before: Some("2025-03-02T00:00:00Z".to_owned()),
+            after: Some("2025-03-01T00:00:00Z".to_owned()),
+            language: None,
+            is_reply: None,
+            is_sensitive: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_extracts_language_is_and_has_filters() {
+    assert_eq!(
+        parse_status_search_query(
+            "rust language:ja is:reply -is:sensitive has:media -has:poll has:embed"
+        ),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust".to_owned(),
+            from: None,
+            before: None,
+            after: None,
+            language: Some("ja".to_owned()),
+            is_reply: Some(true),
+            is_sensitive: Some(false),
+            has_media: Some(true),
+            has_poll: Some(false),
+            has_embed: Some(true),
+        }
+    );
+}
+
+#[test]
+fn status_matches_search_syntax_applies_language_and_is_filters() {
+    let parsed = parse_status_search_query("language:ja is:reply -is:sensitive");
+    assert!(status_matches_search_syntax(
+        &parsed,
+        true,
+        false,
+        Some("ja")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        false,
+        false,
+        Some("ja")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        true,
+        true,
+        Some("ja")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        true,
+        false,
+        Some("en")
+    ));
+}
+
+#[test]
+fn status_matches_search_metadata_applies_has_filters() {
+    let parsed = parse_status_search_query("has:media -has:poll has:embed");
+    assert!(status_matches_search_metadata(&parsed, true, false, true));
+    assert!(!status_matches_search_metadata(&parsed, false, false, true));
+    assert!(!status_matches_search_metadata(&parsed, true, true, true));
+    assert!(!status_matches_search_metadata(&parsed, true, false, false));
 }
 
 #[test]
@@ -1419,6 +2333,7 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("en".to_owned()),
         avatar_object_key: None,
@@ -1442,6 +2357,8 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         visibility: "public".to_owned(),
         sensitive: 0,
         language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        quote_state: "accepted".to_owned(),
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -1478,6 +2395,319 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
 }
 
 #[test]
+fn effective_local_quote_approval_defaults_to_public() {
+    let status = StatusRow {
+        id: "status-1".to_owned(),
+        account_id: "acct-1".to_owned(),
+        ap_id: None,
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: None,
+        content_html: "<p>hello</p>".to_owned(),
+        _text_content: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "public".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        quote_state: "accepted".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(effective_local_quote_approval_policy(&status), "public");
+}
+
+#[test]
+fn effective_local_quote_approval_forces_private_status_to_nobody() {
+    let status = StatusRow {
+        id: "status-1".to_owned(),
+        account_id: "acct-1".to_owned(),
+        ap_id: None,
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: None,
+        content_html: "<p>hello</p>".to_owned(),
+        _text_content: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "private".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_approval_policy: Some("public".to_owned()),
+        quote_state: "accepted".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(effective_local_quote_approval_policy(&status), "nobody");
+}
+
+#[test]
+fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
+    let account = LocalAccount {
+        id: "acct-1".to_owned(),
+        username: "alice".to_owned(),
+        access_email: "alice@example.com".to_owned(),
+        display_name: "Alice".to_owned(),
+        bio_html: String::new(),
+        bio_text: String::new(),
+        fields: Vec::new(),
+        locked: false,
+        bot: false,
+        discoverable: false,
+        default_post_visibility: "public".to_owned(),
+        default_quote_policy: "followers".to_owned(),
+        default_sensitive: false,
+        default_language: Some("en".to_owned()),
+        avatar_object_key: None,
+        avatar_content_type: None,
+        header_object_key: None,
+        header_content_type: None,
+        private_key_jwk: "{}".to_owned(),
+        public_key_pem: "pem".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+    let private_draft = cfwdon_domain::StatusDraft {
+        text: "hello".to_owned(),
+        visibility: cfwdon_domain::Visibility::FollowersOnly,
+        spoiler_text: String::new(),
+        sensitive: false,
+        language: Some("en".to_owned()),
+        quote_approval_policy: Some("public".to_owned()),
+        in_reply_to_id: None,
+        media_ids: Vec::new(),
+        poll: None,
+    };
+    let direct_draft = cfwdon_domain::StatusDraft {
+        visibility: cfwdon_domain::Visibility::Direct,
+        ..private_draft.clone()
+    };
+
+    assert_eq!(
+        initial_local_quote_approval_policy(&account, &private_draft),
+        "nobody"
+    );
+    assert_eq!(
+        initial_local_quote_approval_policy(&account, &direct_draft),
+        "nobody"
+    );
+}
+
+#[test]
+fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_it() {
+    let account = LocalAccount {
+        id: "acct-1".to_owned(),
+        username: "alice".to_owned(),
+        access_email: "alice@example.com".to_owned(),
+        display_name: "Alice".to_owned(),
+        bio_html: String::new(),
+        bio_text: String::new(),
+        fields: Vec::new(),
+        locked: false,
+        bot: false,
+        discoverable: false,
+        default_post_visibility: "public".to_owned(),
+        default_quote_policy: "followers".to_owned(),
+        default_sensitive: false,
+        default_language: Some("en".to_owned()),
+        avatar_object_key: None,
+        avatar_content_type: None,
+        header_object_key: None,
+        header_content_type: None,
+        private_key_jwk: "{}".to_owned(),
+        public_key_pem: "pem".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+    let draft = cfwdon_domain::StatusDraft {
+        text: "hello".to_owned(),
+        visibility: cfwdon_domain::Visibility::Public,
+        spoiler_text: String::new(),
+        sensitive: false,
+        language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        in_reply_to_id: None,
+        media_ids: Vec::new(),
+        poll: None,
+    };
+
+    assert_eq!(
+        initial_local_quote_approval_policy(&account, &draft),
+        "followers"
+    );
+}
+
+#[test]
+fn local_quote_policy_allows_matches_policy_rules() {
+    assert!(local_quote_policy_allows("public", false, false));
+    assert!(local_quote_policy_allows("followers", false, true));
+    assert!(!local_quote_policy_allows("followers", false, false));
+    assert!(!local_quote_policy_allows("nobody", false, true));
+    assert!(local_quote_policy_allows("nobody", true, false));
+}
+
+#[test]
+fn remote_quote_state_for_local_target_matches_policy_rules() {
+    let mut status = StatusRow {
+        id: "status-1".to_owned(),
+        account_id: "acct-1".to_owned(),
+        ap_id: None,
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: None,
+        content_html: "<p>hello</p>".to_owned(),
+        _text_content: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "public".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_approval_policy: Some("public".to_owned()),
+        quote_state: "accepted".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, false, false),
+        "accepted"
+    );
+
+    status.quote_approval_policy = Some("followers".to_owned());
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, true, false),
+        "accepted"
+    );
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, false, false),
+        "pending"
+    );
+
+    status.quote_approval_policy = Some("nobody".to_owned());
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, true, false),
+        "pending"
+    );
+
+    status.visibility = "private".to_owned();
+    status.quote_approval_policy = Some("public".to_owned());
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, true, false),
+        "pending"
+    );
+    assert_eq!(
+        remote_quote_state_for_local_target(&status, true, true),
+        "rejected"
+    );
+}
+
+#[test]
+fn effective_status_quote_state_defaults_to_accepted_without_quote() {
+    let status = StatusRow {
+        id: "status-1".to_owned(),
+        account_id: "acct-1".to_owned(),
+        ap_id: None,
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: None,
+        content_html: "<p>hello</p>".to_owned(),
+        _text_content: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "public".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        quote_state: "revoked".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(effective_status_quote_state(&status), "accepted");
+    assert!(!status_has_active_quote(&status));
+}
+
+#[test]
+fn status_has_active_quote_depends_on_quote_state() {
+    let mut status = StatusRow {
+        id: "status-1".to_owned(),
+        account_id: "acct-1".to_owned(),
+        ap_id: None,
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: Some("https://remote.example/@bob/1".to_owned()),
+        content_html: "<p>hello</p>".to_owned(),
+        _text_content: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "public".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        quote_state: "pending".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(effective_status_quote_state(&status), "pending");
+    assert!(status_has_active_quote(&status));
+
+    status.quote_state = "revoked".to_owned();
+    assert_eq!(effective_status_quote_state(&status), "revoked");
+    assert!(!status_has_active_quote(&status));
+}
+
+#[test]
+fn remote_status_quote_helpers_follow_quote_state() {
+    let mut status = RemoteStatusRow {
+        id: "remote-1".to_owned(),
+        actor_uri: "https://remote.example/users/bob".to_owned(),
+        object_uri: "https://remote.example/users/bob/statuses/1".to_owned(),
+        url: Some("https://remote.example/@bob/1".to_owned()),
+        in_reply_to_uri: None,
+        boost_of_uri: None,
+        quote_of_uri: Some("https://social.example/users/alice/statuses/1".to_owned()),
+        content_html: "<p>hello</p>".to_owned(),
+        spoiler_text: String::new(),
+        visibility: "public".to_owned(),
+        sensitive: 0,
+        language: Some("en".to_owned()),
+        quote_state: "accepted".to_owned(),
+        published_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    assert_eq!(effective_remote_status_quote_state(&status), "accepted");
+    assert!(remote_status_has_active_quote(&status));
+
+    status.quote_state = "revoked".to_owned();
+    assert_eq!(effective_remote_status_quote_state(&status), "revoked");
+    assert!(!remote_status_has_active_quote(&status));
+}
+
+#[test]
+fn quote_document_with_state_wraps_status_payload() {
+    let document = quote_document_with_state(
+        "accepted",
+        serde_json::json!({
+            "id": "status-1"
+        }),
+    );
+
+    assert_eq!(document["state"], serde_json::json!("accepted"));
+    assert_eq!(
+        document["quoted_status"]["id"],
+        serde_json::json!("status-1")
+    );
+}
+
+#[test]
+fn pending_quote_document_uses_placeholder_shape() {
+    let document = pending_quote_document();
+
+    assert_eq!(document["state"], serde_json::json!("pending"));
+    assert!(document["quoted_status"].is_null());
+}
+
+#[test]
+fn quote_placeholder_document_preserves_requested_state() {
+    let document = quote_placeholder_document("revoked");
+
+    assert_eq!(document["state"], serde_json::json!("revoked"));
+    assert!(document["quoted_status"].is_null());
+}
+
+#[test]
 fn build_status_update_activity_includes_quote_context_when_present() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
     let account = LocalAccount {
@@ -1492,6 +2722,7 @@ fn build_status_update_activity_includes_quote_context_when_present() {
         bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("en".to_owned()),
         avatar_object_key: None,
@@ -1530,6 +2761,74 @@ fn build_status_update_activity_includes_quote_context_when_present() {
                     .and_then(serde_json::Value::as_str)
                     == Some("https://misskey-hub.net/ns#_misskey_quote")
             }))
+    );
+}
+
+#[test]
+fn build_delete_quote_authorization_activity_uses_fep_044f_shape() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test");
+    let account = LocalAccount {
+        id: "acct-1".to_owned(),
+        username: "alice".to_owned(),
+        access_email: "alice@example.com".to_owned(),
+        display_name: "Alice".to_owned(),
+        bio_html: String::new(),
+        bio_text: String::new(),
+        fields: Vec::new(),
+        locked: false,
+        bot: false,
+        discoverable: false,
+        default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
+        default_sensitive: false,
+        default_language: Some("en".to_owned()),
+        avatar_object_key: None,
+        avatar_content_type: None,
+        header_object_key: None,
+        header_content_type: None,
+        private_key_jwk: "{}".to_owned(),
+        public_key_pem: "pem".to_owned(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+    };
+
+    let activity = serde_json::from_str::<serde_json::Value>(
+        &build_delete_quote_authorization_activity(
+            &config,
+            &account,
+            "https://remote.example/users/bob/statuses/1",
+            "https://social.example/users/alice/statuses/2",
+            "remote-status-1",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(activity["type"], serde_json::json!("Delete"));
+    assert_eq!(
+        activity["actor"],
+        serde_json::json!("https://social.example/users/alice")
+    );
+    assert_eq!(
+        activity["object"]["type"],
+        serde_json::json!("QuoteAuthorization")
+    );
+    assert_eq!(
+        activity["object"]["attributedTo"],
+        serde_json::json!("https://social.example/users/alice")
+    );
+    assert_eq!(
+        activity["object"]["interactingObject"],
+        serde_json::json!("https://remote.example/users/bob/statuses/1")
+    );
+    assert_eq!(
+        activity["object"]["interactionTarget"],
+        serde_json::json!("https://social.example/users/alice/statuses/2")
+    );
+    assert_eq!(
+        activity["id"],
+        serde_json::json!(
+            "https://social.example/users/alice/statuses/2/quote_authorizations/remote-status-1#delete"
+        )
     );
 }
 
@@ -1619,6 +2918,41 @@ fn build_timeline_link_header_preserves_non_cursor_filters() {
     assert!(header.contains("max_id=oldest"));
     assert!(header.contains("min_id=newest"));
     assert!(!header.contains("max_id=old&"));
+}
+
+#[test]
+fn derive_link_timeline_match_urls_normalizes_fragment_and_trailing_slash() {
+    assert_eq!(
+        derive_link_timeline_match_urls(" https://Example.com/articles/rust#intro "),
+        vec![
+            "https://Example.com/articles/rust#intro".to_owned(),
+            "https://example.com/articles/rust".to_owned(),
+            "https://example.com/articles/rust/".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn derive_link_timeline_match_urls_removes_tracking_query_params() {
+    assert_eq!(
+        derive_link_timeline_match_urls(
+            "https://example.com/articles/rust?utm_source=mastodon&fbclid=abc123"
+        ),
+        vec![
+            "https://example.com/articles/rust?utm_source=mastodon&fbclid=abc123".to_owned(),
+            "https://example.com/articles/rust".to_owned(),
+            "https://example.com/articles/rust/".to_owned(),
+            "https://example.com/articles/rust/?utm_source=mastodon&fbclid=abc123".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn derive_link_timeline_match_urls_keeps_invalid_url_as_is() {
+    assert_eq!(
+        derive_link_timeline_match_urls("not a url"),
+        vec!["not a url".to_owned()]
+    );
 }
 
 #[test]
@@ -1835,6 +3169,7 @@ fn build_update_person_activity_wraps_actor_document() {
         bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("en".to_owned()),
         avatar_object_key: None,
@@ -2046,6 +3381,135 @@ fn build_status_card_value_returns_mastodon_compatible_link_shape() {
     assert_eq!(card["url"], "https://example.com/article");
     assert_eq!(card["provider_name"], "example.com");
     assert_eq!(card["provider_url"], "https://example.com");
+    assert_eq!(card["title"], "article");
+    assert_eq!(card["description"], "hello");
+}
+
+#[test]
+fn build_status_card_value_derives_slug_title_and_provider_from_url() {
+    let card = build_status_card_value(
+        "Read this https://www.example.com/posts/hello-world.html?utm_source=test soon",
+    )
+    .unwrap();
+
+    assert_eq!(card["provider_name"], "example.com");
+    assert_eq!(card["provider_url"], "https://www.example.com");
+    assert_eq!(card["title"], "hello world");
+    assert_eq!(card["description"], "Read this soon");
+}
+
+#[test]
+fn build_status_card_value_truncates_long_descriptions() {
+    let long_prefix = "a".repeat(320);
+    let card = build_status_card_value(&format!("{long_prefix} https://example.com/post")).unwrap();
+
+    let description = card["description"].as_str().unwrap();
+    assert!(description.ends_with('…'));
+    assert!(description.chars().count() <= 301);
+}
+
+#[test]
+fn build_remote_status_card_value_prefers_link_attachment_metadata() {
+    let attachments = vec![crate::RemoteStatusAttachmentRow {
+        id: "att-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        remote_url: "https://news.example/articles/hello-world".to_owned(),
+        preview_url: Some("https://cdn.example/preview.png".to_owned()),
+        content_type: "text/html".to_owned(),
+        description: Some("Hello World Article".to_owned()),
+        blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_owned()),
+        width: Some(1200),
+        height: Some(630),
+        created_at: "2026-01-01T00:00:00Z".to_owned(),
+    }];
+
+    let card =
+        build_remote_status_card_value("context https://fallback.example/post", &attachments)
+            .unwrap();
+
+    assert_eq!(card["url"], "https://news.example/articles/hello-world");
+    assert_eq!(card["provider_name"], "news.example");
+    assert_eq!(card["provider_url"], "https://news.example");
+    assert_eq!(card["title"], "Hello World Article");
+    assert_eq!(card["description"], "context");
+    assert_eq!(card["image"], "https://cdn.example/preview.png");
+    assert_eq!(card["width"], 1200);
+    assert_eq!(card["height"], 630);
+    assert_eq!(card["blurhash"], "LKO2?U%2Tw=w]~RBVZRi};RPxuwH");
+}
+
+#[test]
+fn build_remote_status_card_value_falls_back_without_link_attachment() {
+    let attachments = vec![crate::RemoteStatusAttachmentRow {
+        id: "att-1".to_owned(),
+        status_id: "status-1".to_owned(),
+        remote_url: "https://cdn.example/image.png".to_owned(),
+        preview_url: None,
+        content_type: "image/png".to_owned(),
+        description: Some("alt".to_owned()),
+        blurhash: None,
+        width: None,
+        height: None,
+        created_at: "2026-01-01T00:00:00Z".to_owned(),
+    }];
+
+    let card =
+        build_remote_status_card_value("see https://example.com/post", &attachments).unwrap();
+
+    assert_eq!(card["url"], "https://example.com/post");
+    assert_eq!(card["provider_name"], "example.com");
+    assert!(card["image"].is_null());
+}
+
+#[test]
+fn extract_html_preview_metadata_reads_open_graph_fields() {
+    let metadata = extract_html_preview_metadata(
+        r#"
+        <html><head>
+        <meta property="og:title" content="Rust article">
+        <meta property="og:description" content="A deep dive">
+        <meta property="og:site_name" content="Example News">
+        <meta property="og:image" content="https://cdn.example/cover.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        </head></html>
+        "#,
+    );
+
+    assert_eq!(metadata.title.as_deref(), Some("Rust article"));
+    assert_eq!(metadata.description.as_deref(), Some("A deep dive"));
+    assert_eq!(metadata.provider_name.as_deref(), Some("Example News"));
+    assert_eq!(
+        metadata.image.as_deref(),
+        Some("https://cdn.example/cover.png")
+    );
+    assert_eq!(metadata.width, Some(1200));
+    assert_eq!(metadata.height, Some(630));
+}
+
+#[test]
+fn apply_html_preview_metadata_overwrites_basic_card_fields() {
+    let mut card = build_status_card_value("see https://example.com/post").unwrap();
+    let metadata = extract_html_preview_metadata(
+        r#"
+        <html>
+          <head>
+            <title>Ignored title</title>
+            <meta name="description" content="Summary here">
+            <meta property="og:title" content="Actual preview title">
+            <meta property="og:site_name" content="Example Publication">
+            <link rel="image_src" href="https://cdn.example/preview.jpg">
+          </head>
+        </html>
+        "#,
+    );
+
+    apply_html_preview_metadata(&mut card, &metadata);
+
+    assert_eq!(card["title"], "Actual preview title");
+    assert_eq!(card["description"], "Summary here");
+    assert_eq!(card["provider_name"], "Example Publication");
+    assert_eq!(card["image"], "https://cdn.example/preview.jpg");
 }
 
 #[test]
@@ -2064,6 +3528,7 @@ fn is_admin_account_matches_configured_emails() {
         bot: false,
         discoverable: false,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: None,
         avatar_object_key: None,
@@ -2167,6 +3632,86 @@ fn filter_notification_entries_by_query_applies_max_and_min_cursor() {
             .collect::<Vec<_>>(),
         vec!["notif-new".to_owned()]
     );
+}
+
+#[test]
+fn trim_context_ancestors_keeps_nearest_unauthenticated_entries() {
+    let ancestors = (0..50)
+        .map(|index| format!("ancestor-{index}"))
+        .collect::<Vec<_>>();
+
+    let trimmed = trim_context_ancestors(ancestors, false);
+
+    assert_eq!(trimmed.len(), 40);
+    assert_eq!(trimmed.first().map(String::as_str), Some("ancestor-10"));
+    assert_eq!(trimmed.last().map(String::as_str), Some("ancestor-49"));
+}
+
+#[test]
+fn trim_context_descendants_limits_unauthenticated_entries() {
+    let descendants = (0..80)
+        .map(|index| format!("descendant-{index}"))
+        .collect::<Vec<_>>();
+
+    let trimmed = trim_context_descendants(descendants, false);
+
+    assert_eq!(trimmed.len(), 60);
+    assert_eq!(trimmed.first().map(String::as_str), Some("descendant-0"));
+    assert_eq!(trimmed.last().map(String::as_str), Some("descendant-59"));
+}
+
+#[test]
+fn trim_context_ancestors_limits_authenticated_entries() {
+    let ancestors = (0..5000)
+        .map(|index| format!("ancestor-{index}"))
+        .collect::<Vec<_>>();
+
+    let trimmed = trim_context_ancestors(ancestors, true);
+
+    assert_eq!(trimmed.len(), AUTH_CONTEXT_LIMIT);
+    assert_eq!(trimmed.first().map(String::as_str), Some("ancestor-904"));
+    assert_eq!(trimmed.last().map(String::as_str), Some("ancestor-4999"));
+}
+
+#[test]
+fn trim_context_descendants_limits_authenticated_entries() {
+    let descendants = (0..5000)
+        .map(|index| format!("descendant-{index}"))
+        .collect::<Vec<_>>();
+
+    let trimmed = trim_context_descendants(descendants, true);
+
+    assert_eq!(trimmed.len(), AUTH_CONTEXT_LIMIT);
+    assert_eq!(trimmed.first().map(String::as_str), Some("descendant-0"));
+    assert_eq!(trimmed.last().map(String::as_str), Some("descendant-4095"));
+}
+
+#[test]
+fn context_async_refresh_id_uses_context_namespace() {
+    assert_eq!(
+        context_async_refresh_id("status-123"),
+        "context:status-123:refresh"
+    );
+}
+
+#[test]
+fn format_async_refresh_header_value_includes_retry_and_result_count() {
+    assert_eq!(
+        format_async_refresh_header_value("context:status-123:refresh", 3, Some(0)),
+        "id=\"context:status-123:refresh\", retry=3, result_count=0"
+    );
+}
+
+#[test]
+fn validate_poll_vote_submission_rejects_repeat_votes() {
+    let error = validate_poll_vote_submission(1, true, 2).unwrap_err();
+    assert_eq!(error, "you have already voted in this poll");
+}
+
+#[test]
+fn validate_poll_vote_submission_rejects_multi_choice_for_single_choice_poll() {
+    let error = validate_poll_vote_submission(0, false, 2).unwrap_err();
+    assert_eq!(error, "poll does not allow multiple choices");
 }
 
 #[test]

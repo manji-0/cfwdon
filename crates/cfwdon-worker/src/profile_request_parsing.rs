@@ -1,4 +1,7 @@
-use super::{MAX_IMAGE_UPLOAD_BYTES, ProfileMediaUpload, classify_media_kind, parse_optional_bool};
+use super::{
+    MAX_IMAGE_UPLOAD_BYTES, ProfileMediaUpload, classify_media_kind,
+    normalize_quote_approval_policy, parse_optional_bool,
+};
 use serde::Deserialize;
 use worker::{FormData, FormEntry, Request};
 
@@ -27,6 +30,7 @@ pub(crate) struct UpdateCredentialsRequest {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct UpdateCredentialsSource {
     pub(crate) privacy: Option<String>,
+    pub(crate) quote_policy: Option<String>,
     pub(crate) sensitive: Option<bool>,
     pub(crate) language: Option<String>,
 }
@@ -74,6 +78,7 @@ pub(crate) async fn parse_update_credentials_request(
             header_description: form.get_field("header_description"),
             source: Some(UpdateCredentialsSource {
                 privacy: form.get_field("source[privacy]"),
+                quote_policy: form.get_field("source[quote_policy]"),
                 sensitive: parse_optional_bool(form.get_field("source[sensitive]").as_deref())?,
                 language: form.get_field("source[language]"),
             }),
@@ -114,6 +119,8 @@ pub(crate) async fn parse_update_credentials_request(
                 source.language = None;
             }
         }
+
+        source.quote_policy = normalize_quote_approval_policy(source.quote_policy.take())?;
     }
 
     Ok(request)

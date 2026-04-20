@@ -109,11 +109,30 @@ pub(crate) fn note_targets_account_or_followers(
     account: &LocalAccount,
     config: &AppConfig,
 ) -> bool {
+    note_targets_account(object, account, config) || note_targets_followers(object, account, config)
+}
+
+pub(crate) fn note_targets_account(
+    object: &serde_json::Value,
+    account: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    let actor = actor_url(config, &account.username);
+    activity_audience_uris(&serde_json::json!({ "object": object }))
+        .into_iter()
+        .any(|audience| audience == actor)
+}
+
+pub(crate) fn note_targets_followers(
+    object: &serde_json::Value,
+    account: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
     let actor = actor_url(config, &account.username);
     let followers = format!("{actor}/followers");
     activity_audience_uris(&serde_json::json!({ "object": object }))
         .into_iter()
-        .any(|audience| audience == actor || audience == followers)
+        .any(|audience| audience == followers)
 }
 
 pub(crate) fn contains_public_audience(value: Option<&serde_json::Value>) -> bool {

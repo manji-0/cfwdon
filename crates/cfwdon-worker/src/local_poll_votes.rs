@@ -1,7 +1,7 @@
 use crate::{
     PollVoteIdRow, StatusPollRow, find_status_poll_vote_for_remote_actor_by_activity_uri,
     find_status_poll_vote_id_by_position, generate_entity_id, list_poll_vote_positions_for_account,
-    list_status_poll_options,
+    list_status_poll_options, validate_poll_vote_submission,
 };
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
@@ -26,6 +26,9 @@ pub(crate) async fn apply_poll_vote(
     }
 
     let existing = list_poll_vote_positions_for_account(db, &poll.id, account_id).await?;
+    validate_poll_vote_submission(existing.len(), poll.multiple != 0, choices.len())
+        .map_err(Error::RustError)?;
+
     for choice in existing {
         let bindings = [
             D1Type::Text(poll.id.as_str()),

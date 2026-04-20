@@ -7,29 +7,23 @@ route はあるが、互換性の詰めが残っているもの。
 ## Discovery / OAuth / Meta
 
 - [ ] `GET /oauth/userinfo`
-  OAuth scope と claims の定義を upstream に寄せる。
+  userinfo claims、401、app bearer rejection は寄せたので、OAuth user token + `profile` scope semantics を upstream に寄せる。
 - [ ] `POST /oauth/userinfo`
-  OAuth scope と claims の定義を upstream に寄せる。
+  userinfo claims、401、app bearer rejection は寄せたので、OAuth user token + `profile` scope semantics を upstream に寄せる。
 
 ## Instance / Apps / Trends
 
-- [ ] `GET /api/v1/apps/verify_credentials`
-  response shape は寄せたので、bearer application token の検証を upstream に寄せる。
 - [ ] `POST /api/v1/emails/confirmations`
-  auth gate は入ったので、mail dispatch 条件と application ownership 条件を upstream に寄せる。
+  401/403 と confirmed-email state は寄せたので、mail dispatch 条件と application ownership 条件を upstream に寄せる。
 - [ ] `GET /api/v1/emails/check_confirmation`
-  boolean response と auth gate は入ったので、email confirmation 状態判定を upstream に寄せる。
+  authenticated local account の email presence で confirmation bool は返すので、unconfirmed-user/application-token semantics を upstream に寄せる。
 
 ## Timelines / Search
 
-- [ ] `GET /api/v1/timelines/link`
-  link timeline の trending 判定と article 単位の抽出精度を upstream に寄せる。
 - [ ] `GET /api/v1/timelines/home`
-  followed hashtag 混在、sorting、cursor pagination は入ったので、access control settings 差分を upstream に寄せる。
-- [ ] `GET /api/v1/timelines/tag/:hashtag`
-  tag filter / pagination / remote 混在は入っているので、public preview access control settings を upstream に寄せる。
+  followed hashtag 混在、sorting、cursor pagination、401 invalid access token、app bearer rejection は入ったので、OAuth user token semantics を upstream に寄せる。
 - [ ] `GET /api/v2/search`
-  `docs/full-todo.md` にある URL resolve / hashtag resolve / ranking の差分をここで追う。
+  HTTP URL resolve-only semantics、exact handle prepend、short-query gating、acct-aware account ranking/following boost、popularity tie-break、profile note/bio matching、statuses の account_id/min_id/max_id filter、statuses relevance-then-recency sorting、basic status query syntax (`from/before/after/during/language/is:/has:media/poll/embed`)、hashtags offset と usage/recency ranking は寄せたので、advanced query syntax / FTS quality の差分をここで追う。
 - [ ] `GET /api/v1/streaming`
   streaming transport と channel multiplexing を upstream に寄せる。
 - [ ] `GET /api/v1/streaming/(*any)`
@@ -37,30 +31,13 @@ route はあるが、互換性の詰めが残っているもの。
 
 ## Statuses / Polls
 
-- [ ] `GET /api/v1/statuses/:id/context`
-  ancestor / descendant の組み立ては改善済み。未認証時の limit と `Mastodon-Async-Refresh` を upstream に寄せる。
-- [ ] `POST /api/v1/statuses/:id/quotes/:id/revoke`
-  quote revoke の remote 連携と response semantics を upstream に寄せる。
-- [ ] `GET /api/v1/polls/:id`
-  private / remote permissions と remote poll の扱いを upstream に寄せる。
-- [ ] `POST /api/v1/polls/:id/votes`
-  local / remote vote の反映、取り消し、再解決の精度を上げる。
-
-## Accounts / Profile
-
-- [ ] `PATCH /api/v1/accounts/update_credentials`
-  profile fields / media / ActivityPub `Update(Person)` 反映を含めて upstream 挙動に寄せる。
-- [ ] `GET /api/v1/directory`
-  remote discoverable account は混在したので、ordering と ranking 精度を upstream に寄せる。
+- [ ] `POST /api/v1/statuses`
+  quote_approval_policy の保存、account default quote policy、quote+media/poll 制約、local/remote quote state と count/list/revoke 整合、scheduled_at の validation と scheduled status persistence/media attachment expansion、idempotency echo、registered app bearer path の application_id echo は寄せたので、manual acceptance semantics と OAuth token ownership semantics を upstream に寄せる。
 
 ## Accounts / Endorsements
 
-- [ ] `GET /api/v1/accounts/:id/endorsements`
-  remote account の featured collection 取得を含めて account endorsement 一覧を upstream に寄せる。
 - [ ] `POST /api/v1/accounts`
   account registration / approval / token 発行の挙動を upstream に寄せる。
-- [ ] `POST /api/v1/accounts/:id/remove_from_followers`
-  follower removal の federation semantics を upstream に寄せる。
 
 ## Push Subscription
 
@@ -78,21 +55,19 @@ route はあるが、互換性の詰めが残っているもの。
 ## Status Extras
 
 - [ ] `PUT /api/v1/statuses/:id/interaction_policy`
-  response shape ではなく、quote policy の保存と response への反映を upstream に寄せる。
+  quote policy の保存と response 反映、local/remote quote pending 反映は寄せたので、manual acceptance semantics を upstream に寄せる。
 - [ ] `PATCH /api/v1/statuses/:id/interaction_policy`
-  response shape ではなく、quote policy の保存と response への反映を upstream に寄せる。
+  quote policy の保存と response 反映、local/remote quote pending 反映は寄せたので、manual acceptance semantics を upstream に寄せる。
 - [ ] `POST /api/v1/statuses/:id/translate`
-  response shape は寄せたので、翻訳 provider 連携と target language semantics を upstream に寄せる。
+  404/403、target `lang` semantics、response shape は寄せたので、翻訳 provider 連携を upstream に寄せる。
 
 ## Scheduled Statuses
 
 - [ ] `GET /api/v1/scheduled_statuses`
-  一覧 shape ではなく永続化と pagination を upstream に寄せる。
+  owner-scoped persistence、media attachment expansion、idempotency echo、pagination、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。
 - [ ] `GET /api/v1/scheduled_statuses/:id`
-  detail shape は寄せたので、永続化と ownership 404 を upstream に寄せる。
+  owner-scoped persistence と 404、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。
 - [ ] `PUT /api/v1/scheduled_statuses/:id`
-  detail shape は寄せたので、scheduled_at 更新 semantics と validation を upstream に寄せる。
+  owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。
 - [ ] `PATCH /api/v1/scheduled_statuses/:id`
-  detail shape は寄せたので、scheduled_at 更新 semantics と validation を upstream に寄せる。
-- [ ] `DELETE /api/v1/scheduled_statuses/:id`
-  削除 response shape ではなく、scheduled status delete semantics を upstream に寄せる。
+  owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。

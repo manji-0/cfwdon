@@ -1,5 +1,9 @@
-use super::{StatusDraft, normalize_status_poll, parse_media_ids_from_form, parse_optional_bool};
+use super::{
+    StatusDraft, normalize_quote_approval_policy, normalize_status_poll, parse_media_ids_from_form,
+    parse_optional_bool,
+};
 use serde::Deserialize;
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::{FormData, FormEntry, Request};
 
 #[derive(Debug, Default, Deserialize)]
@@ -8,7 +12,9 @@ pub(crate) struct CreateStatusRequest {
     pub(crate) media_ids: Option<Vec<String>>,
     pub(crate) poll: Option<CreateStatusPollRequest>,
     pub(crate) in_reply_to_id: Option<String>,
+    pub(crate) scheduled_at: Option<String>,
     pub(crate) quoted_status_id: Option<String>,
+    pub(crate) quote_approval_policy: Option<String>,
     pub(crate) sensitive: Option<bool>,
     pub(crate) spoiler_text: Option<String>,
     pub(crate) visibility: Option<String>,
@@ -17,6 +23,8 @@ pub(crate) struct CreateStatusRequest {
 
 pub(crate) struct ParsedStatusDraft {
     pub(crate) draft: StatusDraft,
+    pub(crate) idempotency_key: Option<String>,
+    pub(crate) scheduled_at: Option<String>,
     pub(crate) quoted_status_id: Option<String>,
 }
 
@@ -64,6 +72,10 @@ pub(crate) struct AccountStatusesQuery {
 pub(crate) async fn parse_status_draft(
     req: &mut Request,
 ) -> std::result::Result<ParsedStatusDraft, String> {
+    let idempotency_key = req
+        .headers()
+        .get("Idempotency-Key")
+        .map_err(|error| format!("failed to read Idempotency-Key header: {error}"))?;
     let content_type = req
         .headers()
         .get("Content-Type")
@@ -86,13 +98,16 @@ pub(crate) async fn parse_status_draft(
             media_ids: parse_media_ids_from_form(&form),
             poll: parse_status_poll_from_form(&form)?,
             in_reply_to_id: form.get_field("in_reply_to_id"),
+            scheduled_at: form.get_field("scheduled_at"),
             quoted_status_id: form.get_field("quoted_status_id"),
+            quote_approval_policy: form.get_field("quote_approval_policy"),
             sensitive: parse_optional_bool(form.get_field("sensitive").as_deref())?,
             spoiler_text: form.get_field("spoiler_text"),
             visibility: form.get_field("visibility"),
             language: form.get_field("language"),
         }
     };
+    let scheduled_at = normalize_scheduled_at(request.scheduled_at.as_deref())?;
 
     let text = request.status.unwrap_or_default().trim().to_owned();
     let poll = normalize_status_poll(request.poll)?;
@@ -112,6 +127,11 @@ pub(crate) async fn parse_status_draft(
     if poll.is_some() && !media_ids.is_empty() {
         return Err("poll cannot be combined with media attachments yet".to_owned());
     }
+    if request.quoted_status_id.as_ref().is_some() && (poll.is_some() || !media_ids.is_empty()) {
+        return Err(
+            "quoted statuses cannot be combined with media attachments or polls".to_owned(),
+        );
+    }
 
     let visibility = match request.visibility.as_deref().map(str::trim) {
         Some("") | None => super::Visibility::Public,
@@ -119,6 +139,7 @@ pub(crate) async fn parse_status_draft(
             "visibility must be one of: public, unlisted, private, direct".to_owned()
         })?,
     };
+    let quote_approval_policy = normalize_quote_approval_policy(request.quote_approval_policy)?;
 
     Ok(ParsedStatusDraft {
         draft: StatusDraft {
@@ -130,6 +151,7 @@ pub(crate) async fn parse_status_draft(
                 .language
                 .map(|value| value.trim().to_ascii_lowercase())
                 .filter(|value| !value.is_empty()),
+            quote_approval_policy,
             in_reply_to_id: request
                 .in_reply_to_id
                 .map(|value| value.trim().to_owned())
@@ -137,11 +159,39 @@ pub(crate) async fn parse_status_draft(
             media_ids,
             poll,
         },
+        idempotency_key: idempotency_key
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        scheduled_at,
         quoted_status_id: request
             .quoted_status_id
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty()),
     })
+}
+
+pub(crate) fn normalize_scheduled_at(
+    value: Option<&str>,
+) -> std::result::Result<Option<String>, String> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|_| "scheduled_at must be a valid RFC 3339 datetime".to_owned())?
+        .format(&Rfc3339)
+        .map(Some)
+        .map_err(|error| format!("failed to format scheduled_at: {error}"))
+}
+
+pub(crate) fn validate_scheduled_at_minimum_offset(value: &str) -> std::result::Result<(), String> {
+    let scheduled_at = OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|_| "scheduled_at must be a valid RFC 3339 datetime".to_owned())?;
+    if scheduled_at <= OffsetDateTime::now_utc() + Duration::minutes(5) {
+        return Err(
+            "Validation failed: Scheduled at The scheduled date must be in the future".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn parse_status_poll_from_form(

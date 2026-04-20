@@ -69,7 +69,11 @@ async fn resolve_local_interaction_target_account(
 ) -> Result<Option<LocalAccount>> {
     if let Some(account_id) = find_first_account_id_by_query(
         db,
-        "SELECT account_id FROM statuses WHERE quote_of_uri = ?1 LIMIT 1",
+        "SELECT account_id
+         FROM statuses
+         WHERE quote_of_uri = ?1
+           AND COALESCE(quote_state, 'accepted') != 'revoked'
+         LIMIT 1",
         remote_status_uri,
     )
     .await?

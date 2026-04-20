@@ -1,6 +1,7 @@
 use super::normalize_hashtag;
 use serde::Deserialize;
 use std::collections::HashSet;
+use url::Url;
 use worker::{D1Database, Request, Result};
 
 #[derive(Debug, Default, Deserialize)]
@@ -65,6 +66,53 @@ pub(crate) fn timeline_limit(pagination: &TimelinePaginationQuery) -> u32 {
 
 pub(crate) fn timeline_fetch_limit(limit: u32) -> u32 {
     limit.saturating_mul(4).clamp(limit, 160)
+}
+
+pub(crate) fn derive_link_timeline_match_urls(value: &str) -> Vec<String> {
+    let target = value.trim();
+    if target.is_empty() {
+        return Vec::new();
+    }
+
+    let mut urls = vec![target.to_owned()];
+    let Ok(parsed) = Url::parse(target) else {
+        return urls;
+    };
+
+    let mut normalized = parsed;
+    normalized.set_fragment(None);
+    push_unique_link_timeline_url(&mut urls, normalized.to_string());
+    if let Some(variant) = remove_tracking_query_params_url(&normalized) {
+        push_unique_link_timeline_url(&mut urls, variant.clone());
+        if let Ok(parsed_variant) = Url::parse(&variant)
+            && let Some(toggled) = toggle_trailing_slash_url(&parsed_variant)
+        {
+            push_unique_link_timeline_url(&mut urls, toggled);
+        }
+    }
+    if let Some(variant) = toggle_trailing_slash_url(&normalized) {
+        push_unique_link_timeline_url(&mut urls, variant);
+    }
+
+    urls
+}
+
+pub(crate) fn canonicalize_link_timeline_url(value: &str) -> Option<String> {
+    let target = value.trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    let Ok(mut parsed) = Url::parse(target) else {
+        return Some(target.to_owned());
+    };
+
+    parsed.set_fragment(None);
+    if let Some(variant) = remove_tracking_query_params_url(&parsed) {
+        return Some(variant);
+    }
+
+    Some(parsed.to_string())
 }
 
 pub(crate) async fn resolve_timeline_cursor(
@@ -143,6 +191,69 @@ fn normalize_timeline_cursor(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn push_unique_link_timeline_url(urls: &mut Vec<String>, value: String) {
+    if !value.is_empty() && !urls.iter().any(|url| url == &value) {
+        urls.push(value);
+    }
+}
+
+fn toggle_trailing_slash_url(url: &Url) -> Option<String> {
+    let path = url.path();
+    if path == "/" || path.is_empty() {
+        return None;
+    }
+
+    let toggled_path = if path.ends_with('/') {
+        path.trim_end_matches('/').to_owned()
+    } else {
+        format!("{path}/")
+    };
+    if toggled_path.is_empty() {
+        return None;
+    }
+
+    let mut variant = url.clone();
+    variant.set_path(&toggled_path);
+    Some(variant.to_string())
+}
+
+fn remove_tracking_query_params_url(url: &Url) -> Option<String> {
+    let mut filtered = Vec::new();
+    let mut removed = false;
+
+    for (key, value) in url.query_pairs() {
+        let key_lower = key.to_ascii_lowercase();
+        if key_lower.starts_with("utm_")
+            || matches!(
+                key_lower.as_str(),
+                "fbclid" | "gclid" | "mc_cid" | "mc_eid" | "igshid"
+            )
+        {
+            removed = true;
+            continue;
+        }
+        filtered.push((key.into_owned(), value.into_owned()));
+    }
+
+    if !removed {
+        return None;
+    }
+
+    let mut variant = url.clone();
+    {
+        let mut query = variant.query_pairs_mut();
+        query.clear();
+        for (key, value) in filtered {
+            query.append_pair(&key, &value);
+        }
+    }
+    if variant.query() == Some("") {
+        variant.set_query(None);
+    }
+
+    Some(variant.to_string())
 }
 
 async fn resolve_timeline_cursor_timestamp(

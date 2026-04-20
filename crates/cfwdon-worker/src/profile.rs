@@ -1,10 +1,11 @@
 use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
     Result, RouteContext, UpdateCredentialsField, UpdateCredentialsRequest,
-    apply_account_credentials_update, count_pending_follow_requests, extract_authenticated_user,
-    load_account_stats, load_config, media_object_url, normalize_hashtag,
-    parse_update_credentials_request, render_profile_field_value_html, resolve_account_reference,
-    resolve_local_account, resolve_lookup_account,
+    apply_account_credentials_update, count_pending_follow_requests,
+    enqueue_profile_update_activities, extract_authenticated_user, load_account_stats, load_config,
+    media_object_url, normalize_hashtag, parse_update_credentials_request,
+    render_profile_field_value_html, resolve_account_reference, resolve_local_account,
+    resolve_lookup_account,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -143,7 +144,7 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
         "posting:default:visibility": account.default_post_visibility,
         "posting:default:sensitive": account.default_sensitive,
         "posting:default:language": account.default_language,
-        "posting:default:quote_policy": "public",
+        "posting:default:quote_policy": account.default_quote_policy,
         "posting:default:privacy": account.default_post_visibility,
         "posting:default:media_sensitive": account.default_sensitive,
         "posting:default:content_type": "text/plain",
@@ -262,6 +263,7 @@ async fn delete_profile_media_response(
     let account = resolve_local_account(&db, &user).await?;
     clear_profile_media(&db, &bucket, &account, field).await?;
     let account = resolve_local_account(&db, &user).await?;
+    enqueue_profile_update_activities(&db, &config, &account).await?;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;

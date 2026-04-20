@@ -217,20 +217,20 @@ pub(crate) fn build_instance_v2_document(
             "translation": {
                 "enabled": false,
             },
-            "timelines_access": {
-                "live_feeds": {
-                    "local": "public",
-                    "remote": "public",
+                "timelines_access": {
+                    "live_feeds": {
+                        "local": config.timeline_live_feeds_local.as_str(),
+                        "remote": config.timeline_live_feeds_remote.as_str(),
+                    },
+                    "hashtag_feeds": {
+                        "local": config.timeline_hashtag_feeds_local.as_str(),
+                        "remote": config.timeline_hashtag_feeds_remote.as_str(),
+                    },
+                    "trending_link_feeds": {
+                        "local": config.timeline_trending_link_feeds_local.as_str(),
+                        "remote": config.timeline_trending_link_feeds_remote.as_str(),
+                    },
                 },
-                "hashtag_feeds": {
-                    "local": "public",
-                    "remote": "public",
-                },
-                "trending_link_feeds": {
-                    "local": "public",
-                    "remote": "public",
-                },
-            },
             "limited_federation": false,
         }),
     );

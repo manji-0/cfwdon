@@ -95,6 +95,7 @@ pub(crate) async fn collect_status_notification_entries(
             visibility: status.visibility.clone(),
             sensitive: status.sensitive,
             language: status.language.clone(),
+            quote_state: status.quote_state.clone(),
             published_at: status.published_at.clone(),
         };
         let status_response =

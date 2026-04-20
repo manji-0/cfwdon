@@ -1,8 +1,9 @@
 use crate::{
     AppConfig, RemoteActorProfile, RemoteStatusAttachmentRow, build_remote_status_response,
-    delete_remote_status_poll_by_status_id, extract_remote_poll_draft,
-    find_remote_actor_by_actor_uri, generate_entity_id, insert_remote_status_edit_snapshot,
-    normalize_status_history_entry, now_iso_string, quote_target_uri_from_object,
+    count_followers_by_actor, delete_remote_status_poll_by_status_id, extract_remote_poll_draft,
+    find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
+    generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
+    now_iso_string, quote_target_uri_from_object, remote_quote_state_for_local_target,
     render_status_html, replace_remote_status_attachments, upsert_remote_status_poll,
     visibility_from_activitypub_object,
 };
@@ -26,7 +27,25 @@ pub(crate) struct RemoteStatusRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
+    #[serde(default = "default_remote_quote_state")]
+    pub(crate) quote_state: String,
     pub(crate) published_at: String,
+}
+
+pub(crate) fn default_remote_quote_state() -> String {
+    "accepted".to_owned()
+}
+
+pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &str {
+    if status.quote_of_uri.is_none() {
+        "accepted"
+    } else {
+        status.quote_state.as_str()
+    }
+}
+
+pub(crate) fn remote_status_has_active_quote(status: &RemoteStatusRow) -> bool {
+    status.quote_of_uri.is_some() && effective_remote_status_quote_state(status) != "revoked"
 }
 
 pub(crate) async fn find_remote_status_by_id(
@@ -35,7 +54,7 @@ pub(crate) async fn find_remote_status_by_id(
 ) -> Result<Option<RemoteStatusRow>> {
     let status_id = D1Type::Text(status_id);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
          WHERE id = ?1
          LIMIT 1",
@@ -45,13 +64,42 @@ pub(crate) async fn find_remote_status_by_id(
     .await
 }
 
+pub(crate) async fn find_remote_status_raw_object_by_id(
+    db: &D1Database,
+    status_id: &str,
+) -> Result<Option<serde_json::Value>> {
+    #[derive(Deserialize)]
+    struct RemoteStatusRawObjectRow {
+        raw_object_json: String,
+    }
+
+    let status_id = D1Type::Text(status_id);
+    let Some(row) = db
+        .prepare(
+            "SELECT raw_object_json
+             FROM remote_statuses
+             WHERE id = ?1
+             LIMIT 1",
+        )
+        .bind_refs(&status_id)?
+        .first::<RemoteStatusRawObjectRow>(None)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    serde_json::from_str(&row.raw_object_json)
+        .map(Some)
+        .map_err(|error| Error::RustError(format!("failed to parse remote status object: {error}")))
+}
+
 pub(crate) async fn find_remote_status_by_object_uri(
     db: &D1Database,
     object_uri: &str,
 ) -> Result<Option<RemoteStatusRow>> {
     let object_uri = D1Type::Text(object_uri);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
          WHERE object_uri = ?1
          LIMIT 1",
@@ -67,7 +115,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
 ) -> Result<Option<RemoteStatusRow>> {
     let value = D1Type::Text(value);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
          WHERE object_uri = ?1
             OR url = ?1
@@ -92,6 +140,8 @@ struct RemoteStatusEditStateRow {
     visibility: String,
     sensitive: i32,
     language: Option<String>,
+    #[serde(default = "default_remote_quote_state")]
+    quote_state: String,
     published_at: String,
     raw_object_json: String,
 }
@@ -111,6 +161,7 @@ impl RemoteStatusEditStateRow {
             visibility: self.visibility.clone(),
             sensitive: self.sensitive,
             language: self.language.clone(),
+            quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
         }
     }
@@ -123,7 +174,7 @@ async fn find_remote_status_edit_state_by_object_uri(
     let object_uri = D1Type::Text(object_uri);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri,
-                content_html, spoiler_text, visibility, sensitive, language, published_at,
+                content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at,
                 raw_object_json
          FROM remote_statuses
          WHERE object_uri = ?1
@@ -208,6 +259,8 @@ pub(crate) async fn upsert_remote_status(
         .and_then(|map| map.keys().next().cloned());
     let status_id = generate_entity_id(16)?;
     let quote_of_uri = quote_target_uri_from_object(object);
+    let quote_state =
+        evaluate_remote_quote_state(db, config, actor, quote_of_uri.as_deref()).await?;
     let revision_at = now_iso_string()?;
 
     if previous
@@ -248,6 +301,7 @@ pub(crate) async fn upsert_remote_status(
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
+        D1Type::Text(quote_state),
         D1Type::Text(published_at.as_str()),
         D1Type::Text(raw_object_json.as_str()),
         D1Type::Text(revision_at.as_str()),
@@ -266,14 +320,15 @@ pub(crate) async fn upsert_remote_status(
             visibility,
             sensitive,
             language,
+            quote_state,
             published_at,
             raw_object_json,
             created_at,
             updated_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
             CURRENT_TIMESTAMP,
-            ?15
+            ?16
         )
         ON CONFLICT(object_uri) DO UPDATE SET
             actor_uri = excluded.actor_uri,
@@ -286,9 +341,13 @@ pub(crate) async fn upsert_remote_status(
             visibility = excluded.visibility,
             sensitive = excluded.sensitive,
             language = excluded.language,
+            quote_state = CASE
+                WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
+                ELSE excluded.quote_state
+            END,
             published_at = excluded.published_at,
             raw_object_json = excluded.raw_object_json,
-            updated_at = ?15",
+            updated_at = ?16",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -385,6 +444,7 @@ fn attachment_uri(value: &serde_json::Value) -> Option<String> {
 
 pub(crate) async fn upsert_remote_reblog_status(
     db: &D1Database,
+    config: &AppConfig,
     remote_actor: &RemoteActorProfile,
     activity: &serde_json::Value,
 ) -> Result<()> {
@@ -414,6 +474,8 @@ pub(crate) async fn upsert_remote_reblog_status(
     let status_id = generate_entity_id(16)?;
     let visibility = visibility_from_activitypub_object(activity);
     let quote_of_uri = quote_target_uri_from_object(activity);
+    let quote_state =
+        evaluate_remote_quote_state(db, config, remote_actor, quote_of_uri.as_deref()).await?;
     let bindings = [
         D1Type::Text(status_id.as_str()),
         D1Type::Text(remote_actor.actor_uri.as_str()),
@@ -430,6 +492,7 @@ pub(crate) async fn upsert_remote_reblog_status(
         D1Type::Text(visibility.as_str()),
         D1Type::Integer(0),
         D1Type::Null,
+        D1Type::Text(quote_state),
         D1Type::Text(published_at.as_str()),
         D1Type::Text(raw_object_json.as_str()),
     ];
@@ -447,12 +510,13 @@ pub(crate) async fn upsert_remote_reblog_status(
             visibility,
             sensitive,
             language,
+            quote_state,
             published_at,
             raw_object_json,
             created_at,
             updated_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -467,6 +531,10 @@ pub(crate) async fn upsert_remote_reblog_status(
             visibility = excluded.visibility,
             sensitive = excluded.sensitive,
             language = excluded.language,
+            quote_state = CASE
+                WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
+                ELSE excluded.quote_state
+            END,
             published_at = excluded.published_at,
             raw_object_json = excluded.raw_object_json,
             updated_at = CURRENT_TIMESTAMP",
@@ -475,4 +543,50 @@ pub(crate) async fn upsert_remote_reblog_status(
     .run()
     .await?;
     Ok(())
+}
+
+async fn evaluate_remote_quote_state(
+    db: &D1Database,
+    config: &AppConfig,
+    actor: &RemoteActorProfile,
+    quote_of_uri: Option<&str>,
+) -> Result<&'static str> {
+    let Some(quote_of_uri) = quote_of_uri else {
+        return Ok("accepted");
+    };
+    let Some(status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? else {
+        return Ok("accepted");
+    };
+    let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok("accepted");
+    };
+    let remote_actor_follows_owner =
+        count_followers_by_actor(db, &owner.id, &actor.actor_uri).await? > 0;
+    let blocked_by_owner = crate::is_blocking_actor(db, &owner.id, &actor.actor_uri).await?;
+    Ok(remote_quote_state_for_local_target(
+        &status,
+        remote_actor_follows_owner,
+        blocked_by_owner,
+    ))
+}
+
+pub(crate) async fn update_remote_status_quote_state(
+    db: &D1Database,
+    status_id: &str,
+    quote_state: &str,
+) -> Result<RemoteStatusRow> {
+    let bindings = [D1Type::Text(quote_state), D1Type::Text(status_id)];
+    db.prepare(
+        "UPDATE remote_statuses
+         SET quote_state = ?1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    find_remote_status_by_id(db, status_id)
+        .await?
+        .ok_or_else(|| Error::RustError("remote status not found".to_owned()))
 }

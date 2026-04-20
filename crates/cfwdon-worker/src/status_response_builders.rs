@@ -1,25 +1,49 @@
 use crate::{
     AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url, can_view_local_status, count_local_status_favourites,
-    count_local_status_reblogs, count_remote_status_favourites, count_remote_status_reblogs,
-    count_rows, find_account_by_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
-    has_remote_status_edit_snapshots, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    RemoteStatusRow, StatusRow, actor_url, build_remote_status_card_value, build_status_card_value,
+    can_view_local_status, count_local_status_favourites, count_local_status_reblogs,
+    count_remote_status_favourites, count_remote_status_reblogs, count_rows,
+    effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
+    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
     is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
     is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
     is_remote_status_reblogged_by, load_in_reply_to_account_id, load_mastodon_poll_response,
     load_remote_mastodon_poll_response, load_remote_status_updated_at, load_status_filtered,
     load_status_updated_at, strip_html_tags,
 };
-use worker::{D1Database, Result};
+use worker::{D1Database, Result, d1::D1Type};
+
+pub(crate) fn quote_document_with_state(
+    state: &str,
+    quoted_status: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "state": state,
+        "quoted_status": quoted_status,
+    })
+}
+
+pub(crate) fn pending_quote_document() -> serde_json::Value {
+    quote_placeholder_document("pending")
+}
+
+pub(crate) fn quote_placeholder_document(state: &str) -> serde_json::Value {
+    serde_json::json!({
+        "state": state,
+        "quoted_status": serde_json::Value::Null,
+    })
+}
 
 async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
     Ok(count_rows(
         db,
         "SELECT COUNT(*) AS count
              FROM statuses
-             WHERE quote_of_uri = ?1",
+             WHERE quote_of_uri = ?1
+               AND quote_state = 'accepted'",
         status_uri,
     )
     .await?
@@ -27,10 +51,132 @@ async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result
             db,
             "SELECT COUNT(*) AS count
                  FROM remote_statuses
-                 WHERE quote_of_uri = ?1",
+                 WHERE quote_of_uri = ?1
+                   AND quote_state = 'accepted'",
             status_uri,
         )
         .await?)
+}
+
+async fn viewer_blocks_domain(db: &D1Database, account_id: &str, domain: &str) -> Result<bool> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(domain)];
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM account_domain_blocks
+             WHERE account_id = ?1
+               AND domain = ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    Ok(row
+        .as_ref()
+        .and_then(|value| value.get("count"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        > 0)
+}
+
+async fn quote_state_for_local_quoted_status(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    quoted_account: &LocalAccount,
+) -> Result<Option<&'static str>> {
+    let quoted_actor_uri = actor_url(config, &quoted_account.username);
+    if is_blocking_actor(db, &viewer.id, &quoted_actor_uri).await? {
+        return Ok(Some("blocked_account"));
+    }
+    if is_muted_actor(db, &viewer.id, &quoted_actor_uri).await? {
+        return Ok(Some("muted_account"));
+    }
+    Ok(None)
+}
+
+async fn quote_state_for_remote_quoted_status(
+    db: &D1Database,
+    viewer: &LocalAccount,
+    actor: &RemoteActorRow,
+) -> Result<Option<&'static str>> {
+    if is_blocking_actor(db, &viewer.id, &actor.actor_uri).await? {
+        return Ok(Some("blocked_account"));
+    }
+    if viewer_blocks_domain(db, &viewer.id, &actor.domain).await? {
+        return Ok(Some("blocked_domain"));
+    }
+    if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+        return Ok(Some("muted_account"));
+    }
+    Ok(None)
+}
+
+pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &str {
+    if matches!(status.visibility.as_str(), "private" | "direct") {
+        "nobody"
+    } else {
+        status.quote_approval_policy.as_deref().unwrap_or("public")
+    }
+}
+
+async fn build_local_quote_approval(
+    db: &D1Database,
+    status: &StatusRow,
+    viewer: Option<&LocalAccount>,
+    owner: &LocalAccount,
+) -> Result<serde_json::Value> {
+    let policy = effective_local_quote_approval_policy(status);
+    let automatic = match policy {
+        "public" => vec![serde_json::json!("public")],
+        "followers" => vec![serde_json::json!("followers")],
+        _ => Vec::new(),
+    };
+    let current_user = match policy {
+        "public" => "automatic",
+        "followers" => {
+            if viewer.map(|viewer| viewer.id == owner.id).unwrap_or(false) {
+                "automatic"
+            } else if let Some(viewer) = viewer {
+                if is_local_follower_authorized(db, &viewer.id, &owner.id).await? {
+                    "automatic"
+                } else {
+                    "denied"
+                }
+            } else {
+                "denied"
+            }
+        }
+        _ => {
+            if viewer.map(|viewer| viewer.id == owner.id).unwrap_or(false) {
+                "automatic"
+            } else {
+                "denied"
+            }
+        }
+    };
+
+    Ok(serde_json::json!({
+        "automatic": automatic,
+        "manual": [],
+        "current_user": current_user,
+    }))
+}
+
+fn build_remote_quote_approval(status: &RemoteStatusRow) -> serde_json::Value {
+    if !matches!(status.visibility.as_str(), "public" | "unlisted") {
+        return serde_json::json!({
+            "automatic": [],
+            "manual": [],
+            "current_user": "denied",
+        });
+    }
+
+    serde_json::json!({
+        "automatic": [],
+        "manual": ["unsupported_policy"],
+        "current_user": "manual",
+    })
 }
 
 pub(crate) async fn build_status_mentions(
@@ -126,6 +272,7 @@ async fn build_local_status_response_inner(
         in_reply_to_account_id,
         media_attachments,
     );
+    response.card = build_status_card_value(&status._text_content);
     response.poll = load_mastodon_poll_response(db, &status.id, viewer).await?;
     response.mentions = build_status_mentions(db, config, &status._text_content).await?;
     response.favourites_count = count_local_status_favourites(db, &status.id).await?;
@@ -168,9 +315,17 @@ async fn build_local_status_response_inner(
         }
         None => Vec::new(),
     };
+    response.quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
     if include_quote {
-        response.quote =
-            build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
+        response.quote = build_quoted_status_value(
+            db,
+            config,
+            viewer,
+            status.quote_of_uri.as_deref(),
+            Some(effective_status_quote_state(status)),
+            true,
+        )
+        .await?;
     }
     Ok(response)
 }
@@ -208,12 +363,13 @@ async fn build_remote_status_response_inner(
 
     let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
     let text_content = strip_html_tags(&status.content_html);
-    response.media_attachments = find_remote_status_attachments_by_status_id(db, &status.id)
-        .await?
-        .into_iter()
+    let remote_attachments = find_remote_status_attachments_by_status_id(db, &status.id).await?;
+    response.card = build_remote_status_card_value(&text_content, &remote_attachments);
+    response.media_attachments = remote_attachments
+        .iter()
         .map(|media| {
             serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
-                &media,
+                media,
             ))
             .unwrap_or(serde_json::Value::Null)
         })
@@ -255,9 +411,17 @@ async fn build_remote_status_response_inner(
         }
         None => Vec::new(),
     };
+    response.quote_approval = Some(build_remote_quote_approval(status));
     if include_quote {
-        response.quote =
-            build_quoted_status_value(db, config, viewer, status.quote_of_uri.as_deref()).await?;
+        response.quote = build_quoted_status_value(
+            db,
+            config,
+            viewer,
+            status.quote_of_uri.as_deref(),
+            Some(effective_remote_status_quote_state(status)),
+            false,
+        )
+        .await?;
     }
     Ok(response)
 }
@@ -267,17 +431,28 @@ async fn build_quoted_status_value(
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
     quote_of_uri: Option<&str>,
+    local_quote_state: Option<&str>,
+    pending_remote_quote: bool,
 ) -> Result<Option<serde_json::Value>> {
     let Some(quote_of_uri) = quote_of_uri else {
         return Ok(None);
     };
+    match local_quote_state {
+        Some("pending") => return Ok(Some(pending_quote_document())),
+        Some("revoked" | "rejected" | "unauthorized" | "deleted") => {
+            return Ok(Some(quote_placeholder_document(
+                local_quote_state.expect("matched above"),
+            )));
+        }
+        _ => {}
+    }
 
     if let Some(local_status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? {
         let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
             return Ok(None);
         };
         if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
-            return Ok(None);
+            return Ok(Some(quote_placeholder_document("unauthorized")));
         }
         let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
         let mut response = MastodonStatusResponse::from_row(
@@ -287,6 +462,7 @@ async fn build_quoted_status_value(
             load_in_reply_to_account_id(db, &local_status).await?,
             media,
         );
+        response.card = build_status_card_value(&local_status._text_content);
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
         response.filtered = match viewer {
             Some(viewer) => {
@@ -325,14 +501,25 @@ async fn build_quoted_status_value(
             None => false,
         };
         response.quote = None;
-        return Ok(Some(
+        let state = match viewer {
+            Some(viewer) => {
+                quote_state_for_local_quoted_status(db, config, viewer, &local_account).await?
+            }
+            None => None,
+        }
+        .unwrap_or("accepted");
+        return Ok(Some(quote_document_with_state(
+            state,
             serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-        ));
+        )));
     }
 
     if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, quote_of_uri).await? {
+        if pending_remote_quote {
+            return Ok(Some(pending_quote_document()));
+        }
         if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
-            return Ok(None);
+            return Ok(Some(quote_placeholder_document("unauthorized")));
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
         else {
@@ -340,17 +527,18 @@ async fn build_quoted_status_value(
         };
         let mut response = MastodonStatusResponse::from_remote_row(&remote_status, &actor, config);
         let text_content = strip_html_tags(&remote_status.content_html);
-        response.media_attachments =
-            find_remote_status_attachments_by_status_id(db, &remote_status.id)
-                .await?
-                .into_iter()
-                .map(|media| {
-                    serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
-                        &media,
-                    ))
-                    .unwrap_or(serde_json::Value::Null)
-                })
-                .collect();
+        let remote_attachments =
+            find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
+        response.card = build_remote_status_card_value(&text_content, &remote_attachments);
+        response.media_attachments = remote_attachments
+            .iter()
+            .map(|media| {
+                serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
+                    media,
+                ))
+                .unwrap_or(serde_json::Value::Null)
+            })
+            .collect();
         response.filtered = match viewer {
             Some(viewer) => {
                 load_status_filtered(
@@ -391,9 +579,15 @@ async fn build_quoted_status_value(
         };
         response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
         response.quote = None;
-        return Ok(Some(
+        let state = match viewer {
+            Some(viewer) => quote_state_for_remote_quoted_status(db, viewer, &actor).await?,
+            None => None,
+        }
+        .unwrap_or("accepted");
+        return Ok(Some(quote_document_with_state(
+            state,
             serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-        ));
+        )));
     }
 
     Ok(None)

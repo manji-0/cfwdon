@@ -1,10 +1,11 @@
 use super::{
     Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
-    build_activitypub_note, build_local_status_context, build_local_status_response,
-    build_remote_status_context, build_remote_status_response, can_view_local_status,
-    find_account_by_id, find_account_by_username, find_authenticated_local_account,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id,
+    build_activitypub_note, build_finished_context_async_refresh_header,
+    build_local_status_context, build_local_status_response, build_remote_status_context,
+    build_remote_status_response, can_view_local_status, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_id, find_remote_status_by_id,
     find_remote_status_by_url_or_object_uri, find_status_by_id, is_public_activitypub_visibility,
     list_local_favourite_account_ids_for_remote_status,
     list_local_favourite_account_ids_for_status, list_local_reblog_account_ids_for_remote_status,
@@ -15,6 +16,8 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+const REMOTE_PREVIEW_HTML_LIMIT: usize = 65_536;
 
 #[derive(Debug, Default, Deserialize)]
 struct StatusInteractionAccountsQuery {
@@ -101,19 +104,96 @@ pub(crate) fn first_url_from_text(text: &str) -> Option<String> {
     })
 }
 
+fn collapsed_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn display_provider_name(parsed: &Url) -> String {
+    parsed
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches("www.")
+        .to_owned()
+}
+
+fn provider_url(parsed: &Url) -> String {
+    let Some(host) = parsed.host_str() else {
+        return String::new();
+    };
+    match parsed.port() {
+        Some(port) => format!("{}://{}:{port}", parsed.scheme(), host),
+        None => format!("{}://{}", parsed.scheme(), host),
+    }
+}
+
+fn strip_common_document_extension(segment: &str) -> &str {
+    segment
+        .strip_suffix(".html")
+        .or_else(|| segment.strip_suffix(".htm"))
+        .or_else(|| segment.strip_suffix(".php"))
+        .or_else(|| segment.strip_suffix(".asp"))
+        .or_else(|| segment.strip_suffix(".aspx"))
+        .unwrap_or(segment)
+}
+
+fn display_title_from_url(parsed: &Url, provider_name: &str) -> String {
+    let Some(last_segment) = parsed
+        .path_segments()
+        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+    else {
+        return provider_name.to_owned();
+    };
+    let decoded = urlencoding::decode(last_segment)
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|_| last_segment.to_owned());
+    let simplified = strip_common_document_extension(&decoded)
+        .replace(['-', '_', '+'], " ")
+        .replace("%20", " ");
+    let collapsed = collapsed_whitespace(&simplified);
+    if collapsed.is_empty() {
+        provider_name.to_owned()
+    } else {
+        collapsed
+    }
+}
+
+fn status_card_description_from_text(text: &str, url: &str) -> String {
+    let description = text
+        .split_whitespace()
+        .filter(|token| {
+            token.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    '<' | '>' | '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.'
+                )
+            }) != url
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let collapsed = collapsed_whitespace(&description);
+    if collapsed.chars().count() <= 300 {
+        return collapsed;
+    }
+    let truncated = collapsed.chars().take(300).collect::<String>();
+    format!("{}…", truncated.trim_end())
+}
+
 pub(crate) fn build_status_card_value(text: &str) -> Option<serde_json::Value> {
     let url = first_url_from_text(text)?;
     let parsed = Url::parse(&url).ok()?;
-    let provider_name = parsed.host_str().unwrap_or_default().to_owned();
+    let provider_name = display_provider_name(&parsed);
+    let provider_url = provider_url(&parsed);
+    let title = display_title_from_url(&parsed, &provider_name);
+    let description = status_card_description_from_text(text, &url);
     Some(serde_json::json!({
         "url": url,
-        "title": provider_name,
-        "description": "",
+        "title": title,
+        "description": description,
         "type": "link",
         "author_name": "",
         "author_url": "",
         "provider_name": provider_name,
-        "provider_url": format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or_default()),
+        "provider_url": provider_url,
         "html": "",
         "width": 0,
         "height": 0,
@@ -121,6 +201,254 @@ pub(crate) fn build_status_card_value(text: &str) -> Option<serde_json::Value> {
         "embed_url": "",
         "blurhash": serde_json::Value::Null,
     }))
+}
+
+fn remote_status_attachment_card_candidate(
+    attachments: &[crate::RemoteStatusAttachmentRow],
+) -> Option<&crate::RemoteStatusAttachmentRow> {
+    attachments.iter().find(|attachment| {
+        if Url::parse(&attachment.remote_url).is_err() {
+            return false;
+        }
+
+        if attachment
+            .preview_url
+            .as_deref()
+            .is_some_and(|preview| preview != attachment.remote_url && Url::parse(preview).is_ok())
+        {
+            return true;
+        }
+
+        let content_type = attachment
+            .content_type
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        matches!(content_type, "text/html" | "application/xhtml+xml")
+            || crate::classify_media_kind(content_type).is_none()
+    })
+}
+
+pub(crate) fn build_remote_status_card_value(
+    text: &str,
+    attachments: &[crate::RemoteStatusAttachmentRow],
+) -> Option<serde_json::Value> {
+    let mut card = build_status_card_value(text)?;
+    let Some(attachment) = remote_status_attachment_card_candidate(attachments) else {
+        return Some(card);
+    };
+
+    let parsed = Url::parse(&attachment.remote_url).ok()?;
+    let provider_name = display_provider_name(&parsed);
+    card["url"] = serde_json::json!(attachment.remote_url);
+    card["provider_name"] = serde_json::json!(provider_name.clone());
+    card["provider_url"] = serde_json::json!(provider_url(&parsed));
+    card["title"] = serde_json::json!(
+        attachment
+            .description
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(collapsed_whitespace)
+            .unwrap_or_else(|| display_title_from_url(&parsed, &provider_name))
+    );
+    if let Some(preview_url) = attachment
+        .preview_url
+        .as_deref()
+        .filter(|preview| *preview != attachment.remote_url)
+        .filter(|preview| Url::parse(preview).is_ok())
+    {
+        card["image"] = serde_json::json!(preview_url);
+    }
+    if let Some(width) = attachment.width {
+        card["width"] = serde_json::json!(width);
+    }
+    if let Some(height) = attachment.height {
+        card["height"] = serde_json::json!(height);
+    }
+    if let Some(blurhash) = attachment
+        .blurhash
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        card["blurhash"] = serde_json::json!(blurhash);
+    }
+    Some(card)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct HtmlPreviewMetadata {
+    pub(crate) title: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) provider_name: Option<String>,
+    pub(crate) image: Option<String>,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+}
+
+fn html_unescape(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+}
+
+fn html_attr_value(tag: &str, attr_name: &str) -> Option<String> {
+    let lower_tag = tag.to_ascii_lowercase();
+    let needle = format!("{attr_name}=");
+    let index = lower_tag.find(&needle)?;
+    let mut value = tag[index + needle.len()..].trim_start().chars();
+    let quote = value.next()?;
+    if !matches!(quote, '"' | '\'') {
+        return None;
+    }
+    let rest = &tag[index + needle.len() + quote.len_utf8()..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_owned())
+}
+
+fn find_html_tag<'a>(html: &'a str, tag_name: &str) -> Vec<&'a str> {
+    let needle = format!("<{tag_name}");
+    html.match_indices(&needle)
+        .filter_map(|(index, _)| {
+            html[index..]
+                .find('>')
+                .map(|end| &html[index..=index + end])
+        })
+        .collect()
+}
+
+fn find_meta_content(html: &str, attr_name: &str, attr_value: &str) -> Option<String> {
+    find_html_tag(html, "meta")
+        .into_iter()
+        .find(|tag| {
+            html_attr_value(tag, attr_name)
+                .map(|value| value.eq_ignore_ascii_case(attr_value))
+                .unwrap_or(false)
+        })
+        .and_then(|tag| html_attr_value(tag, "content"))
+        .map(|value| collapsed_whitespace(&html_unescape(&value)))
+        .filter(|value| !value.is_empty())
+}
+
+fn find_link_href(html: &str, rel_value: &str) -> Option<String> {
+    find_html_tag(html, "link")
+        .into_iter()
+        .find(|tag| {
+            html_attr_value(tag, "rel")
+                .map(|value| value.eq_ignore_ascii_case(rel_value))
+                .unwrap_or(false)
+        })
+        .and_then(|tag| html_attr_value(tag, "href"))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn find_title_tag_content(html: &str) -> Option<String> {
+    let lower_html = html.to_ascii_lowercase();
+    let start = lower_html.find("<title")?;
+    let title_open_end = html[start..].find('>')? + start + 1;
+    let end = lower_html[title_open_end..].find("</title>")? + title_open_end;
+    let content = collapsed_whitespace(&html_unescape(html[title_open_end..end].trim()));
+    (!content.is_empty()).then_some(content)
+}
+
+pub(crate) fn extract_html_preview_metadata(html: &str) -> HtmlPreviewMetadata {
+    let head = html
+        .chars()
+        .take(REMOTE_PREVIEW_HTML_LIMIT)
+        .collect::<String>();
+    HtmlPreviewMetadata {
+        title: find_meta_content(&head, "property", "og:title")
+            .or_else(|| find_meta_content(&head, "name", "twitter:title"))
+            .or_else(|| find_title_tag_content(&head)),
+        description: find_meta_content(&head, "property", "og:description")
+            .or_else(|| find_meta_content(&head, "name", "description"))
+            .or_else(|| find_meta_content(&head, "name", "twitter:description")),
+        provider_name: find_meta_content(&head, "property", "og:site_name")
+            .or_else(|| find_meta_content(&head, "name", "application-name")),
+        image: find_meta_content(&head, "property", "og:image")
+            .or_else(|| find_meta_content(&head, "name", "twitter:image"))
+            .or_else(|| find_link_href(&head, "image_src")),
+        width: find_meta_content(&head, "property", "og:image:width")
+            .and_then(|value| value.parse::<u32>().ok()),
+        height: find_meta_content(&head, "property", "og:image:height")
+            .and_then(|value| value.parse::<u32>().ok()),
+    }
+}
+
+pub(crate) fn apply_html_preview_metadata(
+    card: &mut serde_json::Value,
+    metadata: &HtmlPreviewMetadata,
+) {
+    if let Some(title) = metadata.title.as_deref() {
+        card["title"] = serde_json::json!(title);
+    }
+    if let Some(description) = metadata.description.as_deref() {
+        card["description"] = serde_json::json!(description);
+    }
+    if let Some(provider_name) = metadata.provider_name.as_deref() {
+        card["provider_name"] = serde_json::json!(provider_name);
+    }
+    if let Some(image) = metadata.image.as_deref() {
+        card["image"] = serde_json::json!(image);
+    }
+    if let Some(width) = metadata.width {
+        card["width"] = serde_json::json!(width);
+    }
+    if let Some(height) = metadata.height {
+        card["height"] = serde_json::json!(height);
+    }
+}
+
+async fn fetch_remote_preview_html(url: &str) -> Result<String> {
+    let parsed = super::parse_remote_http_url(url)?;
+    crate::federation_url_guard::validate_remote_fetch_url(&parsed).await?;
+
+    let headers = worker::Headers::new();
+    headers.set(
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.1",
+    )?;
+
+    let mut init = worker::RequestInit::new();
+    init.with_method(worker::Method::Get).with_headers(headers);
+    let request = worker::Request::new_with_init(parsed.as_str(), &init)?;
+    let mut response = worker::Fetch::Request(request).send().await?;
+    if response.status_code() / 100 != 2 {
+        return Err(Error::RustError(format!(
+            "failed to fetch remote preview document {}: HTTP {}",
+            url,
+            response.status_code()
+        )));
+    }
+
+    response.text().await
+}
+
+pub(crate) async fn enrich_card_with_remote_preview(card: &mut serde_json::Value) -> Result<bool> {
+    let Some(url) = card
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+
+    let html = match fetch_remote_preview_html(url).await {
+        Ok(html) => html,
+        Err(_) => return Ok(false),
+    };
+    let metadata = extract_html_preview_metadata(&html);
+    if metadata == HtmlPreviewMetadata::default() {
+        return Ok(false);
+    }
+    apply_html_preview_metadata(card, &metadata);
+    Ok(true)
 }
 
 pub(crate) async fn resolve_status_reference(
@@ -393,7 +721,7 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
         return Response::error("status not found", 404);
     };
 
-    let card = match status {
+    let mut card = match status {
         ResolvedStatus::Local(status) => {
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
@@ -404,10 +732,12 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            build_status_card_value(&strip_html_tags(&status.content_html))
+            let attachments = find_remote_status_attachments_by_status_id(&db, &status.id).await?;
+            build_remote_status_card_value(&strip_html_tags(&status.content_html), &attachments)
         }
     }
     .unwrap_or(serde_json::Value::Null);
+    let _ = enrich_card_with_remote_preview(&mut card).await;
 
     Response::from_json(&card)
 }
@@ -530,9 +860,16 @@ pub(crate) async fn status_context_response(
                 return Response::error("status not found", 404);
             }
 
-            Response::from_json(
-                &build_local_status_context(&db, &config, viewer.as_ref(), &status, &owner).await?,
-            )
+            let context =
+                build_local_status_context(&db, &config, viewer.as_ref(), &status, &owner).await?;
+            let mut response = Response::from_json(&context)?;
+            if viewer.is_some() {
+                let header = build_finished_context_async_refresh_header(&db, &status.id).await?;
+                response
+                    .headers_mut()
+                    .set("Mastodon-Async-Refresh", &header)?;
+            }
+            Ok(response)
         }
         ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(&status.visibility) {
@@ -541,7 +878,16 @@ pub(crate) async fn status_context_response(
             let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
                 return Response::error("status not found", 404);
             };
-            Response::from_json(&build_remote_status_context(&db, &config, &status, &actor).await?)
+            let context =
+                build_remote_status_context(&db, &config, viewer.as_ref(), &status, &actor).await?;
+            let mut response = Response::from_json(&context)?;
+            if viewer.is_some() {
+                let header = build_finished_context_async_refresh_header(&db, &status.id).await?;
+                response
+                    .headers_mut()
+                    .set("Mastodon-Async-Refresh", &header)?;
+            }
+            Ok(response)
         }
     }
 }

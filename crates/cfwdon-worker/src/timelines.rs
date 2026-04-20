@@ -2,37 +2,121 @@ use crate::auth::{extract_authenticated_user, find_account_by_id, resolve_local_
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::find_media_attachments_by_status_id;
 use crate::instance_identity::actor_url;
+use crate::oauth_apps::{
+    app_bearer_token_from_request, find_oauth_app_by_bearer_token, oauth_app_has_any_scope,
+};
 use crate::runtime_config::load_config;
 use crate::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
     TimelinePaginationQuery, build_local_status_response, build_remote_status_response,
-    build_timeline_link_header, include_local_source, include_remote_source,
-    list_followed_tag_names, list_local_direct_timeline_statuses,
+    build_status_card_value, build_timeline_link_header, canonicalize_link_timeline_url,
+    derive_link_timeline_match_urls, enrich_card_with_remote_preview, include_local_source,
+    include_remote_source, list_followed_tag_names, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_link,
     list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_link,
     list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
     load_in_reply_to_account_id, matches_tag_timeline_filters, normalize_hashtag,
-    remote_status_has_media, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
+    remote_status_has_media, resolve_timeline_cursor, strip_html_tags, timeline_fetch_limit,
+    timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
+use cfwdon_core::TimelineAccessLevel;
 use std::collections::HashSet;
+use worker::D1Database;
 use worker::{Error, Request, Response, Result, RouteContext};
+
+enum TimelineRequestAccess {
+    Viewer(crate::LocalAccount),
+    ScopedApp,
+    None,
+    Invalid,
+}
+
+impl TimelineRequestAccess {
+    fn viewer(&self) -> Option<&crate::LocalAccount> {
+        match self {
+            Self::Viewer(viewer) => Some(viewer),
+            Self::ScopedApp | Self::None | Self::Invalid => None,
+        }
+    }
+
+    fn is_authorized(&self) -> bool {
+        matches!(self, Self::Viewer(_) | Self::ScopedApp)
+    }
+}
+
+fn timeline_source_requires_authorization(level: TimelineAccessLevel) -> bool {
+    !matches!(level, TimelineAccessLevel::Public)
+}
+
+fn timeline_request_requires_authorization(
+    include_local: bool,
+    include_remote: bool,
+    local_access: TimelineAccessLevel,
+    remote_access: TimelineAccessLevel,
+) -> bool {
+    (include_local && timeline_source_requires_authorization(local_access))
+        || (include_remote && timeline_source_requires_authorization(remote_access))
+}
+
+async fn resolve_timeline_request_access(
+    req: &Request,
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+) -> Result<TimelineRequestAccess> {
+    if let Some(user) = extract_authenticated_user(req, config).await? {
+        return Ok(TimelineRequestAccess::Viewer(
+            resolve_local_account(db, &user).await?,
+        ));
+    }
+
+    let Some(token) = app_bearer_token_from_request(req)? else {
+        return Ok(TimelineRequestAccess::None);
+    };
+    let Some(app) = find_oauth_app_by_bearer_token(db, &token).await? else {
+        return Ok(TimelineRequestAccess::Invalid);
+    };
+    if oauth_app_has_any_scope(&app, &["read", "read:statuses"]) {
+        Ok(TimelineRequestAccess::ScopedApp)
+    } else {
+        Ok(TimelineRequestAccess::Invalid)
+    }
+}
+
+fn timeline_invalid_access_token_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "The access token is invalid",
+    }))?
+    .with_status(401))
+}
+
+fn status_card_url_matches_targets(text: &str, targets: &HashSet<String>) -> bool {
+    build_status_card_value(text)
+        .and_then(|card| {
+            card.get("url")
+                .and_then(serde_json::Value::as_str)
+                .and_then(canonicalize_link_timeline_url)
+        })
+        .map(|url| targets.contains(&url))
+        .unwrap_or(false)
+}
 
 pub(crate) async fn home_timeline_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match resolve_timeline_request_access(&req, &db, &config).await? {
+        TimelineRequestAccess::Viewer(viewer) => viewer,
+        TimelineRequestAccess::ScopedApp
+        | TimelineRequestAccess::None
+        | TimelineRequestAccess::Invalid => return timeline_invalid_access_token_response(),
     };
     let query: HomeTimelineQuery = req.query().unwrap_or_default();
     let limit = timeline_limit(&query.pagination);
     let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
     let mut entries = Vec::new();
     let mut seen_status_ids = HashSet::new();
@@ -163,10 +247,17 @@ pub(crate) async fn public_timeline_response(
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => Some(resolve_local_account(&db, &user).await?),
-        None => None,
-    };
+    let access = resolve_timeline_request_access(&req, &db, &config).await?;
+    if timeline_request_requires_authorization(
+        include_local,
+        include_remote,
+        config.timeline_live_feeds_local,
+        config.timeline_live_feeds_remote,
+    ) && !access.is_authorized()
+    {
+        return timeline_invalid_access_token_response();
+    }
+    let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
     let mut entries = Vec::new();
 
@@ -175,7 +266,7 @@ pub(crate) async fn public_timeline_response(
             let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                 continue;
             };
-            if let Some(viewer) = viewer.as_ref()
+            if let Some(viewer) = viewer
                 && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
             {
                 continue;
@@ -189,13 +280,7 @@ pub(crate) async fn public_timeline_response(
                 status.id.clone(),
                 serde_json::to_value(
                     build_local_status_response(
-                        &db,
-                        &config,
-                        viewer.as_ref(),
-                        &status,
-                        &account,
-                        None,
-                        media,
+                        &db, &config, viewer, &status, &account, None, media,
                     )
                     .await?,
                 )
@@ -217,8 +302,7 @@ pub(crate) async fn public_timeline_response(
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
-                        .await?,
+                    build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
                 )
                 .unwrap_or(serde_json::Value::Null),
             ));
@@ -259,10 +343,17 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => Some(resolve_local_account(&db, &user).await?),
-        None => None,
-    };
+    let access = resolve_timeline_request_access(&req, &db, &config).await?;
+    if timeline_request_requires_authorization(
+        include_local,
+        include_remote,
+        config.timeline_hashtag_feeds_local,
+        config.timeline_hashtag_feeds_remote,
+    ) && !access.is_authorized()
+    {
+        return timeline_invalid_access_token_response();
+    }
+    let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
     let mut entries = Vec::new();
 
@@ -275,7 +366,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                 continue;
             };
-            if let Some(viewer) = viewer.as_ref()
+            if let Some(viewer) = viewer
                 && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
             {
                 continue;
@@ -290,7 +381,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                 build_local_status_response(
                     &db,
                     &config,
-                    viewer.as_ref(),
+                    viewer,
                     &status,
                     &account,
                     load_in_reply_to_account_id(&db, &status).await?,
@@ -317,8 +408,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             entries.push((
                 status.published_at.clone(),
                 status.id.clone(),
-                build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
-                    .await?,
+                build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
             ));
         }
     }
@@ -356,57 +446,80 @@ pub(crate) async fn link_timeline_response(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing url query parameter".to_owned()))?;
+    let target_urls = derive_link_timeline_match_urls(target_url);
     let limit = timeline_limit(&query.pagination);
     let query_limit = timeline_fetch_limit(limit);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => Some(resolve_local_account(&db, &user).await?),
-        None => None,
-    };
+    let access = resolve_timeline_request_access(&req, &db, &config).await?;
+    if timeline_request_requires_authorization(
+        true,
+        true,
+        config.timeline_trending_link_feeds_local,
+        config.timeline_trending_link_feeds_remote,
+    ) && !access.is_authorized()
+    {
+        return timeline_invalid_access_token_response();
+    }
+    if !crate::trending_link_target_is_known(&db, &target_urls).await? {
+        return Response::error("Record not found", 404);
+    }
+    let target_url_set = target_urls
+        .iter()
+        .filter_map(|url| canonicalize_link_timeline_url(&url))
+        .collect::<HashSet<_>>();
+    let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
     let mut entries = Vec::new();
 
-    for status in list_local_public_statuses_by_link(&db, target_url, &cursor, query_limit).await? {
+    for status in
+        list_local_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?
+    {
+        if !status_card_url_matches_targets(&status._text_content, &target_url_set) {
+            continue;
+        }
         let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
             continue;
         };
-        if let Some(viewer) = viewer.as_ref()
+        if let Some(viewer) = viewer
             && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
         {
             continue;
         }
         let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(
-                build_local_status_response(
-                    &db,
-                    &config,
-                    viewer.as_ref(),
-                    &status,
-                    &account,
-                    load_in_reply_to_account_id(&db, &status).await?,
-                    media,
-                )
-                .await?,
+        let mut value = serde_json::to_value(
+            build_local_status_response(
+                &db,
+                &config,
+                viewer,
+                &status,
+                &account,
+                load_in_reply_to_account_id(&db, &status).await?,
+                media,
             )
-            .unwrap_or(serde_json::Value::Null),
-        ));
+            .await?,
+        )
+        .unwrap_or(serde_json::Value::Null);
+        if let Some(card) = value.get_mut("card") {
+            let _ = enrich_card_with_remote_preview(card).await;
+        }
+        entries.push((status.created_at.clone(), status.id.clone(), value));
     }
 
     for (status, actor) in
-        list_remote_public_statuses_by_link(&db, target_url, &cursor, query_limit).await?
+        list_remote_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?
     {
-        entries.push((
-            status.published_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(
-                build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
-                    .await?,
-            )
-            .unwrap_or(serde_json::Value::Null),
-        ));
+        if !status_card_url_matches_targets(&strip_html_tags(&status.content_html), &target_url_set)
+        {
+            continue;
+        }
+        let mut value = serde_json::to_value(
+            build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+        )
+        .unwrap_or(serde_json::Value::Null);
+        if let Some(card) = value.get_mut("card") {
+            let _ = enrich_card_with_remote_preview(card).await;
+        }
+        entries.push((status.published_at.clone(), status.id.clone(), value));
     }
 
     entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
@@ -431,6 +544,67 @@ pub(crate) async fn link_timeline_response(
         builder.headers_mut().set("Link", &link)?;
     }
     Ok(builder)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        status_card_url_matches_targets, timeline_request_requires_authorization,
+        timeline_source_requires_authorization,
+    };
+    use cfwdon_core::TimelineAccessLevel;
+    use std::collections::HashSet;
+
+    #[test]
+    fn timeline_source_requires_authorization_for_non_public_levels() {
+        assert!(!timeline_source_requires_authorization(
+            TimelineAccessLevel::Public
+        ));
+        assert!(timeline_source_requires_authorization(
+            TimelineAccessLevel::Authenticated
+        ));
+        assert!(timeline_source_requires_authorization(
+            TimelineAccessLevel::Disabled
+        ));
+    }
+
+    #[test]
+    fn timeline_request_requires_authorization_only_for_requested_sources() {
+        assert!(!timeline_request_requires_authorization(
+            true,
+            false,
+            TimelineAccessLevel::Public,
+            TimelineAccessLevel::Authenticated,
+        ));
+        assert!(timeline_request_requires_authorization(
+            true,
+            true,
+            TimelineAccessLevel::Public,
+            TimelineAccessLevel::Authenticated,
+        ));
+        assert!(timeline_request_requires_authorization(
+            false,
+            true,
+            TimelineAccessLevel::Public,
+            TimelineAccessLevel::Disabled,
+        ));
+    }
+
+    #[test]
+    fn status_card_url_matches_targets_uses_primary_card_url() {
+        let targets = ["https://example.com/articles/rust".to_owned()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        assert!(status_card_url_matches_targets(
+            "see https://example.com/articles/rust and https://example.com/other",
+            &targets,
+        ));
+        assert!(!status_card_url_matches_targets(
+            "see https://example.com/other and https://example.com/articles/rust",
+            &targets,
+        ));
+    }
 }
 
 pub(crate) async fn direct_timeline_response(

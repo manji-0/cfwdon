@@ -21,7 +21,27 @@ pub(crate) struct StatusRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
+    #[serde(default)]
+    pub(crate) quote_approval_policy: Option<String>,
+    #[serde(default = "default_quote_state")]
+    pub(crate) quote_state: String,
     pub(crate) created_at: String,
+}
+
+pub(crate) fn default_quote_state() -> String {
+    "accepted".to_owned()
+}
+
+pub(crate) fn effective_status_quote_state(status: &StatusRow) -> &str {
+    if status.quote_of_uri.is_none() {
+        "accepted"
+    } else {
+        status.quote_state.as_str()
+    }
+}
+
+pub(crate) fn status_has_active_quote(status: &StatusRow) -> bool {
+    status.quote_of_uri.is_some() && effective_status_quote_state(status) != "revoked"
 }
 
 pub(crate) fn status_is_visible_to_requester(

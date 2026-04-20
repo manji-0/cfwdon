@@ -1,5 +1,29 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TimelineAccessLevel {
+    Public,
+    Authenticated,
+    Disabled,
+}
+
+impl TimelineAccessLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Authenticated => "authenticated",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
+impl Default for TimelineAccessLevel {
+    fn default() -> Self {
+        Self::Public
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     pub instance_domain: String,
@@ -22,6 +46,12 @@ pub struct AppConfig {
     pub database_binding: String,
     pub media_binding: String,
     pub media_public_base_url: Option<String>,
+    pub timeline_live_feeds_local: TimelineAccessLevel,
+    pub timeline_live_feeds_remote: TimelineAccessLevel,
+    pub timeline_hashtag_feeds_local: TimelineAccessLevel,
+    pub timeline_hashtag_feeds_remote: TimelineAccessLevel,
+    pub timeline_trending_link_feeds_local: TimelineAccessLevel,
+    pub timeline_trending_link_feeds_remote: TimelineAccessLevel,
     pub access_email_header: String,
     pub access_jwt_header: String,
     pub access_team_domain: String,
@@ -55,6 +85,12 @@ impl AppConfig {
             database_binding: "DB".to_owned(),
             media_binding: "MEDIA".to_owned(),
             media_public_base_url: None,
+            timeline_live_feeds_local: TimelineAccessLevel::Public,
+            timeline_live_feeds_remote: TimelineAccessLevel::Public,
+            timeline_hashtag_feeds_local: TimelineAccessLevel::Public,
+            timeline_hashtag_feeds_remote: TimelineAccessLevel::Public,
+            timeline_trending_link_feeds_local: TimelineAccessLevel::Public,
+            timeline_trending_link_feeds_remote: TimelineAccessLevel::Public,
             access_email_header: "Cf-Access-Authenticated-User-Email".to_owned(),
             access_jwt_header: "Cf-Access-Jwt-Assertion".to_owned(),
             access_team_domain: String::new(),

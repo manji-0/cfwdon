@@ -47,6 +47,12 @@ pub(crate) async fn apply_account_credentials_update(
         .and_then(|source| source.privacy.as_deref())
         .unwrap_or(account.default_post_visibility.as_str())
         .to_owned();
+    let default_quote_policy = update
+        .source
+        .as_ref()
+        .and_then(|source| source.quote_policy.as_deref())
+        .unwrap_or(account.default_quote_policy.as_str())
+        .to_owned();
     let default_sensitive = update
         .source
         .as_ref()
@@ -93,6 +99,7 @@ pub(crate) async fn apply_account_credentials_update(
         D1Type::Integer(if bot { 1 } else { 0 }),
         D1Type::Integer(if discoverable { 1 } else { 0 }),
         D1Type::Text(default_post_visibility.as_str()),
+        D1Type::Text(default_quote_policy.as_str()),
         D1Type::Integer(if default_sensitive { 1 } else { 0 }),
         match default_language.as_deref() {
             Some(value) => D1Type::Text(value),
@@ -139,14 +146,15 @@ pub(crate) async fn apply_account_credentials_update(
              bot = ?6,
              discoverable = ?7,
              default_post_visibility = ?8,
-             default_sensitive = ?9,
-             default_language = ?10,
-             avatar_object_key = ?11,
-             avatar_content_type = ?12,
-             header_object_key = ?13,
-             header_content_type = ?14,
+             default_quote_policy = ?9,
+             default_sensitive = ?10,
+             default_language = ?11,
+             avatar_object_key = ?12,
+             avatar_content_type = ?13,
+             header_object_key = ?14,
+             header_content_type = ?15,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?15",
+         WHERE id = ?16",
     )
     .bind_refs(bindings.iter())?
     .run()

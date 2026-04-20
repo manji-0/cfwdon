@@ -1,16 +1,18 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use crate::content_helpers::{
     extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
 };
-use crate::db_utils::count_rows_like;
 use crate::responses::{MastodonTagHistoryEntry, MastodonTagResponse};
 use crate::{
     ResolvedTimelineCursor, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses,
 };
 use cfwdon_core::AppConfig;
+use serde::Deserialize;
 use url::Url;
+use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
 pub(crate) fn tag_search_rank(query: &str, tag: &str) -> (u8, String) {
@@ -18,6 +20,49 @@ pub(crate) fn tag_search_rank(query: &str, tag: &str) -> (u8, String) {
         crate::search_text_match_rank(query, tag),
         normalize_hashtag(tag),
     )
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub(crate) struct TagSearchMetrics {
+    pub(crate) statuses_count: u64,
+    pub(crate) accounts_count: u64,
+    pub(crate) last_status_at: Option<String>,
+}
+
+pub(crate) fn tag_search_sort_key(
+    query: &str,
+    tag: &str,
+    statuses_count: u64,
+    last_status_at: Option<&str>,
+) -> (u8, u64, Reverse<Option<String>>, String) {
+    let (match_rank, normalized) = tag_search_rank(query, tag);
+    (
+        match_rank,
+        u64::MAX - statuses_count,
+        Reverse(last_status_at.map(ToOwned::to_owned)),
+        normalized,
+    )
+}
+
+pub(crate) fn paginate_tag_search_matches(
+    query: &str,
+    mut matches: Vec<(String, TagSearchMetrics)>,
+    limit: u32,
+    offset: u32,
+) -> Vec<(String, TagSearchMetrics)> {
+    matches.sort_by_key(|(tag, metrics)| {
+        tag_search_sort_key(
+            query,
+            tag,
+            metrics.statuses_count,
+            metrics.last_status_at.as_deref(),
+        )
+    });
+    matches
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect()
 }
 
 pub(crate) fn normalize_hashtag(value: &str) -> String {
@@ -83,17 +128,19 @@ pub(crate) async fn search_tags_for_v2(
     config: &AppConfig,
     query: &str,
     limit: u32,
+    offset: u32,
 ) -> Result<Vec<MastodonTagResponse>> {
-    let needle = normalize_hashtag(query);
+    let needle = resolve_search_tag_name(query).unwrap_or_else(|| normalize_hashtag(query));
     if needle.is_empty() {
         return Ok(Vec::new());
     }
 
+    let fetch_limit = limit.saturating_add(offset).clamp(limit, 200);
     let mut matches = Vec::new();
     let mut seen = HashSet::new();
 
     let cursor = ResolvedTimelineCursor::default();
-    for status in list_local_public_timeline_statuses(db, &cursor, 200).await? {
+    for status in list_local_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_text(&status._text_content) {
             if tag.contains(&needle) && seen.insert(tag.clone()) {
                 matches.push(tag);
@@ -101,7 +148,7 @@ pub(crate) async fn search_tags_for_v2(
         }
     }
 
-    for (status, _) in list_remote_public_timeline_statuses(db, &cursor, 200).await? {
+    for (status, _) in list_remote_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_html(&status.content_html) {
             if tag.contains(&needle) && seen.insert(tag.clone()) {
                 matches.push(tag);
@@ -109,12 +156,16 @@ pub(crate) async fn search_tags_for_v2(
         }
     }
 
-    matches.sort_by_key(|tag| tag_search_rank(&needle, tag));
-    matches.truncate(limit as usize);
+    let mut ranked_matches = Vec::with_capacity(matches.len());
+    for tag in matches {
+        ranked_matches.push((tag.clone(), load_tag_search_metrics(db, &tag).await?));
+    }
+
+    let matches = paginate_tag_search_matches(&needle, ranked_matches, limit, offset);
 
     let mut responses = Vec::with_capacity(matches.len());
-    for tag in matches {
-        responses.push(build_tag_response(db, config, &tag).await?);
+    for (tag, metrics) in matches {
+        responses.push(build_tag_response_with_metrics(config, &tag, metrics));
     }
 
     Ok(responses)
@@ -126,17 +177,23 @@ pub(crate) async fn build_tag_response(
     tag: &str,
 ) -> Result<MastodonTagResponse> {
     let tag = normalize_hashtag(tag);
-    let local_count = count_local_public_statuses_by_tag(db, &tag).await?;
-    let remote_count = count_remote_public_statuses_by_tag(db, &tag).await?;
-    let total_uses = local_count + remote_count;
-    let accounts = count_local_accounts_for_tag(db, &tag).await?
-        + count_remote_accounts_for_tag(db, &tag).await?;
+    Ok(build_tag_response_with_metrics(
+        config,
+        &tag,
+        load_tag_search_metrics(db, &tag).await?,
+    ))
+}
 
-    Ok(MastodonTagResponse {
-        id: tag_rest_id(&tag),
-        name: tag.clone(),
-        url: tag_url(config, &tag),
-        history: if total_uses == 0 {
+fn build_tag_response_with_metrics(
+    config: &AppConfig,
+    tag: &str,
+    metrics: TagSearchMetrics,
+) -> MastodonTagResponse {
+    MastodonTagResponse {
+        id: tag_rest_id(tag),
+        name: tag.to_owned(),
+        url: tag_url(config, tag),
+        history: if metrics.statuses_count == 0 {
             tag_history_stub()
         } else {
             vec![MastodonTagHistoryEntry {
@@ -147,59 +204,65 @@ pub(crate) async fn build_tag_response(
                     .chars()
                     .take(10)
                     .collect(),
-                uses: total_uses.to_string(),
-                accounts: accounts.to_string(),
+                uses: metrics.statuses_count.to_string(),
+                accounts: metrics.accounts_count.to_string(),
             }]
         },
         following: false,
         featured: false,
+    }
+}
+
+pub(crate) async fn load_tag_search_metrics(
+    db: &D1Database,
+    tag: &str,
+) -> Result<TagSearchMetrics> {
+    let local = load_local_tag_search_metrics(db, tag).await?;
+    let remote = load_remote_tag_search_metrics(db, tag).await?;
+    Ok(TagSearchMetrics {
+        statuses_count: local.statuses_count + remote.statuses_count,
+        accounts_count: local.accounts_count + remote.accounts_count,
+        last_status_at: match (local.last_status_at, remote.last_status_at) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        },
     })
 }
 
-async fn count_local_public_statuses_by_tag(db: &D1Database, tag: &str) -> Result<u64> {
-    count_rows_like(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM statuses
-         WHERE visibility = 'public'
-           AND lower(text_content) LIKE ?1",
-        &format!("%#{}%", normalize_hashtag(tag)),
-    )
-    .await
+async fn load_local_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+    let pattern = format!("%#{}%", normalize_hashtag(tag));
+    let bindings = [D1Type::Text(pattern.as_str())];
+    Ok(db
+        .prepare(
+            "SELECT COUNT(*) AS statuses_count,
+                    COUNT(DISTINCT account_id) AS accounts_count,
+                    MAX(substr(created_at, 1, 10)) AS last_status_at
+             FROM statuses
+             WHERE visibility = 'public'
+               AND lower(text_content) LIKE ?1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<TagSearchMetrics>(None)
+        .await?
+        .unwrap_or_default())
 }
 
-async fn count_remote_public_statuses_by_tag(db: &D1Database, tag: &str) -> Result<u64> {
-    count_rows_like(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM remote_statuses
-         WHERE visibility = 'public'
-           AND lower(content_html) LIKE ?1",
-        &format!("%#{}%", normalize_hashtag(tag)),
-    )
-    .await
-}
-
-async fn count_local_accounts_for_tag(db: &D1Database, tag: &str) -> Result<u64> {
-    count_rows_like(
-        db,
-        "SELECT COUNT(DISTINCT account_id) AS count
-         FROM statuses
-         WHERE visibility = 'public'
-           AND lower(text_content) LIKE ?1",
-        &format!("%#{}%", normalize_hashtag(tag)),
-    )
-    .await
-}
-
-async fn count_remote_accounts_for_tag(db: &D1Database, tag: &str) -> Result<u64> {
-    count_rows_like(
-        db,
-        "SELECT COUNT(DISTINCT actor_uri) AS count
-         FROM remote_statuses
-         WHERE visibility = 'public'
-           AND lower(content_html) LIKE ?1",
-        &format!("%#{}%", normalize_hashtag(tag)),
-    )
-    .await
+async fn load_remote_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+    let pattern = format!("%#{}%", normalize_hashtag(tag));
+    let bindings = [D1Type::Text(pattern.as_str())];
+    Ok(db
+        .prepare(
+            "SELECT COUNT(*) AS statuses_count,
+                    COUNT(DISTINCT actor_uri) AS accounts_count,
+                    MAX(substr(published_at, 1, 10)) AS last_status_at
+             FROM remote_statuses
+             WHERE visibility = 'public'
+               AND lower(content_html) LIKE ?1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<TagSearchMetrics>(None)
+        .await?
+        .unwrap_or_default())
 }

@@ -1,19 +1,27 @@
 use crate::{
     AccountReference, Request, Response, Result, RouteContext, TimelinePaginationQuery, actor_url,
-    build_local_status_response, build_relationship_for_target, build_remote_status_response,
-    build_timeline_link_header, can_view_local_status, clear_local_status_quote,
-    delete_follow_by_target, delete_follower_by_actor, enqueue_status_update_activity,
-    extract_authenticated_user, find_account_by_id, find_authenticated_local_account,
+    app_bearer_token_from_request, build_app_verify_credentials_document_from_parts,
+    build_app_verify_credentials_document_from_row, build_delete_quote_authorization_activity,
+    build_local_status_response, build_reject_follow_activity, build_relationship_for_target,
+    build_remote_status_response, build_timeline_link_header, can_view_local_status,
+    clear_local_status_quote, delete_follow_by_target, delete_follower_by_actor,
+    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
+    enqueue_targeted_outbox_activity, extract_authenticated_user, find_account_by_id,
+    find_authenticated_local_account, find_follower_follow_activity_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_remote_actor_by_actor_uri, find_status_by_id, first_url_from_text, generate_entity_id,
-    insert_status_edit_snapshot, instance_base_url, is_public_activitypub_visibility,
+    find_oauth_app_by_bearer_token, find_pending_remote_follow_request_by_actor,
+    find_remote_actor_by_actor_uri, generate_entity_id, insert_status_edit_snapshot,
+    instance_base_url, is_public_activitypub_visibility, list_follower_delivery_targets,
     load_account_stats, load_config, load_in_reply_to_account_id, local_status_ap_id,
     local_status_target_uri, media_object_url, normalize_status_history_entry, now_iso_string,
-    parse_relationship_query_ids, remote_account_rest_id, resolve_account_reference,
-    resolve_local_account, resolve_status_reference, resolve_timeline_cursor, timeline_fetch_limit,
-    timeline_limit,
+    parse_relationship_query_ids, queue_remote_actor_activity,
+    queue_remote_actor_activity_required, remote_account_rest_id, remote_status_has_active_quote,
+    resolve_account_reference, resolve_local_account, resolve_status_reference,
+    resolve_timeline_cursor, status_has_active_quote, timeline_fetch_limit, timeline_limit,
+    update_remote_status_quote_state,
 };
 use serde::Deserialize;
+use std::collections::HashSet;
 use worker::{ResponseBody, d1::D1Type};
 
 #[derive(Debug, Deserialize)]
@@ -130,27 +138,20 @@ pub(crate) fn build_oauth_userinfo_document(
     account: &cfwdon_domain::LocalAccount,
 ) -> serde_json::Value {
     let base_url = oauth_base_url(config);
+    let issuer = format!("{}/", base_url.trim_end_matches('/'));
+    let actor = actor_url(config, &account.username);
     let picture = account
         .avatar_object_key
         .as_deref()
         .map(|object_key| serde_json::json!(media_object_url(config, object_key)))
         .unwrap_or(serde_json::Value::Null);
-    let website = account
-        .fields
-        .iter()
-        .find_map(|field| first_url_from_text(&field.value))
-        .map(serde_json::Value::String)
-        .unwrap_or(serde_json::Value::Null);
     serde_json::json!({
-        "sub": account.id,
+        "iss": issuer,
+        "sub": actor,
         "preferred_username": account.username,
         "name": account.display_name,
-        "nickname": account.username,
         "profile": format!("{base_url}/@{}", account.username),
-        "website": website,
         "picture": picture,
-        "email": account.access_email,
-        "email_verified": true,
     })
 }
 
@@ -200,18 +201,19 @@ fn build_oembed_html(
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_app_verify_credentials_document(
     config: &cfwdon_core::AppConfig,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "id": "0",
-        "name": config.instance_name,
-        "website": serde_json::Value::Null,
-        "scopes": ["read"],
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob"],
-        "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
-        "vapid_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
-    })
+    build_app_verify_credentials_document_from_parts(
+        "0",
+        &config.instance_name,
+        None,
+        &[String::from("read")],
+        &[String::from("urn:ietf:wg:oauth:2.0:oob")],
+        "urn:ietf:wg:oauth:2.0:oob",
+        config.web_push_vapid_public_key.as_deref().unwrap_or(""),
+    )
 }
 
 fn current_campaign_year() -> i32 {
@@ -433,6 +435,24 @@ async fn is_authenticated_request(req: &Request, config: &cfwdon_core::AppConfig
     Ok(extract_authenticated_user(req, config).await?.is_some())
 }
 
+pub(crate) fn oauth_userinfo_rejects_bearer_authorization(req: &Request) -> Result<bool> {
+    Ok(app_bearer_token_from_request(req)?.is_some())
+}
+
+fn invalid_access_token_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "The access token is invalid",
+    }))?
+    .with_status(401))
+}
+
+fn email_confirmation_unavailable_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This method is only available while the e-mail is awaiting confirmation",
+    }))?
+    .with_status(403))
+}
+
 pub(crate) async fn oauth_authorization_server_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     Response::from_json(&build_oauth_authorization_server_document(&config))
@@ -443,12 +463,15 @@ pub(crate) async fn oauth_userinfo_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
+    if oauth_userinfo_rejects_bearer_authorization(&req)? {
+        return invalid_access_token_response();
+    }
     if !is_authenticated_request(&req, &config).await? {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return invalid_access_token_response();
     }
     let user = match extract_authenticated_user(&req, &config).await? {
         Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return invalid_access_token_response(),
     };
     let db = ctx.d1(&config.database_binding)?;
     let account = resolve_local_account(&db, &user).await?;
@@ -618,10 +641,16 @@ pub(crate) async fn app_verify_credentials_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if !is_authenticated_request(&req, &config).await? {
-        return Response::error("Cloudflare Access authentication required", 401);
-    }
-    Response::from_json(&build_app_verify_credentials_document(&config))
+    let db = ctx.d1(&config.database_binding)?;
+    let Some(token) = app_bearer_token_from_request(&req)? else {
+        return Response::error("The access token is invalid", 401);
+    };
+    let Some(app) = find_oauth_app_by_bearer_token(&db, &token).await? else {
+        return Response::error("The access token is invalid", 401);
+    };
+    Response::from_json(&build_app_verify_credentials_document_from_row(
+        &app, &config,
+    ))
 }
 
 pub(crate) async fn create_email_confirmation_response(
@@ -630,7 +659,16 @@ pub(crate) async fn create_email_confirmation_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     if !is_authenticated_request(&req, &config).await? {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return invalid_access_token_response();
+    }
+    let db = ctx.d1(&config.database_binding)?;
+    let account = find_authenticated_local_account(&req, &db, &config).await?;
+    if account
+        .as_ref()
+        .map(|account| !account.access_email.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return email_confirmation_unavailable_response();
     }
     Response::from_json(&serde_json::json!({}))
 }
@@ -641,9 +679,14 @@ pub(crate) async fn check_email_confirmation_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     if !is_authenticated_request(&req, &config).await? {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return invalid_access_token_response();
     }
-    Response::from_json(&true)
+    let db = ctx.d1(&config.database_binding)?;
+    let confirmed = find_authenticated_local_account(&req, &db, &config)
+        .await?
+        .map(|account| !account.access_email.trim().is_empty())
+        .unwrap_or(false);
+    Response::from_json(&confirmed)
 }
 
 pub(crate) async fn streaming_placeholder_response(
@@ -824,6 +867,50 @@ pub(crate) async fn status_quotes_response(
     Ok(builder)
 }
 
+async fn enqueue_quote_revocation_federation(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    requester: &cfwdon_domain::LocalAccount,
+    target_status_id: &str,
+    target_uri: &str,
+    interacting_object_uri: &str,
+    authorization_key: &str,
+    follower_inboxes: &[String],
+    remote_quote_author_actor_uri: Option<&str>,
+) -> Result<()> {
+    let payload = build_delete_quote_authorization_activity(
+        config,
+        requester,
+        interacting_object_uri,
+        target_uri,
+        authorization_key,
+    )?;
+
+    let mut unique_follower_inboxes = Vec::new();
+    let mut seen = HashSet::new();
+    for inbox in follower_inboxes {
+        let inbox = inbox.trim();
+        if !inbox.is_empty() && seen.insert(inbox.to_owned()) {
+            unique_follower_inboxes.push(inbox.to_owned());
+        }
+    }
+    if !unique_follower_inboxes.is_empty() {
+        enqueue_targeted_outbox_activity(
+            db,
+            &requester.id,
+            target_status_id,
+            &payload,
+            &unique_follower_inboxes,
+        )
+        .await?;
+    }
+    if let Some(actor_uri) = remote_quote_author_actor_uri {
+        let _ = queue_remote_actor_activity(db, &requester.id, actor_uri, &payload).await?;
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
@@ -851,74 +938,137 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
     else {
         return Response::error("status not found", 404);
     };
-    let target_uri = match target_status {
+    let (target_status_id, target_uri) = match &target_status {
         crate::ResolvedStatus::Local(status) => {
             let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                 return Response::error("status not found", 404);
             };
-            if !can_view_local_status(&db, &status, Some(&requester), &account).await? {
+            if status.account_id != requester.id
+                || !can_view_local_status(&db, &status, Some(&requester), &account).await?
+            {
                 return Response::error("status not found", 404);
             }
-            local_status_target_uri(&status)
+            (status.id.clone(), local_status_target_uri(status))
         }
         crate::ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
-            status.object_uri
+            let _ = status;
+            return Response::error("status not found", 404);
         }
     };
+    let mut quote_revocation_targets = list_follower_delivery_targets(&db, &requester.id).await?;
 
-    let Some(quote_status) = find_status_by_id(&db, &quote_status_id).await? else {
-        return Response::error("status not found", 404);
-    };
-    if quote_status.account_id != requester.id {
-        return Response::error("status not found", 404);
+    match resolve_status_reference(&db, &config, &quote_status_id).await? {
+        Some(crate::ResolvedStatus::Local(quote_status)) => {
+            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
+                || !status_has_active_quote(&quote_status)
+            {
+                return Response::error("status not found", 404);
+            }
+            let Some(quote_author) = find_account_by_id(&db, &quote_status.account_id).await?
+            else {
+                return Response::error("status not found", 404);
+            };
+
+            let current_media = find_media_attachments_by_status_id(&db, &quote_status.id).await?;
+            let previous_in_reply_to_account_id =
+                load_in_reply_to_account_id(&db, &quote_status).await?;
+            let previous_response = build_local_status_response(
+                &db,
+                &config,
+                Some(&requester),
+                &quote_status,
+                &quote_author,
+                previous_in_reply_to_account_id,
+                current_media.clone(),
+            )
+            .await?;
+            let mut previous_snapshot =
+                serde_json::to_value(previous_response).unwrap_or_else(|_| serde_json::json!({}));
+            let revision_at = now_iso_string()?;
+            previous_snapshot["created_at"] = serde_json::json!(revision_at.clone());
+            let previous_snapshot = normalize_status_history_entry(previous_snapshot);
+            let previous_snapshot_json =
+                serde_json::to_string(&previous_snapshot).map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to serialize status snapshot: {error}"
+                    ))
+                })?;
+            insert_status_edit_snapshot(
+                &db,
+                &quote_status.id,
+                &previous_snapshot_json,
+                &revision_at,
+            )
+            .await?;
+
+            let updated_status = clear_local_status_quote(&db, &quote_status, &revision_at).await?;
+            enqueue_status_update_activity(&db, &config, &quote_author, &updated_status).await?;
+            quote_revocation_targets
+                .extend(list_follower_delivery_targets(&db, &quote_author.id).await?);
+            enqueue_quote_revocation_federation(
+                &db,
+                &config,
+                &requester,
+                &target_status_id,
+                &target_uri,
+                &local_status_target_uri(&updated_status),
+                &updated_status.id,
+                &quote_revocation_targets,
+                None,
+            )
+            .await?;
+
+            let media = find_media_attachments_by_status_id(&db, &updated_status.id).await?;
+            let in_reply_to_account_id = load_in_reply_to_account_id(&db, &updated_status).await?;
+            let response = build_local_status_response(
+                &db,
+                &config,
+                Some(&requester),
+                &updated_status,
+                &quote_author,
+                in_reply_to_account_id,
+                media,
+            )
+            .await?;
+            Response::from_json(&response)
+        }
+        Some(crate::ResolvedStatus::Remote(quote_status)) => {
+            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
+                || !remote_status_has_active_quote(&quote_status)
+            {
+                return Response::error("status not found", 404);
+            }
+            let Some(quote_author) =
+                find_remote_actor_by_actor_uri(&db, &quote_status.actor_uri).await?
+            else {
+                return Response::error("status not found", 404);
+            };
+            let updated_status =
+                update_remote_status_quote_state(&db, &quote_status.id, "revoked").await?;
+            enqueue_quote_revocation_federation(
+                &db,
+                &config,
+                &requester,
+                &target_status_id,
+                &target_uri,
+                &quote_status.object_uri,
+                &quote_status.id,
+                &quote_revocation_targets,
+                Some(&quote_author.actor_uri),
+            )
+            .await?;
+            let response = build_remote_status_response(
+                &db,
+                &config,
+                Some(&requester),
+                &updated_status,
+                &quote_author,
+            )
+            .await?;
+            Response::from_json(&response)
+        }
+        None => Response::error("status not found", 404),
     }
-    if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str()) {
-        return Response::error("status not found", 404);
-    }
-
-    let current_media = find_media_attachments_by_status_id(&db, &quote_status.id).await?;
-    let previous_in_reply_to_account_id = load_in_reply_to_account_id(&db, &quote_status).await?;
-    let previous_response = build_local_status_response(
-        &db,
-        &config,
-        Some(&requester),
-        &quote_status,
-        &requester,
-        previous_in_reply_to_account_id,
-        current_media.clone(),
-    )
-    .await?;
-    let mut previous_snapshot =
-        serde_json::to_value(previous_response).unwrap_or_else(|_| serde_json::json!({}));
-    let revision_at = now_iso_string()?;
-    previous_snapshot["created_at"] = serde_json::json!(revision_at.clone());
-    let previous_snapshot = normalize_status_history_entry(previous_snapshot);
-    let previous_snapshot_json = serde_json::to_string(&previous_snapshot).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize status snapshot: {error}"))
-    })?;
-    insert_status_edit_snapshot(&db, &quote_status.id, &previous_snapshot_json, &revision_at)
-        .await?;
-
-    let updated_status = clear_local_status_quote(&db, &quote_status, &revision_at).await?;
-    enqueue_status_update_activity(&db, &config, &requester, &updated_status).await?;
-
-    let media = find_media_attachments_by_status_id(&db, &updated_status.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(&db, &updated_status).await?;
-    let response = build_local_status_response(
-        &db,
-        &config,
-        Some(&requester),
-        &updated_status,
-        &requester,
-        in_reply_to_account_id,
-        media,
-    )
-    .await?;
-
-    Response::from_json(&response)
 }
 
 pub(crate) async fn accounts_index_response(
@@ -984,6 +1134,55 @@ pub(crate) async fn remove_from_followers_response(
             Response::from_json(&relationship)
         }
         Some(AccountReference::Remote(actor)) => {
+            let accepted_follow_activity_id = find_follower_follow_activity_id(
+                &db,
+                &viewer.id,
+                &actor.actor_uri,
+                &actor.actor_uri,
+            )
+            .await?;
+            if let Some(request) =
+                find_pending_remote_follow_request_by_actor(&db, &viewer.id, &actor.actor_uri)
+                    .await?
+            {
+                delete_remote_follow_request_by_actor(
+                    &db,
+                    &viewer.id,
+                    &actor.actor_uri,
+                    &actor.actor_uri,
+                )
+                .await?;
+                if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
+                    let payload = build_reject_follow_activity(
+                        &config,
+                        &viewer,
+                        follow_activity_id,
+                        &actor.actor_uri,
+                    )?;
+                    let _ = queue_remote_actor_activity_required(
+                        &db,
+                        &viewer.id,
+                        &actor.actor_uri,
+                        &payload,
+                    )
+                    .await;
+                }
+            }
+            if let Some(follow_activity_id) = accepted_follow_activity_id.as_deref() {
+                let payload = build_reject_follow_activity(
+                    &config,
+                    &viewer,
+                    follow_activity_id,
+                    &actor.actor_uri,
+                )?;
+                let _ = queue_remote_actor_activity_required(
+                    &db,
+                    &viewer.id,
+                    &actor.actor_uri,
+                    &payload,
+                )
+                .await;
+            }
             delete_follower_by_actor(&db, &viewer.id, &actor.actor_uri, &actor.actor_uri).await?;
             let relationship = build_relationship_for_target(
                 &db,
@@ -1021,9 +1220,10 @@ async fn list_local_status_quotes_by_uri(
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses
              WHERE quote_of_uri = ?1
+               AND quote_state = 'accepted'
                AND (
                     ?2 IS NULL
                     OR created_at < ?2
@@ -1065,9 +1265,10 @@ async fn list_remote_status_quotes_by_uri(
     ];
     let result = db
         .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE quote_of_uri = ?1
+               AND quote_state = 'accepted'
                AND (
                     ?2 IS NULL
                     OR published_at < ?2

@@ -54,7 +54,7 @@ pub(crate) async fn handle_inbox_announce(
         return Ok(());
     };
     upsert_remote_actor(db, remote_actor).await?;
-    upsert_remote_reblog_status(db, remote_actor, activity).await?;
+    upsert_remote_reblog_status(db, config, remote_actor, activity).await?;
 
     if let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? {
         if status.account_id != account.id {

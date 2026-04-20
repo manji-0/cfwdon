@@ -1,5 +1,5 @@
 use super::{AppConfig, RouteContext, parse_csv_list};
-use cfwdon_core::BuildMetadata;
+use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct RootDocument {
@@ -12,6 +12,15 @@ pub(crate) struct RootDocument {
 pub(crate) const MAX_IMAGE_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_AV_UPLOAD_BYTES: usize = 40 * 1024 * 1024;
 
+fn parse_timeline_access_level(value: Option<String>) -> Option<TimelineAccessLevel> {
+    match value.as_deref().map(str::trim) {
+        Some("public") => Some(TimelineAccessLevel::Public),
+        Some("authenticated") => Some(TimelineAccessLevel::Authenticated),
+        Some("disabled") => Some(TimelineAccessLevel::Disabled),
+        _ => None,
+    }
+}
+
 pub(crate) fn root_document() -> RootDocument {
     let build = build_metadata();
 
@@ -23,6 +32,7 @@ pub(crate) fn root_document() -> RootDocument {
             "/",
             "/healthz",
             "/.well-known/oauth-authorization-server",
+            "/api/v1_alpha/async_refreshes/:id",
             "/api/v1/instance",
             "/api/v1/timelines/home",
             "/api/v1/timelines/direct",
@@ -268,6 +278,39 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         if !value.is_empty() {
             config.terms_of_service_effective_date = Some(value);
         }
+    }
+
+    if let Some(value) =
+        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL"))
+    {
+        config.timeline_live_feeds_local = value;
+    }
+    if let Some(value) =
+        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE"))
+    {
+        config.timeline_live_feeds_remote = value;
+    }
+    if let Some(value) =
+        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL"))
+    {
+        config.timeline_hashtag_feeds_local = value;
+    }
+    if let Some(value) =
+        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE"))
+    {
+        config.timeline_hashtag_feeds_remote = value;
+    }
+    if let Some(value) = parse_timeline_access_level(optional_var(
+        ctx,
+        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL",
+    )) {
+        config.timeline_trending_link_feeds_local = value;
+    }
+    if let Some(value) = parse_timeline_access_level(optional_var(
+        ctx,
+        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE",
+    )) {
+        config.timeline_trending_link_feeds_remote = value;
     }
 
     if let Some(value) = optional_var(ctx, "ANNOUNCEMENTS_JSON") {

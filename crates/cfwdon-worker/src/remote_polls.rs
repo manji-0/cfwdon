@@ -3,9 +3,14 @@ use super::local_polls::{MastodonPollOptionResponse, MastodonPollResponse};
 use super::queue_remote_actor_activity_required;
 use super::time_html::is_iso_timestamp_in_past;
 use super::{
-    RemoteActorRow, RemoteStatusPollRow, RemoteStatusRow, build_poll_vote_activity,
-    find_remote_status_poll_by_status_id, list_remote_poll_votes_for_account,
-    list_remote_status_poll_options, remap_remote_poll_vote_positions,
+    RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
+    RemoteStatusRow, build_poll_vote_activity, extract_remote_note_object,
+    extract_remote_poll_draft, fetch_remote_activitypub_document, fetch_remote_actor_profile,
+    find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
+    has_remote_poll_votes_created_after, is_local_account_following_remote_actor,
+    list_remote_poll_votes_for_account, list_remote_status_poll_options, note_targets_account,
+    note_targets_followers, remap_remote_poll_vote_positions, upsert_remote_actor,
+    upsert_remote_status, validate_poll_vote_submission,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -72,6 +77,258 @@ pub(crate) async fn build_remote_mastodon_poll_response(
     }))
 }
 
+pub(crate) fn remote_poll_should_refresh(
+    poll: &RemoteStatusPollRow,
+    viewer: Option<&LocalAccount>,
+) -> bool {
+    if viewer.is_none() || poll.expired != 0 {
+        return false;
+    }
+
+    poll.expires_at
+        .as_deref()
+        .map(|value| !is_iso_timestamp_in_past(value).unwrap_or(false))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+pub(crate) fn remote_status_targets_local_viewer(
+    raw_status: &serde_json::Value,
+    viewer: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    extract_remote_note_object(raw_status)
+        .map(|object| {
+            note_targets_account(object, viewer, config)
+                || note_targets_followers(object, viewer, config)
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn remote_status_targets_local_viewer_account(
+    raw_status: &serde_json::Value,
+    viewer: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    extract_remote_note_object(raw_status)
+        .map(|object| note_targets_account(object, viewer, config))
+        .unwrap_or(false)
+}
+
+pub(crate) fn remote_status_targets_local_viewer_followers(
+    raw_status: &serde_json::Value,
+    viewer: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    extract_remote_note_object(raw_status)
+        .map(|object| note_targets_followers(object, viewer, config))
+        .unwrap_or(false)
+}
+
+pub(crate) async fn remote_poll_is_visible_to_viewer(
+    db: &D1Database,
+    config: &AppConfig,
+    poll: &RemoteStatusPollRow,
+    status: &RemoteStatusRow,
+    viewer: Option<&LocalAccount>,
+) -> Result<bool> {
+    if matches!(status.visibility.as_str(), "public" | "unlisted") {
+        return Ok(true);
+    }
+
+    let Some(viewer) = viewer else {
+        return Ok(false);
+    };
+    let has_own_vote = !list_remote_poll_votes_for_account(db, &poll.id, &viewer.id)
+        .await?
+        .is_empty();
+
+    if let Some(raw_status) = find_remote_status_raw_object_by_id(db, &status.id).await? {
+        if remote_status_targets_local_viewer_account(&raw_status, viewer, config) {
+            return Ok(true);
+        }
+        if remote_status_targets_local_viewer_followers(&raw_status, viewer, config)
+            && is_local_account_following_remote_actor(db, &viewer.id, &status.actor_uri).await?
+        {
+            return Ok(true);
+        }
+        return Ok(has_own_vote);
+    }
+
+    if is_local_account_following_remote_actor(db, &viewer.id, &status.actor_uri).await? {
+        return Ok(true);
+    }
+
+    Ok(has_own_vote)
+}
+
+pub(crate) async fn refresh_remote_poll_if_needed(
+    db: &D1Database,
+    config: &AppConfig,
+    status: &RemoteStatusRow,
+    poll: &RemoteStatusPollRow,
+    viewer: Option<&LocalAccount>,
+) -> Result<()> {
+    if !remote_poll_should_refresh(poll, viewer) {
+        return Ok(());
+    }
+
+    let document = match fetch_remote_activitypub_document(&status.object_uri).await {
+        Ok(document) => document,
+        Err(_) => return Ok(()),
+    };
+    let Some(object) = extract_remote_note_object(&document) else {
+        return Ok(());
+    };
+    let Some(fetched_poll) = extract_remote_poll_draft(object) else {
+        return Ok(());
+    };
+    if has_remote_poll_votes_created_after(db, &poll.id, &poll.updated_at).await? {
+        let options = list_remote_status_poll_options(db, &poll.id).await?;
+        if !remote_poll_draft_acknowledges_local_snapshot(poll, &options, &fetched_poll) {
+            return Ok(());
+        }
+    }
+    let actor_uri = object
+        .get("attributedTo")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| document.get("actor").and_then(serde_json::Value::as_str))
+        .unwrap_or(&status.actor_uri);
+    let actor = match fetch_remote_actor_profile(actor_uri).await {
+        Ok(actor) => actor,
+        Err(_) => return Ok(()),
+    };
+    upsert_remote_actor(db, &actor).await?;
+    upsert_remote_status(db, config, &actor, object).await
+}
+
+pub(crate) fn remote_poll_draft_acknowledges_vote(
+    poll: &RemoteStatusPollRow,
+    options: &[RemoteStatusPollOptionRow],
+    fetched_poll: &RemotePollDraft,
+    had_existing_votes: bool,
+    new_choices: &[u32],
+) -> bool {
+    if fetched_poll.multiple != (poll.multiple != 0) {
+        return false;
+    }
+
+    let expected_votes_count = poll
+        .votes_count
+        .saturating_add(i64::try_from(new_choices.len()).unwrap_or(i64::MAX))
+        .max(0) as u64;
+    if fetched_poll.votes_count < expected_votes_count {
+        return false;
+    }
+
+    if poll.multiple != 0 {
+        let expected_voters_count = if had_existing_votes || new_choices.is_empty() {
+            poll.voters_count.map(|value| value.max(0) as u64)
+        } else {
+            Some(poll.voters_count.unwrap_or(0).saturating_add(1).max(0) as u64)
+        };
+        if let Some(expected_voters_count) = expected_voters_count
+            && fetched_poll.voters_count.unwrap_or(0) < expected_voters_count
+        {
+            return false;
+        }
+    }
+
+    for choice in new_choices {
+        let Some(local_option) = options.get(*choice as usize) else {
+            return false;
+        };
+        let expected_option_votes = local_option.votes_count.saturating_add(1).max(0) as u64;
+        let Some(remote_option) = fetched_poll
+            .options
+            .iter()
+            .find(|option| option.title == local_option.title)
+        else {
+            return false;
+        };
+        if remote_option.votes_count < expected_option_votes {
+            return false;
+        }
+    }
+
+    true
+}
+
+pub(crate) fn remote_poll_draft_acknowledges_local_snapshot(
+    poll: &RemoteStatusPollRow,
+    options: &[RemoteStatusPollOptionRow],
+    fetched_poll: &RemotePollDraft,
+) -> bool {
+    if fetched_poll.multiple != (poll.multiple != 0) {
+        return false;
+    }
+    if fetched_poll.votes_count < poll.votes_count.max(0) as u64 {
+        return false;
+    }
+
+    if poll.multiple != 0
+        && let Some(expected_voters_count) = poll.voters_count.map(|value| value.max(0) as u64)
+        && fetched_poll.voters_count.unwrap_or(0) < expected_voters_count
+    {
+        return false;
+    }
+
+    for local_option in options {
+        let expected_option_votes = local_option.votes_count.max(0) as u64;
+        let Some(remote_option) = fetched_poll
+            .options
+            .iter()
+            .find(|option| option.title == local_option.title)
+        else {
+            return false;
+        };
+        if remote_option.votes_count < expected_option_votes {
+            return false;
+        }
+    }
+
+    true
+}
+
+async fn refresh_remote_poll_after_vote_if_acknowledged(
+    db: &D1Database,
+    config: &AppConfig,
+    actor: &RemoteActorRow,
+    status: &RemoteStatusRow,
+    poll: &RemoteStatusPollRow,
+    options: &[RemoteStatusPollOptionRow],
+    had_existing_votes: bool,
+    new_choices: &[u32],
+) -> Result<bool> {
+    let document = match fetch_remote_activitypub_document(&status.object_uri).await {
+        Ok(document) => document,
+        Err(_) => return Ok(false),
+    };
+    let Some(object) = extract_remote_note_object(&document) else {
+        return Ok(false);
+    };
+    let Some(fetched_poll) = extract_remote_poll_draft(object) else {
+        return Ok(false);
+    };
+    if !remote_poll_draft_acknowledges_vote(
+        poll,
+        options,
+        &fetched_poll,
+        had_existing_votes,
+        new_choices,
+    ) {
+        return Ok(false);
+    }
+
+    let actor_profile = match fetch_remote_actor_profile(&actor.actor_uri).await {
+        Ok(actor_profile) => actor_profile,
+        Err(_) => return Ok(false),
+    };
+    upsert_remote_actor(db, &actor_profile).await?;
+    upsert_remote_status(db, config, &actor_profile, object).await?;
+    Ok(true)
+}
+
 pub(crate) async fn apply_remote_poll_vote(
     db: &D1Database,
     config: &AppConfig,
@@ -87,16 +344,9 @@ pub(crate) async fn apply_remote_poll_vote(
     }
     let existing_votes = list_remote_poll_votes_for_account(db, &poll.id, &viewer.id).await?;
     let existing = remap_remote_poll_vote_positions(&options, &existing_votes);
-    if poll.multiple == 0 && !existing.is_empty() {
-        return Err(Error::RustError(
-            "you have already voted in this poll".to_owned(),
-        ));
-    }
-    if poll.multiple == 0 && choices.len() > 1 {
-        return Err(Error::RustError(
-            "single-choice polls accept exactly one choice".to_owned(),
-        ));
-    }
+    let had_existing_votes = !existing.is_empty();
+    validate_poll_vote_submission(existing.len(), poll.multiple != 0, choices.len())
+        .map_err(Error::RustError)?;
 
     let mut new_choices = Vec::new();
     for choice in choices {
@@ -164,9 +414,92 @@ pub(crate) async fn apply_remote_poll_vote(
         .await?;
     }
 
+    apply_optimistic_remote_poll_vote_tally(
+        db,
+        &poll.id,
+        poll.multiple != 0,
+        had_existing_votes,
+        &new_choices,
+    )
+    .await?;
+    let _ = refresh_remote_poll_after_vote_if_acknowledged(
+        db,
+        config,
+        actor,
+        status,
+        poll,
+        &options,
+        had_existing_votes,
+        &new_choices,
+    )
+    .await;
+
     let mut own_votes = existing;
     own_votes.extend(new_choices);
     own_votes.sort_unstable();
     own_votes.dedup();
     Ok(own_votes)
+}
+
+async fn apply_optimistic_remote_poll_vote_tally(
+    db: &D1Database,
+    poll_id: &str,
+    multiple: bool,
+    had_existing_votes: bool,
+    new_choices: &[u32],
+) -> Result<()> {
+    if new_choices.is_empty() {
+        return Ok(());
+    }
+
+    let (votes_count_delta, voters_count_delta) =
+        optimistic_remote_poll_vote_deltas(multiple, had_existing_votes, new_choices.len());
+    let poll_bindings = [
+        D1Type::Integer(votes_count_delta),
+        voters_count_delta.map_or(D1Type::Null, D1Type::Integer),
+        D1Type::Text(poll_id),
+    ];
+    db.prepare(
+        "UPDATE remote_status_polls
+         SET votes_count = votes_count + ?1,
+             voters_count = CASE
+                 WHEN ?2 IS NULL THEN voters_count
+                 WHEN voters_count IS NULL THEN ?2
+                 ELSE voters_count + ?2
+             END,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?3",
+    )
+    .bind_refs(poll_bindings.iter())?
+    .run()
+    .await?;
+
+    for choice in new_choices {
+        let option_bindings = [D1Type::Text(poll_id), D1Type::Integer(*choice as i32)];
+        db.prepare(
+            "UPDATE remote_status_poll_options
+             SET votes_count = votes_count + 1
+             WHERE poll_id = ?1
+               AND position = ?2",
+        )
+        .bind_refs(option_bindings.iter())?
+        .run()
+        .await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn optimistic_remote_poll_vote_deltas(
+    multiple: bool,
+    had_existing_votes: bool,
+    added_vote_count: usize,
+) -> (i32, Option<i32>) {
+    let votes_count_delta = i32::try_from(added_vote_count).unwrap_or(i32::MAX);
+    let voters_count_delta = if multiple && !had_existing_votes && added_vote_count > 0 {
+        Some(1)
+    } else {
+        None
+    };
+    (votes_count_delta, voters_count_delta)
 }

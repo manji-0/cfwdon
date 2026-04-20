@@ -38,6 +38,7 @@ pub(crate) async fn resolve_local_account(
             display_name,
             fields_json,
             discoverable,
+            default_quote_policy,
             private_key_jwk,
             public_key_pem,
             created_at,
@@ -49,6 +50,7 @@ pub(crate) async fn resolve_local_account(
             ?3,
             '[]',
             0,
+            'public',
             ?4,
             ?5,
             CURRENT_TIMESTAMP,
@@ -103,7 +105,7 @@ pub(crate) async fn find_account_by_email(
 
     let row = db
         .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
              FROM accounts
              WHERE access_email = ?1
              LIMIT 1",
@@ -120,7 +122,7 @@ pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Opti
 
     let row = db
         .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
              FROM accounts
              WHERE id = ?1
              LIMIT 1",
@@ -141,7 +143,7 @@ pub(crate) async fn find_account_by_username(
 
     let row = db
         .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
              FROM accounts
              WHERE username = ?1
              LIMIT 1",

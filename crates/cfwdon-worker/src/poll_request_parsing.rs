@@ -47,3 +47,17 @@ pub(crate) async fn parse_poll_vote_request(
 
     Ok(choices)
 }
+
+pub(crate) fn validate_poll_vote_submission(
+    existing_vote_count: usize,
+    multiple: bool,
+    choice_count: usize,
+) -> std::result::Result<(), String> {
+    if existing_vote_count != 0 {
+        return Err("you have already voted in this poll".to_owned());
+    }
+    if !multiple && choice_count != 1 {
+        return Err("poll does not allow multiple choices".to_owned());
+    }
+    Ok(())
+}

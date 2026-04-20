@@ -1,5 +1,6 @@
 use super::{
-    StatusRow, actor_url, add_seconds_to_iso_string, generate_entity_id, now_iso_string,
+    StatusRow, actor_url, add_seconds_to_iso_string, generate_entity_id,
+    initial_local_quote_approval_policy, initial_local_quote_state, now_iso_string,
     render_status_html, require_status_by_id,
 };
 use cfwdon_core::AppConfig;
@@ -40,6 +41,8 @@ pub(crate) async fn insert_status(
         Some(value) => D1Type::Text(value),
         None => D1Type::Null,
     };
+    let quote_approval_policy = D1Type::Text(initial_local_quote_approval_policy(account, draft));
+    let quote_state = D1Type::Text(initial_local_quote_state(db, config, quote_of_uri).await?);
 
     let bindings = [
         id,
@@ -54,6 +57,9 @@ pub(crate) async fn insert_status(
         visibility,
         sensitive,
         language,
+        quote_approval_policy,
+        quote_state,
+        D1Type::Text(created_at.as_str()),
         created_at_binding,
     ];
 
@@ -71,6 +77,8 @@ pub(crate) async fn insert_status(
             visibility,
             sensitive,
             language,
+            quote_approval_policy,
+            quote_state,
             created_at,
             updated_at
         ) VALUES (
@@ -87,7 +95,9 @@ pub(crate) async fn insert_status(
             ?11,
             ?12,
             ?13,
-            ?13
+            ?14,
+            ?15,
+            ?16
         )",
     )
     .bind_refs(bindings.iter())?
@@ -149,6 +159,9 @@ pub(crate) async fn upsert_reblog_wrapper_status(
         D1Type::Text(visibility),
         D1Type::Integer(0),
         D1Type::Null,
+        D1Type::Text("public"),
+        D1Type::Text("accepted"),
+        D1Type::Text(created_at.as_str()),
         D1Type::Text(created_at.as_str()),
     ];
     db.prepare(
@@ -165,6 +178,8 @@ pub(crate) async fn upsert_reblog_wrapper_status(
             visibility,
             sensitive,
             language,
+            quote_approval_policy,
+            quote_state,
             created_at,
             updated_at
         ) VALUES (
@@ -181,7 +196,9 @@ pub(crate) async fn upsert_reblog_wrapper_status(
             ?11,
             ?12,
             ?13,
-            ?13
+            ?14,
+            ?15,
+            ?16
         )",
     )
     .bind_refs(bindings.iter())?
@@ -198,7 +215,7 @@ pub(crate) async fn find_reblog_wrapper_status_by_target_uri(
 ) -> Result<Option<StatusRow>> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(target_uri)];
     db.prepare(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, created_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
          FROM statuses
          WHERE account_id = ?1
            AND boost_of_uri = ?2
@@ -389,6 +406,30 @@ pub(crate) async fn update_local_status(
     require_status_by_id(db, &status.id).await
 }
 
+pub(crate) async fn update_local_status_quote_approval_policy(
+    db: &D1Database,
+    status: &StatusRow,
+    quote_approval_policy: &str,
+    updated_at: &str,
+) -> Result<StatusRow> {
+    let bindings = [
+        D1Type::Text(quote_approval_policy),
+        D1Type::Text(updated_at),
+        D1Type::Text(status.id.as_str()),
+    ];
+    db.prepare(
+        "UPDATE statuses
+         SET quote_approval_policy = ?1,
+             updated_at = ?2
+         WHERE id = ?3",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    require_status_by_id(db, &status.id).await
+}
+
 pub(crate) async fn clear_local_status_quote(
     db: &D1Database,
     status: &StatusRow,
@@ -397,7 +438,7 @@ pub(crate) async fn clear_local_status_quote(
     let bindings = [D1Type::Text(updated_at), D1Type::Text(status.id.as_str())];
     db.prepare(
         "UPDATE statuses
-         SET quote_of_uri = NULL,
+         SET quote_state = 'revoked',
              updated_at = ?1
          WHERE id = ?2",
     )

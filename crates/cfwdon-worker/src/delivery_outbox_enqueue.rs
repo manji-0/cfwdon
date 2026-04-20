@@ -1,11 +1,13 @@
 use super::{
     AppConfig, D1Database, Error, LocalAccount, Result, StatusRow, actor_url,
-    build_activitypub_delete, build_activitypub_note, is_public_activitypub_visibility,
+    build_activitypub_delete, build_activitypub_note, describe_outbound_activity,
+    is_public_activitypub_visibility, status_has_active_quote,
 };
+use std::collections::HashSet;
 use worker::d1::D1Type;
 
 fn create_activity_context(status: &StatusRow) -> serde_json::Value {
-    if status.quote_of_uri.is_some() {
+    if status_has_active_quote(status) {
         serde_json::json!([
             "https://www.w3.org/ns/activitystreams",
             {
@@ -153,6 +155,69 @@ pub(crate) async fn enqueue_outbox_delete(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn enqueue_targeted_outbox_activity(
+    db: &D1Database,
+    account_id: &str,
+    status_id: &str,
+    payload_json: &str,
+    target_inboxes: &[String],
+) -> Result<()> {
+    let descriptor = describe_outbound_activity(payload_json)?;
+    let mut seen = HashSet::new();
+
+    for target_inbox in target_inboxes {
+        let target_inbox = target_inbox.trim();
+        if target_inbox.is_empty() || !seen.insert(target_inbox.to_owned()) {
+            continue;
+        }
+
+        let bindings = [
+            D1Type::Text(account_id),
+            D1Type::Text(status_id),
+            D1Type::Text(descriptor.activity_id.as_str()),
+            D1Type::Text(descriptor.activity_type.as_str()),
+            D1Type::Text(target_inbox),
+            D1Type::Text(payload_json),
+        ];
+        db.prepare(
+            "INSERT OR IGNORE INTO outbox_deliveries (
+                id,
+                account_id,
+                status_id,
+                activity_id,
+                activity_type,
+                target_inbox,
+                payload_json,
+                state,
+                attempt_count,
+                last_attempt_at,
+                next_attempt_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                lower(hex(randomblob(16))),
+                ?1,
+                ?2,
+                ?3,
+                ?4,
+                ?5,
+                ?6,
+                'queued',
+                0,
+                NULL,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    }
 
     Ok(())
 }

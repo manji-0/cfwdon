@@ -20,6 +20,8 @@ pub(crate) struct AccountRow {
     pub(crate) bot: i32,
     pub(crate) discoverable: i32,
     pub(crate) default_post_visibility: String,
+    #[serde(default = "default_quote_policy")]
+    pub(crate) default_quote_policy: String,
     pub(crate) default_sensitive: i32,
     pub(crate) default_language: Option<String>,
     pub(crate) avatar_object_key: Option<String>,
@@ -29,6 +31,33 @@ pub(crate) struct AccountRow {
     pub(crate) private_key_jwk: String,
     pub(crate) public_key_pem: String,
     pub(crate) created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscoverableAccountRow {
+    id: String,
+    username: String,
+    access_email: String,
+    display_name: String,
+    bio_html: String,
+    bio_text: String,
+    fields_json: String,
+    locked: i32,
+    bot: i32,
+    discoverable: i32,
+    default_post_visibility: String,
+    #[serde(default = "default_quote_policy")]
+    default_quote_policy: String,
+    default_sensitive: i32,
+    default_language: Option<String>,
+    avatar_object_key: Option<String>,
+    avatar_content_type: Option<String>,
+    header_object_key: Option<String>,
+    header_content_type: Option<String>,
+    private_key_jwk: String,
+    public_key_pem: String,
+    created_at: String,
+    sort_key: String,
 }
 
 #[derive(Debug, Default)]
@@ -52,29 +81,35 @@ pub(crate) fn directory_order(value: Option<&str>) -> DirectoryOrder {
     }
 }
 
-pub(crate) async fn list_discoverable_accounts(
+fn default_quote_policy() -> String {
+    "public".to_owned()
+}
+
+pub(crate) async fn list_discoverable_accounts_with_sort_key(
     db: &D1Database,
     limit: u32,
     offset: u32,
     order: DirectoryOrder,
-) -> Result<Vec<LocalAccount>> {
+) -> Result<Vec<(LocalAccount, String)>> {
     let sql = match order {
         DirectoryOrder::Active => {
-            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at,
+                    COALESCE(MAX(s.created_at), a.created_at) AS sort_key
              FROM accounts a
              LEFT JOIN statuses s
                ON s.account_id = a.id
              WHERE a.discoverable = 1
              GROUP BY a.id
-             ORDER BY COALESCE(MAX(s.created_at), a.created_at) DESC, a.username ASC
+             ORDER BY sort_key DESC, a.username ASC
              LIMIT ?1
              OFFSET ?2"
         }
         DirectoryOrder::New => {
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at,
+                    created_at AS sort_key
              FROM accounts
              WHERE discoverable = 1
-             ORDER BY created_at DESC, username ASC
+             ORDER BY sort_key DESC, username ASC
              LIMIT ?1
              OFFSET ?2"
         }
@@ -87,9 +122,37 @@ pub(crate) async fn list_discoverable_accounts(
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
     Ok(result
-        .results::<AccountRow>()?
+        .results::<DiscoverableAccountRow>()?
         .into_iter()
-        .map(LocalAccount::from)
+        .map(|row| {
+            let sort_key = row.sort_key.clone();
+            (
+                LocalAccount::from(AccountRow {
+                    id: row.id,
+                    username: row.username,
+                    access_email: row.access_email,
+                    display_name: row.display_name,
+                    bio_html: row.bio_html,
+                    bio_text: row.bio_text,
+                    fields_json: row.fields_json,
+                    locked: row.locked,
+                    bot: row.bot,
+                    discoverable: row.discoverable,
+                    default_post_visibility: row.default_post_visibility,
+                    default_quote_policy: row.default_quote_policy,
+                    default_sensitive: row.default_sensitive,
+                    default_language: row.default_language,
+                    avatar_object_key: row.avatar_object_key,
+                    avatar_content_type: row.avatar_content_type,
+                    header_object_key: row.header_object_key,
+                    header_content_type: row.header_content_type,
+                    private_key_jwk: row.private_key_jwk,
+                    public_key_pem: row.public_key_pem,
+                    created_at: row.created_at,
+                }),
+                sort_key,
+            )
+        })
         .collect())
 }
 
@@ -139,6 +202,7 @@ impl From<AccountRow> for LocalAccount {
             bot: value.bot != 0,
             discoverable: value.discoverable != 0,
             default_post_visibility: value.default_post_visibility,
+            default_quote_policy: value.default_quote_policy,
             default_sensitive: value.default_sensitive != 0,
             default_language: value.default_language,
             avatar_object_key: value.avatar_object_key,

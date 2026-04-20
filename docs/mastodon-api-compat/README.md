@@ -20,12 +20,12 @@
 
 - discovery / OAuth metadata
 - `/api/oembed`
+- `/api/v1_alpha`
 - `/api/v1`
 - `/api/v2`
 
 現時点では次は対象外にしている。
 
-- `/api/v1_alpha`
 - `/api/v1/admin`, `/api/v2/admin`
 - `/api/web`
 - ActivityPub actor / inbox / outbox そのもの
@@ -65,9 +65,9 @@ deprecated route を残している可能性があるので、削除ではなく
 
 ## Snapshot
 
-- tracked upstream routes: `214`
-- local tracked routes: `215`
-- implemented routes: `181`
-- compatibility gaps: `33`
-- missing routes: `0`
+- tracked upstream routes: `231`
+- local tracked routes: `216`
+- implemented routes: `193`
+- compatibility gaps: `22`
+- missing routes: `16`
 - extra routes: `6`

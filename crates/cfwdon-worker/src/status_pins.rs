@@ -67,7 +67,7 @@ pub(crate) async fn list_pinned_statuses_for_account(
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
-            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.created_at
+            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
              FROM status_pins sp
              JOIN statuses s
                ON s.id = sp.status_id

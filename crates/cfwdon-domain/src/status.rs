@@ -44,6 +44,7 @@ pub struct StatusDraft {
     pub spoiler_text: String,
     pub sensitive: bool,
     pub language: Option<String>,
+    pub quote_approval_policy: Option<String>,
     pub in_reply_to_id: Option<String>,
     pub media_ids: Vec<String>,
     pub poll: Option<PollDraft>,

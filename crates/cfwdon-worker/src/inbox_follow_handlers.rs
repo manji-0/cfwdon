@@ -34,7 +34,7 @@ pub(crate) async fn handle_inbox_follow(
         &remote_actor.actor_uri,
     )
     .await?;
-    upsert_follower(db, &account.id, remote_actor).await?;
+    upsert_follower(db, &account.id, remote_actor, follow_activity_id).await?;
 
     let accept_activity =
         build_accept_activity(config, account, activity, &remote_actor.actor_uri)?;

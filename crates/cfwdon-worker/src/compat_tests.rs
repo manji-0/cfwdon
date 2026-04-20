@@ -35,6 +35,7 @@ fn fixture_account() -> LocalAccount {
         bot: false,
         discoverable: true,
         default_post_visibility: "public".to_owned(),
+        default_quote_policy: "public".to_owned(),
         default_sensitive: false,
         default_language: Some("ja".to_owned()),
         avatar_object_key: Some("media/account/avatar/alice".to_owned()),
@@ -82,6 +83,8 @@ fn fixture_status() -> StatusRow {
         visibility: "public".to_owned(),
         sensitive: 0,
         language: Some("ja".to_owned()),
+        quote_approval_policy: None,
+        quote_state: "accepted".to_owned(),
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
     }
 }
@@ -304,6 +307,29 @@ fn compatibility_preferences_shape_is_stable() {
 }
 
 #[test]
+fn compatibility_quote_policy_reflects_account_default() {
+    let mut account = fixture_account();
+    account.default_quote_policy = "followers".to_owned();
+
+    let preferences = build_preferences_document(&account);
+    assert_eq!(
+        preferences.pointer("/posting:default:quote_policy"),
+        Some(&serde_json::json!("followers"))
+    );
+
+    let credentials = serde_json::to_value(MastodonAccountResponse::from_credentials_account(
+        &account,
+        &fixture_config(),
+        &fixture_stats(),
+    ))
+    .unwrap();
+    assert_eq!(
+        credentials.pointer("/source/quote_policy"),
+        Some(&serde_json::json!("followers"))
+    );
+}
+
+#[test]
 fn compatibility_instance_activity_shape_is_stable() {
     let week_floor = PrimitiveDateTime::new(
         Date::from_calendar_date(2026, Month::March, 30).unwrap(),
@@ -359,15 +385,12 @@ fn compatibility_oauth_userinfo_shape_is_stable() {
     let value = build_oauth_userinfo_document(&fixture_config(), &fixture_account());
 
     for pointer in [
+        "/iss",
         "/sub",
         "/preferred_username",
         "/name",
-        "/nickname",
         "/profile",
-        "/website",
         "/picture",
-        "/email",
-        "/email_verified",
     ] {
         assert_has_pointer(&value, pointer);
     }

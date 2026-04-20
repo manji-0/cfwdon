@@ -11,9 +11,31 @@
 | GET | `/.well-known/oauth-authorization-server` | `oauth_authorization_server_response` | `implemented` |  |
 | GET | `/.well-known/nodeinfo` | `nodeinfo_links_response` | `implemented` |  |
 | GET | `/.well-known/webfinger` | `webfinger_response` | `implemented` |  |
-| GET | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | minimal OAuth userinfo claims |
-| POST | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | minimal OAuth userinfo claims |
+| GET | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装 |
+| POST | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装 |
 | GET | `/api/oembed` | `oembed_response` | `implemented` |  |
+
+## Experimental / Alpha
+
+| Method | Mastodon route | cfwdon handler | Status | Note |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1_alpha/accounts` | - | `missing` |  |
+| GET | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
+| POST | `/api/v1_alpha/accounts` | - | `missing` |  |
+| PUT | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
+| PATCH | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
+| DELETE | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
+| GET | `/api/v1_alpha/accounts/:id/collections` | - | `missing` |  |
+| GET | `/api/v1_alpha/accounts/:id/in_collections` | - | `missing` |  |
+| GET | `/api/v1_alpha/async_refreshes/:id` | `async_refresh_response` | `implemented` |  |
+| GET | `/api/v1_alpha/collections/:id` | - | `missing` |  |
+| POST | `/api/v1_alpha/collections` | - | `missing` |  |
+| PUT | `/api/v1_alpha/collections/:id` | - | `missing` |  |
+| PATCH | `/api/v1_alpha/collections/:id` | - | `missing` |  |
+| DELETE | `/api/v1_alpha/collections/:id` | - | `missing` |  |
+| POST | `/api/v1_alpha/collections/:id/items` | - | `missing` |  |
+| DELETE | `/api/v1_alpha/collections/:id/items/:id` | - | `missing` |  |
+| POST | `/api/v1_alpha/collections/:id/items/:id/revoke` | - | `missing` |  |
 
 ## Instance / Apps / Trends
 
@@ -35,13 +57,13 @@
 | DELETE | `/api/v1/announcements/:id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
 | POST | `/api/v1/announcements/:id/dismiss` | `dismiss_announcement_mutation_response` | `implemented` |  |
 | GET | `/api/v1/trends` | `trending_tags_response` | `implemented` |  |
-| GET | `/api/v1/apps/verify_credentials` | `app_verify_credentials_response` | `compat-gap` | response shape は寄せたが bearer application token の検証は未実装 |
+| GET | `/api/v1/apps/verify_credentials` | `app_verify_credentials_response` | `implemented` |  |
 | POST | `/api/v1/apps` | `create_app_response` | `implemented` |  |
 | GET | `/api/v1/trends/tags` | `trending_tags_response` | `implemented` |  |
 | GET | `/api/v1/trends/links` | `trending_links_response` | `implemented` |  |
 | GET | `/api/v1/trends/statuses` | `trending_statuses_response` | `implemented` |  |
-| POST | `/api/v1/emails/confirmations` | `create_email_confirmation_response` | `compat-gap` | auth gate は入れたが mail dispatch / application ownership 条件は未実装 |
-| GET | `/api/v1/emails/check_confirmation` | `check_email_confirmation_response` | `compat-gap` | boolean response と auth gate は入れたが confirmation state は未実装 |
+| POST | `/api/v1/emails/confirmations` | `create_email_confirmation_response` | `compat-gap` | 401/403 と confirmed-email state は寄せたが mail dispatch / application ownership 条件は未実装 |
+| GET | `/api/v1/emails/check_confirmation` | `check_email_confirmation_response` | `compat-gap` | authenticated local account の email presence で confirmation bool は返すが unconfirmed-user/application-token semantics は未実装 |
 | GET | `/api/v1/instance` | `instance_summary_response` | `implemented` |  |
 | GET | `/api/v1/instance/peers` | `instance_peers_response` | `implemented` |  |
 | GET | `/api/v1/instance/rules` | `instance_rules_response` | `implemented` |  |
@@ -60,21 +82,21 @@
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
-| GET | `/api/v1/timelines/home` | `home_timeline_response` | `compat-gap` | followed hashtag 混在は反映したが upstream の access control settings 差分は残る |
+| GET | `/api/v1/timelines/home` | `home_timeline_response` | `compat-gap` | followed hashtag 混在、401 invalid access token、app bearer rejection は入ったが OAuth user token semantics は未実装 |
 | GET | `/api/v1/timelines/public` | `public_timeline_response` | `implemented` |  |
-| GET | `/api/v1/timelines/link` | `link_timeline_response` | `compat-gap` | discoverable public statuses を返すが trending 判定は未実装 |
-| GET | `/api/v1/timelines/tag/:id` | `tag_timeline_response` | `compat-gap` | tag filter / local-remote 混在は実装したが public preview access control settings は未対応 |
+| GET | `/api/v1/timelines/link` | `link_timeline_response` | `implemented` |  |
+| GET | `/api/v1/timelines/tag/:id` | `tag_timeline_response` | `implemented` |  |
 | GET | `/api/v1/timelines/list/:id` | `list_timeline_response` | `implemented` |  |
 | GET | `/api/v1/streaming` | `streaming_placeholder_response` | `compat-gap` | placeholder SSE endpoint |
 | GET | `/api/v1/streaming/(*any)` | `streaming_placeholder_response` | `compat-gap` | placeholder SSE endpoint |
-| GET | `/api/v2/search` | `search_v2` | `compat-gap` | URL / hashtag resolve の詰めが残る |
+| GET | `/api/v2/search` | `search_v2` | `compat-gap` | HTTP URL resolve-only semantics、exact handle prepend、short-query gating、acct-aware account ranking/following boost、popularity tie-break、profile note/bio matching、statuses の account_id/min_id/max_id filter、statuses relevance-then-recency sorting、basic status query syntax (`from/before/after/during/language/is:/has:media/poll/embed`)、hashtags offset と usage/recency ranking は寄せたが advanced query syntax / FTS quality の差分は残る |
 
 ## Statuses / Polls / Media
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
 | GET | `/api/v1/statuses` | `statuses_index_placeholder_response` | `implemented` |  |
-| POST | `/api/v1/statuses` | `create_status` | `implemented` |  |
+| POST | `/api/v1/statuses` | `create_status` | `compat-gap` | quote_approval_policy の保存、account default quote policy、quote+media/poll 制約、local quote policy enforcement、local/remote quote state と count/list/revoke 整合、scheduled_at の validation と scheduled status persistence/media attachment expansion、idempotency echo、registered app bearer path の application_id echo は入ったが manual acceptance semantics と OAuth token ownership semantics は未実装 |
 | GET | `/api/v1/statuses/:id` | `status_api_response` | `implemented` |  |
 | PUT | `/api/v1/statuses/:id` | `update_status` | `implemented` |  |
 | PATCH | `/api/v1/statuses/:id` | `update_status` | `implemented` |  |
@@ -84,7 +106,7 @@
 | POST | `/api/v1/statuses/:id/reblog` | `reblog_status` | `implemented` |  |
 | POST | `/api/v1/statuses/:id/unreblog` | `unreblog_status` | `implemented` |  |
 | GET | `/api/v1/statuses/:id/quotes` | `status_quotes_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/quotes/:id/revoke` | `revoke_quote_response` | `compat-gap` | local quote の関連解除のみ実装 |
+| POST | `/api/v1/statuses/:id/quotes/:id/revoke` | `revoke_quote_response` | `implemented` |  |
 | POST | `/api/v1/statuses/:id/favourite` | `favourite_status` | `implemented` |  |
 | POST | `/api/v1/statuses/:id/unfavourite` | `unfavourite_status` | `implemented` |  |
 | POST | `/api/v1/statuses/:id/bookmark` | `bookmark_status` | `implemented` |  |
@@ -95,22 +117,22 @@
 | POST | `/api/v1/statuses/:id/unpin` | `unpin_status_response` | `implemented` |  |
 | GET | `/api/v1/statuses/:id/history` | `status_history_response` | `implemented` |  |
 | GET | `/api/v1/statuses/:id/source` | `status_source_response` | `implemented` |  |
-| PUT | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | auth gate と param validation は入れたが quote policy 永続化は未実装 |
-| PATCH | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | auth gate と param validation は入れたが quote policy 永続化は未実装 |
-| POST | `/api/v1/statuses/:id/translate` | `translate_status_response` | `compat-gap` | auth gate と response shape は寄せたが翻訳 provider 連携は未実装 |
-| GET | `/api/v1/statuses/:id/context` | `status_context_response` | `compat-gap` | 混在 thread の traversal は改善したが unauthenticated limit / async refresh header は未実装 |
-| GET | `/api/v1/scheduled_statuses` | `scheduled_statuses_response` | `compat-gap` | auth gate はあるが永続化された scheduled status 一覧は未実装 |
-| GET | `/api/v1/scheduled_statuses/:id` | `scheduled_status_response` | `compat-gap` | entity shape は寄せたが永続化と ownership 404 は未実装 |
-| PUT | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | entity shape は寄せたが scheduled_at 更新 semantics は未実装 |
-| PATCH | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | entity shape は寄せたが scheduled_at 更新 semantics は未実装 |
-| DELETE | `/api/v1/scheduled_statuses/:id` | `delete_scheduled_status_response` | `compat-gap` | auth gate はあるが scheduled status 削除 semantics は未実装 |
+| PUT | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装 |
+| PATCH | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装 |
+| POST | `/api/v1/statuses/:id/translate` | `translate_status_response` | `compat-gap` | 404/403、target `lang` semantics、response shape は寄せたが翻訳 provider 連携は未実装 |
+| GET | `/api/v1/statuses/:id/context` | `status_context_response` | `implemented` |  |
+| GET | `/api/v1/scheduled_statuses` | `scheduled_statuses_response` | `compat-gap` | owner-scoped persistence、media attachment expansion、idempotency echo、pagination、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
+| GET | `/api/v1/scheduled_statuses/:id` | `scheduled_status_response` | `compat-gap` | owner-scoped persistence と 404、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
+| PUT | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
+| PATCH | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
+| DELETE | `/api/v1/scheduled_statuses/:id` | `delete_scheduled_status_response` | `implemented` |  |
 | POST | `/api/v1/media` | `create_media_attachment` | `implemented` |  |
 | PUT | `/api/v1/media/:id` | `update_media_attachment` | `implemented` |  |
 | PATCH | `/api/v1/media/:id` | `update_media_attachment` | `implemented` |  |
 | GET | `/api/v1/media/:id` | `media_metadata_response` | `implemented` |  |
 | DELETE | `/api/v1/media/:id` | `delete_media_attachment` | `implemented` |  |
-| GET | `/api/v1/polls/:id` | `poll_response` | `compat-gap` | permissions / remote poll 精度 |
-| POST | `/api/v1/polls/:id/votes` | `vote_in_poll` | `compat-gap` | local / remote vote の詰めが残る |
+| GET | `/api/v1/polls/:id` | `poll_response` | `implemented` |  |
+| POST | `/api/v1/polls/:id/votes` | `vote_in_poll` | `implemented` |  |
 | POST | `/api/v2/media` | `create_media_attachment` | `implemented` |  |
 
 ## Accounts / Relationships / Tags
@@ -127,12 +149,12 @@
 | PATCH | `/api/v1/profile` | `update_profile_response` | `implemented` |  |
 | DELETE | `/api/v1/profile/avatar` | `delete_profile_avatar_response` | `implemented` |  |
 | DELETE | `/api/v1/profile/header` | `delete_profile_header_response` | `implemented` |  |
-| GET | `/api/v1/directory` | `account_directory` | `compat-gap` | remote discoverable account は混在するが ordering 精度は近似 |
+| GET | `/api/v1/directory` | `account_directory` | `implemented` |  |
 | GET | `/api/v1/follow_requests` | `follow_requests_response` | `implemented` |  |
 | POST | `/api/v1/follow_requests/:id/authorize` | `authorize_follow_request_response` | `implemented` |  |
 | POST | `/api/v1/follow_requests/:id/reject` | `reject_follow_request_response` | `implemented` |  |
 | GET | `/api/v1/accounts/verify_credentials` | `verify_credentials` | `implemented` |  |
-| PATCH | `/api/v1/accounts/update_credentials` | `update_credentials` | `compat-gap` | profile / AP update の詰めが残る |
+| PATCH | `/api/v1/accounts/update_credentials` | `update_credentials` | `implemented` |  |
 | GET | `/api/v1/accounts/search` | `account_search` | `implemented` |  |
 | GET | `/api/v1/accounts/lookup` | `account_lookup` | `implemented` |  |
 | GET | `/api/v1/accounts/relationships` | `account_relationships` | `implemented` |  |
@@ -146,11 +168,11 @@
 | GET | `/api/v1/accounts/:id/lists` | `account_lists_response` | `implemented` |  |
 | GET | `/api/v1/accounts/:id/identity_proofs` | `identity_proofs_response` | `implemented` |  |
 | GET | `/api/v1/accounts/:id/featured_tags` | `account_featured_tags_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/endorsements` | `account_endorsements_response` | `compat-gap` | local account owner の featured profiles を返すが remote account の featured collection は未対応 |
+| GET | `/api/v1/accounts/:id/endorsements` | `account_endorsements_response` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/email_subscriptions` | `account_email_subscriptions_response` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/follow` | `follow_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/unfollow` | `unfollow_account` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/remove_from_followers` | `remove_from_followers_response` | `compat-gap` | local/remote follower の切断のみ実装 |
+| POST | `/api/v1/accounts/:id/remove_from_followers` | `remove_from_followers_response` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/block` | `block_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/unblock` | `unblock_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/mute` | `mute_account` | `implemented` |  |

@@ -2,7 +2,7 @@ use crate::{
     AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
     count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
     find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_object_url,
+    media_object_url, status_has_active_quote,
 };
 use worker::{D1Database, Result};
 
@@ -88,7 +88,7 @@ pub(crate) async fn build_activitypub_note(
         None => None,
     };
     let attachments = find_media_attachments_by_status_id(db, &status.id).await?;
-    let has_quote = status.quote_of_uri.is_some();
+    let has_quote = status_has_active_quote(status);
 
     let mut note = serde_json::json!({
         "type": "Note",
@@ -136,7 +136,7 @@ pub(crate) async fn build_activitypub_note(
     if let Some(reply_uri) = reply_uri {
         note["inReplyTo"] = serde_json::json!(reply_uri);
     }
-    if let Some(quote_uri) = status.quote_of_uri.as_deref() {
+    if has_quote && let Some(quote_uri) = status.quote_of_uri.as_deref() {
         note["quoteUri"] = serde_json::json!(quote_uri);
         note["quoteUrl"] = serde_json::json!(quote_uri);
         note["_misskey_quote"] = serde_json::json!(quote_uri);

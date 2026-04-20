@@ -15,7 +15,3 @@ pub(crate) async fn count_rows(db: &D1Database, sql: &str, value: &str) -> Resul
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0))
 }
-
-pub(crate) async fn count_rows_like(db: &D1Database, sql: &str, pattern: &str) -> Result<u64> {
-    count_rows(db, sql, pattern).await
-}

@@ -235,6 +235,51 @@ pub(crate) fn build_undo_announce_activity(
     ))
 }
 
+fn quote_authorization_context() -> serde_json::Value {
+    serde_json::json!([
+        "https://www.w3.org/ns/activitystreams",
+        {
+            "QuoteAuthorization": "https://w3id.org/fep/044f#QuoteAuthorization",
+            "interactingObject": "https://gotosocial.org/ns#interactingObject",
+            "interactionTarget": "https://gotosocial.org/ns#interactionTarget",
+        }
+    ])
+}
+
+pub(crate) fn build_delete_quote_authorization_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    interacting_object_uri: &str,
+    interaction_target_uri: &str,
+    authorization_key: &str,
+) -> Result<String> {
+    let actor = actor_url(config, &account.username);
+    let approval_id = format!(
+        "{}/quote_authorizations/{}",
+        interaction_target_uri.trim_end_matches('/'),
+        authorization_key.trim()
+    );
+    let activity = serde_json::json!({
+        "@context": quote_authorization_context(),
+        "id": format!("{approval_id}#delete"),
+        "type": "Delete",
+        "actor": actor,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "object": {
+            "id": approval_id,
+            "type": "QuoteAuthorization",
+            "attributedTo": actor,
+            "interactingObject": interacting_object_uri,
+            "interactionTarget": interaction_target_uri,
+        }
+    });
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!(
+            "failed to serialize Delete QuoteAuthorization activity: {error}"
+        ))
+    })
+}
+
 pub(crate) fn build_add_featured_activity(
     config: &AppConfig,
     account: &LocalAccount,

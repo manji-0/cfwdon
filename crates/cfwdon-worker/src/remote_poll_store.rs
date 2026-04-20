@@ -13,6 +13,7 @@ pub(crate) struct RemoteStatusPollRow {
     pub(crate) voters_count: Option<i64>,
     pub(crate) votes_count: i64,
     pub(crate) expired: i32,
+    pub(crate) updated_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +41,7 @@ pub(crate) async fn find_remote_status_poll_by_id(
 ) -> Result<Option<RemoteStatusPollRow>> {
     let poll_id = D1Type::Text(poll_id);
     db.prepare(
-        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired
+        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
          FROM remote_status_polls
          WHERE id = ?1
          LIMIT 1",
@@ -56,7 +57,7 @@ pub(crate) async fn find_remote_status_poll_by_status_id(
 ) -> Result<Option<RemoteStatusPollRow>> {
     let status_id = D1Type::Text(status_id);
     db.prepare(
-        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired
+        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
          FROM remote_status_polls
          WHERE status_id = ?1
          LIMIT 1",
@@ -195,4 +196,29 @@ pub(crate) async fn prune_remote_poll_vote_rows(
     }
 
     Ok(())
+}
+
+pub(crate) async fn has_remote_poll_votes_created_after(
+    db: &D1Database,
+    poll_id: &str,
+    created_after: &str,
+) -> Result<bool> {
+    let bindings = [D1Type::Text(poll_id), D1Type::Text(created_after)];
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM remote_status_poll_votes
+             WHERE poll_id = ?1
+               AND datetime(created_at) > datetime(?2)",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    Ok(row
+        .as_ref()
+        .and_then(|value| value.get("count"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        > 0)
 }

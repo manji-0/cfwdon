@@ -1,13 +1,25 @@
 use crate::{Request, Response, Result, RouteContext, generate_entity_id, load_config};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
+use time::OffsetDateTime;
 use url::Url;
-use worker::d1::D1Type;
+use worker::{D1Database, d1::D1Type};
 
 #[derive(Debug, Default, Deserialize)]
 struct CreateAppRequest {
     client_name: Option<String>,
     scopes: Option<String>,
     website: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OAuthTokenRequest {
+    grant_type: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    redirect_uri: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Debug)]
@@ -19,7 +31,7 @@ struct ParsedCreateAppRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct OAuthAppRow {
+pub(crate) struct OAuthAppRow {
     id: i64,
     name: String,
     website: Option<String>,
@@ -31,10 +43,70 @@ struct OAuthAppRow {
     client_secret_expires_at: i64,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> serde_json::Value {
+    serde_json::json!({
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "scope": scope,
+        "created_at": OffsetDateTime::now_utc().unix_timestamp(),
+    })
+}
+
+fn oauth_app_scopes(row: &OAuthAppRow) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(&row.scopes_json).unwrap_or_default()
+}
+
+pub(crate) fn oauth_app_has_any_scope(row: &OAuthAppRow, scopes: &[&str]) -> bool {
+    oauth_app_scopes(row)
+        .iter()
+        .any(|scope| scopes.contains(&scope.as_str()))
+}
+
+fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(&row.redirect_uris_json).unwrap_or_default()
+}
+
+pub(crate) fn build_app_verify_credentials_document_from_parts(
+    id: &str,
+    name: &str,
+    website: Option<&str>,
+    scopes: &[String],
+    redirect_uris: &[String],
+    redirect_uri: &str,
+    vapid_key: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": name,
+        "website": website,
+        "scopes": scopes,
+        "redirect_uris": redirect_uris,
+        "redirect_uri": redirect_uri,
+        "vapid_key": vapid_key,
+    })
+}
+
+pub(crate) fn build_app_verify_credentials_document_from_row(
+    row: &OAuthAppRow,
+    config: &cfwdon_core::AppConfig,
+) -> serde_json::Value {
+    let scopes = oauth_app_scopes(row);
+    let redirect_uris = oauth_app_redirect_uris(row);
+    build_app_verify_credentials_document_from_parts(
+        &row.id.to_string(),
+        &row.name,
+        row.website.as_deref(),
+        &scopes,
+        &redirect_uris,
+        &row.redirect_uri_legacy,
+        config.web_push_vapid_public_key.as_deref().unwrap_or(""),
+    )
+}
+
 fn app_document(row: &OAuthAppRow, config: &cfwdon_core::AppConfig) -> serde_json::Value {
-    let scopes = serde_json::from_str::<Vec<String>>(&row.scopes_json).unwrap_or_default();
-    let redirect_uris =
-        serde_json::from_str::<Vec<String>>(&row.redirect_uris_json).unwrap_or_default();
+    let scopes = oauth_app_scopes(row);
+    let redirect_uris = oauth_app_redirect_uris(row);
     serde_json::json!({
         "id": row.id.to_string(),
         "name": row.name,
@@ -47,6 +119,78 @@ fn app_document(row: &OAuthAppRow, config: &cfwdon_core::AppConfig) -> serde_jso
         "client_secret_expires_at": row.client_secret_expires_at,
         "vapid_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
     })
+}
+
+pub(crate) fn app_bearer_token_from_request(req: &Request) -> Result<Option<String>> {
+    let Some(value) = req.headers().get("Authorization")? else {
+        return Ok(None);
+    };
+    Ok(parse_bearer_authorization_header(&value))
+}
+
+pub(crate) fn parse_bearer_authorization_header(value: &str) -> Option<String> {
+    let value = value.trim();
+    let token = value.strip_prefix("Bearer ")?.trim();
+    (!token.is_empty()).then(|| token.to_owned())
+}
+
+pub(crate) fn parse_basic_authorization_header(value: &str) -> Option<(String, String)> {
+    let value = value.trim();
+    let encoded = value.strip_prefix("Basic ")?.trim();
+    let decoded = STANDARD.decode(encoded).ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (client_id, client_secret) = decoded.split_once(':')?;
+    let client_id = client_id.trim();
+    let client_secret = client_secret.trim();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return None;
+    }
+    Some((client_id.to_owned(), client_secret.to_owned()))
+}
+
+pub(crate) async fn find_oauth_app_by_bearer_token(
+    db: &D1Database,
+    token: &str,
+) -> Result<Option<OAuthAppRow>> {
+    let binding = D1Type::Text(token);
+    db.prepare(
+        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+                client_id, client_secret, client_secret_expires_at
+         FROM oauth_apps
+         WHERE client_secret = ?1
+            OR client_id = ?1
+         ORDER BY id ASC
+         LIMIT 1",
+    )
+    .bind_refs(&[binding])?
+    .first::<OAuthAppRow>(None)
+    .await
+}
+
+pub(crate) async fn find_oauth_app_by_client_id(
+    db: &D1Database,
+    client_id: &str,
+) -> Result<Option<OAuthAppRow>> {
+    let client_id_binding = D1Type::Text(client_id);
+    db.prepare(
+        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+                client_id, client_secret, client_secret_expires_at
+         FROM oauth_apps
+         WHERE client_id = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&[client_id_binding])?
+    .first::<OAuthAppRow>(None)
+    .await
+}
+
+pub(crate) async fn find_oauth_app_id_by_bearer_token(
+    db: &D1Database,
+    token: &str,
+) -> Result<Option<i64>> {
+    Ok(find_oauth_app_by_bearer_token(db, token)
+        .await?
+        .map(|row| row.id))
 }
 
 fn normalize_required_client_name(value: Option<String>) -> std::result::Result<String, String> {
@@ -257,6 +401,75 @@ async fn insert_oauth_app(
     .ok_or_else(|| worker::Error::RustError("created app could not be reloaded".to_owned()))
 }
 
+fn oauth_invalid_client_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "invalid_client",
+        "error_description": "Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method.",
+    }))?
+    .with_status(401))
+}
+
+fn oauth_invalid_scope_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "invalid_scope",
+        "error_description": "The requested scope is invalid, unknown, or malformed.",
+    }))?
+    .with_status(400))
+}
+
+fn oauth_unsupported_grant_type_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "unsupported_grant_type",
+        "error_description": "The authorization grant type is not supported by the authorization server.",
+    }))?
+    .with_status(400))
+}
+
+async fn parse_oauth_token_request(
+    req: &mut Request,
+) -> std::result::Result<OAuthTokenRequest, String> {
+    let content_type = req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if content_type.contains("application/json") {
+        req.json::<OAuthTokenRequest>()
+            .await
+            .map_err(|error| format!("invalid JSON token payload: {error}"))
+    } else {
+        let form = req
+            .form_data()
+            .await
+            .map_err(|error| format!("invalid form token payload: {error}"))?;
+        Ok(OAuthTokenRequest {
+            grant_type: form.get_field("grant_type"),
+            client_id: form.get_field("client_id"),
+            client_secret: form.get_field("client_secret"),
+            redirect_uri: form.get_field("redirect_uri"),
+            scope: form.get_field("scope"),
+        })
+    }
+}
+
+fn requested_oauth_token_scopes(value: Option<String>) -> Vec<String> {
+    let raw = value.unwrap_or_else(|| "read".to_owned());
+    let mut scopes = Vec::new();
+    for scope in raw.split_whitespace() {
+        let normalized = scope.trim().to_owned();
+        if !normalized.is_empty() && !scopes.contains(&normalized) {
+            scopes.push(normalized);
+        }
+    }
+    if scopes.is_empty() {
+        vec!["read".to_owned()]
+    } else {
+        scopes
+    }
+}
+
 pub(crate) async fn create_app_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -269,4 +482,88 @@ pub(crate) async fn create_app_response(
     };
     let app = insert_oauth_app(&db, &request).await?;
     Response::from_json(&app_document(&app, &config))
+}
+
+pub(crate) async fn oauth_token_response(
+    mut req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let request = match parse_oauth_token_request(&mut req).await {
+        Ok(request) => request,
+        Err(_) => return oauth_invalid_client_response(),
+    };
+    let grant_type = request
+        .grant_type
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    if grant_type != "client_credentials" {
+        return oauth_unsupported_grant_type_response();
+    }
+
+    let header_credentials = req
+        .headers()
+        .get("Authorization")?
+        .as_deref()
+        .and_then(parse_basic_authorization_header);
+    let client_id = header_credentials
+        .as_ref()
+        .map(|(client_id, _)| client_id.clone())
+        .or_else(|| {
+            request
+                .client_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        });
+    let client_secret = header_credentials
+        .as_ref()
+        .map(|(_, client_secret)| client_secret.clone())
+        .or_else(|| {
+            request
+                .client_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        });
+    let redirect_uri = request
+        .redirect_uri
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let (Some(client_id), Some(client_secret), Some(redirect_uri)) =
+        (client_id, client_secret, redirect_uri)
+    else {
+        return oauth_invalid_client_response();
+    };
+
+    let db = ctx.d1(&load_config(&ctx).database_binding)?;
+    let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
+        return oauth_invalid_client_response();
+    };
+    if app.client_secret != client_secret {
+        return oauth_invalid_client_response();
+    }
+    if !oauth_app_redirect_uris(&app)
+        .iter()
+        .any(|value| value == redirect_uri)
+    {
+        return oauth_invalid_client_response();
+    }
+
+    let requested_scopes = requested_oauth_token_scopes(request.scope);
+    let registered_scopes = oauth_app_scopes(&app);
+    if requested_scopes
+        .iter()
+        .any(|scope| !registered_scopes.contains(scope))
+    {
+        return oauth_invalid_scope_response();
+    }
+
+    Response::from_json(&build_oauth_token_document(
+        &app.client_secret,
+        &requested_scopes.join(" "),
+    ))
 }

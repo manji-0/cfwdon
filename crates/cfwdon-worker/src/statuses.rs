@@ -1,17 +1,136 @@
 use super::{
-    DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result, RouteContext,
-    UpdateMediaRequest, UpdateStatusRequest, attach_media_to_status, build_local_status_response,
-    delete_media_attachments, delete_status_by_id, enqueue_outbox_activity, enqueue_outbox_delete,
-    enqueue_status_update_activity, ensure_direct_conversation_for_status,
-    extract_authenticated_user, find_authenticated_local_account, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, find_status_poll_by_status_id,
-    insert_status, insert_status_edit_snapshot, list_status_poll_options, load_config,
+    DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result, RouteContext, StatusRow,
+    UpdateMediaRequest, UpdateStatusRequest, actor_url, app_bearer_token_from_request,
+    attach_media_to_status, build_local_status_response, can_view_local_status,
+    delete_media_attachments, delete_status_by_id, effective_local_quote_approval_policy,
+    enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
+    ensure_direct_conversation_for_status, extract_authenticated_user, find_account_by_id,
+    find_authenticated_local_account, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_app_id_by_bearer_token,
+    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
+    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot, is_blocking_actor,
+    is_local_follower_authorized, list_status_poll_options, load_config,
     load_in_reply_to_account_id, load_mastodon_poll_response, normalize_status_history_entry,
     normalize_status_poll, now_iso_string, parse_status_draft, parse_update_status_request,
     replace_status_media, replace_status_poll, resolve_attachable_media, resolve_editable_media,
     resolve_local_account, status_id_from_context, update_local_status,
+    validate_scheduled_at_minimum_offset,
 };
+use cfwdon_domain::{LocalAccount, StatusDraft, Visibility};
+
+pub(crate) fn initial_local_quote_approval_policy<'a>(
+    account: &'a LocalAccount,
+    draft: &'a StatusDraft,
+) -> &'a str {
+    if matches!(
+        draft.visibility,
+        Visibility::FollowersOnly | Visibility::Direct
+    ) {
+        "nobody"
+    } else {
+        draft
+            .quote_approval_policy
+            .as_deref()
+            .unwrap_or(account.default_quote_policy.as_str())
+    }
+}
+
+pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_follower: bool) -> bool {
+    if is_owner {
+        return true;
+    }
+
+    match policy {
+        "public" => true,
+        "followers" => is_follower,
+        _ => false,
+    }
+}
+
+pub(crate) fn remote_quote_state_for_local_target(
+    status: &StatusRow,
+    remote_actor_follows_owner: bool,
+    blocked_by_owner: bool,
+) -> &'static str {
+    if blocked_by_owner {
+        return "rejected";
+    }
+    if local_quote_policy_allows(
+        effective_local_quote_approval_policy(status),
+        false,
+        remote_actor_follows_owner,
+    ) {
+        "accepted"
+    } else {
+        "pending"
+    }
+}
+
+pub(crate) async fn initial_local_quote_state(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    quote_of_uri: Option<&str>,
+) -> Result<&'static str> {
+    let Some(quote_of_uri) = quote_of_uri else {
+        return Ok("accepted");
+    };
+
+    if find_local_status_by_object_uri(db, config, quote_of_uri)
+        .await?
+        .is_some()
+    {
+        Ok("accepted")
+    } else {
+        Ok("pending")
+    }
+}
+
+async fn validate_local_quote_creation(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    requester: &LocalAccount,
+    draft: &StatusDraft,
+    quote_of_uri: &str,
+) -> Result<Option<&'static str>> {
+    let Some(status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? else {
+        return Ok(None);
+    };
+    let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok(Some("quoted_status_id references unknown status"));
+    };
+    if !can_view_local_status(db, &status, Some(requester), &owner).await? {
+        return Ok(Some("quoted_status_id references unknown status"));
+    }
+    if status.visibility == "direct" {
+        return Ok(Some("private mentions cannot be quoted"));
+    }
+    if status.visibility == "private" && draft.visibility.as_str() != "private" {
+        return Ok(Some("private posts can only be quoted in private posts"));
+    }
+    let owner_actor_uri = actor_url(config, &owner.username);
+    let requester_actor_uri = actor_url(config, &requester.username);
+    if is_blocking_actor(db, &owner.id, &requester_actor_uri).await?
+        || is_blocking_actor(db, &requester.id, &owner_actor_uri).await?
+    {
+        return Ok(Some("current user is not allowed to quote this status"));
+    }
+
+    let is_owner = requester.id == owner.id;
+    let is_follower = if is_owner {
+        false
+    } else {
+        is_local_follower_authorized(db, &requester.id, &owner.id).await?
+    };
+    if !local_quote_policy_allows(
+        effective_local_quote_approval_policy(&status),
+        is_owner,
+        is_follower,
+    ) {
+        return Ok(Some("current user is not allowed to quote this status"));
+    }
+
+    Ok(None)
+}
 
 async fn resolve_quoted_status_uri(
     db: &worker::D1Database,
@@ -52,7 +171,12 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let config = load_config(&ctx);
     let user = match extract_authenticated_user(&req, &config).await? {
         Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "error": "The access token is invalid",
+            }))?
+            .with_status(401));
+        }
     };
 
     let parsed = match parse_status_draft(&mut req).await {
@@ -61,10 +185,16 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     };
     let super::ParsedStatusDraft {
         draft,
+        idempotency_key,
+        scheduled_at,
         quoted_status_id,
     } = parsed;
     let db = ctx.d1(&config.database_binding)?;
     let account = resolve_local_account(&db, &user).await?;
+    let application_id = match app_bearer_token_from_request(&req)? {
+        Some(token) => find_oauth_app_id_by_bearer_token(&db, &token).await?,
+        None => None,
+    };
     let pending_media = match resolve_attachable_media(&db, &account, &draft.media_ids).await {
         Ok(media) => media,
         Err(message) => return Response::error(message, 422),
@@ -84,6 +214,30 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
             }
             None => None,
         };
+    if let Some(quote_of_uri) = quote_of_uri.as_deref()
+        && let Some(message) =
+            validate_local_quote_creation(&db, &config, &account, &draft, quote_of_uri).await?
+    {
+        return Response::error(message, 422);
+    }
+    if let Some(scheduled_at) = scheduled_at.as_deref() {
+        if let Err(message) = validate_scheduled_at_minimum_offset(scheduled_at) {
+            return Response::error(message, 422);
+        }
+        return Response::from_json(
+            &crate::create_scheduled_status(
+                &db,
+                &config,
+                &account.id,
+                &draft,
+                idempotency_key.as_deref(),
+                application_id,
+                quote_of_uri.as_deref(),
+                scheduled_at,
+            )
+            .await?,
+        );
+    }
 
     let status = insert_status(&db, &config, &account, &draft, quote_of_uri.as_deref()).await?;
     ensure_direct_conversation_for_status(&db, &config, &account, &draft, &status).await?;

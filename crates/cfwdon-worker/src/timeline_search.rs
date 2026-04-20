@@ -3,9 +3,11 @@ use crate::responses::MastodonSearchResponse;
 use crate::runtime_config::load_config;
 use crate::tags::{resolve_search_tag, search_tags_for_v2};
 use crate::{
-    SearchCategoryFlags, SearchV2Query, resolve_search_account, resolve_search_status,
-    search_cached_accounts, search_category_flags, search_statuses_for_v2, search_v2_limit,
-    search_v2_requires_auth,
+    LocalAccount, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query,
+    account_search_non_exact_limit, resolve_cached_exact_search_account, resolve_search_account,
+    resolve_search_status, search_cached_accounts, search_category_flags, search_statuses_for_v2,
+    search_v2_limit, search_v2_requires_auth, search_v2_unauthenticated_error,
+    search_v2_url_query_mode,
 };
 use worker::{Request, Response, Result, RouteContext};
 
@@ -70,7 +72,12 @@ async fn search_impl(
     {
         Some(account) => Some(account),
         None if requires_auth => {
-            return Err(Response::error("Cloudflare Access authentication required", 401).unwrap());
+            return Err(Response::error(
+                search_v2_unauthenticated_error(&query)
+                    .unwrap_or("Cloudflare Access authentication required"),
+                401,
+            )
+            .unwrap());
         }
         None => None,
     };
@@ -79,20 +86,61 @@ async fn search_impl(
     let limit = search_v2_limit(query.limit);
     let offset = query.offset.unwrap_or(0);
     let resolve_enabled = query.resolve.unwrap_or(false);
+    match search_v2_url_query_mode(q, resolve_enabled, offset) {
+        SearchUrlQueryMode::None => {}
+        SearchUrlQueryMode::EmptyResults => {
+            return Ok(MastodonSearchResponse::default());
+        }
+        SearchUrlQueryMode::ResolveOnly => {
+            return resolve_search_url_only_response(
+                &db,
+                &config,
+                viewer.as_ref(),
+                q,
+                search_flags,
+            )
+            .await
+            .map_err(|error| Response::error(error.to_string(), 500).unwrap());
+        }
+    }
+
     let mut response = MastodonSearchResponse::default();
 
     if search_flags.accounts {
-        response.accounts = search_cached_accounts(
-            &db,
-            &config,
-            viewer.as_ref(),
-            q,
-            limit,
-            offset,
-            query.following.unwrap_or(false),
-        )
-        .await
-        .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
+        let following_only = query.following.unwrap_or(false);
+        let exact_account = if offset == 0 {
+            resolve_cached_exact_search_account(&db, &config, viewer.as_ref(), q, following_only)
+                .await
+                .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
+        } else {
+            None
+        };
+        let non_exact_limit =
+            account_search_non_exact_limit(q, viewer.as_ref(), limit, exact_account.is_some());
+        response.accounts = if non_exact_limit == 0 {
+            Vec::new()
+        } else {
+            search_cached_accounts(
+                &db,
+                &config,
+                viewer.as_ref(),
+                q,
+                non_exact_limit,
+                offset,
+                following_only,
+            )
+            .await
+            .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
+        };
+        if let Some(account) = exact_account
+            && !response
+                .accounts
+                .iter()
+                .any(|candidate| candidate.id == account.id)
+        {
+            response.accounts.insert(0, account);
+        }
+        response.accounts.truncate(limit as usize);
         if resolve_enabled
             && response.accounts.is_empty()
             && let Some(account) = resolve_search_account(&db, &config, q)
@@ -115,6 +163,8 @@ async fn search_impl(
             limit,
             offset,
             query.account_id.as_deref(),
+            query.max_id.as_deref(),
+            query.min_id.as_deref(),
         )
         .await
         .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
@@ -130,7 +180,7 @@ async fn search_impl(
     }
 
     if search_flags.hashtags {
-        response.hashtags = search_tags_for_v2(&db, &config, q, limit)
+        response.hashtags = search_tags_for_v2(&db, &config, q, limit, offset)
             .await
             .map_err(|error| Response::error(error.to_string(), 500).unwrap())?;
         if resolve_enabled
@@ -141,6 +191,40 @@ async fn search_impl(
         {
             response.hashtags.push(tag);
             response.hashtags.truncate(limit as usize);
+        }
+    }
+
+    Ok(response)
+}
+
+async fn resolve_search_url_only_response(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
+    query: &str,
+    search_flags: SearchCategoryFlags,
+) -> Result<MastodonSearchResponse> {
+    let mut response = MastodonSearchResponse::default();
+
+    if let Some(viewer) = viewer
+        && let Some(status) = resolve_search_status(db, config, viewer, query).await?
+    {
+        if search_flags.statuses {
+            response.statuses.push(status);
+        }
+        return Ok(response);
+    }
+
+    if let Some(account) = resolve_search_account(db, config, query).await? {
+        if search_flags.accounts {
+            response.accounts.push(account);
+        }
+        return Ok(response);
+    }
+
+    if let Some(tag) = resolve_search_tag(db, config, query).await? {
+        if search_flags.hashtags {
+            response.hashtags.push(tag);
         }
     }
 

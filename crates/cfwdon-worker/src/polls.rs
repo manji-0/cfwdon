@@ -7,10 +7,10 @@ use super::time_html::is_iso_timestamp_in_past;
 use super::{
     apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
     build_remote_mastodon_poll_response, can_view_local_status, find_remote_actor_by_actor_uri,
-    find_remote_status_by_id, find_remote_status_poll_by_id, find_status_by_id,
-    find_status_poll_by_id, is_public_activitypub_visibility,
-    list_expired_polls_requiring_federation_close, mark_status_poll_federated_closed,
-    parse_poll_vote_request,
+    find_remote_status_by_id, find_remote_status_poll_by_id, find_remote_status_poll_by_status_id,
+    find_status_by_id, find_status_poll_by_id, list_expired_polls_requiring_federation_close,
+    mark_status_poll_federated_closed, parse_poll_vote_request, refresh_remote_poll_if_needed,
+    remote_poll_is_visible_to_viewer,
 };
 use serde::{Deserialize, Serialize};
 use worker::{Error, Request, Response, Result, RouteContext};
@@ -54,13 +54,21 @@ pub(crate) async fn poll_response(req: Request, ctx: RouteContext<()>) -> Result
         );
     }
 
-    let Some(poll) = find_remote_status_poll_by_id(&db, &poll_id).await? else {
+    let Some(mut poll) = find_remote_status_poll_by_id(&db, &poll_id).await? else {
         return Response::error("poll not found", 404);
     };
-    let Some(status) = find_remote_status_by_id(&db, &poll.status_id).await? else {
+    let Some(mut status) = find_remote_status_by_id(&db, &poll.status_id).await? else {
         return Response::error("poll not found", 404);
     };
-    if !is_public_activitypub_visibility(&status.visibility) {
+    refresh_remote_poll_if_needed(&db, &config, &status, &poll, viewer.as_ref()).await?;
+    if let Some(refreshed_status) = find_remote_status_by_id(&db, &poll.status_id).await? {
+        status = refreshed_status;
+    }
+    if let Some(refreshed_poll) = find_remote_status_poll_by_status_id(&db, &status.id).await? {
+        poll = refreshed_poll;
+    }
+
+    if !remote_poll_is_visible_to_viewer(&db, &config, &poll, &status, viewer.as_ref()).await? {
         return Response::error("poll not found", 404);
     }
 
@@ -115,11 +123,18 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
         );
     }
 
-    if let Some(poll) = find_remote_status_poll_by_id(&db, &poll_id).await? {
-        let Some(status) = find_remote_status_by_id(&db, &poll.status_id).await? else {
+    if let Some(mut poll) = find_remote_status_poll_by_id(&db, &poll_id).await? {
+        let Some(mut status) = find_remote_status_by_id(&db, &poll.status_id).await? else {
             return Response::error("poll not found", 404);
         };
-        if !is_public_activitypub_visibility(&status.visibility) {
+        refresh_remote_poll_if_needed(&db, &config, &status, &poll, Some(&viewer)).await?;
+        if let Some(refreshed_status) = find_remote_status_by_id(&db, &poll.status_id).await? {
+            status = refreshed_status;
+        }
+        if let Some(refreshed_poll) = find_remote_status_poll_by_status_id(&db, &status.id).await? {
+            poll = refreshed_poll;
+        }
+        if !remote_poll_is_visible_to_viewer(&db, &config, &poll, &status, Some(&viewer)).await? {
             return Response::error("poll not found", 404);
         }
         let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
@@ -142,6 +157,9 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
                 Error::RustError(message) => Response::error(message, 422),
                 other => Err(other),
             };
+        }
+        if let Some(refreshed_poll) = find_remote_status_poll_by_status_id(&db, &status.id).await? {
+            poll = refreshed_poll;
         }
         return Response::from_json(
             &build_remote_mastodon_poll_response(&db, &poll, Some(&viewer))

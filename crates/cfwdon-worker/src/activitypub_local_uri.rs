@@ -1,4 +1,4 @@
-use super::{AppConfig, instance_base_url, instance_host};
+use super::{AppConfig, instance_host};
 use url::Url;
 
 pub(crate) fn local_username_from_audience_uri(config: &AppConfig, uri: &str) -> Option<String> {
@@ -24,6 +24,10 @@ pub(crate) fn local_username_from_actor_uri(config: &AppConfig, actor_uri: &str)
         .filter(|segment| !segment.is_empty());
     match (segments.next(), segments.next(), segments.next()) {
         (Some("users"), Some(username), None) => Some(username.to_ascii_lowercase()),
+        (Some(segment), None, None) => segment
+            .strip_prefix('@')
+            .filter(|username| !username.is_empty())
+            .map(|username| username.to_ascii_lowercase()),
         _ => None,
     }
 }
@@ -32,25 +36,51 @@ pub(crate) fn local_status_identity_from_uri(
     config: &AppConfig,
     uri: &str,
 ) -> Option<(String, String)> {
-    let base = instance_base_url(config);
-    let expected_prefix = format!("{base}/users/");
-    let canonical = uri.trim_end_matches('/');
-    if !canonical.starts_with(&expected_prefix) {
+    let parsed = Url::parse(uri).ok()?;
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host != instance_host(config) {
         return None;
     }
-    let remainder = &canonical[expected_prefix.len()..];
-    let mut segments = remainder.split('/');
-    let username = segments.next()?.trim();
-    let statuses = segments.next()?;
-    let status_id = segments.next()?.trim();
-    if statuses != "statuses"
-        || username.is_empty()
-        || status_id.is_empty()
-        || segments.next().is_some()
-    {
-        return None;
+
+    let segments = parsed
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["users", username, "statuses", status_id]
+            if !username.is_empty() && !status_id.is_empty() =>
+        {
+            Some((username.to_ascii_lowercase(), (*status_id).to_owned()))
+        }
+        [segment, status_id]
+            if !status_id.is_empty()
+                && segment
+                    .strip_prefix('@')
+                    .filter(|username| !username.is_empty())
+                    .is_some() =>
+        {
+            Some((
+                segment.trim_start_matches('@').to_ascii_lowercase(),
+                (*status_id).to_owned(),
+            ))
+        }
+        [segment, "statuses", status_id]
+            if !status_id.is_empty()
+                && segment
+                    .strip_prefix('@')
+                    .filter(|username| !username.is_empty())
+                    .is_some() =>
+        {
+            Some((
+                segment.trim_start_matches('@').to_ascii_lowercase(),
+                (*status_id).to_owned(),
+            ))
+        }
+        _ => None,
     }
-    Some((username.to_ascii_lowercase(), status_id.to_owned()))
 }
 
 pub(crate) fn local_username_from_status_uri(config: &AppConfig, uri: &str) -> Option<String> {

@@ -45,7 +45,7 @@ pub(crate) fn build_internal_cursor_link(
     since_id: Option<i64>,
     rel: &str,
 ) -> Result<String> {
-    build_internal_cursor_link_for_url(&req.url()?, limit, max_id, since_id, rel)
+    build_internal_cursor_link_for_url_with_min_id(&req.url()?, limit, max_id, since_id, None, rel)
 }
 
 pub(crate) fn build_internal_cursor_link_for_url(
@@ -53,6 +53,17 @@ pub(crate) fn build_internal_cursor_link_for_url(
     limit: u32,
     max_id: Option<i64>,
     since_id: Option<i64>,
+    rel: &str,
+) -> Result<String> {
+    build_internal_cursor_link_for_url_with_min_id(url, limit, max_id, since_id, None, rel)
+}
+
+pub(crate) fn build_internal_cursor_link_for_url_with_min_id(
+    url: &Url,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    min_id: Option<i64>,
     rel: &str,
 ) -> Result<String> {
     let mut url = url.clone();
@@ -75,6 +86,9 @@ pub(crate) fn build_internal_cursor_link_for_url(
         }
         if let Some(value) = since_id {
             query.append_pair("since_id", &value.to_string());
+        }
+        if let Some(value) = min_id {
+            query.append_pair("min_id", &value.to_string());
         }
     }
 

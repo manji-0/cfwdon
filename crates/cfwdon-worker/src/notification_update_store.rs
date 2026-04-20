@@ -17,6 +17,8 @@ pub(crate) struct UpdateNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
+    #[serde(default = "crate::default_remote_quote_state")]
+    pub(crate) quote_state: String,
     pub(crate) published_at: String,
     pub(crate) remote_updated_at: String,
 }
@@ -31,7 +33,7 @@ pub(crate) async fn list_update_notifications_for_account(
         .prepare(
             "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri,
                     rs.quote_of_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive,
-                    rs.language, rs.published_at, rs.updated_at AS remote_updated_at
+                    rs.language, rs.quote_state, rs.published_at, rs.updated_at AS remote_updated_at
              FROM remote_statuses rs
              JOIN reblogs r
                ON r.remote_status_id = rs.id
@@ -62,6 +64,7 @@ impl UpdateNotificationRow {
             visibility: self.visibility.clone(),
             sensitive: self.sensitive,
             language: self.language.clone(),
+            quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
         }
     }

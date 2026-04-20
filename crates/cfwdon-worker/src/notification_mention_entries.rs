@@ -44,6 +44,8 @@ pub(crate) async fn collect_mention_notification_entries(
             visibility: mention.visibility,
             sensitive: mention.sensitive,
             language: mention.language,
+            quote_approval_policy: None,
+            quote_state: mention.quote_state.clone(),
             created_at: mention.created_at.clone(),
         };
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?
@@ -111,6 +113,7 @@ pub(crate) async fn collect_mention_notification_entries(
             visibility: mention.visibility,
             sensitive: mention.sensitive,
             language: mention.language,
+            quote_state: mention.quote_state,
             published_at: mention.published_at.clone(),
         };
         let status_response =

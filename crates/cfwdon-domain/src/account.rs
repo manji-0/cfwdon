@@ -51,6 +51,7 @@ pub struct LocalAccount {
     pub bot: bool,
     pub discoverable: bool,
     pub default_post_visibility: String,
+    pub default_quote_policy: String,
     pub default_sensitive: bool,
     pub default_language: Option<String>,
     pub avatar_object_key: Option<String>,

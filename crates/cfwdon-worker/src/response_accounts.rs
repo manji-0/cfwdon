@@ -41,7 +41,7 @@ pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::
         "posting:default:visibility": account.default_post_visibility,
         "posting:default:sensitive": account.default_sensitive,
         "posting:default:language": account.default_language,
-        "posting:default:quote_policy": "public",
+        "posting:default:quote_policy": account.default_quote_policy,
         "posting:default:privacy": account.default_post_visibility,
         "posting:default:media_sensitive": account.default_sensitive,
         "posting:default:content_type": "text/plain",
@@ -164,7 +164,7 @@ impl MastodonAccountResponse {
             hide_collections: None,
             discoverable: Some(account.discoverable),
             indexable: true,
-            quote_policy: "public".to_owned(),
+            quote_policy: account.default_quote_policy.clone(),
         });
         value
     }

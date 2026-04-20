@@ -49,11 +49,11 @@ struct PendingRemoteFollowRequestRow {
 }
 
 #[derive(Debug, Clone)]
-struct PendingRemoteFollowRequest {
+pub(crate) struct PendingRemoteFollowRequest {
     requester_actor_uri: String,
     requester_inbox_uri: String,
     requester_shared_inbox_uri: Option<String>,
-    follow_activity_id: Option<String>,
+    pub(crate) follow_activity_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +146,32 @@ pub(crate) async fn has_pending_follow_request_from_actor(
         .first::<serde_json::Value>(None)
         .await?;
     Ok(row.is_some())
+}
+
+pub(crate) async fn find_pending_remote_follow_request_by_actor(
+    db: &D1Database,
+    account_id: &str,
+    requester_actor_uri: &str,
+) -> Result<Option<PendingRemoteFollowRequest>> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(requester_actor_uri)];
+    let row = db
+        .prepare(
+            "SELECT requester_actor_uri, requester_inbox_uri, requester_shared_inbox_uri, follow_activity_id
+             FROM follow_requests
+             WHERE account_id = ?1
+               AND requester_actor_uri = ?2
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<PendingRemoteFollowRequestRow>(None)
+        .await?;
+
+    Ok(row.map(|row| PendingRemoteFollowRequest {
+        requester_actor_uri: row.requester_actor_uri,
+        requester_inbox_uri: row.requester_inbox_uri,
+        requester_shared_inbox_uri: row.requester_shared_inbox_uri,
+        follow_activity_id: row.follow_activity_id,
+    }))
 }
 
 pub(crate) async fn upsert_remote_follow_request(
@@ -522,6 +548,7 @@ async fn authorize_pending_follow_request(
                 &request.requester_actor_uri,
                 &request.requester_inbox_uri,
                 request.requester_shared_inbox_uri.as_deref(),
+                request.follow_activity_id.as_deref(),
             )
             .await?;
             delete_remote_follow_request_by_actor(

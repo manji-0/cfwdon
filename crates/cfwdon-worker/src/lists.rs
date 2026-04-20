@@ -754,6 +754,7 @@ mod tests {
             bot: false,
             discoverable: true,
             default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
             default_sensitive: false,
             default_language: Some("en".to_owned()),
             avatar_object_key: None,

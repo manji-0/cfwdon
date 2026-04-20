@@ -23,6 +23,7 @@ pub(crate) async fn list_remote_public_timeline_statuses(
             rs.visibility,
             rs.sensitive,
             rs.language,
+            rs.quote_state,
             rs.published_at,
             ra.username,
             ra.domain,
@@ -88,6 +89,7 @@ pub(crate) async fn list_remote_home_timeline_statuses(
             rs.visibility,
             rs.sensitive,
             rs.language,
+            rs.quote_state,
             rs.published_at,
             ra.username,
             ra.domain,
@@ -159,6 +161,7 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
             rs.visibility,
             rs.sensitive,
             rs.language,
+            rs.quote_state,
             rs.published_at,
             ra.username,
             ra.domain,
@@ -207,13 +210,31 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
 
 pub(crate) async fn list_remote_public_statuses_by_link(
     db: &D1Database,
-    url: &str,
+    urls: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
-    let pattern = format!("%{url}%");
-    query_remote_statuses_with_actor(
-        db,
+    if urls.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let patterns = urls
+        .iter()
+        .map(|url| format!("%{url}%"))
+        .collect::<Vec<_>>();
+    let match_clause = patterns
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let position = index + 1;
+            format!(
+                "(rs.content_html LIKE ?{position} OR rs.url LIKE ?{position} OR rs.object_uri LIKE ?{position})"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let cursor_offset = patterns.len();
+    let sql = format!(
         "SELECT
             rs.id,
             rs.actor_uri,
@@ -227,6 +248,7 @@ pub(crate) async fn list_remote_public_statuses_by_link(
             rs.visibility,
             rs.sensitive,
             rs.language,
+            rs.quote_state,
             rs.published_at,
             ra.username,
             ra.domain,
@@ -243,35 +265,45 @@ pub(crate) async fn list_remote_public_statuses_by_link(
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
            AND ra.discoverable = 1
-           AND (rs.content_html LIKE ?1 OR rs.url LIKE ?1 OR rs.object_uri LIKE ?1)
+           AND ({match_clause})
            AND (
-                ?2 IS NULL
-                OR rs.published_at < ?2
-                OR (rs.published_at = ?2 AND rs.id < ?3)
+                ?{max_timestamp} IS NULL
+                OR rs.published_at < ?{max_timestamp}
+                OR (rs.published_at = ?{max_timestamp} AND rs.id < ?{max_id})
            )
            AND (
-                ?4 IS NULL
-                OR rs.published_at > ?4
-                OR (rs.published_at = ?4 AND rs.id > ?5)
+                ?{min_timestamp} IS NULL
+                OR rs.published_at > ?{min_timestamp}
+                OR (rs.published_at = ?{min_timestamp} AND rs.id > ?{min_id})
            )
          ORDER BY rs.published_at DESC, rs.id DESC
-         LIMIT ?6",
-        &[
-            D1Type::Text(pattern.as_str()),
-            cursor
-                .max_timestamp
-                .as_deref()
-                .map_or(D1Type::Null, D1Type::Text),
-            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-            cursor
-                .min_timestamp
-                .as_deref()
-                .map_or(D1Type::Null, D1Type::Text),
-            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-            D1Type::Integer(limit as i32),
-        ],
-    )
-    .await
+         LIMIT ?{limit_position}",
+        max_timestamp = cursor_offset + 1,
+        max_id = cursor_offset + 2,
+        min_timestamp = cursor_offset + 3,
+        min_id = cursor_offset + 4,
+        limit_position = cursor_offset + 5,
+    );
+    let mut bindings = patterns
+        .iter()
+        .map(|pattern| D1Type::Text(pattern.as_str()))
+        .collect::<Vec<_>>();
+    bindings.push(
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+    );
+    bindings.push(cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text));
+    bindings.push(
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+    );
+    bindings.push(cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text));
+    bindings.push(D1Type::Integer(limit as i32));
+    query_remote_statuses_with_actor(db, &sql, &bindings).await
 }
 
 pub(crate) async fn list_remote_statuses_by_actor_uri(
@@ -282,7 +314,7 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
     let bindings = [D1Type::Text(actor_uri), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE actor_uri = ?1
              ORDER BY published_at DESC
@@ -314,6 +346,7 @@ pub(crate) async fn list_direct_remote_replies_by_uri(
             rs.visibility,
             rs.sensitive,
             rs.language,
+            rs.quote_state,
             rs.published_at,
             ra.username,
             ra.domain,
@@ -409,6 +442,11 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
             .get("language")
             .and_then(|v| v.as_str())
             .map(ToOwned::to_owned),
+        quote_state: value
+            .get("quote_state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("accepted")
+            .to_owned(),
         published_at: value
             .get("published_at")
             .and_then(|v| v.as_str())

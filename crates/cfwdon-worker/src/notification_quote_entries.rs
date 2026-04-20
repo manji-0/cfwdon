@@ -90,6 +90,7 @@ pub(crate) async fn collect_quote_notification_entries(
             visibility: quote.visibility.clone(),
             sensitive: quote.sensitive,
             language: quote.language.clone(),
+            quote_state: quote.quote_state.clone(),
             published_at: quote.published_at.clone(),
         };
         let status_response =
@@ -154,6 +155,8 @@ pub(crate) async fn collect_quoted_update_notification_entries(
             visibility: update.visibility.clone(),
             sensitive: update.sensitive,
             language: update.language.clone(),
+            quote_approval_policy: None,
+            quote_state: update.quote_state.clone(),
             created_at: update.created_at.clone(),
         };
         let media = find_media_attachments_by_status_id(db, &status.id).await?;
