@@ -1,7 +1,10 @@
-use crate::{RemoteStatusRow, StatusRow, count_rows, local_status_target_uri};
+use crate::{
+    AppConfig, D1Database, RemoteStatusRow, StatusRow, count_rows, local_status_target_uri,
+    send_push_notification,
+};
 use serde::Deserialize;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
+use worker::Result;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogActivityRow {
@@ -21,6 +24,7 @@ struct InteractionActorUriRow {
 
 pub(crate) async fn upsert_reblog_local_status(
     db: &D1Database,
+    config: &AppConfig,
     account_id: &str,
     status: &StatusRow,
     visibility: &str,
@@ -63,6 +67,19 @@ pub(crate) async fn upsert_reblog_local_status(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    let _ = send_push_notification(
+        db,
+        config,
+        &status.account_id,
+        "reblog",
+        serde_json::json!({
+            "account_id": account_id,
+            "status_id": status.id,
+            "visibility": visibility,
+        }),
+    )
+    .await;
 
     Ok(())
 }

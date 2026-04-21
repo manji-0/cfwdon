@@ -10,7 +10,7 @@ use super::{
     find_remote_status_by_id, find_remote_status_poll_by_id, find_remote_status_poll_by_status_id,
     find_status_by_id, find_status_poll_by_id, list_expired_polls_requiring_federation_close,
     mark_status_poll_federated_closed, parse_poll_vote_request, refresh_remote_poll_if_needed,
-    remote_poll_is_visible_to_viewer,
+    remote_poll_is_visible_to_viewer, send_poll_end_notifications,
 };
 use serde::{Deserialize, Serialize};
 use worker::{Error, Request, Response, Result, RouteContext};
@@ -192,6 +192,7 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
             .await
             .is_ok()
         {
+            let _ = send_poll_end_notifications(&db, &config, &row.poll_id, &row.status_id, &row.account_id).await;
             mark_status_poll_federated_closed(&db, &row.poll_id).await?;
             summary.queued += 1;
         }

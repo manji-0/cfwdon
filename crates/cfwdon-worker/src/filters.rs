@@ -124,6 +124,41 @@ fn normalize_filter_action(value: Option<&str>) -> std::result::Result<String, E
     }
 }
 
+pub(crate) async fn load_latest_filter_updated_at(
+    db: &worker::D1Database,
+    account_id: &str,
+) -> Result<Option<String>> {
+    let account_id = D1Type::Text(account_id);
+    let row = db
+        .prepare(
+            "SELECT MAX(updated_at) AS updated_at
+             FROM (
+                 SELECT f.updated_at AS updated_at
+                 FROM filters f
+                 WHERE f.account_id = ?1
+                 UNION ALL
+                 SELECT k.updated_at AS updated_at
+                 FROM filter_keywords k
+                 JOIN filters f ON f.id = k.filter_id
+                 WHERE f.account_id = ?1
+                 UNION ALL
+                 SELECT s.updated_at AS updated_at
+                 FROM filter_statuses s
+                 JOIN filters f ON f.id = s.filter_id
+                 WHERE f.account_id = ?1
+             )",
+        )
+        .bind_refs(&account_id)?
+        .first::<serde_json::Value>(None)
+        .await?;
+    Ok(row.and_then(|value| {
+        value
+            .get("updated_at")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    }))
+}
+
 fn expires_at_from_seconds(seconds: Option<i64>) -> std::result::Result<Option<String>, Error> {
     let Some(seconds) = seconds else {
         return Ok(None);

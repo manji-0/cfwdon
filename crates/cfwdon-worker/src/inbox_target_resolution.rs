@@ -21,10 +21,16 @@ pub(crate) async fn resolve_inbox_target_account(
             Some(target_username) => find_account_by_username(db, &target_username).await?,
             None => resolve_follow_response_target_account(db, activity)
                 .await?
+                .or(resolve_feature_response_target_account(db, activity).await?)
                 .or(resolve_poll_vote_target_account(db, activity).await?)
                 .or(resolve_remote_status_activity_target_account(db, config, activity).await?)
                 .or(resolve_remote_actor_update_target_account(db, activity).await?)
-                .or(resolve_remote_actor_announce_target_account(db, activity).await?),
+                .or(resolve_remote_actor_announce_target_account(db, activity).await?)
+                .or(
+                    resolve_feature_authorization_delete_target_account(db, config, activity)
+                        .await?,
+                )
+                .or(resolve_remote_collection_activity_target_account(db, activity).await?),
         },
     };
 
@@ -191,6 +197,35 @@ pub(crate) async fn resolve_remote_actor_announce_target_account(
     first_local_follower_for_remote_actor(db, actor_uri).await
 }
 
+pub(crate) async fn resolve_remote_collection_activity_target_account(
+    db: &D1Database,
+    activity: &serde_json::Value,
+) -> Result<Option<LocalAccount>> {
+    let is_collection_activity = match activity.get("type").and_then(serde_json::Value::as_str) {
+        Some("Add" | "Remove") => activity.get("target").is_some(),
+        Some("Update") => {
+            activity
+                .get("object")
+                .and_then(|object| object.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("FeaturedCollection")
+        }
+        _ => false,
+    };
+    if !is_collection_activity {
+        return Ok(None);
+    }
+    let Some(actor_uri) = activity
+        .get("actor")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+
+    first_local_follower_for_remote_actor(db, actor_uri).await
+}
+
 pub(crate) async fn resolve_follow_response_target_account(
     db: &D1Database,
     activity: &serde_json::Value,
@@ -207,6 +242,79 @@ pub(crate) async fn resolve_follow_response_target_account(
     };
 
     find_account_by_id(db, &follow.follower_account_id).await
+}
+
+pub(crate) async fn resolve_feature_response_target_account(
+    db: &D1Database,
+    activity: &serde_json::Value,
+) -> Result<Option<LocalAccount>> {
+    if !matches!(
+        activity.get("type").and_then(serde_json::Value::as_str),
+        Some("Accept" | "Reject")
+    ) {
+        return Ok(None);
+    }
+    let Some(feature_request_uri) = activity
+        .get("object")
+        .and_then(|object| activity_object_id(Some(object)))
+    else {
+        return Ok(None);
+    };
+    let Some(account_id) = find_first_account_id_by_query(
+        db,
+        "SELECT c.account_id
+         FROM account_collection_items i
+         JOIN account_collections c
+           ON c.id = i.collection_id
+         WHERE i.activity_uri = ?1
+         LIMIT 1",
+        feature_request_uri,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    find_account_by_id(db, &account_id).await
+}
+
+pub(crate) async fn resolve_feature_authorization_delete_target_account(
+    db: &D1Database,
+    config: &AppConfig,
+    activity: &serde_json::Value,
+) -> Result<Option<LocalAccount>> {
+    if activity.get("type").and_then(serde_json::Value::as_str) != Some("Delete") {
+        return Ok(None);
+    }
+    let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
+        return Ok(None);
+    };
+    if object.get("type").and_then(serde_json::Value::as_str) != Some("FeatureAuthorization") {
+        return Ok(None);
+    }
+    let Some(collection_uri) = object
+        .get("interactingObject")
+        .and_then(|value| activity_object_id(Some(value)))
+    else {
+        return Ok(None);
+    };
+    let Some(collection_id) = crate::local_collection_id_from_uri(config, collection_uri) else {
+        return Ok(None);
+    };
+    let Some(account_id) = find_first_account_id_by_query(
+        db,
+        "SELECT account_id
+         FROM account_collections
+         WHERE id = ?1
+         LIMIT 1",
+        &collection_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    find_account_by_id(db, &account_id).await
 }
 
 pub(crate) async fn resolve_poll_vote_target_account(

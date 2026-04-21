@@ -273,6 +273,12 @@ pub(crate) fn build_instance_v2_document(
     serde_json::Value::Object(response)
 }
 
+pub(crate) fn set_instance_translation_enabled(document: &mut serde_json::Value, enabled: bool) {
+    if let Some(translation) = document.pointer_mut("/configuration/translation/enabled") {
+        *translation = serde_json::json!(enabled);
+    }
+}
+
 pub(crate) fn build_instance_activity_document(
     week_floor: OffsetDateTime,
     weekly_totals: &[(u64, u64, u64)],

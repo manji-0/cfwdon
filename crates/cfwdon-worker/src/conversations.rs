@@ -21,7 +21,7 @@ fn conversations_limit(value: Option<u32>) -> u32 {
     value.unwrap_or(20).clamp(1, 40)
 }
 
-async fn participant_account_documents(
+pub(crate) async fn participant_account_documents(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
@@ -71,7 +71,7 @@ async fn participant_account_documents(
     Ok(accounts)
 }
 
-async fn last_status_document(
+pub(crate) async fn last_status_document(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
@@ -102,7 +102,7 @@ async fn last_status_document(
     )?))
 }
 
-async fn conversation_document(
+pub(crate) async fn conversation_document(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,

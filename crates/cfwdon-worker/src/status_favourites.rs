@@ -45,7 +45,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
             if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
                 return Response::error("status not found", 404);
             }
-            upsert_favourite_local_status(&db, &viewer.id, &status).await?;
+            upsert_favourite_local_status(&db, &config, &viewer.id, &status).await?;
             let media = find_media_attachments_by_status_id(&db, &status.id).await?;
             let response = build_local_status_response(
                 &db,

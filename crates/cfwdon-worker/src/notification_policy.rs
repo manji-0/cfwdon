@@ -12,12 +12,12 @@ const DEFAULT_FOR_PRIVATE_MENTIONS: &str = "drop";
 const DEFAULT_FOR_LIMITED_ACCOUNTS: &str = "filter";
 
 #[derive(Debug, Deserialize)]
-struct NotificationPolicyRow {
-    for_not_following: String,
-    for_not_followers: String,
-    for_new_accounts: String,
-    for_private_mentions: String,
-    for_limited_accounts: String,
+pub(crate) struct NotificationPolicyRow {
+    pub(crate) for_not_following: String,
+    pub(crate) for_not_followers: String,
+    pub(crate) for_new_accounts: String,
+    pub(crate) for_private_mentions: String,
+    pub(crate) for_limited_accounts: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -53,7 +53,7 @@ fn build_notification_policy_document(row: &NotificationPolicyRow) -> serde_json
     })
 }
 
-async fn load_notification_policy_row(
+pub(crate) async fn load_notification_policy_row(
     db: &worker::D1Database,
     account_id: &str,
 ) -> Result<NotificationPolicyRow> {

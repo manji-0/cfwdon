@@ -165,6 +165,7 @@ pub(crate) fn root_document() -> RootDocument {
             "/api/v1/apps",
             "/api/v1/emails/confirmations",
             "/api/v1/emails/check_confirmation",
+            "/auth/confirmation",
             "/api/v1/instance/peers",
             "/api/v1/instance/domain_blocks",
             "/api/v1/instance/extended_description",
@@ -235,6 +236,20 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         let value = value.trim().to_owned();
         if !value.is_empty() {
             config.web_push_vapid_public_key = Some(value);
+        }
+    }
+
+    if let Some(value) = optional_var(ctx, "WEB_PUSH_VAPID_PRIVATE_KEY") {
+        let value = value.trim().to_owned();
+        if !value.is_empty() {
+            config.web_push_vapid_private_key = Some(value);
+        }
+    }
+
+    if let Some(value) = optional_var(ctx, "WEB_PUSH_VAPID_SUBJECT") {
+        let value = value.trim().to_owned();
+        if !value.is_empty() {
+            config.web_push_vapid_subject = Some(value);
         }
     }
 

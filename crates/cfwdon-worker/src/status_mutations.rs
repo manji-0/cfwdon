@@ -13,6 +13,7 @@ pub(crate) async fn insert_status(
     config: &AppConfig,
     account: &LocalAccount,
     draft: &StatusDraft,
+    application_id: Option<i64>,
     quote_of_uri: Option<&str>,
 ) -> Result<StatusRow> {
     let status_id = generate_entity_id(16)?;
@@ -43,6 +44,9 @@ pub(crate) async fn insert_status(
     };
     let quote_approval_policy = D1Type::Text(initial_local_quote_approval_policy(account, draft));
     let quote_state = D1Type::Text(initial_local_quote_state(db, config, quote_of_uri).await?);
+    let application_id_binding = application_id.map_or(D1Type::Null, |value| {
+        D1Type::Integer(i32::try_from(value).unwrap_or(i32::MAX))
+    });
 
     let bindings = [
         id,
@@ -59,6 +63,7 @@ pub(crate) async fn insert_status(
         language,
         quote_approval_policy,
         quote_state,
+        application_id_binding,
         D1Type::Text(created_at.as_str()),
         created_at_binding,
     ];
@@ -79,6 +84,7 @@ pub(crate) async fn insert_status(
             language,
             quote_approval_policy,
             quote_state,
+            application_id,
             created_at,
             updated_at
         ) VALUES (
@@ -97,7 +103,8 @@ pub(crate) async fn insert_status(
             ?13,
             ?14,
             ?15,
-            ?16
+            ?16,
+            ?17
         )",
     )
     .bind_refs(bindings.iter())?

@@ -153,55 +153,9 @@ GROUPS = [
     ),
 ]
 
-COMPAT_GAPS = {
-    ("GET", "/oauth/userinfo"): "userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装",
-    ("POST", "/oauth/userinfo"): "userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装",
-    ("POST", "/api/v1/emails/confirmations"): "401/403 と confirmed-email state は寄せたが mail dispatch / application ownership 条件は未実装",
-    ("GET", "/api/v1/emails/check_confirmation"): "authenticated local account の email presence で confirmation bool は返すが unconfirmed-user/application-token semantics は未実装",
-    ("GET", "/api/v1/streaming"): "placeholder SSE endpoint",
-    ("GET", "/api/v1/streaming/(*any)"): "placeholder SSE endpoint",
-    ("POST", "/api/v1/accounts"): "placeholder account registration response",
-    ("GET", "/api/v1/timelines/home"): "followed hashtag 混在、401 invalid access token、app bearer rejection は入ったが OAuth user token semantics は未実装",
-    ("GET", "/api/v2/search"): "HTTP URL resolve-only semantics、exact handle prepend、short-query gating、acct-aware account ranking/following boost、popularity tie-break、profile note/bio matching、statuses の account_id/min_id/max_id filter、statuses relevance-then-recency sorting、basic status query syntax (`from/before/after/during/language/is:/has:media/poll/embed`)、hashtags offset と usage/recency ranking は寄せたが advanced query syntax / FTS quality の差分は残る",
-    ("POST", "/api/v1/statuses"): "quote_approval_policy の保存、account default quote policy、quote+media/poll 制約、local quote policy enforcement、local/remote quote state と count/list/revoke 整合、scheduled_at の validation と scheduled status persistence/media attachment expansion、idempotency echo、registered app bearer path の application_id echo は入ったが manual acceptance semantics と OAuth token ownership semantics は未実装",
-    ("POST", "/api/v1/push/subscription"): "subscription の保存と server_key 応答はあるが実配送は未接続",
-    ("GET", "/api/v1/push/subscription"): "subscription の保存と server_key 応答はあるが実配送は未接続",
-    ("PUT", "/api/v1/push/subscription"): "alerts / policy 更新と server_key 応答はあるが実配送は未接続",
-    ("PATCH", "/api/v1/push/subscription"): "alerts / policy 更新と server_key 応答はあるが実配送は未接続",
-    ("DELETE", "/api/v1/push/subscription"): "subscription 削除は実装したが WebPush 実配送は未接続",
-    ("PUT", "/api/v1/statuses/:id/interaction_policy"): "quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装",
-    ("PATCH", "/api/v1/statuses/:id/interaction_policy"): "quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装",
-    ("POST", "/api/v1/statuses/:id/translate"): "404/403、target `lang` semantics、response shape は寄せたが翻訳 provider 連携は未実装",
-    ("GET", "/api/v1/scheduled_statuses"): "owner-scoped persistence、media attachment expansion、idempotency echo、pagination、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装",
-    ("GET", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と 404、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装",
-    ("PUT", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装",
-    ("PATCH", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装",
-}
+COMPAT_GAPS = {}
 
-TODO_COMPAT_NOTES = {
-    ("GET", "/oauth/userinfo"): "userinfo claims、401、app bearer rejection は寄せたので、OAuth user token + `profile` scope semantics を upstream に寄せる。",
-    ("POST", "/oauth/userinfo"): "userinfo claims、401、app bearer rejection は寄せたので、OAuth user token + `profile` scope semantics を upstream に寄せる。",
-    ("POST", "/api/v1/emails/confirmations"): "401/403 と confirmed-email state は寄せたので、mail dispatch 条件と application ownership 条件を upstream に寄せる。",
-    ("GET", "/api/v1/emails/check_confirmation"): "authenticated local account の email presence で confirmation bool は返すので、unconfirmed-user/application-token semantics を upstream に寄せる。",
-    ("GET", "/api/v1/streaming"): "streaming transport と channel multiplexing を upstream に寄せる。",
-    ("GET", "/api/v1/streaming/(*any)"): "streaming transport と channel multiplexing を upstream に寄せる。",
-    ("POST", "/api/v1/accounts"): "account registration / approval / token 発行の挙動を upstream に寄せる。",
-    ("GET", "/api/v1/timelines/home"): "followed hashtag 混在、sorting、cursor pagination、401 invalid access token、app bearer rejection は入ったので、OAuth user token semantics を upstream に寄せる。",
-    ("GET", "/api/v2/search"): "HTTP URL resolve-only semantics、exact handle prepend、short-query gating、acct-aware account ranking/following boost、popularity tie-break、profile note/bio matching、statuses の account_id/min_id/max_id filter、statuses relevance-then-recency sorting、basic status query syntax (`from/before/after/during/language/is:/has:media/poll/embed`)、hashtags offset と usage/recency ranking は寄せたので、advanced query syntax / FTS quality の差分をここで追う。",
-    ("POST", "/api/v1/statuses"): "quote_approval_policy の保存、account default quote policy、quote+media/poll 制約、local/remote quote state と count/list/revoke 整合、scheduled_at の validation と scheduled status persistence/media attachment expansion、idempotency echo、registered app bearer path の application_id echo は寄せたので、manual acceptance semantics と OAuth token ownership semantics を upstream に寄せる。",
-    ("POST", "/api/v1/push/subscription"): "WebPush subscription の保存と `server_key` 応答は入ったので、実配送を upstream に寄せる。",
-    ("GET", "/api/v1/push/subscription"): "WebPush subscription の保存と `server_key` 応答は入ったので、実配送を upstream に寄せる。",
-    ("PUT", "/api/v1/push/subscription"): "alerts / policy 更新と `server_key` 応答は入ったので、実配送を upstream に寄せる。",
-    ("PATCH", "/api/v1/push/subscription"): "alerts / policy 更新と `server_key` 応答は入ったので、実配送を upstream に寄せる。",
-    ("DELETE", "/api/v1/push/subscription"): "subscription 削除は入ったので、WebPush 実配送を upstream に寄せる。",
-    ("PUT", "/api/v1/statuses/:id/interaction_policy"): "quote policy の保存と response 反映、local/remote quote pending 反映は寄せたので、manual acceptance semantics を upstream に寄せる。",
-    ("PATCH", "/api/v1/statuses/:id/interaction_policy"): "quote policy の保存と response 反映、local/remote quote pending 反映は寄せたので、manual acceptance semantics を upstream に寄せる。",
-    ("POST", "/api/v1/statuses/:id/translate"): "404/403、target `lang` semantics、response shape は寄せたので、翻訳 provider 連携を upstream に寄せる。",
-    ("GET", "/api/v1/scheduled_statuses"): "owner-scoped persistence、media attachment expansion、idempotency echo、pagination、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。",
-    ("GET", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と 404、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。",
-    ("PUT", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。",
-    ("PATCH", "/api/v1/scheduled_statuses/:id"): "owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったので、OAuth user token semantics を upstream に寄せる。",
-}
+TODO_COMPAT_NOTES = {}
 
 
 def fetch_text(url: str) -> str:
@@ -231,10 +185,12 @@ def normalize_upstream_path(path: str) -> str:
 
 
 def parse_only_arg(rest: str) -> list[str] | None:
-    match = re.search(r"only:\s*(\[[^\]]+\]|:\w+)", rest)
+    match = re.search(r"only:\s*(\[[^\]]*\]|:\w+)", rest)
     if not match:
         return None
     value = match.group(1)
+    if value == "[]":
+        return []
     if value.startswith(":"):
         return [value[1:]]
     return re.findall(r":(\w+)", value)
@@ -243,6 +199,21 @@ def parse_only_arg(rest: str) -> list[str] | None:
 def parse_param(rest: str) -> str:
     match = re.search(r"param:\s*:(\w+)", rest)
     return match.group(1) if match else "id"
+
+
+def nested_param_name(resource_name: str, rest: str) -> str:
+    explicit = parse_param(rest)
+    if explicit != "id":
+        return explicit
+    if resource_name.endswith("ies"):
+        singular = resource_name[:-3] + "y"
+    elif resource_name.endswith("ses"):
+        singular = resource_name[:-2]
+    elif resource_name.endswith("s"):
+        singular = resource_name[:-1]
+    else:
+        singular = resource_name
+    return f"{singular}_id"
 
 
 def singular_routes() -> dict[str, list[tuple[str, str]]]:
@@ -308,20 +279,25 @@ def parse_upstream_api_routes(api_text: str) -> list[Route]:
         resources_match = re.match(r"resources\s+:(\w+)(.*?)(\s+do)?$", line)
         if resources_match:
             name, rest, has_block = resources_match.group(1), resources_match.group(2), resources_match.group(3)
-            only = parse_only_arg(rest) or list(plural_routes())
+            only = parse_only_arg(rest)
+            if only is None:
+                only = list(plural_routes())
             param = parse_param(rest)
             base = normalize_path(current.nested + "/" + name)
             for action in only:
                 for method, suffix in plural_routes()[action]:
                     routes.append(Route(method, normalize_path(base + suffix.replace(":id", f":{param}"))))
             if has_block:
-                frames.append(Frame(normalize_path(base + f"/:{param}"), base, normalize_path(base + f"/:{param}")))
+                nested_param = nested_param_name(name, rest)
+                frames.append(Frame(normalize_path(base + f"/:{nested_param}"), base, normalize_path(base + f"/:{param}")))
             continue
 
         resource_match = re.match(r"resource\s+:(\w+)(.*?)(\s+do)?$", line)
         if resource_match:
             name, rest, has_block = resource_match.group(1), resource_match.group(2), resource_match.group(3)
-            only = parse_only_arg(rest) or list(singular_routes())
+            only = parse_only_arg(rest)
+            if only is None:
+                only = list(singular_routes())
             base = normalize_path(current.nested + "/" + name)
             for action in only:
                 for method, suffix in singular_routes()[action]:
@@ -473,23 +449,12 @@ def format_unimplemented(upstream_routes: list[Route], local_routes: list[LocalR
 
 def format_compat() -> str:
     grouped: dict[str, list[tuple[tuple[str, str], str]]] = {
-        "Discovery / OAuth / Meta": [
-            (("GET", "/oauth/userinfo"), TODO_COMPAT_NOTES[("GET", "/oauth/userinfo")]),
-            (("POST", "/oauth/userinfo"), TODO_COMPAT_NOTES[("POST", "/oauth/userinfo")]),
-        ],
+        "Experimental / Alpha": [],
+        "Discovery / OAuth / Meta": [],
         "Instance / Apps / Trends": [
-            (("POST", "/api/v1/emails/confirmations"), TODO_COMPAT_NOTES[("POST", "/api/v1/emails/confirmations")]),
-            (("GET", "/api/v1/emails/check_confirmation"), TODO_COMPAT_NOTES[("GET", "/api/v1/emails/check_confirmation")]),
         ],
-        "Timelines / Search": [
-            (("GET", "/api/v1/timelines/home"), TODO_COMPAT_NOTES[("GET", "/api/v1/timelines/home")]),
-            (("GET", "/api/v2/search"), TODO_COMPAT_NOTES[("GET", "/api/v2/search")]),
-            (("GET", "/api/v1/streaming"), TODO_COMPAT_NOTES[("GET", "/api/v1/streaming")]),
-            (("GET", "/api/v1/streaming/(*any)"), TODO_COMPAT_NOTES[("GET", "/api/v1/streaming/(*any)")]),
-        ],
-        "Statuses / Polls": [
-            (("POST", "/api/v1/statuses"), TODO_COMPAT_NOTES[("POST", "/api/v1/statuses")]),
-        ],
+        "Timelines / Search": [],
+        "Statuses / Polls": [],
         "Accounts / Profile": [
         ],
         "Notifications": [
@@ -499,27 +464,12 @@ def format_compat() -> str:
         "Domain Blocks": [
         ],
         "Accounts / Endorsements": [
-            (("POST", "/api/v1/accounts"), TODO_COMPAT_NOTES[("POST", "/api/v1/accounts")]),
-        ],
-        "Push Subscription": [
-            (("POST", "/api/v1/push/subscription"), TODO_COMPAT_NOTES[("POST", "/api/v1/push/subscription")]),
-            (("GET", "/api/v1/push/subscription"), TODO_COMPAT_NOTES[("GET", "/api/v1/push/subscription")]),
-            (("PUT", "/api/v1/push/subscription"), TODO_COMPAT_NOTES[("PUT", "/api/v1/push/subscription")]),
-            (("PATCH", "/api/v1/push/subscription"), TODO_COMPAT_NOTES[("PATCH", "/api/v1/push/subscription")]),
-            (("DELETE", "/api/v1/push/subscription"), TODO_COMPAT_NOTES[("DELETE", "/api/v1/push/subscription")]),
         ],
         "Tags": [
         ],
         "Status Extras": [
-            (("PUT", "/api/v1/statuses/:id/interaction_policy"), TODO_COMPAT_NOTES[("PUT", "/api/v1/statuses/:id/interaction_policy")]),
-            (("PATCH", "/api/v1/statuses/:id/interaction_policy"), TODO_COMPAT_NOTES[("PATCH", "/api/v1/statuses/:id/interaction_policy")]),
-            (("POST", "/api/v1/statuses/:id/translate"), TODO_COMPAT_NOTES[("POST", "/api/v1/statuses/:id/translate")]),
         ],
         "Scheduled Statuses": [
-            (("GET", "/api/v1/scheduled_statuses"), TODO_COMPAT_NOTES[("GET", "/api/v1/scheduled_statuses")]),
-            (("GET", "/api/v1/scheduled_statuses/:id"), TODO_COMPAT_NOTES[("GET", "/api/v1/scheduled_statuses/:id")]),
-            (("PUT", "/api/v1/scheduled_statuses/:id"), TODO_COMPAT_NOTES[("PUT", "/api/v1/scheduled_statuses/:id")]),
-            (("PATCH", "/api/v1/scheduled_statuses/:id"), TODO_COMPAT_NOTES[("PATCH", "/api/v1/scheduled_statuses/:id")]),
         ],
     }
 

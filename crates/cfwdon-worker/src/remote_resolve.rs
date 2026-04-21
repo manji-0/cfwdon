@@ -1,13 +1,13 @@
 use crate::{
     AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteStatusRow,
-    extract_remote_note_object, fetch_remote_account_profile_by_handle,
-    fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
-    find_account_by_username, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, find_remote_status_by_object_uri,
-    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
-    local_username_from_actor_uri, parse_lookup_handle, parse_remote_http_url,
-    remote_actor_uri_from_rest_id, upsert_remote_actor, upsert_remote_status,
-    visibility_from_activitypub_object,
+    account_search_is_complete_handle, extract_remote_note_object,
+    fetch_remote_account_profile_by_handle, fetch_remote_activitypub_document,
+    fetch_remote_actor_profile, find_account_by_id, find_account_by_username,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
+    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
+    parse_lookup_handle, parse_remote_http_url, remote_actor_uri_from_rest_id, upsert_remote_actor,
+    upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::{D1Database, Error, Result};
 
@@ -65,7 +65,7 @@ pub(crate) async fn resolve_search_account(
         return Ok(None);
     }
 
-    if query.contains('@')
+    if account_search_is_complete_handle(query, config)
         && let Ok(account) = resolve_lookup_account(db, config, query).await
     {
         return Ok(Some(account));

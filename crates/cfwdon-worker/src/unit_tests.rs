@@ -1,30 +1,35 @@
 use base64::Engine;
 
 use super::{
-    AUTH_CONTEXT_LIMIT, CreateStatusPollRequest, MastodonAccountResponse, MastodonReportResponse,
-    NotificationEntry, NotificationsQuery, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
-    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
-    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
-    StatusRow, TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery,
-    account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
-    account_search_rank, account_search_sort_key, account_search_term,
+    AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest,
+    MastodonAccountResponse, MastodonReportResponse, NotificationEntry, NotificationsQuery,
+    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow,
+    RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow, SearchCategoryFlags,
+    SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow,
+    StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery,
+    TranslationProviderLanguageRow, account_matches_search_terms, account_relationship_rank,
+    account_search_is_complete_handle, account_search_non_exact_limit, account_search_rank,
+    account_search_sort_key, account_search_term, account_search_terms,
     activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
     build_activitypub_actor_document, build_activitypub_delete_with_published_at,
     build_add_featured_activity_with_id, build_announcements_document,
     build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
     build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_internal_cursor_link_for_url_with_min_id, build_nodeinfo_document,
-    build_nodeinfo_links_document, build_notifications_v2_document,
-    build_oauth_authorization_server_document, build_oauth_token_document,
-    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
+    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
+    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
+    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
-    build_translation_document_for_language, build_update_person_activity_with_id,
-    classify_media_kind, configured_html_document, context_async_refresh_id,
-    delivery_retry_delay_modifier, derive_link_timeline_match_urls, describe_outbound_activity,
-    directory_order, effective_local_quote_approval_policy, effective_remote_status_quote_state,
+    build_deepl_request_body, build_translation_document_for_language,
+    build_translation_languages_document, build_deepl_translation_languages_document,
+    build_update_person_activity_with_id, classify_media_kind, configured_html_document,
+    context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
+    describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
+    effective_remote_status_quote_state, effective_search_v2_following, effective_search_v2_offset,
     effective_status_quote_state, extract_account_handles_from_text, extract_hashtags_from_html,
     extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
     extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
@@ -35,27 +40,37 @@ use super::{
     local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
     matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
     nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
-    normalize_status_history_entry, normalize_status_poll, normalized_account_search_query,
-    normalized_action_uri, notification_sort_key, notification_timestamp_sort_token,
-    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
-    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
-    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
-    parse_http_url_parts, parse_internal_pagination_id, parse_lookup_handle, parse_media_focus,
-    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
-    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
-    quote_placeholder_document, quote_target_uri_from_object, remap_remote_poll_vote_positions,
-    remote_account_rest_id, remote_actor_uri_from_rest_id,
+    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
+    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
+    notification_sort_key, notification_timestamp_sort_token, object_attributed_to_remote_actor,
+    optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
+    paginate_tag_search_matches, parse_basic_authorization_header,
+    parse_bearer_authorization_header, parse_csv_list, parse_http_url_parts,
+    parse_deepl_translated_text, parse_internal_pagination_id,
+    parse_libretranslate_translated_text, parse_lookup_handle,
+    parse_media_focus, parse_remote_actor_profile_document, parse_status_search_query,
+    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
+    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
+    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
     remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
     remote_poll_should_refresh, remote_quote_state_for_local_target,
     remote_status_has_active_quote, remote_status_targets_local_viewer,
     remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
     resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
     search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
-    search_v2_unauthenticated_error, search_v2_url_query_mode, status_has_active_quote,
-    status_matches_search_metadata, status_matches_search_syntax, status_search_rank,
-    tag_search_rank, tag_search_sort_key, timeline_fetch_limit, timeline_limit,
-    trim_context_ancestors, trim_context_descendants, validate_poll_vote_submission,
-    validate_scheduled_at_minimum_offset, visibility_from_activitypub_object,
+    oauth_access_token_has_any_scope_json, search_v2_unauthenticated_error, search_v2_url_query_mode, set_instance_translation_enabled,
+    search_v2_type_allows_url_resource,
+    status_search_query_terms,
+    status_has_active_quote, status_is_searchable_by_scope, status_matches_search_metadata,
+    status_matches_search_scope, status_matches_search_syntax, status_matches_search_timestamp,
+    status_search_rank, streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
+    tag_search_sort_key, text_mentions_search_library_viewer, timeline_fetch_limit, timeline_limit,
+    translation_cache_source_fingerprint, translation_provider_language_code,
+    translation_provider_language_matches, translation_provider_supported_target_language,
+    translation_target_language, trim_context_ancestors, trim_context_descendants,
+    validate_account_registration_request, validate_poll_vote_submission,
+    validate_scheduled_at_minimum_offset, validate_streaming_channel_request,
+    visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -97,6 +112,13 @@ fn actor_fixture_account() -> LocalAccount {
 #[test]
 fn parse_webfinger_resource_extracts_local_handle() {
     let handle = parse_webfinger_resource("acct:alice@example.com").unwrap();
+    assert_eq!(handle.username, "alice");
+    assert_eq!(handle.domain.as_deref(), Some("example.com"));
+}
+
+#[test]
+fn parse_webfinger_resource_accepts_case_insensitive_acct_scheme() {
+    let handle = parse_webfinger_resource("ACCT:Alice@Example.Com").unwrap();
     assert_eq!(handle.username, "alice");
     assert_eq!(handle.domain.as_deref(), Some("example.com"));
 }
@@ -542,6 +564,249 @@ fn translation_document_for_language_overrides_target_language() {
     assert_eq!(
         document.pointer("/detected_source_language"),
         Some(&serde_json::json!("ja"))
+    );
+}
+
+#[test]
+fn translation_document_uses_provider_display_name() {
+    let document = build_translation_document_for_language(
+        &serde_json::json!({
+            "content": "<p>Hello</p>",
+            "spoiler_text": "",
+            "language": "en",
+            "media_attachments": [],
+            "poll": null
+        }),
+        "de",
+        "DeepL.com",
+    );
+
+    assert_eq!(document.pointer("/provider"), Some(&serde_json::json!("DeepL.com")));
+}
+
+#[test]
+fn translation_provider_language_code_normalizes_target_codes() {
+    assert_eq!(translation_provider_language_code("pt-BR"), "pt");
+    assert_eq!(translation_provider_language_code("EN_us"), "en");
+    assert_eq!(translation_provider_language_code("und"), "auto");
+    assert_eq!(translation_provider_language_code(""), "auto");
+}
+
+#[test]
+fn libretranslate_request_payload_matches_provider_shape() {
+    let payload = build_libretranslate_request_payload(
+        "<p>Hello</p>",
+        "en-US",
+        "ja-JP",
+        "html",
+        Some("secret"),
+    );
+
+    assert_eq!(
+        payload.pointer("/q"),
+        Some(&serde_json::json!("<p>Hello</p>"))
+    );
+    assert_eq!(payload.pointer("/source"), Some(&serde_json::json!("en")));
+    assert_eq!(payload.pointer("/target"), Some(&serde_json::json!("ja")));
+    assert_eq!(payload.pointer("/format"), Some(&serde_json::json!("html")));
+    assert_eq!(
+        payload.pointer("/api_key"),
+        Some(&serde_json::json!("secret"))
+    );
+}
+
+#[test]
+fn libretranslate_response_extracts_translated_text() {
+    assert_eq!(
+        parse_libretranslate_translated_text(&serde_json::json!({
+            "translatedText": "<p>こんにちは</p>"
+        })),
+        Some("<p>こんにちは</p>".to_owned())
+    );
+    assert_eq!(
+        parse_libretranslate_translated_text(&serde_json::json!({ "error": "missing" })),
+        None
+    );
+}
+
+#[test]
+fn deepl_request_body_uses_uppercase_language_codes() {
+    let body = build_deepl_request_body("<p>Hello</p>", "en-US", "ja-JP");
+
+    assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
+    assert!(body.contains("source_lang=EN-US"));
+    assert!(body.contains("target_lang=ja-JP"));
+    assert!(body.contains("tag_handling=html"));
+}
+
+#[test]
+fn deepl_request_body_omits_unknown_source_language() {
+    let body = build_deepl_request_body("<p>Hello</p>", "und", "ja");
+
+    assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
+    assert!(!body.contains("source_lang="));
+    assert!(body.contains("target_lang=ja"));
+}
+
+#[test]
+fn translation_provider_supported_target_language_prefers_primary_subtag() {
+    let document = serde_json::json!({
+        "en": ["pt", "de"],
+        "ja": ["en", "pt"]
+    });
+
+    assert_eq!(
+        translation_provider_supported_target_language(&document, "en-US", "de-DE"),
+        Some("de".to_owned())
+    );
+    assert_eq!(
+        translation_provider_supported_target_language(&document, "en-US", "pt-BR"),
+        Some("pt".to_owned())
+    );
+    assert_eq!(
+        translation_provider_supported_target_language(&document, "ja", "en-GB"),
+        Some("en".to_owned())
+    );
+    assert_eq!(
+        translation_provider_supported_target_language(&document, "en", "it"),
+        None
+    );
+}
+
+#[test]
+fn deepl_response_extracts_translated_text() {
+    assert_eq!(
+        parse_deepl_translated_text(&serde_json::json!({
+            "translations": [
+                { "text": "<p>こんにちは</p>" }
+            ]
+        })),
+        Some("<p>こんにちは</p>".to_owned())
+    );
+    assert_eq!(
+        parse_deepl_translated_text(&serde_json::json!({ "translations": [] })),
+        None
+    );
+}
+
+#[test]
+fn translation_languages_document_flattens_supported_targets() {
+    let document = build_translation_languages_document(&[
+        TranslationProviderLanguageRow {
+            code: Some("en".to_owned()),
+            targets: Some(vec!["de".to_owned(), "es".to_owned()]),
+        },
+        TranslationProviderLanguageRow {
+            code: Some("fr".to_owned()),
+            targets: Some(vec!["de".to_owned()]),
+        },
+    ]);
+
+    assert_eq!(
+        document.pointer("/en"),
+        Some(&serde_json::json!(["de", "es"]))
+    );
+    assert_eq!(document.pointer("/fr"), Some(&serde_json::json!(["de"])));
+    assert_eq!(
+        document.pointer("/und"),
+        Some(&serde_json::json!(["de", "es"]))
+    );
+}
+
+#[test]
+fn deepl_translation_languages_document_exposes_all_targets_except_self() {
+    let document = build_deepl_translation_languages_document(
+        &["en".to_owned(), "ja".to_owned()],
+        &["en".to_owned(), "ja".to_owned(), "de".to_owned()],
+    );
+
+    assert_eq!(
+        document.pointer("/en"),
+        Some(&serde_json::json!(["pt", "ja", "de"]))
+    );
+    assert_eq!(
+        document.pointer("/ja"),
+        Some(&serde_json::json!(["en", "pt", "de"]))
+    );
+    assert_eq!(
+        document.pointer("/und"),
+        Some(&serde_json::json!(["en", "pt", "ja", "de"]))
+    );
+}
+
+#[test]
+fn translation_language_pair_support_uses_source_or_auto_detection() {
+    let document = serde_json::json!({
+        "en": ["de", "es"],
+        "fr": ["de"],
+        "und": ["de", "es"]
+    });
+
+    assert!(translation_provider_language_matches(&document, "en", "de"));
+    assert!(translation_provider_language_matches(
+        &document, "en-US", "de-DE"
+    ));
+    assert!(translation_provider_language_matches(
+        &document, "und", "es"
+    ));
+    assert!(!translation_provider_language_matches(
+        &document, "fr", "es"
+    ));
+}
+
+#[test]
+fn translation_cache_source_fingerprint_tracks_translatable_fields() {
+    let base = serde_json::json!({
+        "content": "<p>Hello</p>",
+        "spoiler_text": "cw",
+        "language": "en",
+        "account": { "display_name": "Alice" },
+        "media_attachments": [
+            { "id": "media-1", "description": "alt text", "url": "https://media.example/1" }
+        ],
+        "poll": {
+            "id": "poll-1",
+            "options": [
+                { "title": "One", "votes_count": 1 }
+            ]
+        }
+    });
+    let same_translatable_fields = serde_json::json!({
+        "content": "<p>Hello</p>",
+        "spoiler_text": "cw",
+        "language": "en",
+        "account": { "display_name": "Changed" },
+        "media_attachments": [
+            { "id": "media-1", "description": "alt text", "url": "https://media.example/changed" }
+        ],
+        "poll": {
+            "id": "poll-1",
+            "options": [
+                { "title": "One", "votes_count": 99 }
+            ]
+        }
+    });
+    let edited_content = serde_json::json!({
+        "content": "<p>Hello edited</p>",
+        "spoiler_text": "cw",
+        "language": "en",
+        "media_attachments": [
+            { "id": "media-1", "description": "alt text" }
+        ],
+        "poll": {
+            "options": [
+                { "title": "One" }
+            ]
+        }
+    });
+
+    assert_eq!(
+        translation_cache_source_fingerprint(&base).unwrap(),
+        translation_cache_source_fingerprint(&same_translatable_fields).unwrap()
+    );
+    assert_ne!(
+        translation_cache_source_fingerprint(&base).unwrap(),
+        translation_cache_source_fingerprint(&edited_content).unwrap()
     );
 }
 
@@ -1684,6 +1949,14 @@ fn parse_lookup_handle_defaults_bare_username_to_local_domain() {
 }
 
 #[test]
+fn parse_lookup_handle_accepts_case_insensitive_acct_scheme() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let handle = parse_lookup_handle("ACCT:Alice@Remote.Example", &config).unwrap();
+    assert_eq!(handle.username, "alice");
+    assert_eq!(handle.domain.as_deref(), Some("remote.example"));
+}
+
+#[test]
 fn search_category_flags_defaults_to_all_categories() {
     assert_eq!(
         search_category_flags(None),
@@ -1721,6 +1994,14 @@ fn search_category_flags_respects_explicit_type() {
             hashtags: true,
         }
     );
+    assert_eq!(
+        search_category_flags(Some(" Accounts ")),
+        SearchCategoryFlags {
+            accounts: true,
+            statuses: false,
+            hashtags: false,
+        }
+    );
 }
 
 #[test]
@@ -1729,7 +2010,12 @@ fn search_v2_requires_auth_for_resolve_following_and_offset() {
         resolve: Some(true),
         ..SearchV2Query::default()
     }));
+    assert!(!search_v2_requires_auth(&SearchV2Query {
+        offset: Some(1),
+        ..SearchV2Query::default()
+    }));
     assert!(search_v2_requires_auth(&SearchV2Query {
+        search_type: Some("accounts".to_owned()),
         offset: Some(1),
         ..SearchV2Query::default()
     }));
@@ -1744,6 +2030,14 @@ fn search_v2_requires_auth_for_resolve_following_and_offset() {
 fn search_v2_unauthenticated_error_matches_upstream_messages() {
     assert_eq!(
         search_v2_unauthenticated_error(&SearchV2Query {
+            offset: Some(1),
+            ..SearchV2Query::default()
+        }),
+        None
+    );
+    assert_eq!(
+        search_v2_unauthenticated_error(&SearchV2Query {
+            search_type: Some("accounts".to_owned()),
             offset: Some(1),
             ..SearchV2Query::default()
         }),
@@ -1765,6 +2059,55 @@ fn search_v2_unauthenticated_error_matches_upstream_messages() {
         }),
         None
     );
+}
+
+#[test]
+fn effective_search_v2_offset_ignores_untyped_offset() {
+    assert_eq!(
+        effective_search_v2_offset(&SearchV2Query {
+            offset: Some(10),
+            ..SearchV2Query::default()
+        }),
+        0
+    );
+    assert_eq!(
+        effective_search_v2_offset(&SearchV2Query {
+            search_type: Some("hashtags".to_owned()),
+            offset: Some(10),
+            ..SearchV2Query::default()
+        }),
+        10
+    );
+    assert_eq!(
+        effective_search_v2_offset(&SearchV2Query {
+            search_type: Some(" Hashtags ".to_owned()),
+            offset: Some(10),
+            ..SearchV2Query::default()
+        }),
+        10
+    );
+}
+
+#[test]
+fn effective_search_v2_following_requires_authenticated_viewer() {
+    assert!(!effective_search_v2_following(
+        &SearchV2Query {
+            following: Some(true),
+            ..SearchV2Query::default()
+        },
+        false
+    ));
+    assert!(effective_search_v2_following(
+        &SearchV2Query {
+            following: Some(true),
+            ..SearchV2Query::default()
+        },
+        true
+    ));
+    assert!(!effective_search_v2_following(
+        &SearchV2Query::default(),
+        true
+    ));
 }
 
 #[test]
@@ -1793,6 +2136,42 @@ fn search_v2_url_query_mode_matches_mastodon_url_resolution_rules() {
         search_v2_url_query_mode("@alice@remote.example", true, 0),
         SearchUrlQueryMode::None
     );
+}
+
+#[test]
+fn search_v2_type_allows_url_resource_matches_requested_category() {
+    assert!(search_v2_type_allows_url_resource(None, "accounts"));
+    assert!(search_v2_type_allows_url_resource(Some("accounts"), "accounts"));
+    assert!(!search_v2_type_allows_url_resource(Some("statuses"), "accounts"));
+    assert!(!search_v2_type_allows_url_resource(Some("hashtags"), "statuses"));
+    assert!(!search_v2_type_allows_url_resource(Some("other"), "accounts"));
+}
+
+#[test]
+fn status_search_query_terms_include_all_candidate_terms() {
+    let parsed = parse_status_search_query(r#"rust "release notes" from:me -is:reply"#);
+    assert_eq!(
+        status_search_query_terms(&parsed),
+        vec![
+            "rust".to_owned(),
+            "release notes".to_owned(),
+            "rust release notes".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn oauth_access_token_scopes_match_search_permissions() {
+    let scopes_json = serde_json::to_string(&vec!["read".to_owned(), "write".to_owned()]).unwrap();
+
+    assert!(oauth_access_token_has_any_scope_json(
+        &scopes_json,
+        &["read:search", "read"]
+    ));
+    assert!(!oauth_access_token_has_any_scope_json(
+        &scopes_json,
+        &["follow", "admin"]
+    ));
 }
 
 #[test]
@@ -1918,6 +2297,40 @@ fn search_text_match_rank_prefers_exact_then_prefix_then_contains() {
 }
 
 #[test]
+fn normalize_search_match_text_folds_case_quotes_and_latin_accents() {
+    assert_eq!(
+        normalize_search_match_text("「Café」 Résumé München Straße"),
+        "\"cafe\" resume munchen strasse"
+    );
+}
+
+#[test]
+fn search_text_match_rank_matches_folded_latin_accents() {
+    assert_eq!(search_text_match_rank("cafe", "Café"), 0);
+    assert_eq!(search_text_match_rank("resume", "résumé update"), 1);
+    assert_eq!(search_text_match_rank("strasse", "die Straße"), 2);
+}
+
+#[test]
+fn account_matches_search_terms_matches_folded_latin_accents() {
+    assert!(account_matches_search_terms(
+        &["cafe".to_owned(), "resume".to_owned()],
+        "alice",
+        "alice@example.com",
+        "Café Alice",
+        "résumé posts"
+    ));
+}
+
+#[test]
+fn normalize_search_query_input_maps_quote_equivalents_to_ascii_quotes() {
+    assert_eq!(
+        normalize_search_query_input("「release」 “notes”"),
+        "\"release\" \"notes\""
+    );
+}
+
+#[test]
 fn normalized_account_search_query_supports_handles() {
     assert_eq!(normalized_account_search_query("@alice"), "alice");
     assert_eq!(
@@ -1926,6 +2339,10 @@ fn normalized_account_search_query_supports_handles() {
     );
     assert_eq!(
         normalized_account_search_query("@alice@remote.example"),
+        "alice@remote.example"
+    );
+    assert_eq!(
+        normalized_account_search_query("ACCT:Alice@Remote.Example"),
         "alice@remote.example"
     );
 }
@@ -1943,6 +2360,11 @@ fn account_search_is_complete_handle_requires_domain_form() {
     ));
     assert!(!account_search_is_complete_handle("alice", &config));
     assert!(!account_search_is_complete_handle("@alice", &config));
+    assert!(!account_search_is_complete_handle("hi @alice", &config));
+    assert!(!account_search_is_complete_handle(
+        "alice @remote.example",
+        &config
+    ));
 }
 
 #[test]
@@ -1960,9 +2382,45 @@ fn account_search_term_treats_local_domain_handles_as_usernames() {
 }
 
 #[test]
+fn account_search_terms_split_words_and_keep_quoted_phrases() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    assert_eq!(
+        account_search_terms("alice rust", &config),
+        vec!["alice".to_owned(), "rust".to_owned()]
+    );
+    assert_eq!(
+        account_search_terms("alice \"rust workers\"", &config),
+        vec!["alice".to_owned(), "rust workers".to_owned()]
+    );
+}
+
+#[test]
+fn account_matches_search_terms_requires_all_terms_across_profile_fields() {
+    assert!(account_matches_search_terms(
+        &["alice".to_owned(), "workers".to_owned()],
+        "alice",
+        "alice",
+        "Alice",
+        "workers and rust"
+    ));
+    assert!(!account_matches_search_terms(
+        &["alice".to_owned(), "workers".to_owned()],
+        "alice",
+        "alice",
+        "Alice",
+        ""
+    ));
+}
+
+#[test]
 fn account_search_non_exact_limit_matches_mastodon_rules() {
     let viewer = actor_fixture_account();
     assert_eq!(account_search_non_exact_limit("ab", None, 20, false), 0);
+    assert_eq!(account_search_non_exact_limit("#rust", None, 20, false), 0);
+    assert_eq!(
+        account_search_non_exact_limit("#rust", Some(&viewer), 20, false),
+        0
+    );
     assert_eq!(
         account_search_non_exact_limit("@alice@remote.example", None, 20, true),
         19
@@ -2035,9 +2493,39 @@ fn account_search_rank_considers_profile_note_after_names() {
 }
 
 #[test]
+fn account_search_rank_prefers_multi_term_coverage_before_partial_matches() {
+    assert!(
+        account_search_rank("alice rust", "alice", "alice", "Alice Rust", "")
+            < account_search_rank("alice rust", "alice", "alice", "Alice", "")
+    );
+    assert!(
+        account_search_rank(
+            "\"rust workers\"",
+            "alice",
+            "alice",
+            "Alice",
+            "rust workers"
+        ) < account_search_rank("\"rust workers\"", "alice", "alice", "Alice", "rust")
+    );
+}
+
+#[test]
 fn tag_search_rank_prefers_exact_matches() {
     assert!(tag_search_rank("rust", "rust") < tag_search_rank("rust", "rustlang"));
     assert!(tag_search_rank("rust", "rustlang") < tag_search_rank("rust", "fedirust"));
+}
+
+#[test]
+fn tag_matches_search_query_uses_prefix_semantics() {
+    assert!(tag_matches_search_query("rust", "rustlang"));
+    assert!(tag_matches_search_query("#rust", "rustlang"));
+    assert!(!tag_matches_search_query("rust", "fedirust"));
+}
+
+#[test]
+fn tag_search_matches_folded_latin_accents() {
+    assert_eq!(tag_search_rank("cafe", "Café").0, 0);
+    assert!(tag_matches_search_query("munchen", "München"));
 }
 
 #[test]
@@ -2135,13 +2623,28 @@ fn paginate_tag_search_matches_applies_offset_after_usage_aware_ranking() {
 
 #[test]
 fn status_search_rank_prefers_content_matches_before_spoilers() {
+    let rust_query = parse_status_search_query("rust");
     assert!(
-        status_search_rank("rust", "rust release notes", "cw")
-            < status_search_rank("rust", "cw", "rust release notes")
+        status_search_rank(&rust_query, "rust release notes", "cw")
+            < status_search_rank(&rust_query, "cw", "rust release notes")
     );
     assert!(
-        status_search_rank("rust", "rust release notes", "cw")
-            < status_search_rank("rust", "fedi post", "cw")
+        status_search_rank(&rust_query, "rust release notes", "cw")
+            < status_search_rank(&rust_query, "fedi post", "cw")
+    );
+    let rust_release_query = parse_status_search_query("rust release");
+    assert!(
+        status_search_rank(&rust_release_query, "rust release notes", "cw")
+            < status_search_rank(&rust_release_query, "rust notes", "release candidate")
+    );
+    assert!(
+        status_search_rank(&rust_release_query, "rust notes", "release candidate")
+            < status_search_rank(&rust_release_query, "rust notes only", "cw")
+    );
+    let mixed_phrase_query = parse_status_search_query("foo \"bar baz\"");
+    assert!(
+        status_search_rank(&mixed_phrase_query, "foo update with bar baz", "")
+            < status_search_rank(&mixed_phrase_query, "foo update with bar and baz", "")
     );
 }
 
@@ -2151,15 +2654,27 @@ fn parse_status_search_query_extracts_basic_status_syntax_filters() {
         parse_status_search_query("rust release from:me before:\"2025-03-01\" after:2025-02-01"),
         super::ParsedStatusSearchQuery {
             text_query: "rust release".to_owned(),
+            included_text_terms: vec!["rust".to_owned(), "release".to_owned()],
+            excluded_text_terms: Vec::new(),
             from: Some("me".to_owned()),
+            not_from: None,
             before: Some("2025-03-01T00:00:00Z".to_owned()),
             after: Some("2025-02-01T00:00:00Z".to_owned()),
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
             language: None,
+            not_language: None,
             is_reply: None,
             is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
             has_media: None,
             has_poll: None,
             has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
         }
     );
 }
@@ -2170,16 +2685,167 @@ fn parse_status_search_query_expands_during_into_day_bounds() {
         parse_status_search_query("\"rust release\" during:2025-03-01"),
         super::ParsedStatusSearchQuery {
             text_query: "rust release".to_owned(),
+            included_text_terms: vec!["rust release".to_owned()],
+            excluded_text_terms: Vec::new(),
             from: None,
+            not_from: None,
             before: Some("2025-03-02T00:00:00Z".to_owned()),
             after: Some("2025-03-01T00:00:00Z".to_owned()),
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
             language: None,
+            not_language: None,
             is_reply: None,
             is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
             has_media: None,
             has_poll: None,
             has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
         }
+    );
+}
+
+#[test]
+fn parse_status_search_query_accepts_epoch_timestamps() {
+    assert_eq!(
+        parse_status_search_query("before:1740873600 after:1740787200 during:1740787200"),
+        super::ParsedStatusSearchQuery {
+            text_query: String::new(),
+            included_text_terms: Vec::new(),
+            excluded_text_terms: Vec::new(),
+            from: None,
+            not_from: None,
+            before: Some("2025-03-01T00:00:00Z".to_owned()),
+            after: Some("2025-03-01T00:00:00Z".to_owned()),
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: None,
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_extracts_negated_date_filters() {
+    assert_eq!(
+        parse_status_search_query("-before:\"2025-03-01\" -after:2025-02-01 -during:2025-02-10"),
+        super::ParsedStatusSearchQuery {
+            text_query: String::new(),
+            included_text_terms: Vec::new(),
+            excluded_text_terms: Vec::new(),
+            from: None,
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: Some("2025-03-01T00:00:00Z".to_owned()),
+            excluded_after: Some("2025-02-01T00:00:00Z".to_owned()),
+            excluded_during: vec![(
+                "2025-02-10T00:00:00Z".to_owned(),
+                "2025-02-11T00:00:00Z".to_owned(),
+            )],
+            language: None,
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_normalizes_quote_equivalent_characters() {
+    assert_eq!(
+        parse_status_search_query("rust 「release notes」 -“outage”"),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust release notes".to_owned(),
+            included_text_terms: vec!["rust".to_owned(), "release notes".to_owned()],
+            excluded_text_terms: vec!["outage".to_owned()],
+            from: None,
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: None,
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_preserves_escaped_quote_and_space_terms() {
+    assert_eq!(
+        parse_status_search_query(r#"rust "release \"notes\"" escaped\ space"#),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust release \"notes\" escaped space".to_owned(),
+            included_text_terms: vec![
+                "rust".to_owned(),
+                "release \"notes\"".to_owned(),
+                "escaped space".to_owned()
+            ],
+            excluded_text_terms: Vec::new(),
+            from: None,
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: None,
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_keeps_non_special_backslashes() {
+    assert_eq!(
+        parse_status_search_query(r#"path\name"#).included_text_terms,
+        vec![r#"path\name"#.to_owned()]
     );
 }
 
@@ -2187,49 +2853,440 @@ fn parse_status_search_query_expands_during_into_day_bounds() {
 fn parse_status_search_query_extracts_language_is_and_has_filters() {
     assert_eq!(
         parse_status_search_query(
-            "rust language:ja is:reply -is:sensitive has:media -has:poll has:embed"
+            "rust -\"remote outage\" language:ja -language:en from:me -from:bob is:reply -is:sensitive is:boost -is:quote has:media -has:poll has:embed in:public -in:library"
         ),
         super::ParsedStatusSearchQuery {
             text_query: "rust".to_owned(),
-            from: None,
+            included_text_terms: vec!["rust".to_owned()],
+            excluded_text_terms: vec!["remote outage".to_owned()],
+            from: Some("me".to_owned()),
+            not_from: Some("bob".to_owned()),
             before: None,
             after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
             language: Some("ja".to_owned()),
+            not_language: Some("en".to_owned()),
             is_reply: Some(true),
             is_sensitive: Some(false),
+            is_boost: Some(true),
+            is_quote: Some(false),
             has_media: Some(true),
             has_poll: Some(false),
             has_embed: Some(true),
+            in_public: Some(true),
+            in_library: Some(false),
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_accepts_advanced_search_aliases() {
+    let parsed = parse_status_search_query("is:reblog -is:quote has:link -has:preview");
+
+    assert_eq!(parsed.is_boost, Some(true));
+    assert_eq!(parsed.is_quote, Some(false));
+    assert!(parsed.unsatisfiable);
+}
+
+#[test]
+fn parse_status_search_query_accepts_explicit_positive_operator() {
+    assert_eq!(
+        parse_status_search_query(
+            "+rust +\"release notes\" +from:me +language:ja +has:media +in:public"
+        ),
+        super::ParsedStatusSearchQuery {
+            text_query: "rust release notes".to_owned(),
+            included_text_terms: vec!["rust".to_owned(), "release notes".to_owned()],
+            excluded_text_terms: Vec::new(),
+            from: Some("me".to_owned()),
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: Some("ja".to_owned()),
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: Some(true),
+            has_poll: None,
+            has_embed: None,
+            in_public: Some(true),
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_treats_prefixes_case_insensitively() {
+    assert_eq!(
+        parse_status_search_query(
+            "Rust FROM:Me Language:EN-us IS:Reply HAS:Media IN:Library Site:Example.com"
+        ),
+        super::ParsedStatusSearchQuery {
+            text_query: "Rust site Example.com".to_owned(),
+            included_text_terms: vec!["Rust".to_owned(), "site Example.com".to_owned()],
+            excluded_text_terms: Vec::new(),
+            from: Some("Me".to_owned()),
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: Some("en".to_owned()),
+            not_language: None,
+            is_reply: Some(true),
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: Some(true),
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: Some(true),
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_falls_back_unknown_prefixes_to_text_terms() {
+    assert_eq!(
+        parse_status_search_query("cryptid site:example.com -mood:spooky"),
+        super::ParsedStatusSearchQuery {
+            text_query: "cryptid site example.com".to_owned(),
+            included_text_terms: vec!["cryptid".to_owned(), "site example.com".to_owned()],
+            excluded_text_terms: vec!["mood spooky".to_owned()],
+            from: None,
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: None,
+            not_language: None,
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_marks_conflicting_filters_unsatisfiable() {
+    assert_eq!(
+        parse_status_search_query("from:alice from:bob is:reply -is:reply"),
+        super::ParsedStatusSearchQuery {
+            text_query: String::new(),
+            included_text_terms: Vec::new(),
+            excluded_text_terms: Vec::new(),
+            from: Some("alice".to_owned()),
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: None,
+            not_language: None,
+            is_reply: Some(true),
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: true,
+        }
+    );
+}
+
+#[test]
+fn parse_status_search_query_normalizes_language_subtags() {
+    assert_eq!(
+        parse_status_search_query("language:EN-us -language:pt_BR"),
+        super::ParsedStatusSearchQuery {
+            text_query: String::new(),
+            included_text_terms: Vec::new(),
+            excluded_text_terms: Vec::new(),
+            from: None,
+            not_from: None,
+            before: None,
+            after: None,
+            excluded_before: None,
+            excluded_after: None,
+            excluded_during: Vec::new(),
+            language: Some("en".to_owned()),
+            not_language: Some("pt".to_owned()),
+            is_reply: None,
+            is_sensitive: None,
+            is_boost: None,
+            is_quote: None,
+            has_media: None,
+            has_poll: None,
+            has_embed: None,
+            in_public: None,
+            in_library: None,
+            unsatisfiable: false,
         }
     );
 }
 
 #[test]
 fn status_matches_search_syntax_applies_language_and_is_filters() {
-    let parsed = parse_status_search_query("language:ja is:reply -is:sensitive");
+    let parsed =
+        parse_status_search_query("language:ja -language:en is:reply -is:sensitive -blocked");
     assert!(status_matches_search_syntax(
         &parsed,
+        "release notes",
+        "",
         true,
         false,
-        Some("ja")
-    ));
-    assert!(!status_matches_search_syntax(
-        &parsed,
         false,
         false,
         Some("ja")
     ));
     assert!(!status_matches_search_syntax(
         &parsed,
-        true,
-        true,
+        "release notes",
+        "",
+        false,
+        false,
+        false,
+        false,
         Some("ja")
     ));
     assert!(!status_matches_search_syntax(
         &parsed,
+        "release notes",
+        "",
         true,
+        true,
+        false,
+        false,
+        Some("ja")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        true,
+        false,
+        false,
         false,
         Some("en")
+    ));
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        true,
+        false,
+        false,
+        false,
+        Some("ja-JP")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        true,
+        false,
+        false,
+        false,
+        Some("en-US")
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "blocked release notes",
+        "",
+        true,
+        false,
+        false,
+        false,
+        Some("ja")
+    ));
+}
+
+#[test]
+fn status_matches_search_syntax_requires_all_positive_text_terms() {
+    let parsed = parse_status_search_query("rust release");
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "rust release notes",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "rust notes",
+        "release candidate",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "rust notes only",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+}
+
+#[test]
+fn status_matches_search_syntax_applies_boost_and_quote_filters() {
+    let parsed = parse_status_search_query("is:boost -is:quote");
+
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        false,
+        false,
+        true,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "release notes",
+        "",
+        false,
+        false,
+        true,
+        true,
+        None
+    ));
+}
+
+#[test]
+fn status_matches_search_timestamp_applies_negated_date_filters() {
+    let negated_before = parse_status_search_query("-before:\"2025-03-01\"");
+    assert!(status_matches_search_timestamp(
+        &negated_before,
+        "2025-03-01T00:00:00Z"
+    ));
+    assert!(!status_matches_search_timestamp(
+        &negated_before,
+        "2025-02-28T23:59:59Z"
+    ));
+
+    let negated_after = parse_status_search_query("-after:2025-02-01");
+    assert!(status_matches_search_timestamp(
+        &negated_after,
+        "2025-02-01T00:00:00Z"
+    ));
+    assert!(!status_matches_search_timestamp(
+        &negated_after,
+        "2025-02-01T00:00:01Z"
+    ));
+
+    let negated_during = parse_status_search_query("-during:2025-02-10");
+    assert!(status_matches_search_timestamp(
+        &negated_during,
+        "2025-02-09T23:59:59Z"
+    ));
+    assert!(!status_matches_search_timestamp(
+        &negated_during,
+        "2025-02-10T12:00:00Z"
+    ));
+}
+
+#[test]
+fn status_matches_search_syntax_treats_hashtag_terms_as_tags() {
+    let parsed = parse_status_search_query("#rust -#blocked");
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "release notes for #Rust",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "rust release notes",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "release notes for #rust #blocked",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+}
+
+#[test]
+fn status_matches_search_syntax_matches_folded_latin_accents() {
+    let parsed = parse_status_search_query("cafe -resume");
+    assert!(status_matches_search_syntax(
+        &parsed,
+        "Café notes",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
+    ));
+    assert!(!status_matches_search_syntax(
+        &parsed,
+        "Café résumé notes",
+        "",
+        false,
+        false,
+        false,
+        false,
+        None
     ));
 }
 
@@ -2240,6 +3297,70 @@ fn status_matches_search_metadata_applies_has_filters() {
     assert!(!status_matches_search_metadata(&parsed, false, false, true));
     assert!(!status_matches_search_metadata(&parsed, true, true, true));
     assert!(!status_matches_search_metadata(&parsed, true, false, false));
+}
+
+#[test]
+fn status_matches_search_scope_applies_in_public_filter() {
+    let public_only = parse_status_search_query("in:public");
+    assert!(status_matches_search_scope(&public_only, true, false));
+    assert!(!status_matches_search_scope(&public_only, false, false));
+
+    let non_public_only = parse_status_search_query("-in:public");
+    assert!(status_matches_search_scope(&non_public_only, false, false));
+    assert!(!status_matches_search_scope(&non_public_only, true, false));
+}
+
+#[test]
+fn status_matches_search_scope_applies_in_library_filter() {
+    let library_only = parse_status_search_query("in:library");
+    assert!(status_matches_search_scope(&library_only, false, true));
+    assert!(!status_matches_search_scope(&library_only, true, false));
+
+    let outside_library_only = parse_status_search_query("-in:library");
+    assert!(status_matches_search_scope(
+        &outside_library_only,
+        true,
+        false
+    ));
+    assert!(!status_matches_search_scope(
+        &outside_library_only,
+        true,
+        true
+    ));
+}
+
+#[test]
+fn status_is_searchable_by_scope_defaults_to_public_plus_library() {
+    let default_query = parse_status_search_query("rust");
+    assert!(status_is_searchable_by_scope(&default_query, true, false));
+    assert!(status_is_searchable_by_scope(&default_query, false, true));
+    assert!(!status_is_searchable_by_scope(&default_query, false, false));
+
+    let public_only = parse_status_search_query("in:public");
+    assert!(!status_is_searchable_by_scope(&public_only, false, true));
+
+    let library_only = parse_status_search_query("in:library");
+    assert!(!status_is_searchable_by_scope(&library_only, true, false));
+}
+
+#[test]
+fn text_mentions_search_library_viewer_detects_local_and_remote_handles() {
+    let config = AppConfig::new("social.example", "cfwdon", "test");
+    assert!(text_mentions_search_library_viewer(
+        &config,
+        "@alice thanks for the report",
+        "alice"
+    ));
+    assert!(text_mentions_search_library_viewer(
+        &config,
+        "@alice@social.example thanks for the report",
+        "alice"
+    ));
+    assert!(!text_mentions_search_library_viewer(
+        &config,
+        "@bob thanks for the report",
+        "alice"
+    ));
 }
 
 #[test]
@@ -2257,6 +3378,18 @@ fn resolve_search_tag_name_supports_hash_and_tag_urls() {
         resolve_search_tag_name("/tags/fediverse_test"),
         Some("fediverse_test".to_owned())
     );
+    assert_eq!(
+        resolve_search_tag_name("https://social.example/Tags/Rust"),
+        Some("rust".to_owned())
+    );
+    assert_eq!(
+        resolve_search_tag_name("https://social.example/Explore/Tags/Workers"),
+        Some("workers".to_owned())
+    );
+    assert_eq!(
+        resolve_search_tag_name("https://social.example/tags/Rust%20Lang"),
+        Some("rust lang".to_owned())
+    );
 }
 
 #[test]
@@ -2267,6 +3400,132 @@ fn resolve_search_tag_name_rejects_non_tag_queries() {
         None
     );
     assert_eq!(resolve_search_tag_name(""), None);
+}
+
+#[test]
+fn validate_streaming_channel_request_accepts_known_streams() {
+    assert_eq!(
+        validate_streaming_channel_request(Some(" User "), None, None, None).unwrap(),
+        "user"
+    );
+    assert_eq!(
+        validate_streaming_channel_request(Some("hashtag:local"), Some("rust"), None, None)
+            .unwrap(),
+        "hashtag:local"
+    );
+    assert_eq!(
+        validate_streaming_channel_request(Some("list"), None, Some("123"), None).unwrap(),
+        "list"
+    );
+}
+
+#[test]
+fn validate_streaming_channel_request_rejects_unknown_or_incomplete_channels() {
+    assert_eq!(
+        validate_streaming_channel_request(Some("hashtag"), None, None, None).unwrap_err(),
+        StreamingChannelValidationError::MissingTag
+    );
+    assert_eq!(
+        validate_streaming_channel_request(Some("list"), None, None, None).unwrap_err(),
+        StreamingChannelValidationError::MissingList
+    );
+    assert_eq!(
+        validate_streaming_channel_request(Some("public"), None, None, Some("health")).unwrap_err(),
+        StreamingChannelValidationError::UnknownChannelRequested
+    );
+}
+
+#[test]
+fn streaming_channel_requires_auth_matches_user_scoped_streams() {
+    assert!(streaming_channel_requires_auth("user"));
+    assert!(streaming_channel_requires_auth("user:notification"));
+    assert!(streaming_channel_requires_auth("list"));
+    assert!(streaming_channel_requires_auth("direct"));
+    assert!(!streaming_channel_requires_auth("public"));
+    assert!(!streaming_channel_requires_auth("hashtag"));
+}
+
+#[test]
+fn validate_account_registration_request_requires_core_fields() {
+    let details = validate_account_registration_request(&AccountRegistrationValidation {
+        username: None,
+        email: None,
+        password_present: false,
+        agreement: None,
+    });
+    assert_eq!(
+        details.get("username"),
+        Some(&vec!["can't be blank".to_owned()])
+    );
+    assert_eq!(
+        details.get("email"),
+        Some(&vec!["can't be blank".to_owned()])
+    );
+    assert_eq!(
+        details.get("password"),
+        Some(&vec!["can't be blank".to_owned()])
+    );
+    assert_eq!(
+        details.get("agreement"),
+        Some(&vec!["must be accepted".to_owned()])
+    );
+}
+
+#[test]
+fn validate_account_registration_request_rejects_invalid_username() {
+    let details = validate_account_registration_request(&AccountRegistrationValidation {
+        username: Some("alice-bob".to_owned()),
+        email: Some("alice@example.com".to_owned()),
+        password_present: true,
+        agreement: Some(true),
+    });
+    assert_eq!(
+        details.get("username"),
+        Some(&vec![
+            "must contain only letters, numbers and underscores".to_owned()
+        ])
+    );
+}
+
+#[test]
+fn email_confirmation_message_uses_configured_instance_and_token() {
+    let config = AppConfig::new("social.example", "cfwdon", "test");
+    let url = build_email_confirmation_url(&config, "tok en/1");
+
+    assert_eq!(
+        url,
+        "https://social.example/auth/confirmation?confirmation_token=tok%20en%2F1"
+    );
+    assert_eq!(
+        build_email_confirmation_subject(&config),
+        "Confirm your cfwdon account"
+    );
+    assert!(build_email_confirmation_text(&config, &url).contains(&url));
+    assert!(
+        build_email_confirmation_html(&config, &url)
+            .contains("https://social.example/auth/confirmation")
+    );
+}
+
+#[test]
+fn translation_target_language_prefers_request_then_viewer_then_instance() {
+    let instance_languages = vec!["ja".to_owned(), "en".to_owned()];
+    assert_eq!(
+        translation_target_language(Some("fr"), Some("de"), &instance_languages, "es"),
+        "fr"
+    );
+    assert_eq!(
+        translation_target_language(None, Some("de"), &instance_languages, "es"),
+        "de"
+    );
+    assert_eq!(
+        translation_target_language(None, None, &instance_languages, "es"),
+        "ja"
+    );
+    assert_eq!(
+        translation_target_language(None, None, &Vec::new(), "es"),
+        "es"
+    );
 }
 
 #[test]
@@ -2359,6 +3618,7 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         language: Some("en".to_owned()),
         quote_approval_policy: None,
         quote_state: "accepted".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -2411,6 +3671,7 @@ fn effective_local_quote_approval_defaults_to_public() {
         language: Some("en".to_owned()),
         quote_approval_policy: None,
         quote_state: "accepted".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -2434,6 +3695,7 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
         language: Some("en".to_owned()),
         quote_approval_policy: Some("public".to_owned()),
         quote_state: "accepted".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -2560,6 +3822,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         language: Some("en".to_owned()),
         quote_approval_policy: Some("public".to_owned()),
         quote_state: "accepted".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -2613,6 +3876,7 @@ fn effective_status_quote_state_defaults_to_accepted_without_quote() {
         language: Some("en".to_owned()),
         quote_approval_policy: None,
         quote_state: "revoked".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -2637,6 +3901,7 @@ fn status_has_active_quote_depends_on_quote_state() {
         language: Some("en".to_owned()),
         quote_approval_policy: None,
         quote_state: "pending".to_owned(),
+        application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
@@ -3770,6 +5035,10 @@ fn instance_v2_document_uses_conservative_defaults() {
         Some(&serde_json::json!(30))
     );
     assert_eq!(
+        document.pointer("/configuration/translation/enabled"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
         document.pointer("/configuration/accounts/max_pinned_statuses"),
         Some(&serde_json::json!(5))
     );
@@ -3796,6 +5065,35 @@ fn instance_v2_document_uses_conservative_defaults() {
     assert_eq!(
         document.pointer("/icon/0/src"),
         Some(&serde_json::json!("https://media.example.com/site.png"))
+    );
+}
+
+#[test]
+fn set_instance_translation_enabled_updates_instance_configuration() {
+    let mut document = build_instance_v2_document(
+        &InstanceSummary {
+            domain: "social.example".to_owned(),
+            title: "cfwdon".to_owned(),
+            description: "test instance".to_owned(),
+            software: SoftwareInfo {
+                name: "cfwdon".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            capabilities: InstanceCapabilities {
+                federation: true,
+                local_timeline: true,
+                media_uploads: true,
+            },
+        },
+        &AppConfig::new("https://social.example", "cfwdon", "test instance"),
+        3,
+    );
+
+    set_instance_translation_enabled(&mut document, true);
+
+    assert_eq!(
+        document.pointer("/configuration/translation/enabled"),
+        Some(&serde_json::json!(true))
     );
 }
 

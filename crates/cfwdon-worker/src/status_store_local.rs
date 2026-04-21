@@ -16,7 +16,7 @@ pub(crate) async fn find_status_by_id(
 ) -> Result<Option<StatusRow>> {
     let status_id = D1Type::Text(status_id);
     db.prepare(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at
          FROM statuses
          WHERE id = ?1
          LIMIT 1",
@@ -32,7 +32,7 @@ pub(crate) async fn find_status_by_ap_id(
 ) -> Result<Option<StatusRow>> {
     let ap_id = D1Type::Text(ap_id);
     db.prepare(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at
          FROM statuses
          WHERE ap_id = ?1
          LIMIT 1",
@@ -78,7 +78,7 @@ pub(crate) async fn list_public_outbox_statuses(
     let limit = D1Type::Integer(limit as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at
              FROM statuses
              WHERE account_id = ?1
                AND visibility IN ('public', 'unlisted')
@@ -101,7 +101,7 @@ pub(crate) async fn list_account_statuses(
     let limit = D1Type::Integer(limit as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at
              FROM statuses
              WHERE account_id = ?1
              ORDER BY created_at DESC

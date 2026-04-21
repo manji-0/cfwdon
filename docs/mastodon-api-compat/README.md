@@ -65,9 +65,9 @@ deprecated route を残している可能性があるので、削除ではなく
 
 ## Snapshot
 
-- tracked upstream routes: `231`
-- local tracked routes: `216`
-- implemented routes: `193`
-- compatibility gaps: `22`
-- missing routes: `16`
+- tracked upstream routes: `225`
+- local tracked routes: `226`
+- implemented routes: `225`
+- compatibility gaps: `0`
+- missing routes: `0`
 - extra routes: `6`

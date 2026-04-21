@@ -17,7 +17,11 @@ pub(crate) fn parse_csv_list(value: &str) -> Vec<String> {
 
 pub(crate) fn parse_webfinger_resource(resource: &str) -> Result<AccountHandle> {
     let resource = resource.trim();
-    let Some(acct) = resource.strip_prefix("acct:") else {
+    let Some(acct) = resource.get(5..).filter(|_| {
+        resource
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
+    }) else {
         return Err(Error::RustError(
             "WebFinger resource must use the acct: scheme".to_owned(),
         ));
@@ -50,7 +54,10 @@ pub(crate) fn parse_lookup_handle(value: &str, config: &AppConfig) -> Result<Acc
             "acct query parameter is required".to_owned(),
         ));
     }
-    if value.starts_with("acct:") {
+    if value
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
+    {
         return parse_webfinger_resource(value);
     }
 

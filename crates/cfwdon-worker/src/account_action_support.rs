@@ -1,6 +1,7 @@
 use super::{
     AppConfig, D1Database, Error, FollowAccountRequest, FormEntry, LocalAccount, Result, actor_url,
     parse_optional_bool,
+    send_push_notification,
 };
 use worker::Request;
 use worker::d1::D1Type;
@@ -105,6 +106,11 @@ pub(crate) async fn upsert_local_follow(
     request: &FollowAccountRequest,
 ) -> Result<()> {
     let target_actor_uri = actor_url(config, &target.username);
+    let notification_type = if target.locked {
+        "follow_request"
+    } else {
+        "follow"
+    };
     let languages_json = request
         .languages
         .as_ref()
@@ -175,6 +181,19 @@ pub(crate) async fn upsert_local_follow(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    let _ = send_push_notification(
+        db,
+        config,
+        &target.id,
+        notification_type,
+        serde_json::json!({
+            "follower_account_id": follower.id,
+            "target_account_id": target.id,
+            "state": state,
+        }),
+    )
+    .await;
 
     Ok(())
 }

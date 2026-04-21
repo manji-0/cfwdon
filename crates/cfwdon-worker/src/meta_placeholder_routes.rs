@@ -1,28 +1,51 @@
+use crate::crypto_keys::generate_account_key_material;
 use crate::{
-    AccountReference, Request, Response, Result, RouteContext, TimelinePaginationQuery, actor_url,
-    app_bearer_token_from_request, build_app_verify_credentials_document_from_parts,
+    AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
+    RouteContext, TimelinePaginationQuery, actor_url, app_bearer_token_from_request,
+    authenticate_local_api_request, build_announcements_document,
+    build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_delete_quote_authorization_activity,
-    build_local_status_response, build_reject_follow_activity, build_relationship_for_target,
-    build_remote_status_response, build_timeline_link_header, can_view_local_status,
-    clear_local_status_quote, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
-    enqueue_targeted_outbox_activity, extract_authenticated_user, find_account_by_id,
-    find_authenticated_local_account, find_follower_follow_activity_id,
+    build_local_status_response, build_oauth_token_document, build_reject_follow_activity,
+    build_relationship_for_target, build_remote_status_response, build_timeline_link_header,
+    can_view_local_status, clear_local_status_quote, collect_visible_notifications,
+    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
+    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_authenticated_user,
+    extract_hashtags_from_html, extract_hashtags_from_text, filter_notification_entries_by_query,
+    find_account_by_email, find_account_by_id, find_account_by_username,
+    find_authenticated_local_account, find_conversation_for_account,
+    find_conversation_id_by_status_id, find_follower_follow_activity_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_app_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, generate_entity_id, insert_status_edit_snapshot,
-    instance_base_url, is_public_activitypub_visibility, list_follower_delivery_targets,
-    load_account_stats, load_config, load_in_reply_to_account_id, local_status_ap_id,
-    local_status_target_uri, media_object_url, normalize_status_history_entry, now_iso_string,
-    parse_relationship_query_ids, queue_remote_actor_activity,
-    queue_remote_actor_activity_required, remote_account_rest_id, remote_status_has_active_quote,
-    resolve_account_reference, resolve_local_account, resolve_status_reference,
-    resolve_timeline_cursor, status_has_active_quote, timeline_fetch_limit, timeline_limit,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
+    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
+    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
+    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
+    list_local_public_timeline_statuses, list_membership_refs,
+    list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
+    list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
+    list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
+    load_announcement_reaction_state, load_config, load_in_reply_to_account_id,
+    load_latest_filter_updated_at, load_remote_status_updated_at, load_status_updated_at,
+    local_status_ap_id, local_status_target_uri, matches_tag_timeline_filters, media_object_url,
+    normalize_status_history_entry, now_iso_string, oauth_access_token_has_any_scope,
+    oauth_app_has_any_scope, oauth_app_scopes, parse_optional_bool, parse_relationship_query_ids,
+    queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
+    remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
+    resolve_local_account, resolve_status_reference, resolve_timeline_cursor,
+    send_push_notification, status_has_active_quote, timeline_fetch_limit, timeline_limit,
     update_remote_status_quote_state,
 };
+use async_stream::try_stream;
+use futures_util::{StreamExt, pin_mut};
 use serde::Deserialize;
-use std::collections::HashSet;
-use worker::{ResponseBody, d1::D1Type};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Duration;
+use worker::{
+    D1Database, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair, d1::D1Type,
+};
+use wasm_bindgen_futures::spawn_local;
 
 #[derive(Debug, Deserialize)]
 struct OembedQuery {
@@ -35,6 +58,13 @@ struct OembedQuery {
 struct QuotesQuery {
     #[serde(flatten)]
     pagination: TimelinePaginationQuery,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamingQuery {
+    stream: Option<String>,
+    tag: Option<String>,
+    list: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,8 +87,187 @@ struct StatusIdRow {
     id: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct AccountRegistrationRequest {
+    username: Option<String>,
+    email: Option<String>,
+    password: Option<String>,
+    agreement: Option<String>,
+    locale: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EmailConfirmationRequest {
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PendingEmailConfirmationRow {
+    account_id: String,
+    oauth_app_id: i64,
+    pending_email: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EmailConfirmationQuery {
+    confirmation_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamingChannelValidationError {
+    UnknownChannelRequested,
+    MissingTag,
+    MissingList,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct AccountRegistrationValidation {
+    pub(crate) username: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) password_present: bool,
+    pub(crate) agreement: Option<bool>,
+}
+
 fn oauth_base_url(config: &cfwdon_core::AppConfig) -> String {
     instance_base_url(config)
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn normalized_registration_field(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalized_registration_username(value: Option<String>) -> Option<String> {
+    normalized_registration_field(value).map(|value| value.to_ascii_lowercase())
+}
+
+fn normalized_registration_email(value: Option<String>) -> Option<String> {
+    normalized_registration_field(value).map(|value| value.to_ascii_lowercase())
+}
+
+pub(crate) fn validate_account_registration_request(
+    validation: &AccountRegistrationValidation,
+) -> BTreeMap<&'static str, Vec<String>> {
+    let mut details = BTreeMap::new();
+
+    match validation.username.as_deref() {
+        None => {
+            details.insert("username", vec!["can't be blank".to_owned()]);
+        }
+        Some(username)
+            if !username
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_') =>
+        {
+            details.insert(
+                "username",
+                vec!["must contain only letters, numbers and underscores".to_owned()],
+            );
+        }
+        _ => {}
+    }
+
+    match validation.email.as_deref() {
+        None => {
+            details.insert("email", vec!["can't be blank".to_owned()]);
+        }
+        Some(email) if !email.contains('@') => {
+            details.insert("email", vec!["is invalid".to_owned()]);
+        }
+        _ => {}
+    }
+
+    if !validation.password_present {
+        details.insert("password", vec!["can't be blank".to_owned()]);
+    }
+
+    if validation.agreement != Some(true) {
+        details.insert("agreement", vec!["must be accepted".to_owned()]);
+    }
+
+    details
+}
+
+pub(crate) fn normalize_streaming_channel(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn streaming_channel_requires_tag(stream: &str) -> bool {
+    matches!(stream, "hashtag" | "hashtag:local")
+}
+
+fn streaming_channel_requires_list(stream: &str) -> bool {
+    stream == "list"
+}
+
+pub(crate) fn streaming_channel_requires_auth(stream: &str) -> bool {
+    matches!(stream, "user" | "user:notification" | "list" | "direct")
+}
+
+pub(crate) fn validate_streaming_channel_request(
+    stream: Option<&str>,
+    tag: Option<&str>,
+    list: Option<&str>,
+    extra_path: Option<&str>,
+) -> std::result::Result<String, StreamingChannelValidationError> {
+    if extra_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return Err(StreamingChannelValidationError::UnknownChannelRequested);
+    }
+    let Some(stream) = normalize_streaming_channel(stream) else {
+        return Err(StreamingChannelValidationError::UnknownChannelRequested);
+    };
+    if !matches!(
+        stream.as_str(),
+        "public"
+            | "public:media"
+            | "public:local"
+            | "public:local:media"
+            | "public:remote"
+            | "public:remote:media"
+            | "hashtag"
+            | "hashtag:local"
+            | "user"
+            | "user:notification"
+            | "list"
+            | "direct"
+    ) {
+        return Err(StreamingChannelValidationError::UnknownChannelRequested);
+    }
+    if streaming_channel_requires_tag(&stream)
+        && tag
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err(StreamingChannelValidationError::MissingTag);
+    }
+    if streaming_channel_requires_list(&stream)
+        && list
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err(StreamingChannelValidationError::MissingList);
+    }
+    Ok(stream)
 }
 
 const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
@@ -435,7 +644,7 @@ async fn is_authenticated_request(req: &Request, config: &cfwdon_core::AppConfig
     Ok(extract_authenticated_user(req, config).await?.is_some())
 }
 
-pub(crate) fn oauth_userinfo_rejects_bearer_authorization(req: &Request) -> Result<bool> {
+fn request_has_bearer_authorization(req: &Request) -> Result<bool> {
     Ok(app_bearer_token_from_request(req)?.is_some())
 }
 
@@ -446,11 +655,428 @@ fn invalid_access_token_response() -> Result<Response> {
     .with_status(401))
 }
 
+fn streaming_bad_request_response(error: StreamingChannelValidationError) -> Result<Response> {
+    let message = match error {
+        StreamingChannelValidationError::UnknownChannelRequested => "Unknown channel requested",
+        StreamingChannelValidationError::MissingTag => "Missing tag parameter",
+        StreamingChannelValidationError::MissingList => "Missing list parameter",
+    };
+    Ok(Response::from_json(&serde_json::json!({
+        "error": message,
+    }))?
+    .with_status(400))
+}
+
 fn email_confirmation_unavailable_response() -> Result<Response> {
     Ok(Response::from_json(&serde_json::json!({
         "error": "This method is only available while the e-mail is awaiting confirmation",
     }))?
     .with_status(403))
+}
+
+fn email_confirmation_application_mismatch_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This method is only available to the application the user originally signed-up with",
+    }))?
+    .with_status(403))
+}
+
+fn outside_authorized_scopes_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This action is outside the authorized scopes",
+    }))?
+    .with_status(403))
+}
+
+fn validation_failed_response(details: BTreeMap<&'static str, Vec<String>>) -> Result<Response> {
+    let mut messages = Vec::new();
+    for (field, field_errors) in &details {
+        let label = match *field {
+            "username" => "Username",
+            "email" => "Email",
+            "password" => "Password",
+            "agreement" => "Agreement",
+            _ => field,
+        };
+        for error in field_errors {
+            messages.push(format!("{label} {error}"));
+        }
+    }
+    Ok(Response::from_json(&serde_json::json!({
+        "error": format!("Validation failed: {}", messages.join(", ")),
+        "details": details,
+    }))?
+    .with_status(422))
+}
+
+async fn parse_account_registration_request(
+    req: &mut Request,
+) -> std::result::Result<AccountRegistrationRequest, String> {
+    let content_type = req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let mut request = if content_type.contains("application/json") {
+        req.json::<AccountRegistrationRequest>()
+            .await
+            .map_err(|error| format!("invalid JSON account registration payload: {error}"))?
+    } else {
+        let form = req
+            .form_data()
+            .await
+            .map_err(|error| format!("invalid form account registration payload: {error}"))?;
+        AccountRegistrationRequest {
+            username: form.get_field("username"),
+            email: form.get_field("email"),
+            password: form.get_field("password"),
+            agreement: form.get_field("agreement"),
+            locale: form.get_field("locale"),
+            reason: form.get_field("reason"),
+        }
+    };
+
+    request.username = normalized_registration_username(request.username);
+    request.email = normalized_registration_email(request.email);
+    request.password = normalized_registration_field(request.password);
+    request.locale = normalized_registration_field(request.locale);
+    request.reason = normalized_registration_field(request.reason);
+    request.agreement = request
+        .agreement
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    Ok(request)
+}
+
+async fn insert_registered_account(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    username: &str,
+    email: &str,
+) -> Result<String> {
+    let id = generate_entity_id(16)?;
+    let display_name = username.to_owned();
+    let key_material = generate_account_key_material().await?;
+    let bindings = [
+        D1Type::Text(id.as_str()),
+        D1Type::Text(username),
+        D1Type::Text(email),
+        D1Type::Text(display_name.as_str()),
+        D1Type::Text(key_material.private_key_jwk.as_str()),
+        D1Type::Text(key_material.public_key_pem.as_str()),
+    ];
+    db.prepare(
+        "INSERT INTO accounts (
+            id,
+            username,
+            access_email,
+            display_name,
+            fields_json,
+            discoverable,
+            default_quote_policy,
+            private_key_jwk,
+            public_key_pem,
+            created_at,
+            updated_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            '[]',
+            0,
+            'public',
+            ?5,
+            ?6,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    for admin_email in &config.admin_emails {
+        if let Some(admin) = find_account_by_email(db, admin_email).await? {
+            let _ = send_push_notification(
+                db,
+                config,
+                &admin.id,
+                "admin.sign_up",
+                serde_json::json!({
+                    "account_id": id,
+                    "username": username,
+                    "email": email,
+                }),
+            )
+            .await;
+        }
+    }
+    Ok(id)
+}
+
+async fn link_oauth_app_to_account(
+    db: &D1Database,
+    oauth_app_id: i64,
+    account_id: &str,
+) -> Result<()> {
+    let bindings = [
+        D1Type::Integer(oauth_app_id as i32),
+        D1Type::Text(account_id),
+    ];
+    db.prepare(
+        "INSERT OR REPLACE INTO oauth_app_accounts (
+            oauth_app_id,
+            account_id,
+            created_at
+        ) VALUES (
+            ?1,
+            ?2,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+async fn upsert_pending_email_confirmation(
+    db: &D1Database,
+    account_id: &str,
+    oauth_app_id: i64,
+    pending_email: &str,
+    confirmation_token: &str,
+) -> Result<()> {
+    let bindings = [
+        D1Type::Text(account_id),
+        D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
+        D1Type::Text(pending_email),
+        D1Type::Text(confirmation_token),
+    ];
+    db.prepare(
+        "INSERT OR REPLACE INTO pending_email_confirmations (
+            account_id,
+            oauth_app_id,
+            pending_email,
+            confirmation_token,
+            created_at,
+            updated_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+async fn update_pending_email_confirmation_sent_at(
+    db: &D1Database,
+    account_id: &str,
+    confirmation_token: &str,
+) -> Result<()> {
+    db.prepare(
+        "UPDATE pending_email_confirmations
+         SET confirmation_token = ?2,
+             confirmation_sent_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE account_id = ?1",
+    )
+    .bind_refs(&[D1Type::Text(account_id), D1Type::Text(confirmation_token)])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+async fn find_pending_email_confirmation(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Option<PendingEmailConfirmationRow>> {
+    let binding = D1Type::Text(account_id);
+    db.prepare(
+        "SELECT account_id,
+                oauth_app_id,
+                pending_email
+         FROM pending_email_confirmations
+         WHERE account_id = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&[binding])?
+    .first::<PendingEmailConfirmationRow>(None)
+    .await
+}
+
+async fn find_pending_email_confirmation_by_token(
+    db: &D1Database,
+    confirmation_token: &str,
+) -> Result<Option<PendingEmailConfirmationRow>> {
+    let binding = D1Type::Text(confirmation_token);
+    db.prepare(
+        "SELECT account_id,
+                oauth_app_id,
+                pending_email
+         FROM pending_email_confirmations
+         WHERE confirmation_token = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&[binding])?
+    .first::<PendingEmailConfirmationRow>(None)
+    .await
+}
+
+async fn confirm_pending_email_confirmation(
+    db: &D1Database,
+    pending: &PendingEmailConfirmationRow,
+) -> Result<()> {
+    db.prepare(
+        "UPDATE accounts
+         SET access_email = ?2
+         WHERE id = ?1",
+    )
+    .bind_refs(&[
+        D1Type::Text(pending.account_id.as_str()),
+        D1Type::Text(pending.pending_email.as_str()),
+    ])?
+    .run()
+    .await?;
+    db.prepare("DELETE FROM pending_email_confirmations WHERE account_id = ?1")
+        .bind_refs(&[D1Type::Text(pending.account_id.as_str())])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+async fn parse_email_confirmation_request(
+    req: &mut Request,
+) -> std::result::Result<EmailConfirmationRequest, String> {
+    let content_type = req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let mut request = if content_type.contains("application/json") {
+        req.json::<EmailConfirmationRequest>()
+            .await
+            .map_err(|error| format!("invalid JSON email confirmation payload: {error}"))?
+    } else {
+        let form = req
+            .form_data()
+            .await
+            .map_err(|error| format!("invalid form email confirmation payload: {error}"))?;
+        EmailConfirmationRequest {
+            email: form.get_field("email"),
+        }
+    };
+    request.email = normalized_registration_email(request.email);
+    if let Some(email) = request.email.as_deref()
+        && !email.contains('@')
+    {
+        return Err("invalid email confirmation payload: email is invalid".to_owned());
+    }
+    Ok(request)
+}
+
+pub(crate) fn build_email_confirmation_url(
+    config: &cfwdon_core::AppConfig,
+    confirmation_token: &str,
+) -> String {
+    format!(
+        "{}/auth/confirmation?confirmation_token={}",
+        oauth_base_url(config),
+        urlencoding::encode(confirmation_token)
+    )
+}
+
+pub(crate) fn build_email_confirmation_subject(config: &cfwdon_core::AppConfig) -> String {
+    format!("Confirm your {} account", config.instance_name)
+}
+
+pub(crate) fn build_email_confirmation_text(
+    config: &cfwdon_core::AppConfig,
+    confirmation_url: &str,
+) -> String {
+    format!(
+        "Welcome to {name}.\n\nConfirm your account by opening this link:\n{confirmation_url}\n\nIf you did not request this account, you can ignore this email.",
+        name = config.instance_name,
+    )
+}
+
+pub(crate) fn build_email_confirmation_html(
+    config: &cfwdon_core::AppConfig,
+    confirmation_url: &str,
+) -> String {
+    let name = html_escape(&config.instance_name);
+    let confirmation_url = html_escape(confirmation_url);
+    format!(
+        "<p>Welcome to {name}.</p><p><a href=\"{confirmation_url}\">Confirm your account</a></p><p>If you did not request this account, you can ignore this email.</p>"
+    )
+}
+
+async fn send_email_confirmation_message(
+    ctx: &RouteContext<()>,
+    config: &cfwdon_core::AppConfig,
+    to_email: &str,
+    confirmation_token: &str,
+) -> Result<bool> {
+    let Ok(api_key) = ctx.var("RESEND_API_KEY").map(|value| value.to_string()) else {
+        return Ok(false);
+    };
+    let Ok(from_email) = ctx.var("EMAIL_FROM").map(|value| value.to_string()) else {
+        return Ok(false);
+    };
+    let confirmation_url = build_email_confirmation_url(config, confirmation_token);
+    let payload = serde_json::json!({
+        "from": from_email,
+        "to": [to_email],
+        "subject": build_email_confirmation_subject(config),
+        "text": build_email_confirmation_text(config, &confirmation_url),
+        "html": build_email_confirmation_html(config, &confirmation_url),
+    });
+    let payload_json = serde_json::to_string(&payload).map_err(|error| {
+        worker::Error::RustError(format!("failed to encode email payload: {error}"))
+    })?;
+
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {api_key}"))?;
+    headers.set("Content-Type", "application/json")?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&payload_json)));
+    let request = Request::new_with_init("https://api.resend.com/emails", &init)?;
+    let response = Fetch::Request(request).send().await?;
+    if response.status_code() / 100 == 2 {
+        Ok(true)
+    } else {
+        Err(worker::Error::RustError(format!(
+            "email provider rejected confirmation message with HTTP {}",
+            response.status_code()
+        )))
+    }
+}
+
+fn email_confirmation_html_response(title: &str, message: &str, status: u16) -> Result<Response> {
+    let title = html_escape(title);
+    let message = html_escape(message);
+    let mut response = Response::from_body(ResponseBody::Body(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head><body><main><h1>{title}</h1><p>{message}</p></main></body></html>"
+    ).into_bytes()))?
+    .with_status(status);
+    response
+        .headers_mut()
+        .set("Content-Type", "text/html; charset=utf-8")?;
+    Ok(response)
 }
 
 pub(crate) async fn oauth_authorization_server_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -463,18 +1089,20 @@ pub(crate) async fn oauth_userinfo_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if oauth_userinfo_rejects_bearer_authorization(&req)? {
-        return invalid_access_token_response();
-    }
-    if !is_authenticated_request(&req, &config).await? {
-        return invalid_access_token_response();
-    }
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return invalid_access_token_response(),
-    };
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match authenticate_local_api_request(&req, &db, &config).await? {
+        LocalApiAuthentication::OAuthToken(auth) => {
+            if !oauth_access_token_has_any_scope(&auth.token, &["profile"]) {
+                return outside_authorized_scopes_response();
+            }
+            auth.account
+        }
+        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
+            return invalid_access_token_response();
+        }
+        LocalApiAuthentication::Access(account) => account,
+        LocalApiAuthentication::None => return invalid_access_token_response(),
+    };
     Response::from_json(&build_oauth_userinfo_document(&config, &account))
 }
 
@@ -654,23 +1282,100 @@ pub(crate) async fn app_verify_credentials_response(
 }
 
 pub(crate) async fn create_email_confirmation_response(
+    mut req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let (account, request_oauth_app_id) =
+        match authenticate_local_api_request(&req, &db, &config).await? {
+            LocalApiAuthentication::OAuthToken(auth) => {
+                if !oauth_access_token_has_any_scope(&auth.token, &["write:accounts", "write"]) {
+                    return outside_authorized_scopes_response();
+                }
+                (auth.account, Some(auth.token.oauth_app_id))
+            }
+            LocalApiAuthentication::Access(account) => (account, None),
+            LocalApiAuthentication::AppToken
+            | LocalApiAuthentication::InvalidBearer
+            | LocalApiAuthentication::None => {
+                return invalid_access_token_response();
+            }
+        };
+    let Some(pending) = find_pending_email_confirmation(&db, &account.id).await? else {
+        return email_confirmation_unavailable_response();
+    };
+    if request_oauth_app_id.is_some_and(|oauth_app_id| oauth_app_id != pending.oauth_app_id) {
+        return email_confirmation_application_mismatch_response();
+    }
+    let request = match parse_email_confirmation_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(&message, 422),
+    };
+    let confirmation_token = generate_entity_id(32)?;
+    let pending_email = request.email.as_deref().unwrap_or(&pending.pending_email);
+    if let Some(existing) = find_account_by_email(&db, pending_email).await?
+        && existing.id != account.id
+    {
+        let mut details = BTreeMap::new();
+        details.insert("email", vec!["has already been taken".to_owned()]);
+        return validation_failed_response(details);
+    }
+    upsert_pending_email_confirmation(
+        &db,
+        &account.id,
+        pending.oauth_app_id,
+        pending_email,
+        &confirmation_token,
+    )
+    .await?;
+    if send_email_confirmation_message(&ctx, &config, pending_email, &confirmation_token).await? {
+        update_pending_email_confirmation_sent_at(&db, &account.id, &confirmation_token).await?;
+    }
+    Response::from_json(&serde_json::json!({}))
+}
+
+pub(crate) async fn email_confirmation_page_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if !is_authenticated_request(&req, &config).await? {
-        return invalid_access_token_response();
-    }
+    let query: EmailConfirmationQuery = req.query().unwrap_or_default();
+    let Some(token) = query
+        .confirmation_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return email_confirmation_html_response(
+            "Confirmation token missing",
+            "The confirmation link is missing a token.",
+            422,
+        );
+    };
     let db = ctx.d1(&config.database_binding)?;
-    let account = find_authenticated_local_account(&req, &db, &config).await?;
-    if account
-        .as_ref()
-        .map(|account| !account.access_email.trim().is_empty())
-        .unwrap_or(false)
+    let Some(pending) = find_pending_email_confirmation_by_token(&db, token).await? else {
+        return email_confirmation_html_response(
+            "Confirmation token is invalid",
+            "The confirmation link is invalid or has already been used.",
+            404,
+        );
+    };
+    if let Some(existing) = find_account_by_email(&db, &pending.pending_email).await?
+        && existing.id != pending.account_id
     {
-        return email_confirmation_unavailable_response();
+        return email_confirmation_html_response(
+            "Email is already taken",
+            "The requested email address is already associated with another account.",
+            409,
+        );
     }
-    Response::from_json(&serde_json::json!({}))
+    confirm_pending_email_confirmation(&db, &pending).await?;
+    email_confirmation_html_response(
+        "Email confirmed",
+        "Your email address has been confirmed. You can return to your app.",
+        200,
+    )
 }
 
 pub(crate) async fn check_email_confirmation_response(
@@ -678,28 +1383,1073 @@ pub(crate) async fn check_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if !is_authenticated_request(&req, &config).await? {
+    if request_has_bearer_authorization(&req)? || !is_authenticated_request(&req, &config).await? {
         return invalid_access_token_response();
     }
     let db = ctx.d1(&config.database_binding)?;
-    let confirmed = find_authenticated_local_account(&req, &db, &config)
+    let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
+        return invalid_access_token_response();
+    };
+    let confirmed = find_pending_email_confirmation(&db, &account.id)
         .await?
-        .map(|account| !account.access_email.trim().is_empty())
-        .unwrap_or(false);
+        .is_none()
+        && !account.access_email.trim().is_empty();
     Response::from_json(&confirmed)
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct StreamingEvent {
+    created_at: String,
+    id: String,
+    event: &'static str,
+    data: String,
+}
+
+#[derive(Debug)]
+struct StreamingBatch {
+    events: Vec<StreamingEvent>,
+    tracked_status_ids: Vec<String>,
+    last_id: Option<String>,
+}
+
+fn sse_comment_bytes(value: &str) -> Vec<u8> {
+    format!(": {value}\n\n").into_bytes()
+}
+
+fn sse_event_bytes(event: &StreamingEvent) -> Vec<u8> {
+    format!("event: {}\ndata: {}\n\n", event.event, event.data).into_bytes()
+}
+
+fn announcement_reaction_entries_for_id(
+    state: &HashMap<(String, String), (u64, bool)>,
+    announcement_id: &str,
+) -> BTreeMap<String, (u64, bool)> {
+    state
+        .iter()
+        .filter(|((id, _), _)| id == announcement_id)
+        .map(|((_, name), value)| (name.clone(), *value))
+        .collect()
+}
+
+async fn streaming_notification_batch(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    since_id: Option<&str>,
+) -> Result<StreamingBatch> {
+    let query = NotificationsQuery {
+        since_id: since_id.map(str::to_owned),
+        limit: Some(40),
+        ..NotificationsQuery::default()
+    };
+    let entries = collect_visible_notifications(db, config, viewer, &query, 160).await?;
+    let filtered = filter_notification_entries_by_query(entries, &query);
+    let last_id = filtered.first().map(|entry| entry.id.clone());
+    let mut events = Vec::with_capacity(filtered.len());
+
+    for entry in filtered.into_iter().rev() {
+        events.push(StreamingEvent {
+            created_at: entry.created_at,
+            id: entry.id,
+            event: "notification",
+            data: serde_json::to_string(&entry.value).map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize notification stream payload: {error}"
+                ))
+            })?,
+        });
+    }
+
+    Ok(StreamingBatch {
+        events,
+        tracked_status_ids: Vec::new(),
+        last_id,
+    })
+}
+
+async fn streaming_public_batch(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    stream: &str,
+    tag: Option<&str>,
+    since_id: Option<&str>,
+) -> Result<StreamingBatch> {
+    let include_local = matches!(
+        stream,
+        "public"
+            | "public:media"
+            | "public:local"
+            | "public:local:media"
+            | "hashtag"
+            | "hashtag:local"
+    ) || stream.starts_with("hashtag");
+    let include_remote = matches!(
+        stream,
+        "public" | "public:media" | "public:remote" | "public:remote:media" | "hashtag"
+    );
+    let only_media = stream.ends_with(":media");
+    let cursor = resolve_timeline_cursor(
+        db,
+        &TimelinePaginationQuery {
+            since_id: since_id.map(str::to_owned),
+            limit: Some(40),
+            ..TimelinePaginationQuery::default()
+        },
+    )
+    .await?;
+    let query_limit = timeline_fetch_limit(40);
+    let mut entries = Vec::new();
+    let mut tracked_status_ids = Vec::new();
+
+    if stream.starts_with("hashtag") {
+        let Some(tag) = tag else {
+            return Ok(StreamingBatch {
+                events: Vec::new(),
+                tracked_status_ids: Vec::new(),
+                last_id: None,
+            });
+        };
+        if include_local {
+            for status in list_local_public_statuses_by_tag(db, tag, &cursor, query_limit).await? {
+                let status_tags = extract_hashtags_from_text(&status._text_content);
+                if !matches_tag_timeline_filters(
+                    &status_tags,
+                    tag,
+                    &crate::TagTimelineQuery::default(),
+                ) {
+                    continue;
+                }
+                let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+                    continue;
+                };
+                if let Some(viewer) = viewer
+                    && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
+                {
+                    continue;
+                }
+                let media = find_media_attachments_by_status_id(db, &status.id).await?;
+                if only_media && media.is_empty() {
+                    continue;
+                }
+                entries.push((
+                    status.created_at.clone(),
+                    status.id.clone(),
+                    serde_json::to_string(
+                        &build_local_status_response(
+                            db,
+                            config,
+                            viewer,
+                            &status,
+                            &account,
+                            load_in_reply_to_account_id(db, &status).await?,
+                            media,
+                        )
+                        .await?,
+                    )
+                    .map_err(|error| {
+                        worker::Error::RustError(format!(
+                            "failed to serialize hashtag stream payload: {error}"
+                        ))
+                    })?,
+                ));
+                tracked_status_ids.push(status.id.clone());
+            }
+        }
+        if include_remote {
+            for (status, actor) in
+                list_remote_public_statuses_by_tag(db, tag, &cursor, query_limit).await?
+            {
+                let status_tags = extract_hashtags_from_html(&status.content_html);
+                if !matches_tag_timeline_filters(
+                    &status_tags,
+                    tag,
+                    &crate::TagTimelineQuery::default(),
+                ) {
+                    continue;
+                }
+                if only_media && !remote_status_has_media(db, &status.id).await? {
+                    continue;
+                }
+                if let Some(viewer) = viewer
+                    && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
+                {
+                    continue;
+                }
+                entries.push((
+                    status.published_at.clone(),
+                    status.id.clone(),
+                    serde_json::to_string(
+                        &build_remote_status_response(db, config, viewer, &status, &actor).await?,
+                    )
+                    .map_err(|error| {
+                        worker::Error::RustError(format!(
+                            "failed to serialize hashtag stream payload: {error}"
+                        ))
+                    })?,
+                ));
+                tracked_status_ids.push(status.id.clone());
+            }
+        }
+    } else {
+        if include_local {
+            for status in list_local_public_timeline_statuses(db, &cursor, query_limit).await? {
+                let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+                    continue;
+                };
+                if let Some(viewer) = viewer
+                    && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
+                {
+                    continue;
+                }
+                let media = find_media_attachments_by_status_id(db, &status.id).await?;
+                if only_media && media.is_empty() {
+                    continue;
+                }
+                entries.push((
+                    status.created_at.clone(),
+                    status.id.clone(),
+                    serde_json::to_string(
+                        &build_local_status_response(
+                            db, config, viewer, &status, &account, None, media,
+                        )
+                        .await?,
+                    )
+                    .map_err(|error| {
+                        worker::Error::RustError(format!(
+                            "failed to serialize public stream payload: {error}"
+                        ))
+                    })?,
+                ));
+                tracked_status_ids.push(status.id.clone());
+            }
+        }
+        if include_remote {
+            for (status, actor) in
+                list_remote_public_timeline_statuses(db, &cursor, query_limit).await?
+            {
+                if only_media && !remote_status_has_media(db, &status.id).await? {
+                    continue;
+                }
+                if let Some(viewer) = viewer
+                    && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
+                {
+                    continue;
+                }
+                entries.push((
+                    status.published_at.clone(),
+                    status.id.clone(),
+                    serde_json::to_string(
+                        &build_remote_status_response(db, config, viewer, &status, &actor).await?,
+                    )
+                    .map_err(|error| {
+                        worker::Error::RustError(format!(
+                            "failed to serialize public stream payload: {error}"
+                        ))
+                    })?,
+                ));
+                tracked_status_ids.push(status.id.clone());
+            }
+        }
+    }
+
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let events = entries
+        .into_iter()
+        .map(|(created_at, id, data)| StreamingEvent {
+            created_at,
+            id,
+            event: "conversation",
+            data,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(StreamingBatch {
+        events,
+        tracked_status_ids,
+        last_id,
+    })
+}
+
+async fn streaming_home_batch(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    since_id: Option<&str>,
+) -> Result<StreamingBatch> {
+    let cursor = resolve_timeline_cursor(
+        db,
+        &TimelinePaginationQuery {
+            since_id: since_id.map(str::to_owned),
+            limit: Some(40),
+            ..TimelinePaginationQuery::default()
+        },
+    )
+    .await?;
+    let query_limit = timeline_fetch_limit(40);
+    let mut entries = Vec::new();
+    let mut tracked_status_ids = Vec::new();
+    let mut seen_status_ids = HashSet::new();
+
+    for status in list_local_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await? {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
+        }
+        let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+            continue;
+        };
+        if is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await? {
+            continue;
+        }
+        if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
+            continue;
+        }
+        let media = find_media_attachments_by_status_id(db, &status.id).await?;
+        entries.push((
+            status.created_at.clone(),
+            status.id.clone(),
+            serde_json::to_string(
+                &build_local_status_response(
+                    db,
+                    config,
+                    Some(viewer),
+                    &status,
+                    &account,
+                    load_in_reply_to_account_id(db, &status).await?,
+                    media,
+                )
+                .await?,
+            )
+            .map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize home stream payload: {error}"
+                ))
+            })?,
+        ));
+        tracked_status_ids.push(status.id.clone());
+    }
+
+    for (status, actor) in
+        list_remote_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await?
+    {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
+        }
+        if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+            continue;
+        }
+        entries.push((
+            status.published_at.clone(),
+            status.id.clone(),
+            serde_json::to_string(
+                &build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
+            )
+            .map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize home stream payload: {error}"
+                ))
+            })?,
+        ));
+        tracked_status_ids.push(status.id.clone());
+    }
+
+    for tag in list_followed_tag_names(db, &viewer.id).await? {
+        for status in list_local_public_statuses_by_tag(db, &tag, &cursor, query_limit).await? {
+            if !seen_status_ids.insert(status.id.clone()) {
+                continue;
+            }
+            let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+                continue;
+            };
+            if is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await? {
+                continue;
+            }
+            if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
+                continue;
+            }
+            let media = find_media_attachments_by_status_id(db, &status.id).await?;
+            entries.push((
+                status.created_at.clone(),
+                status.id.clone(),
+                serde_json::to_string(
+                    &build_local_status_response(
+                        db,
+                        config,
+                        Some(viewer),
+                        &status,
+                        &account,
+                        load_in_reply_to_account_id(db, &status).await?,
+                        media,
+                    )
+                    .await?,
+                )
+                .map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to serialize home stream payload: {error}"
+                    ))
+                })?,
+            ));
+            tracked_status_ids.push(status.id.clone());
+        }
+
+        for (status, actor) in
+            list_remote_public_statuses_by_tag(db, &tag, &cursor, query_limit).await?
+        {
+            if !seen_status_ids.insert(status.id.clone()) {
+                continue;
+            }
+            if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+                continue;
+            }
+            entries.push((
+                status.published_at.clone(),
+                status.id.clone(),
+                serde_json::to_string(
+                    &build_remote_status_response(db, config, Some(viewer), &status, &actor)
+                        .await?,
+                )
+                .map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to serialize home stream payload: {error}"
+                    ))
+                })?,
+            ));
+            tracked_status_ids.push(status.id.clone());
+        }
+    }
+
+    let mut notification_batch = streaming_notification_batch(db, config, viewer, since_id).await?;
+    entries.extend(
+        notification_batch
+            .events
+            .drain(..)
+            .map(|event| (event.created_at, event.id, event.data)),
+    );
+
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let events = entries
+        .into_iter()
+        .map(|(created_at, id, data)| StreamingEvent {
+            created_at,
+            id,
+            event: "update",
+            data,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(StreamingBatch {
+        events,
+        tracked_status_ids,
+        last_id,
+    })
+}
+
+async fn streaming_direct_batch(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    since_id: Option<&str>,
+) -> Result<StreamingBatch> {
+    let cursor = resolve_timeline_cursor(
+        db,
+        &TimelinePaginationQuery {
+            since_id: since_id.map(str::to_owned),
+            limit: Some(40),
+            ..TimelinePaginationQuery::default()
+        },
+    )
+    .await?;
+    let query_limit = timeline_fetch_limit(40);
+    let mut entries = Vec::new();
+    let mut tracked_conversation_ids = Vec::new();
+    let mut seen_conversation_ids = HashSet::new();
+
+    for status in list_local_direct_timeline_statuses(db, &viewer.id, &cursor, query_limit).await? {
+        let Some(conversation_id) = find_conversation_id_by_status_id(db, &status.id).await? else {
+            continue;
+        };
+        if !seen_conversation_ids.insert(conversation_id.clone()) {
+            continue;
+        }
+        let Some(conversation) =
+            find_conversation_for_account(db, &viewer.id, &conversation_id).await?
+        else {
+            continue;
+        };
+        entries.push((
+            status.created_at.clone(),
+            conversation.id.clone(),
+            serde_json::to_string(
+                &crate::conversation_document(db, config, viewer, &conversation).await?,
+            )
+            .map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize direct stream payload: {error}"
+                ))
+            })?,
+        ));
+        tracked_conversation_ids.push(conversation.id.clone());
+    }
+
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let events = entries
+        .into_iter()
+        .map(|(created_at, id, data)| StreamingEvent {
+            created_at,
+            id,
+            event: "update",
+            data,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(StreamingBatch {
+        events,
+        tracked_status_ids: tracked_conversation_ids,
+        last_id,
+    })
+}
+
+async fn streaming_list_batch(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    list_id: &str,
+    since_id: Option<&str>,
+) -> Result<StreamingBatch> {
+    let cursor = resolve_timeline_cursor(
+        db,
+        &TimelinePaginationQuery {
+            since_id: since_id.map(str::to_owned),
+            limit: Some(40),
+            ..TimelinePaginationQuery::default()
+        },
+    )
+    .await?;
+    let query_limit = timeline_fetch_limit(40);
+    let Some(list) = list_row_by_id(db, &viewer.id, list_id).await? else {
+        return Ok(StreamingBatch {
+            events: Vec::new(),
+            tracked_status_ids: Vec::new(),
+            last_id: None,
+        });
+    };
+    let membership_refs = list_membership_refs(db, list_id)
+        .await?
+        .into_iter()
+        .map(|row| row.target_account_ref)
+        .collect::<HashSet<_>>();
+    let mut entries = Vec::new();
+    let mut tracked_status_ids = Vec::new();
+
+    for status in list_local_public_timeline_statuses(db, &cursor, query_limit).await? {
+        let Some(author) = find_account_by_id(db, &status.account_id).await? else {
+            continue;
+        };
+        if !list_membership_variants_for_local_account(&author, config)
+            .into_iter()
+            .any(|candidate| membership_refs.contains(&candidate))
+        {
+            continue;
+        }
+        if list.replies_policy == "none" && status.in_reply_to_id.is_some() {
+            continue;
+        }
+        if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
+            continue;
+        }
+        let media = find_media_attachments_by_status_id(db, &status.id).await?;
+        entries.push((
+            status.created_at.clone(),
+            status.id.clone(),
+            serde_json::to_string(
+                &build_local_status_response(
+                    db,
+                    config,
+                    Some(viewer),
+                    &status,
+                    &author,
+                    load_in_reply_to_account_id(db, &status).await?,
+                    media,
+                )
+                .await?,
+            )
+            .map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize list stream payload: {error}"
+                ))
+            })?,
+        ));
+        tracked_status_ids.push(status.id.clone());
+    }
+
+    for (status, actor) in list_remote_public_timeline_statuses(db, &cursor, query_limit).await? {
+        if !list_membership_variants_for_remote_actor(&actor)
+            .into_iter()
+            .any(|candidate| membership_refs.contains(&candidate))
+        {
+            continue;
+        }
+        if list.replies_policy == "none" && status.in_reply_to_uri.is_some() {
+            continue;
+        }
+        if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+            continue;
+        }
+        entries.push((
+            status.published_at.clone(),
+            status.id.clone(),
+            serde_json::to_string(
+                &build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
+            )
+            .map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize list stream payload: {error}"
+                ))
+            })?,
+        ));
+        tracked_status_ids.push(status.id.clone());
+    }
+
+    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let events = entries
+        .into_iter()
+        .map(|(created_at, id, data)| StreamingEvent {
+            created_at,
+            id,
+            event: "update",
+            data,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(StreamingBatch {
+        events,
+        tracked_status_ids,
+        last_id,
+    })
+}
+
+async fn streaming_status_delta_events(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    tracked_status_ids: &[String],
+    deleted_status_ids: &mut HashSet<String>,
+    updated_status_ids: &mut HashSet<String>,
+) -> Result<Vec<StreamingEvent>> {
+    let mut events = Vec::new();
+
+    for status_id in tracked_status_ids.iter().rev().take(200) {
+        if deleted_status_ids.contains(status_id) || updated_status_ids.contains(status_id) {
+            continue;
+        }
+
+        if let Some(status) = find_status_by_id(db, status_id).await? {
+            let Some(updated_at) = load_status_updated_at(db, &status.id).await? else {
+                continue;
+            };
+            if updated_at == status.created_at {
+                continue;
+            }
+            let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+                continue;
+            };
+            if let Some(viewer) = viewer
+                && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
+            {
+                continue;
+            }
+            let media = find_media_attachments_by_status_id(db, &status.id).await?;
+            let payload = build_local_status_response(
+                db,
+                config,
+                viewer,
+                &status,
+                &account,
+                load_in_reply_to_account_id(db, &status).await?,
+                media,
+            )
+            .await?;
+            events.push(StreamingEvent {
+                created_at: updated_at,
+                id: status.id.clone(),
+                event: "status.update",
+                data: serde_json::to_string(&payload).map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to serialize streaming local status update payload: {error}"
+                    ))
+                })?,
+            });
+            updated_status_ids.insert(status.id.clone());
+            continue;
+        }
+
+        if let Some(status) = find_remote_status_by_id(db, status_id).await? {
+            let Some(updated_at) = load_remote_status_updated_at(db, &status.id).await? else {
+                continue;
+            };
+            if updated_at == status.published_at {
+                continue;
+            }
+            if let Some(viewer) = viewer
+                && is_muted_actor(db, &viewer.id, &status.actor_uri).await?
+            {
+                continue;
+            }
+            let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
+                continue;
+            };
+            let payload = build_remote_status_response(db, config, viewer, &status, &actor).await?;
+            events.push(StreamingEvent {
+                created_at: updated_at,
+                id: status.id.clone(),
+                event: "status.update",
+                data: serde_json::to_string(&payload).map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to serialize streaming remote status update payload: {error}"
+                    ))
+                })?,
+            });
+            updated_status_ids.insert(status.id.clone());
+            continue;
+        }
+
+        deleted_status_ids.insert(status_id.clone());
+        events.push(StreamingEvent {
+            created_at: now_iso_string()?,
+            id: status_id.clone(),
+            event: "delete",
+            data: status_id.clone(),
+        });
+    }
+
+    Ok(events)
+}
+
+fn build_streaming_event_stream(
+    db: D1Database,
+    config: cfwdon_core::AppConfig,
+    stream_name: String,
+    tag: Option<String>,
+    list: Option<String>,
+    viewer: Option<crate::LocalAccount>,
+) -> impl futures_util::TryStream<Ok = Vec<u8>, Error = worker::Error>
+       + futures_util::Stream<Item = std::result::Result<Vec<u8>, worker::Error>>
+       + 'static {
+    try_stream! {
+        yield sse_comment_bytes(&format!("stream={stream_name}"));
+        let mut since_id = None::<String>;
+        let mut tracked_status_ids = Vec::<String>::new();
+        let mut tracked_status_id_set = HashSet::<String>::new();
+        let mut deleted_status_ids = HashSet::<String>::new();
+        let mut updated_status_ids = HashSet::<String>::new();
+        let mut last_filter_updated_at = None::<String>;
+        let mut last_announcements = HashMap::<String, String>::new();
+        let mut last_announcement_reactions = HashMap::<(String, String), (u64, bool)>::new();
+        loop {
+            let batch = if stream_name == "user" {
+                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
+                    "missing authenticated viewer for user stream".to_owned()
+                ))?;
+                streaming_home_batch(&db, &config, viewer, since_id.as_deref()).await?
+            } else if stream_name == "user:notification" {
+                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
+                    "missing authenticated viewer for notification stream".to_owned()
+                ))?;
+                streaming_notification_batch(&db, &config, viewer, since_id.as_deref()).await?
+            } else if stream_name == "list" {
+                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
+                    "missing authenticated viewer for list stream".to_owned()
+                ))?;
+                let list_id = list
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| worker::Error::RustError(
+                        "missing list id for list stream".to_owned()
+                    ))?;
+                streaming_list_batch(&db, &config, viewer, list_id, since_id.as_deref()).await?
+            } else if stream_name == "direct" {
+                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
+                    "missing authenticated viewer for direct stream".to_owned()
+                ))?;
+                streaming_direct_batch(&db, &config, viewer, since_id.as_deref()).await?
+            } else {
+                streaming_public_batch(
+                    &db,
+                    &config,
+                    viewer.as_ref(),
+                    &stream_name,
+                    tag.as_deref(),
+                    since_id.as_deref(),
+                )
+                .await?
+            };
+            if let Some(next_since_id) = batch.last_id.clone() {
+                since_id = Some(next_since_id);
+            }
+            for status_id in batch.tracked_status_ids {
+                if tracked_status_id_set.insert(status_id.clone()) {
+                    tracked_status_ids.push(status_id);
+                }
+            }
+            while tracked_status_ids.len() > 200 {
+                let removed = tracked_status_ids.remove(0);
+                tracked_status_id_set.remove(&removed);
+            }
+            let mut events = batch.events;
+            if stream_name != "user:notification" {
+                let delta_events = streaming_status_delta_events(
+                    &db,
+                    &config,
+                    viewer.as_ref(),
+                    &tracked_status_ids,
+                    &mut deleted_status_ids,
+                    &mut updated_status_ids,
+                )
+                .await?;
+                events.extend(delta_events);
+            }
+            if stream_name == "user" {
+                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
+                    "missing authenticated viewer for user stream".to_owned()
+                ))?;
+                let current_filter_updated_at =
+                    load_latest_filter_updated_at(&db, &viewer.id).await?;
+                if let Some(current_filter_updated_at) = current_filter_updated_at {
+                    let changed = last_filter_updated_at
+                        .as_deref()
+                        .map(|value| value != current_filter_updated_at.as_str())
+                        .unwrap_or(false);
+                    if changed {
+                        events.push(StreamingEvent {
+                            created_at: current_filter_updated_at.clone(),
+                            id: current_filter_updated_at.clone(),
+                            event: "filters_changed",
+                            data: "undefined".to_owned(),
+                        });
+                    }
+                    last_filter_updated_at = Some(current_filter_updated_at);
+                }
+                let read_ids = list_announcement_read_ids(&db, &viewer.id).await?;
+                let reaction_state = load_announcement_reaction_state(&db, &viewer.id).await?;
+                let announcements =
+                    build_announcements_document(&config, &read_ids, &reaction_state);
+                let mut current_announcements = HashMap::<String, String>::new();
+                for announcement in announcements {
+                    let Some(id) = announcement
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned)
+                    else {
+                        continue;
+                    };
+                    let payload = serde_json::to_string(&announcement).map_err(|error| {
+                        worker::Error::RustError(format!(
+                            "failed to serialize announcement stream payload: {error}"
+                        ))
+                    })?;
+                    let current_reactions = announcement_reaction_entries_for_id(&reaction_state, &id);
+                    let previous_reactions = announcement_reaction_entries_for_id(&last_announcement_reactions, &id);
+                    if current_reactions != previous_reactions {
+                        for (name, (count, _me)) in &current_reactions {
+                            let previous = last_announcement_reactions
+                                .get(&(id.clone(), name.clone()))
+                                .copied();
+                            if previous != Some((*count, *_me)) {
+                                events.push(StreamingEvent {
+                                    created_at: announcement
+                                        .get("published_at")
+                                        .and_then(serde_json::Value::as_str)
+                                        .or_else(|| announcement.get("updated_at").and_then(serde_json::Value::as_str))
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    id: format!("{id}:{name}"),
+                                    event: "announcement.reaction",
+                                    data: serde_json::json!({
+                                        "name": name,
+                                        "count": count,
+                                        "announcement_id": id,
+                                    })
+                                    .to_string(),
+                                });
+                            }
+                        }
+                    } else if last_announcements.get(&id) != Some(&payload) {
+                        events.push(StreamingEvent {
+                            created_at: announcement
+                                .get("published_at")
+                                .and_then(serde_json::Value::as_str)
+                                .or_else(|| announcement.get("updated_at").and_then(serde_json::Value::as_str))
+                                .unwrap_or_default()
+                                .to_owned(),
+                            id: id.clone(),
+                            event: "announcement",
+                            data: payload.clone(),
+                        });
+                    }
+                    current_announcements.insert(id, payload);
+                }
+                for removed_id in last_announcements
+                    .keys()
+                    .filter(|id| !current_announcements.contains_key(*id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                {
+                    events.push(StreamingEvent {
+                        created_at: now_iso_string()?,
+                        id: removed_id.clone(),
+                        event: "announcement.delete",
+                        data: removed_id,
+                    });
+                }
+                last_announcement_reactions = reaction_state;
+                last_announcements = current_announcements;
+            }
+            if events.is_empty() {
+                yield sse_comment_bytes("thump");
+            } else {
+                for event in events {
+                    yield sse_event_bytes(&event);
+                }
+            }
+            worker::Delay::from(Duration::from_secs(3)).await;
+        }
+    }
+}
+
 pub(crate) async fn streaming_placeholder_response(
-    _req: Request,
-    _ctx: RouteContext<()>,
+    req: Request,
+    ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let mut response = Response::from_body(ResponseBody::Body(
-        b": cfwdon-placeholder streaming endpoint\n\n".to_vec(),
-    ))?;
-    response
-        .headers_mut()
-        .set("Content-Type", "text/event-stream")?;
-    Ok(response)
+    let query: StreamingQuery = req.query().unwrap_or_default();
+    let extra_path = ctx
+        .param("any")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let stream = match validate_streaming_channel_request(
+        query.stream.as_deref(),
+        query.tag.as_deref(),
+        query.list.as_deref(),
+        extra_path,
+    ) {
+        Ok(stream) => stream,
+        Err(error) => return streaming_bad_request_response(error),
+    };
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let authenticated = match authenticate_local_api_request(&req, &db, &config).await? {
+        LocalApiAuthentication::Access(viewer) => Some(viewer),
+        LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
+        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
+            return invalid_access_token_response();
+        }
+        LocalApiAuthentication::None => None,
+    };
+
+    if streaming_channel_requires_auth(&stream) && authenticated.is_none() {
+        return invalid_access_token_response();
+    }
+
+    let wants_websocket = req
+        .headers()
+        .get("Upgrade")
+        .ok()
+        .flatten()
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+
+    if wants_websocket {
+        let pair = WebSocketPair::new()?;
+        pair.server.accept()?;
+        let websocket = pair.server.clone();
+        let db_for_ws = db;
+        let config_for_ws = config.clone();
+        let stream_name = stream.clone();
+        let tag_for_ws = query.tag.clone();
+        let list_for_ws = query.list.clone();
+        let viewer_for_ws = authenticated.clone();
+        spawn_local(async move {
+            let event_stream = build_streaming_event_stream(
+                db_for_ws,
+                config_for_ws,
+                stream_name,
+                tag_for_ws,
+                list_for_ws,
+                viewer_for_ws,
+            );
+            pin_mut!(event_stream);
+            loop {
+                match event_stream.next().await {
+                    Some(Ok(bytes)) => {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            if websocket.send_with_str(text).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(_)) | None => break,
+                }
+            }
+            let _ = websocket.close(Some(1000), Some("stream closed"));
+        });
+        return Response::from_websocket(pair.client);
+    }
+
+    if matches!(
+        stream.as_str(),
+        "public"
+            | "public:media"
+            | "public:local"
+            | "public:local:media"
+            | "public:remote"
+            | "public:remote:media"
+            | "hashtag"
+            | "hashtag:local"
+            | "user:notification"
+    ) {
+        let stream_body = build_streaming_event_stream(
+            db,
+            config,
+            stream.clone(),
+            query.tag.clone(),
+            query.list.clone(),
+            authenticated.clone(),
+        );
+        let mut response = Response::from_stream(stream_body)?;
+        response
+            .headers_mut()
+            .set("Content-Type", "text/event-stream")?;
+        response.headers_mut().set("Cache-Control", "no-cache")?;
+        return Ok(response);
+    } else {
+        let mut body = format!(": cfwdon-placeholder stream={stream}\n");
+        if let Some(tag) = query
+            .tag
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            body.push_str(&format!(": tag={tag}\n"));
+        }
+        if let Some(list) = query
+            .list
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            body.push_str(&format!(": list={list}\n"));
+        }
+        body.push('\n');
+        let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?;
+        response
+            .headers_mut()
+            .set("Content-Type", "text/event-stream")?;
+        response.headers_mut().set("Cache-Control", "no-cache")?;
+        return Ok(response);
+    }
 }
 
 pub(crate) async fn statuses_index_placeholder_response(
@@ -1098,14 +2848,82 @@ pub(crate) async fn accounts_index_response(
 }
 
 pub(crate) async fn create_account_placeholder_response(
-    _req: Request,
-    _ctx: RouteContext<()>,
+    mut req: Request,
+    ctx: RouteContext<()>,
 ) -> Result<Response> {
-    Response::from_json(&serde_json::json!({
-        "id": "cfwdon-placeholder-account",
-        "token": "",
-        "access_token": serde_json::Value::Null,
-    }))
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let Some(token) = app_bearer_token_from_request(&req)? else {
+        return invalid_access_token_response();
+    };
+    let Some(app) = find_oauth_app_by_bearer_token(&db, &token).await? else {
+        return invalid_access_token_response();
+    };
+    if !oauth_app_has_any_scope(&app, &["write:accounts", "write"]) {
+        return outside_authorized_scopes_response();
+    }
+
+    let request = match parse_account_registration_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(&message, 422),
+    };
+    let agreement = match parse_optional_bool(request.agreement.as_deref()) {
+        Ok(value) => value,
+        Err(_) => None,
+    };
+    let mut details = validate_account_registration_request(&AccountRegistrationValidation {
+        username: request.username.clone(),
+        email: request.email.clone(),
+        password_present: request.password.is_some(),
+        agreement,
+    });
+    if let Some(username) = request.username.as_deref()
+        && find_account_by_username(&db, username).await?.is_some()
+    {
+        details
+            .entry("username")
+            .or_default()
+            .push("has already been taken".to_owned());
+    }
+    if let Some(email) = request.email.as_deref()
+        && find_account_by_email(&db, email).await?.is_some()
+    {
+        details
+            .entry("email")
+            .or_default()
+            .push("has already been taken".to_owned());
+    }
+    if !details.is_empty() {
+        return validation_failed_response(details);
+    }
+    let account_id = insert_registered_account(
+        &db,
+        &config,
+        request
+            .username
+            .as_deref()
+            .expect("validated username presence"),
+        request.email.as_deref().expect("validated email presence"),
+    )
+    .await?;
+    let app_id = find_oauth_app_id_by_bearer_token(&db, &token)
+        .await?
+        .expect("loaded app must have an id");
+    link_oauth_app_to_account(&db, app_id, &account_id).await?;
+    let confirmation_token = generate_entity_id(32)?;
+    let pending_email = request.email.as_deref().expect("validated email presence");
+    upsert_pending_email_confirmation(&db, &account_id, app_id, pending_email, &confirmation_token)
+        .await?;
+    if send_email_confirmation_message(&ctx, &config, pending_email, &confirmation_token).await? {
+        update_pending_email_confirmation_sent_at(&db, &account_id, &confirmation_token).await?;
+    }
+    let app_scopes = oauth_app_scopes(&app);
+    let access_token = issue_oauth_access_token(&db, app_id, &account_id, &app_scopes).await?;
+
+    Response::from_json(&build_oauth_token_document(
+        &access_token.access_token,
+        &app_scopes.join(" "),
+    ))
 }
 
 pub(crate) async fn remove_from_followers_response(

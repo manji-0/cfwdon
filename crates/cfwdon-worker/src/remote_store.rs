@@ -4,7 +4,8 @@ use crate::{
     find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
     generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
     now_iso_string, quote_target_uri_from_object, remote_quote_state_for_local_target,
-    render_status_html, replace_remote_status_attachments, upsert_remote_status_poll,
+    render_status_html, replace_remote_status_attachments, send_remote_status_quote_notification,
+    send_remote_status_update_notifications, upsert_remote_status_poll,
     visibility_from_activitypub_object,
 };
 use serde::Deserialize;
@@ -222,6 +223,9 @@ pub(crate) async fn upsert_remote_status(
         Error::RustError(format!("failed to serialize remote status object: {error}"))
     })?;
     let previous = find_remote_status_edit_state_by_object_uri(db, &object_uri).await?;
+    let previous_raw_object_json = previous
+        .as_ref()
+        .map(|value| value.raw_object_json.clone());
     let visibility = visibility_from_activitypub_object(object);
     let content_html = object
         .get("content")
@@ -366,6 +370,27 @@ pub(crate) async fn upsert_remote_status(
         upsert_remote_status_poll(db, &status.id, &poll).await?;
     } else {
         delete_remote_status_poll_by_status_id(db, &status.id).await?;
+    }
+
+    if previous_raw_object_json.is_none() {
+        let _ = send_remote_status_quote_notification(
+            db,
+            config,
+            &status.id,
+            &status.actor_uri,
+            &status.quote_state,
+            status.quote_of_uri.as_deref(),
+        )
+        .await;
+    } else if previous_raw_object_json.as_deref() != Some(raw_object_json.as_str()) {
+        let _ = send_remote_status_update_notifications(
+            db,
+            config,
+            &status.id,
+            &status.actor_uri,
+            &status.object_uri,
+        )
+        .await;
     }
 
     Ok(())

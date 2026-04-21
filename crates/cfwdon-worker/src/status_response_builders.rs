@@ -4,7 +4,7 @@ use crate::{
     can_view_local_status, count_local_status_favourites, count_local_status_reblogs,
     count_remote_status_favourites, count_remote_status_reblogs, count_rows,
     effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
     find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
     is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
@@ -15,6 +15,22 @@ use crate::{
     load_status_updated_at, strip_html_tags,
 };
 use worker::{D1Database, Result, d1::D1Type};
+
+async fn build_status_application(
+    db: &D1Database,
+    application_id: Option<i64>,
+) -> Result<Option<serde_json::Value>> {
+    let Some(application_id) = application_id else {
+        return Ok(None);
+    };
+    let Some(app) = find_oauth_app_by_id(db, application_id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::json!({
+        "name": app.name,
+        "website": app.website,
+    })))
+}
 
 pub(crate) fn quote_document_with_state(
     state: &str,
@@ -272,6 +288,7 @@ async fn build_local_status_response_inner(
         in_reply_to_account_id,
         media_attachments,
     );
+    response.application = build_status_application(db, status.application_id).await?;
     response.card = build_status_card_value(&status._text_content);
     response.poll = load_mastodon_poll_response(db, &status.id, viewer).await?;
     response.mentions = build_status_mentions(db, config, &status._text_content).await?;

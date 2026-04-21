@@ -8,24 +8,26 @@ use worker::d1::D1Type;
 use worker::{D1Database, Error};
 
 #[derive(Debug, Clone, Deserialize)]
-struct PushSubscriptionRow {
-    id: i64,
-    endpoint: String,
-    standard: i32,
-    alert_follow: i32,
-    alert_favourite: i32,
-    alert_reblog: i32,
-    alert_mention: i32,
-    alert_poll: i32,
-    alert_status: i32,
-    alert_update: i32,
-    alert_follow_request: i32,
-    alert_quote: i32,
-    alert_quoted_update: i32,
-    alert_admin_sign_up: i32,
-    alert_admin_report: i32,
+pub(crate) struct PushSubscriptionRow {
+    pub(crate) id: i64,
+    pub(crate) endpoint: String,
+    pub(crate) p256dh_key: String,
+    pub(crate) auth_key: String,
+    pub(crate) standard: i32,
+    pub(crate) alert_follow: i32,
+    pub(crate) alert_favourite: i32,
+    pub(crate) alert_reblog: i32,
+    pub(crate) alert_mention: i32,
+    pub(crate) alert_poll: i32,
+    pub(crate) alert_status: i32,
+    pub(crate) alert_update: i32,
+    pub(crate) alert_follow_request: i32,
+    pub(crate) alert_quote: i32,
+    pub(crate) alert_quoted_update: i32,
+    pub(crate) alert_admin_sign_up: i32,
+    pub(crate) alert_admin_report: i32,
     #[serde(rename = "policy")]
-    _policy: String,
+    pub(crate) _policy: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -132,6 +134,27 @@ fn push_subscription_document(
         },
         "server_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
     })
+}
+
+pub(crate) fn push_subscription_alert_enabled(
+    row: &PushSubscriptionRow,
+    notification_type: &str,
+) -> bool {
+    match notification_type {
+        "follow" => row.alert_follow != 0,
+        "favourite" => row.alert_favourite != 0,
+        "reblog" => row.alert_reblog != 0,
+        "mention" => row.alert_mention != 0,
+        "poll" => row.alert_poll != 0,
+        "status" => row.alert_status != 0,
+        "update" => row.alert_update != 0,
+        "follow_request" => row.alert_follow_request != 0,
+        "quote" => row.alert_quote != 0,
+        "quoted_update" => row.alert_quoted_update != 0,
+        "admin.sign_up" => row.alert_admin_sign_up != 0,
+        "admin.report" => row.alert_admin_report != 0,
+        _ => false,
+    }
 }
 
 fn bool_to_i32(value: bool) -> i32 {
@@ -332,6 +355,8 @@ async fn find_push_subscription(
         "SELECT
             id,
             endpoint,
+            p256dh_key,
+            auth_key,
             standard,
             alert_follow,
             alert_favourite,
@@ -353,6 +378,13 @@ async fn find_push_subscription(
     .bind_refs(&binding)?
     .first::<PushSubscriptionRow>(None)
     .await
+}
+
+pub(crate) async fn load_push_subscription(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Option<PushSubscriptionRow>> {
+    find_push_subscription(db, account_id).await
 }
 
 async fn save_push_subscription(

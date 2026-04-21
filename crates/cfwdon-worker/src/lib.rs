@@ -27,6 +27,7 @@ mod async_refreshes;
 mod auth;
 mod auth_account_store;
 mod auth_jwt;
+mod collections_alpha;
 mod content_helpers;
 mod conversation_store;
 mod conversations;
@@ -102,6 +103,7 @@ mod polls;
 mod profile;
 mod profile_request_parsing;
 mod push_subscriptions;
+mod push_delivery;
 mod relationship_filter_queries;
 mod relationship_filters;
 mod relationship_follow_queries;
@@ -187,6 +189,8 @@ pub(crate) use activitypub_social_activities::*;
 pub(crate) use activitypub_updates::*;
 pub(crate) use async_refreshes::*;
 pub(crate) use auth::*;
+pub(crate) use auth_account_store::*;
+pub(crate) use collections_alpha::*;
 pub(crate) use content_helpers::*;
 pub(crate) use conversation_store::*;
 pub(crate) use conversations::*;
@@ -259,6 +263,7 @@ pub(crate) use polls::*;
 pub(crate) use profile::*;
 pub(crate) use profile_request_parsing::*;
 pub(crate) use push_subscriptions::*;
+pub(crate) use push_delivery::*;
 pub(crate) use relationship_filter_queries::*;
 pub(crate) use relationship_filters::*;
 pub(crate) use relationship_follow_queries::*;
@@ -327,6 +332,33 @@ pub(crate) use timelines::*;
 #[event(fetch, respond_with_errors)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     router::handle_fetch(req, env).await
+}
+
+fn optional_env_var(env: &Env, key: &str) -> Option<String> {
+    env.var(key).ok().map(|value| value.to_string())
+}
+
+fn scheduled_config(env: &Env) -> AppConfig {
+    AppConfig::new(
+        optional_env_var(env, "INSTANCE_DOMAIN").unwrap_or_else(|| "example.com".to_owned()),
+        optional_env_var(env, "INSTANCE_NAME").unwrap_or_else(|| "cfwdon".to_owned()),
+        optional_env_var(env, "INSTANCE_DESCRIPTION").unwrap_or_else(|| {
+            "Cloudflare Workers + D1 + R2 based Mastodon-compatible server".to_owned()
+        }),
+    )
+}
+
+#[event(scheduled)]
+async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let config = scheduled_config(&env);
+    let result = async {
+        let db = env.d1(&config.database_binding)?;
+        revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
+    }
+    .await;
+    if let Err(error) = result {
+        console_error!("remote collection approval revalidation failed: {error}");
+    }
 }
 
 #[cfg(test)]

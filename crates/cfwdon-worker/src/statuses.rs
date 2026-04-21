@@ -4,19 +4,28 @@ use super::{
     attach_media_to_status, build_local_status_response, can_view_local_status,
     delete_media_attachments, delete_status_by_id, effective_local_quote_approval_policy,
     enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
-    ensure_direct_conversation_for_status, extract_authenticated_user, find_account_by_id,
+    ensure_direct_conversation_for_status, extract_authenticated_user, extract_mentions_from_text,
+    find_account_by_id, find_account_by_username,
     find_authenticated_local_account, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_app_id_by_bearer_token,
-    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
-    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot, is_blocking_actor,
-    is_local_follower_authorized, list_status_poll_options, load_config,
-    load_in_reply_to_account_id, load_mastodon_poll_response, normalize_status_history_entry,
-    normalize_status_poll, now_iso_string, parse_status_draft, parse_update_status_request,
-    replace_status_media, replace_status_poll, resolve_attachable_media, resolve_editable_media,
-    resolve_local_account, status_id_from_context, update_local_status,
+    find_media_attachments_by_status_id, find_oauth_access_token_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_remote_status_by_id,
+    find_remote_status_by_url_or_object_uri, find_status_by_id, find_status_poll_by_status_id,
+    insert_status, insert_status_edit_snapshot, is_blocking_actor, is_local_follower_authorized,
+    list_status_poll_options, load_config, load_in_reply_to_account_id,
+    load_mastodon_poll_response, normalize_status_history_entry, normalize_status_poll,
+    now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
+    parse_update_status_request, replace_status_media, replace_status_poll,
+    resolve_attachable_media, resolve_editable_media, resolve_local_account,
+    send_push_notification, send_status_quote_notification, send_status_update_notifications,
+    status_id_from_context, update_local_status,
     validate_scheduled_at_minimum_offset,
 };
 use cfwdon_domain::{LocalAccount, StatusDraft, Visibility};
+
+struct CreateStatusAccess {
+    account: LocalAccount,
+    application_id: Option<i64>,
+}
 
 pub(crate) fn initial_local_quote_approval_policy<'a>(
     account: &'a LocalAccount,
@@ -167,18 +176,50 @@ async fn resolve_quoted_status_uri(
     Ok(None)
 }
 
+async fn resolve_create_status_access(
+    req: &Request,
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+) -> Result<Option<CreateStatusAccess>> {
+    if let Some(token) = app_bearer_token_from_request(req)? {
+        if let Some(access_token) = find_oauth_access_token_by_bearer_token(db, &token).await? {
+            if !oauth_access_token_has_any_scope(&access_token, &["write:statuses", "write"]) {
+                return Err(worker::Error::RustError(
+                    "status token outside authorized scopes".to_owned(),
+                ));
+            }
+            let Some(account) = find_account_by_id(db, &access_token.account_id).await? else {
+                return Ok(None);
+            };
+            return Ok(Some(CreateStatusAccess {
+                account,
+                application_id: Some(access_token.oauth_app_id),
+            }));
+        }
+        if let Some(app) = find_oauth_app_by_bearer_token(db, &token).await? {
+            let Some(user) = extract_authenticated_user(req, config).await? else {
+                return Ok(None);
+            };
+            let account = resolve_local_account(db, &user).await?;
+            return Ok(Some(CreateStatusAccess {
+                account,
+                application_id: Some(app.id),
+            }));
+        }
+        return Ok(None);
+    }
+
+    let Some(user) = extract_authenticated_user(req, config).await? else {
+        return Ok(None);
+    };
+    Ok(Some(CreateStatusAccess {
+        account: resolve_local_account(db, &user).await?,
+        application_id: None,
+    }))
+}
+
 pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => {
-            return Ok(Response::from_json(&serde_json::json!({
-                "error": "The access token is invalid",
-            }))?
-            .with_status(401));
-        }
-    };
-
     let parsed = match parse_status_draft(&mut req).await {
         Ok(draft) => draft,
         Err(message) => return Response::error(message, 422),
@@ -190,12 +231,26 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         quoted_status_id,
     } = parsed;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
-    let application_id = match app_bearer_token_from_request(&req)? {
-        Some(token) => find_oauth_app_id_by_bearer_token(&db, &token).await?,
-        None => None,
+    let access = match resolve_create_status_access(&req, &db, &config).await {
+        Ok(Some(access)) => access,
+        Ok(None) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "error": "The access token is invalid",
+            }))?
+            .with_status(401));
+        }
+        Err(worker::Error::RustError(message))
+            if message == "status token outside authorized scopes" =>
+        {
+            return Ok(Response::from_json(&serde_json::json!({
+                "error": "This action is outside the authorized scopes",
+            }))?
+            .with_status(403));
+        }
+        Err(error) => return Err(error),
     };
-    let pending_media = match resolve_attachable_media(&db, &account, &draft.media_ids).await {
+    let pending_media = match resolve_attachable_media(&db, &access.account, &draft.media_ids).await
+    {
         Ok(media) => media,
         Err(message) => return Response::error(message, 422),
     };
@@ -216,7 +271,8 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         };
     if let Some(quote_of_uri) = quote_of_uri.as_deref()
         && let Some(message) =
-            validate_local_quote_creation(&db, &config, &account, &draft, quote_of_uri).await?
+            validate_local_quote_creation(&db, &config, &access.account, &draft, quote_of_uri)
+                .await?
     {
         return Response::error(message, 422);
     }
@@ -228,10 +284,10 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
             &crate::create_scheduled_status(
                 &db,
                 &config,
-                &account.id,
+                &access.account.id,
                 &draft,
                 idempotency_key.as_deref(),
-                application_id,
+                access.application_id,
                 quote_of_uri.as_deref(),
                 scheduled_at,
             )
@@ -239,17 +295,59 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         );
     }
 
-    let status = insert_status(&db, &config, &account, &draft, quote_of_uri.as_deref()).await?;
-    ensure_direct_conversation_for_status(&db, &config, &account, &draft, &status).await?;
+    let status = insert_status(
+        &db,
+        &config,
+        &access.account,
+        &draft,
+        access.application_id,
+        quote_of_uri.as_deref(),
+    )
+    .await?;
+    ensure_direct_conversation_for_status(&db, &config, &access.account, &draft, &status).await?;
     attach_media_to_status(&db, &status.id, &pending_media).await?;
     let attached_media = find_media_attachments_by_status_id(&db, &status.id).await?;
-    enqueue_outbox_activity(&db, &config, &account, &status).await?;
+    enqueue_outbox_activity(&db, &config, &access.account, &status).await?;
+    let _ = send_status_quote_notification(&db, &config, &status).await;
+    if let Some(recipient_account_id) = in_reply_to_account_id.as_deref()
+        && recipient_account_id != access.account.id
+    {
+        let _ = send_push_notification(
+            &db,
+            &config,
+            recipient_account_id,
+            "status",
+            serde_json::json!({
+                "account_id": access.account.id,
+                "status_id": status.id,
+                "in_reply_to_account_id": recipient_account_id,
+            }),
+        )
+        .await;
+    }
+    for handle in extract_mentions_from_text(&status._text_content, &config) {
+        if let Some(account) = find_account_by_username(&db, &handle.username).await?
+            && account.id != access.account.id
+        {
+            let _ = send_push_notification(
+                &db,
+                &config,
+                &account.id,
+                "mention",
+                serde_json::json!({
+                    "account_id": access.account.id,
+                    "status_id": status.id,
+                }),
+            )
+            .await;
+        }
+    }
     let response = build_local_status_response(
         &db,
         &config,
-        Some(&account),
+        Some(&access.account),
         &status,
-        &account,
+        &access.account,
         in_reply_to_account_id,
         attached_media,
     )
@@ -466,6 +564,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         }
     }
     enqueue_status_update_activity(&db, &config, &account, &status).await?;
+    let _ = send_status_update_notifications(&db, &config, &status).await;
 
     let media = find_media_attachments_by_status_id(&db, &status.id).await?;
     let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;

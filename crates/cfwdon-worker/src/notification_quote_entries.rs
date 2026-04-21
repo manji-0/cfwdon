@@ -157,6 +157,7 @@ pub(crate) async fn collect_quoted_update_notification_entries(
             language: update.language.clone(),
             quote_approval_policy: None,
             quote_state: update.quote_state.clone(),
+            application_id: None,
             created_at: update.created_at.clone(),
         };
         let media = find_media_attachments_by_status_id(db, &status.id).await?;

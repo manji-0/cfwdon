@@ -1,5 +1,9 @@
 use super::auth_account_store::find_account_by_email;
 use super::auth_jwt::verify_access_jwt;
+use super::oauth_apps::{
+    OAuthAccessTokenRow, app_bearer_token_from_request, find_oauth_access_token_by_bearer_token,
+    find_oauth_app_by_bearer_token,
+};
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Error, Request, Result};
@@ -7,6 +11,21 @@ use worker::{D1Database, Error, Request, Result};
 pub(crate) use super::auth_account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
 };
+
+#[derive(Clone, Debug)]
+pub(crate) struct OAuthAuthenticatedLocalAccount {
+    pub(crate) account: LocalAccount,
+    pub(crate) token: OAuthAccessTokenRow,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum LocalApiAuthentication {
+    Access(LocalAccount),
+    OAuthToken(OAuthAuthenticatedLocalAccount),
+    AppToken,
+    InvalidBearer,
+    None,
+}
 
 pub(crate) async fn extract_authenticated_user(
     req: &Request,
@@ -61,4 +80,33 @@ pub(crate) async fn find_authenticated_local_account(
     };
 
     find_account_by_email(db, &user.email).await
+}
+
+pub(crate) async fn authenticate_local_api_request(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<LocalApiAuthentication> {
+    if let Some(token) = app_bearer_token_from_request(req)? {
+        if let Some(access_token) = find_oauth_access_token_by_bearer_token(db, &token).await? {
+            let Some(account) = find_account_by_id(db, &access_token.account_id).await? else {
+                return Ok(LocalApiAuthentication::InvalidBearer);
+            };
+            return Ok(LocalApiAuthentication::OAuthToken(
+                OAuthAuthenticatedLocalAccount {
+                    account,
+                    token: access_token,
+                },
+            ));
+        }
+        if find_oauth_app_by_bearer_token(db, &token).await?.is_some() {
+            return Ok(LocalApiAuthentication::AppToken);
+        }
+        return Ok(LocalApiAuthentication::InvalidBearer);
+    }
+
+    Ok(find_authenticated_local_account(req, db, config)
+        .await?
+        .map(LocalApiAuthentication::Access)
+        .unwrap_or(LocalApiAuthentication::None))
 }

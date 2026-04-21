@@ -14,16 +14,16 @@ use std::collections::HashSet;
 use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
-struct AccountListRow {
-    id: String,
-    title: String,
-    replies_policy: String,
-    exclusive: i32,
+pub(crate) struct AccountListRow {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) replies_policy: String,
+    pub(crate) exclusive: i32,
 }
 
 #[derive(Debug, Deserialize)]
-struct AccountListMembershipRow {
-    target_account_ref: String,
+pub(crate) struct AccountListMembershipRow {
+    pub(crate) target_account_ref: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -144,7 +144,7 @@ async fn list_rows_for_account(
     result.results::<AccountListRow>()
 }
 
-async fn list_row_by_id(
+pub(crate) async fn list_row_by_id(
     db: &worker::D1Database,
     account_id: &str,
     list_id: &str,
@@ -252,7 +252,7 @@ async fn delete_list_row(db: &worker::D1Database, account_id: &str, list_id: &st
     Ok(true)
 }
 
-async fn list_membership_refs(
+pub(crate) async fn list_membership_refs(
     db: &worker::D1Database,
     list_id: &str,
 ) -> Result<Vec<AccountListMembershipRow>> {
@@ -356,7 +356,7 @@ fn list_id_from_context(ctx: &RouteContext<()>) -> Result<String> {
         .ok_or_else(|| worker::Error::RustError("missing list id route parameter".to_owned()))
 }
 
-fn list_membership_variants_for_local_account(
+pub(crate) fn list_membership_variants_for_local_account(
     account: &cfwdon_domain::LocalAccount,
     config: &cfwdon_core::AppConfig,
 ) -> [String; 2] {
@@ -366,7 +366,9 @@ fn list_membership_variants_for_local_account(
     ]
 }
 
-fn list_membership_variants_for_remote_actor(actor: &crate::RemoteActorRow) -> [String; 2] {
+pub(crate) fn list_membership_variants_for_remote_actor(
+    actor: &crate::RemoteActorRow,
+) -> [String; 2] {
     [
         actor.actor_uri.clone(),
         format!("{}@{}", actor.username, actor.domain),

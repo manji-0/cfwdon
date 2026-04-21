@@ -1,9 +1,13 @@
-use crate::auth::{extract_authenticated_user, find_account_by_id, resolve_local_account};
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, extract_authenticated_user,
+    find_account_by_id, find_authenticated_local_account, resolve_local_account,
+};
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::find_media_attachments_by_status_id;
 use crate::instance_identity::actor_url;
 use crate::oauth_apps::{
-    app_bearer_token_from_request, find_oauth_app_by_bearer_token, oauth_app_has_any_scope,
+    app_bearer_token_from_request, find_oauth_app_by_bearer_token,
+    oauth_access_token_has_any_scope, oauth_app_has_any_scope,
 };
 use crate::runtime_config::load_config;
 use crate::{
@@ -26,7 +30,7 @@ use std::collections::HashSet;
 use worker::D1Database;
 use worker::{Error, Request, Response, Result, RouteContext};
 
-enum TimelineRequestAccess {
+pub(crate) enum TimelineRequestAccess {
     Viewer(crate::LocalAccount),
     ScopedApp,
     None,
@@ -46,11 +50,11 @@ impl TimelineRequestAccess {
     }
 }
 
-fn timeline_source_requires_authorization(level: TimelineAccessLevel) -> bool {
+pub(crate) fn timeline_source_requires_authorization(level: TimelineAccessLevel) -> bool {
     !matches!(level, TimelineAccessLevel::Public)
 }
 
-fn timeline_request_requires_authorization(
+pub(crate) fn timeline_request_requires_authorization(
     include_local: bool,
     include_remote: bool,
     local_access: TimelineAccessLevel,
@@ -60,15 +64,13 @@ fn timeline_request_requires_authorization(
         || (include_remote && timeline_source_requires_authorization(remote_access))
 }
 
-async fn resolve_timeline_request_access(
+pub(crate) async fn resolve_timeline_request_access(
     req: &Request,
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<TimelineRequestAccess> {
-    if let Some(user) = extract_authenticated_user(req, config).await? {
-        return Ok(TimelineRequestAccess::Viewer(
-            resolve_local_account(db, &user).await?,
-        ));
+    if let Some(viewer) = find_authenticated_local_account(req, db, config).await? {
+        return Ok(TimelineRequestAccess::Viewer(viewer));
     }
 
     let Some(token) = app_bearer_token_from_request(req)? else {
@@ -84,11 +86,18 @@ async fn resolve_timeline_request_access(
     }
 }
 
-fn timeline_invalid_access_token_response() -> Result<Response> {
+pub(crate) fn timeline_invalid_access_token_response() -> Result<Response> {
     Ok(Response::from_json(&serde_json::json!({
         "error": "The access token is invalid",
     }))?
     .with_status(401))
+}
+
+pub(crate) fn timeline_outside_authorized_scopes_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This action is outside the authorized scopes",
+    }))?
+    .with_status(403))
 }
 
 fn status_card_url_matches_targets(text: &str, targets: &HashSet<String>) -> bool {
@@ -108,11 +117,17 @@ pub(crate) async fn home_timeline_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match resolve_timeline_request_access(&req, &db, &config).await? {
-        TimelineRequestAccess::Viewer(viewer) => viewer,
-        TimelineRequestAccess::ScopedApp
-        | TimelineRequestAccess::None
-        | TimelineRequestAccess::Invalid => return timeline_invalid_access_token_response(),
+    let viewer = match authenticate_local_api_request(&req, &db, &config).await? {
+        LocalApiAuthentication::OAuthToken(auth) => {
+            if !oauth_access_token_has_any_scope(&auth.token, &["read:statuses", "read"]) {
+                return timeline_outside_authorized_scopes_response();
+            }
+            auth.account
+        }
+        LocalApiAuthentication::Access(viewer) => viewer,
+        LocalApiAuthentication::AppToken
+        | LocalApiAuthentication::InvalidBearer
+        | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
     };
     let query: HomeTimelineQuery = req.query().unwrap_or_default();
     let limit = timeline_limit(&query.pagination);

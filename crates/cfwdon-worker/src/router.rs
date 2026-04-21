@@ -4,27 +4,30 @@ use super::{
     account_featured_tags_response, account_followers_response, account_following_response,
     account_lists_response, account_lookup, account_relationships, account_response,
     account_search, account_statuses_response, accounts_index_response, actor_response,
-    add_list_accounts_response, announcement_reaction_mutation_response, announcements_response,
-    annual_report_action_response, annual_report_response, annual_report_state_response,
-    annual_reports_response, app_verify_credentials_response, async_refresh_response,
-    authorize_follow_request_response, block_account, blocks_response, bookmark_status,
-    bookmarks_response, check_email_confirmation_response, conversations_response,
-    create_account_placeholder_response, create_app_response, create_domain_block_response,
-    create_email_confirmation_response, create_filter_keyword_response,
-    create_filter_status_response, create_filter_v1_response, create_filter_v2_response,
-    create_list_response, create_media_attachment, create_push_subscription_response,
-    create_report, create_status, custom_emojis_response, delete_conversation_response,
-    delete_domain_block_response, delete_filter_keyword_response, delete_filter_status_response,
-    delete_filter_v1_response, delete_filter_v2_response, delete_list_accounts_response,
-    delete_list_response, delete_media_attachment, delete_profile_avatar_response,
-    delete_profile_header_response, delete_push_subscription_response,
-    delete_scheduled_status_response, delete_status, delete_suggestion_response,
-    direct_timeline_response, dismiss_announcement_mutation_response,
+    add_list_accounts_response, alpha_account_collections_response,
+    alpha_account_in_collections_response, alpha_collection_response,
+    announcement_reaction_mutation_response, announcements_response, annual_report_action_response,
+    annual_report_response, annual_report_state_response, annual_reports_response,
+    app_verify_credentials_response, async_refresh_response, authorize_follow_request_response,
+    block_account, blocks_response, bookmark_status, bookmarks_response,
+    check_email_confirmation_response, conversations_response, create_account_placeholder_response,
+    create_alpha_collection_item_response, create_alpha_collection_response, create_app_response,
+    create_domain_block_response, create_email_confirmation_response,
+    create_filter_keyword_response, create_filter_status_response, create_filter_v1_response,
+    create_filter_v2_response, create_list_response, create_media_attachment,
+    create_push_subscription_response, create_report, create_status, custom_emojis_response,
+    delete_alpha_collection_item_response, delete_alpha_collection_response,
+    delete_conversation_response, delete_domain_block_response, delete_filter_keyword_response,
+    delete_filter_status_response, delete_filter_v1_response, delete_filter_v2_response,
+    delete_list_accounts_response, delete_list_response, delete_media_attachment,
+    delete_profile_avatar_response, delete_profile_header_response,
+    delete_push_subscription_response, delete_scheduled_status_response, delete_status,
+    delete_suggestion_response, direct_timeline_response, dismiss_announcement_mutation_response,
     dismiss_notification_request_response, dismiss_notification_requests_response,
     domain_blocks_preview_response, domain_blocks_response, donation_campaigns_response,
-    endorse_account_response, endorsements_response, familiar_followers_response, favourite_status,
-    favourites_response, feature_tag_response, feature_tag_v1_response,
-    featured_collection_response, featured_tag_suggestions_response,
+    email_confirmation_page_response, endorse_account_response, endorsements_response,
+    familiar_followers_response, favourite_status, favourites_response, feature_tag_response,
+    feature_tag_v1_response, featured_collection_response, featured_tag_suggestions_response,
     featured_tags_collection_response, featured_tags_response, filter_keyword_response,
     filter_keywords_response, filter_status_response, filter_statuses_response, filter_v1_response,
     filter_v2_response, filters_v1_response, filters_v2_response, follow_account,
@@ -49,9 +52,10 @@ use super::{
     pin_status_response, poll_response, preferences_response, process_expired_polls,
     process_outbox_deliveries, profile_response, prune_orphan_media, public_timeline_response,
     push_subscription_response, read_conversation_response, reblog_status,
-    reject_follow_request_response, remove_from_followers_response, revoke_quote_response,
-    root_document, save_markers_response, scheduled_status_response, scheduled_statuses_response,
-    search_v1, search_v2, shared_inbox_response, status_api_response, status_card_response,
+    reject_follow_request_response, remove_from_followers_response,
+    revoke_alpha_collection_item_response, revoke_quote_response, root_document,
+    save_markers_response, scheduled_status_response, scheduled_statuses_response, search_v1,
+    search_v2, shared_inbox_response, status_api_response, status_card_response,
     status_context_response, status_favourited_by_response, status_history_response,
     status_interaction_policy_response, status_object_response, status_quotes_response,
     status_reblogged_by_response, status_source_response, statuses_index_placeholder_response,
@@ -61,11 +65,12 @@ use super::{
     unendorse_account_response, unfavourite_status, unfeature_tag_response,
     unfeature_tag_v1_response, unfollow_account, unfollow_tag_response, unmute_account,
     unmute_status_response, unpin_account_response, unpin_status_response,
-    unread_conversation_response, unreblog_status, update_credentials,
-    update_filter_keyword_response, update_filter_v1_response, update_filter_v2_response,
-    update_list_response, update_media_attachment, update_notifications_policy_response,
-    update_profile_response, update_push_subscription_response, update_scheduled_status_response,
-    update_status, verify_credentials, vote_in_poll, webfinger_response,
+    unread_conversation_response, unreblog_status, update_alpha_collection_response,
+    update_credentials, update_filter_keyword_response, update_filter_v1_response,
+    update_filter_v2_response, update_list_response, update_media_attachment,
+    update_notifications_policy_response, update_profile_response,
+    update_push_subscription_response, update_scheduled_status_response, update_status,
+    verify_credentials, vote_in_poll, webfinger_response,
 };
 use worker::{Env, Request, Response, Result, Router};
 
@@ -82,6 +87,41 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/api/v1_alpha/async_refreshes/:id", |req, ctx| async move {
             async_refresh_response(req, ctx).await
         })
+        .get_async(
+            "/api/v1_alpha/accounts/:account_id/collections",
+            |req, ctx| async move { alpha_account_collections_response(req, ctx).await },
+        )
+        .get_async(
+            "/api/v1_alpha/accounts/:account_id/in_collections",
+            |req, ctx| async move { alpha_account_in_collections_response(req, ctx).await },
+        )
+        .get_async("/api/v1_alpha/collections/:id", |req, ctx| async move {
+            alpha_collection_response(req, ctx).await
+        })
+        .post_async("/api/v1_alpha/collections", |req, ctx| async move {
+            create_alpha_collection_response(req, ctx).await
+        })
+        .put_async("/api/v1_alpha/collections/:id", |req, ctx| async move {
+            update_alpha_collection_response(req, ctx).await
+        })
+        .patch_async("/api/v1_alpha/collections/:id", |req, ctx| async move {
+            update_alpha_collection_response(req, ctx).await
+        })
+        .delete_async("/api/v1_alpha/collections/:id", |req, ctx| async move {
+            delete_alpha_collection_response(req, ctx).await
+        })
+        .post_async(
+            "/api/v1_alpha/collections/:collection_id/items",
+            |req, ctx| async move { create_alpha_collection_item_response(req, ctx).await },
+        )
+        .delete_async(
+            "/api/v1_alpha/collections/:collection_id/items/:id",
+            |req, ctx| async move { delete_alpha_collection_item_response(req, ctx).await },
+        )
+        .post_async(
+            "/api/v1_alpha/collections/:collection_id/items/:id/revoke",
+            |req, ctx| async move { revoke_alpha_collection_item_response(req, ctx).await },
+        )
         .get_async("/api/v1/instance/peers", |_req, ctx| async move {
             instance_peers_response(ctx).await
         })
@@ -178,6 +218,9 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         })
         .post_async("/api/v1/emails/confirmations", |req, ctx| async move {
             create_email_confirmation_response(req, ctx).await
+        })
+        .get_async("/auth/confirmation", |req, ctx| async move {
+            email_confirmation_page_response(req, ctx).await
         })
         .get_async("/api/v1/emails/check_confirmation", |req, ctx| async move {
             check_email_confirmation_response(req, ctx).await

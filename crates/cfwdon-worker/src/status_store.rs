@@ -25,6 +25,8 @@ pub(crate) struct StatusRow {
     pub(crate) quote_approval_policy: Option<String>,
     #[serde(default = "default_quote_state")]
     pub(crate) quote_state: String,
+    #[serde(default)]
+    pub(crate) application_id: Option<i64>,
     pub(crate) created_at: String,
 }
 

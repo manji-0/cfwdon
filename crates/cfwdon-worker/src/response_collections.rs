@@ -11,6 +11,7 @@ pub(crate) struct MastodonSearchResponse {
     pub(crate) accounts: Vec<MastodonAccountResponse>,
     pub(crate) statuses: Vec<MastodonStatusResponse>,
     pub(crate) hashtags: Vec<MastodonTagResponse>,
+    pub(crate) collections: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Serialize)]

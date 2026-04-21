@@ -1,6 +1,7 @@
 use super::{
     D1Database, Request, Response, Result, RouteContext, build_report_response,
-    find_authenticated_local_account, insert_report, list_reports, load_config,
+    find_account_by_email, find_authenticated_local_account, insert_report, list_reports,
+    load_config, send_push_notification,
     parse_create_report_request, resolve_account_reference, validate_report_status_ids,
 };
 use serde::Deserialize;
@@ -47,6 +48,23 @@ pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> R
         return Response::error(message, status);
     }
     let report = insert_report(&db, &reporter.id, &request, &target, &status_ids).await?;
+
+    for admin_email in &config.admin_emails {
+        if let Some(admin) = find_account_by_email(&db, admin_email).await? {
+            let _ = send_push_notification(
+                &db,
+                &config,
+                &admin.id,
+                "admin.report",
+                serde_json::json!({
+                    "report_id": report.id,
+                    "reporter_account_id": reporter.id,
+                    "target_account_id": request.account_id,
+                }),
+            )
+            .await;
+        }
+    }
 
     Response::from_json(&build_report_response(&db, &config, &report).await?)
 }

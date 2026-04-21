@@ -85,6 +85,7 @@ fn fixture_status() -> StatusRow {
         language: Some("ja".to_owned()),
         quote_approval_policy: None,
         quote_state: "accepted".to_owned(),
+        application_id: None,
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
     }
 }
@@ -474,6 +475,12 @@ fn compatibility_translation_shape_is_stable() {
     ] {
         assert_has_pointer(&value, pointer);
     }
+}
+
+#[test]
+fn compatibility_search_shape_includes_collections() {
+    let value = serde_json::to_value(crate::MastodonSearchResponse::default()).unwrap();
+    assert_has_pointer(&value, "/collections");
 }
 
 #[test]

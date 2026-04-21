@@ -1,8 +1,9 @@
 use super::{
     AppConfig, D1Database, LocalAccount, Request, Response, Result, RouteContext,
     begin_inbox_activity_processing, handle_inbox_accept, handle_inbox_announce,
-    handle_inbox_create, handle_inbox_delete, handle_inbox_follow, handle_inbox_like,
-    handle_inbox_reject, handle_inbox_undo, handle_inbox_update, inbox_activity_id, load_config,
+    handle_inbox_collection_add, handle_inbox_collection_remove, handle_inbox_create,
+    handle_inbox_delete, handle_inbox_follow, handle_inbox_like, handle_inbox_reject,
+    handle_inbox_undo, handle_inbox_update, inbox_activity_id, load_config,
     mark_inbox_activity_processed, release_inbox_activity_processing, resolve_inbox_target_account,
     verify_incoming_activitypub_request,
 };
@@ -93,7 +94,7 @@ pub(crate) async fn handle_inbox_request(
                 Ok(())
             }
         }
-        Some("Accept") => handle_inbox_accept(db, activity, &remote_actor).await,
+        Some("Accept") => handle_inbox_accept(db, config, activity, &remote_actor).await,
         Some("Reject") => handle_inbox_reject(db, activity, &remote_actor).await,
         Some("Like") => {
             if let Some(account) = account {
@@ -116,6 +117,20 @@ pub(crate) async fn handle_inbox_request(
                 Ok(())
             }
         }
+        Some("Add") => {
+            if account.is_some() {
+                handle_inbox_collection_add(db, config, activity, &remote_actor).await
+            } else {
+                Ok(())
+            }
+        }
+        Some("Remove") => {
+            if account.is_some() {
+                handle_inbox_collection_remove(db, activity, &remote_actor).await
+            } else {
+                Ok(())
+            }
+        }
         Some("Update") => {
             if let Some(account) = account {
                 handle_inbox_update(db, activity, &remote_actor, account, config).await
@@ -123,7 +138,7 @@ pub(crate) async fn handle_inbox_request(
                 Ok(())
             }
         }
-        Some("Delete") => handle_inbox_delete(db, activity, &remote_actor).await,
+        Some("Delete") => handle_inbox_delete(db, config, activity, &remote_actor).await,
         _ => Ok(()),
     };
 

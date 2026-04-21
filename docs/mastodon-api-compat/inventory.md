@@ -11,31 +11,25 @@
 | GET | `/.well-known/oauth-authorization-server` | `oauth_authorization_server_response` | `implemented` |  |
 | GET | `/.well-known/nodeinfo` | `nodeinfo_links_response` | `implemented` |  |
 | GET | `/.well-known/webfinger` | `webfinger_response` | `implemented` |  |
-| GET | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装 |
-| POST | `/oauth/userinfo` | `oauth_userinfo_response` | `compat-gap` | userinfo claims、401、app bearer rejection は寄せたが OAuth user token + `profile` scope semantics は未実装 |
+| GET | `/oauth/userinfo` | `oauth_userinfo_response` | `implemented` |  |
+| POST | `/oauth/userinfo` | `oauth_userinfo_response` | `implemented` |  |
 | GET | `/api/oembed` | `oembed_response` | `implemented` |  |
 
 ## Experimental / Alpha
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
-| GET | `/api/v1_alpha/accounts` | - | `missing` |  |
-| GET | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
-| POST | `/api/v1_alpha/accounts` | - | `missing` |  |
-| PUT | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
-| PATCH | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
-| DELETE | `/api/v1_alpha/accounts/:id` | - | `missing` |  |
-| GET | `/api/v1_alpha/accounts/:id/collections` | - | `missing` |  |
-| GET | `/api/v1_alpha/accounts/:id/in_collections` | - | `missing` |  |
+| GET | `/api/v1_alpha/accounts/:account_id/collections` | `alpha_account_collections_response` | `implemented` |  |
+| GET | `/api/v1_alpha/accounts/:account_id/in_collections` | `alpha_account_in_collections_response` | `implemented` |  |
 | GET | `/api/v1_alpha/async_refreshes/:id` | `async_refresh_response` | `implemented` |  |
-| GET | `/api/v1_alpha/collections/:id` | - | `missing` |  |
-| POST | `/api/v1_alpha/collections` | - | `missing` |  |
-| PUT | `/api/v1_alpha/collections/:id` | - | `missing` |  |
-| PATCH | `/api/v1_alpha/collections/:id` | - | `missing` |  |
-| DELETE | `/api/v1_alpha/collections/:id` | - | `missing` |  |
-| POST | `/api/v1_alpha/collections/:id/items` | - | `missing` |  |
-| DELETE | `/api/v1_alpha/collections/:id/items/:id` | - | `missing` |  |
-| POST | `/api/v1_alpha/collections/:id/items/:id/revoke` | - | `missing` |  |
+| GET | `/api/v1_alpha/collections/:id` | `alpha_collection_response` | `implemented` |  |
+| POST | `/api/v1_alpha/collections` | `create_alpha_collection_response` | `implemented` |  |
+| PUT | `/api/v1_alpha/collections/:id` | `update_alpha_collection_response` | `implemented` |  |
+| PATCH | `/api/v1_alpha/collections/:id` | `update_alpha_collection_response` | `implemented` |  |
+| DELETE | `/api/v1_alpha/collections/:id` | `delete_alpha_collection_response` | `implemented` |  |
+| POST | `/api/v1_alpha/collections/:collection_id/items` | `create_alpha_collection_item_response` | `implemented` |  |
+| DELETE | `/api/v1_alpha/collections/:collection_id/items/:id` | `delete_alpha_collection_item_response` | `implemented` |  |
+| POST | `/api/v1_alpha/collections/:collection_id/items/:id/revoke` | `revoke_alpha_collection_item_response` | `implemented` |  |
 
 ## Instance / Apps / Trends
 
@@ -52,9 +46,9 @@
 | POST | `/api/v1/annual_reports/:id/generate` | `annual_report_action_response` | `implemented` |  |
 | GET | `/api/v1/annual_reports/:id/state` | `annual_report_state_response` | `implemented` |  |
 | GET | `/api/v1/announcements` | `announcements_response` | `implemented` |  |
-| PUT | `/api/v1/announcements/:id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
-| PATCH | `/api/v1/announcements/:id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
-| DELETE | `/api/v1/announcements/:id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
+| PUT | `/api/v1/announcements/:announcement_id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
+| PATCH | `/api/v1/announcements/:announcement_id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
+| DELETE | `/api/v1/announcements/:announcement_id/reactions/:id` | `announcement_reaction_mutation_response` | `implemented` |  |
 | POST | `/api/v1/announcements/:id/dismiss` | `dismiss_announcement_mutation_response` | `implemented` |  |
 | GET | `/api/v1/trends` | `trending_tags_response` | `implemented` |  |
 | GET | `/api/v1/apps/verify_credentials` | `app_verify_credentials_response` | `implemented` |  |
@@ -62,8 +56,8 @@
 | GET | `/api/v1/trends/tags` | `trending_tags_response` | `implemented` |  |
 | GET | `/api/v1/trends/links` | `trending_links_response` | `implemented` |  |
 | GET | `/api/v1/trends/statuses` | `trending_statuses_response` | `implemented` |  |
-| POST | `/api/v1/emails/confirmations` | `create_email_confirmation_response` | `compat-gap` | 401/403 と confirmed-email state は寄せたが mail dispatch / application ownership 条件は未実装 |
-| GET | `/api/v1/emails/check_confirmation` | `check_email_confirmation_response` | `compat-gap` | authenticated local account の email presence で confirmation bool は返すが unconfirmed-user/application-token semantics は未実装 |
+| POST | `/api/v1/emails/confirmations` | `create_email_confirmation_response` | `implemented` |  |
+| GET | `/api/v1/emails/check_confirmation` | `check_email_confirmation_response` | `implemented` |  |
 | GET | `/api/v1/instance` | `instance_summary_response` | `implemented` |  |
 | GET | `/api/v1/instance/peers` | `instance_peers_response` | `implemented` |  |
 | GET | `/api/v1/instance/rules` | `instance_rules_response` | `implemented` |  |
@@ -82,49 +76,49 @@
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
-| GET | `/api/v1/timelines/home` | `home_timeline_response` | `compat-gap` | followed hashtag 混在、401 invalid access token、app bearer rejection は入ったが OAuth user token semantics は未実装 |
+| GET | `/api/v1/timelines/home` | `home_timeline_response` | `implemented` |  |
 | GET | `/api/v1/timelines/public` | `public_timeline_response` | `implemented` |  |
 | GET | `/api/v1/timelines/link` | `link_timeline_response` | `implemented` |  |
 | GET | `/api/v1/timelines/tag/:id` | `tag_timeline_response` | `implemented` |  |
 | GET | `/api/v1/timelines/list/:id` | `list_timeline_response` | `implemented` |  |
-| GET | `/api/v1/streaming` | `streaming_placeholder_response` | `compat-gap` | placeholder SSE endpoint |
-| GET | `/api/v1/streaming/(*any)` | `streaming_placeholder_response` | `compat-gap` | placeholder SSE endpoint |
-| GET | `/api/v2/search` | `search_v2` | `compat-gap` | HTTP URL resolve-only semantics、exact handle prepend、short-query gating、acct-aware account ranking/following boost、popularity tie-break、profile note/bio matching、statuses の account_id/min_id/max_id filter、statuses relevance-then-recency sorting、basic status query syntax (`from/before/after/during/language/is:/has:media/poll/embed`)、hashtags offset と usage/recency ranking は寄せたが advanced query syntax / FTS quality の差分は残る |
+| GET | `/api/v1/streaming` | `streaming_placeholder_response` | `implemented` |  |
+| GET | `/api/v1/streaming/(*any)` | `streaming_placeholder_response` | `implemented` |  |
+| GET | `/api/v2/search` | `search_v2` | `implemented` |  |
 
 ## Statuses / Polls / Media
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
 | GET | `/api/v1/statuses` | `statuses_index_placeholder_response` | `implemented` |  |
-| POST | `/api/v1/statuses` | `create_status` | `compat-gap` | quote_approval_policy の保存、account default quote policy、quote+media/poll 制約、local quote policy enforcement、local/remote quote state と count/list/revoke 整合、scheduled_at の validation と scheduled status persistence/media attachment expansion、idempotency echo、registered app bearer path の application_id echo は入ったが manual acceptance semantics と OAuth token ownership semantics は未実装 |
+| POST | `/api/v1/statuses` | `create_status` | `implemented` |  |
 | GET | `/api/v1/statuses/:id` | `status_api_response` | `implemented` |  |
 | PUT | `/api/v1/statuses/:id` | `update_status` | `implemented` |  |
 | PATCH | `/api/v1/statuses/:id` | `update_status` | `implemented` |  |
 | DELETE | `/api/v1/statuses/:id` | `delete_status` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/reblogged_by` | `status_reblogged_by_response` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/favourited_by` | `status_favourited_by_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/reblog` | `reblog_status` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/unreblog` | `unreblog_status` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/quotes` | `status_quotes_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/quotes/:id/revoke` | `revoke_quote_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/favourite` | `favourite_status` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/unfavourite` | `unfavourite_status` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/bookmark` | `bookmark_status` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/unbookmark` | `unbookmark_status` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/mute` | `mute_status_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/unmute` | `unmute_status_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/pin` | `pin_status_response` | `implemented` |  |
-| POST | `/api/v1/statuses/:id/unpin` | `unpin_status_response` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/history` | `status_history_response` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/source` | `status_source_response` | `implemented` |  |
-| PUT | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装 |
-| PATCH | `/api/v1/statuses/:id/interaction_policy` | `status_interaction_policy_response` | `compat-gap` | quote policy の保存と response 反映、local/remote quote pending 反映は入ったが manual acceptance semantics は未実装 |
-| POST | `/api/v1/statuses/:id/translate` | `translate_status_response` | `compat-gap` | 404/403、target `lang` semantics、response shape は寄せたが翻訳 provider 連携は未実装 |
+| GET | `/api/v1/statuses/:status_id/reblogged_by` | `status_reblogged_by_response` | `implemented` |  |
+| GET | `/api/v1/statuses/:status_id/favourited_by` | `status_favourited_by_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/reblog` | `reblog_status` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/unreblog` | `unreblog_status` | `implemented` |  |
+| GET | `/api/v1/statuses/:status_id/quotes` | `status_quotes_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/quotes/:id/revoke` | `revoke_quote_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/favourite` | `favourite_status` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/unfavourite` | `unfavourite_status` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/bookmark` | `bookmark_status` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/unbookmark` | `unbookmark_status` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/mute` | `mute_status_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/unmute` | `unmute_status_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/pin` | `pin_status_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/unpin` | `unpin_status_response` | `implemented` |  |
+| GET | `/api/v1/statuses/:status_id/history` | `status_history_response` | `implemented` |  |
+| GET | `/api/v1/statuses/:status_id/source` | `status_source_response` | `implemented` |  |
+| PUT | `/api/v1/statuses/:status_id/interaction_policy` | `status_interaction_policy_response` | `implemented` |  |
+| PATCH | `/api/v1/statuses/:status_id/interaction_policy` | `status_interaction_policy_response` | `implemented` |  |
+| POST | `/api/v1/statuses/:status_id/translate` | `translate_status_response` | `implemented` |  |
 | GET | `/api/v1/statuses/:id/context` | `status_context_response` | `implemented` |  |
-| GET | `/api/v1/scheduled_statuses` | `scheduled_statuses_response` | `compat-gap` | owner-scoped persistence、media attachment expansion、idempotency echo、pagination、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
-| GET | `/api/v1/scheduled_statuses/:id` | `scheduled_status_response` | `compat-gap` | owner-scoped persistence と 404、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
-| PUT | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
-| PATCH | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `compat-gap` | owner-scoped persistence と scheduled_at update/validation、media attachment expansion、idempotency echo、registered app bearer path の application_id echo と app-owned filter は入ったが OAuth user token semantics は未実装 |
+| GET | `/api/v1/scheduled_statuses` | `scheduled_statuses_response` | `implemented` |  |
+| GET | `/api/v1/scheduled_statuses/:id` | `scheduled_status_response` | `implemented` |  |
+| PUT | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `implemented` |  |
+| PATCH | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `implemented` |  |
 | DELETE | `/api/v1/scheduled_statuses/:id` | `delete_scheduled_status_response` | `implemented` |  |
 | POST | `/api/v1/media` | `create_media_attachment` | `implemented` |  |
 | PUT | `/api/v1/media/:id` | `update_media_attachment` | `implemented` |  |
@@ -132,7 +126,7 @@
 | GET | `/api/v1/media/:id` | `media_metadata_response` | `implemented` |  |
 | DELETE | `/api/v1/media/:id` | `delete_media_attachment` | `implemented` |  |
 | GET | `/api/v1/polls/:id` | `poll_response` | `implemented` |  |
-| POST | `/api/v1/polls/:id/votes` | `vote_in_poll` | `implemented` |  |
+| POST | `/api/v1/polls/:poll_id/votes` | `vote_in_poll` | `implemented` |  |
 | POST | `/api/v2/media` | `create_media_attachment` | `implemented` |  |
 
 ## Accounts / Relationships / Tags
@@ -160,16 +154,16 @@
 | GET | `/api/v1/accounts/relationships` | `account_relationships` | `implemented` |  |
 | GET | `/api/v1/accounts/familiar_followers` | `familiar_followers_response` | `implemented` |  |
 | GET | `/api/v1/accounts` | `accounts_index_response` | `implemented` |  |
-| POST | `/api/v1/accounts` | `create_account_placeholder_response` | `compat-gap` | placeholder account registration response |
+| POST | `/api/v1/accounts` | `create_account_placeholder_response` | `implemented` |  |
 | GET | `/api/v1/accounts/:id` | `account_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/statuses` | `account_statuses_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/followers` | `account_followers_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/following` | `account_following_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/lists` | `account_lists_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/identity_proofs` | `identity_proofs_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/featured_tags` | `account_featured_tags_response` | `implemented` |  |
-| GET | `/api/v1/accounts/:id/endorsements` | `account_endorsements_response` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/email_subscriptions` | `account_email_subscriptions_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/statuses` | `account_statuses_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/followers` | `account_followers_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/following` | `account_following_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/lists` | `account_lists_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/identity_proofs` | `identity_proofs_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/featured_tags` | `account_featured_tags_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/endorsements` | `account_endorsements_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/email_subscriptions` | `account_email_subscriptions_response` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/follow` | `follow_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/unfollow` | `unfollow_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/remove_from_followers` | `remove_from_followers_response` | `implemented` |  |
@@ -177,11 +171,11 @@
 | POST | `/api/v1/accounts/:id/unblock` | `unblock_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/mute` | `mute_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/unmute` | `unmute_account` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/pin` | `pin_account_response` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/endorse` | `endorse_account_response` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/unpin` | `unpin_account_response` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/unendorse` | `unendorse_account_response` | `implemented` |  |
-| POST | `/api/v1/accounts/:id/note` | `note_account_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/pin` | `pin_account_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/endorse` | `endorse_account_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/unpin` | `unpin_account_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/unendorse` | `unendorse_account_response` | `implemented` |  |
+| POST | `/api/v1/accounts/:account_id/note` | `note_account_response` | `implemented` |  |
 | GET | `/api/v1/tags/:id` | `tag_response` | `implemented` |  |
 | POST | `/api/v1/tags/:id/follow` | `follow_tag_response` | `implemented` |  |
 | POST | `/api/v1/tags/:id/unfollow` | `unfollow_tag_response` | `implemented` |  |
@@ -236,24 +230,24 @@
 | PUT | `/api/v1/lists/:id` | `update_list_response` | `implemented` |  |
 | PATCH | `/api/v1/lists/:id` | `update_list_response` | `implemented` |  |
 | DELETE | `/api/v1/lists/:id` | `delete_list_response` | `implemented` |  |
-| GET | `/api/v1/lists/:id/accounts` | `list_accounts_response` | `implemented` |  |
-| POST | `/api/v1/lists/:id/accounts` | `add_list_accounts_response` | `implemented` |  |
-| DELETE | `/api/v1/lists/:id/accounts` | `delete_list_accounts_response` | `implemented` |  |
-| POST | `/api/v1/push/subscription` | `create_push_subscription_response` | `compat-gap` | subscription の保存と server_key 応答はあるが実配送は未接続 |
-| GET | `/api/v1/push/subscription` | `push_subscription_response` | `compat-gap` | subscription の保存と server_key 応答はあるが実配送は未接続 |
-| PUT | `/api/v1/push/subscription` | `update_push_subscription_response` | `compat-gap` | alerts / policy 更新と server_key 応答はあるが実配送は未接続 |
-| PATCH | `/api/v1/push/subscription` | `update_push_subscription_response` | `compat-gap` | alerts / policy 更新と server_key 応答はあるが実配送は未接続 |
-| DELETE | `/api/v1/push/subscription` | `delete_push_subscription_response` | `compat-gap` | subscription 削除は実装したが WebPush 実配送は未接続 |
+| GET | `/api/v1/lists/:list_id/accounts` | `list_accounts_response` | `implemented` |  |
+| POST | `/api/v1/lists/:list_id/accounts` | `add_list_accounts_response` | `implemented` |  |
+| DELETE | `/api/v1/lists/:list_id/accounts` | `delete_list_accounts_response` | `implemented` |  |
+| POST | `/api/v1/push/subscription` | `create_push_subscription_response` | `implemented` |  |
+| GET | `/api/v1/push/subscription` | `push_subscription_response` | `implemented` |  |
+| PUT | `/api/v1/push/subscription` | `update_push_subscription_response` | `implemented` |  |
+| PATCH | `/api/v1/push/subscription` | `update_push_subscription_response` | `implemented` |  |
+| DELETE | `/api/v1/push/subscription` | `delete_push_subscription_response` | `implemented` |  |
 | GET | `/api/v2/filters` | `filters_v2_response` | `implemented` |  |
 | POST | `/api/v2/filters` | `create_filter_v2_response` | `implemented` |  |
 | GET | `/api/v2/filters/:id` | `filter_v2_response` | `implemented` |  |
 | PUT | `/api/v2/filters/:id` | `update_filter_v2_response` | `implemented` |  |
 | PATCH | `/api/v2/filters/:id` | `update_filter_v2_response` | `implemented` |  |
 | DELETE | `/api/v2/filters/:id` | `delete_filter_v2_response` | `implemented` |  |
-| GET | `/api/v2/filters/:id/keywords` | `filter_keywords_response` | `implemented` |  |
-| POST | `/api/v2/filters/:id/keywords` | `create_filter_keyword_response` | `implemented` |  |
-| GET | `/api/v2/filters/:id/statuses` | `filter_statuses_response` | `implemented` |  |
-| POST | `/api/v2/filters/:id/statuses` | `create_filter_status_response` | `implemented` |  |
+| GET | `/api/v2/filters/:filter_id/keywords` | `filter_keywords_response` | `implemented` |  |
+| POST | `/api/v2/filters/:filter_id/keywords` | `create_filter_keyword_response` | `implemented` |  |
+| GET | `/api/v2/filters/:filter_id/statuses` | `filter_statuses_response` | `implemented` |  |
+| POST | `/api/v2/filters/:filter_id/statuses` | `create_filter_status_response` | `implemented` |  |
 | GET | `/api/v2/filters/keywords/:id` | `filter_keyword_response` | `implemented` |  |
 | PUT | `/api/v2/filters/keywords/:id` | `update_filter_keyword_response` | `implemented` |  |
 | PATCH | `/api/v2/filters/keywords/:id` | `update_filter_keyword_response` | `implemented` |  |

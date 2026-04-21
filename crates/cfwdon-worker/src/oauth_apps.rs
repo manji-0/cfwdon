@@ -32,15 +32,23 @@ struct ParsedCreateAppRequest {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OAuthAppRow {
-    id: i64,
-    name: String,
-    website: Option<String>,
+    pub(crate) id: i64,
+    pub(crate) name: String,
+    pub(crate) website: Option<String>,
     scopes_json: String,
     redirect_uri_legacy: String,
     redirect_uris_json: String,
     client_id: String,
     client_secret: String,
     client_secret_expires_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct OAuthAccessTokenRow {
+    pub(crate) access_token: String,
+    pub(crate) oauth_app_id: i64,
+    pub(crate) account_id: String,
+    scopes_json: String,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -53,14 +61,25 @@ pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> ser
     })
 }
 
-fn oauth_app_scopes(row: &OAuthAppRow) -> Vec<String> {
+pub(crate) fn oauth_app_scopes(row: &OAuthAppRow) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(&row.scopes_json).unwrap_or_default()
+}
+
+pub(crate) fn oauth_access_token_has_any_scope_json(scopes_json: &str, scopes: &[&str]) -> bool {
+    serde_json::from_str::<Vec<String>>(scopes_json)
+        .unwrap_or_default()
+        .iter()
+        .any(|scope| scopes.contains(&scope.as_str()))
 }
 
 pub(crate) fn oauth_app_has_any_scope(row: &OAuthAppRow, scopes: &[&str]) -> bool {
     oauth_app_scopes(row)
         .iter()
         .any(|scope| scopes.contains(&scope.as_str()))
+}
+
+pub(crate) fn oauth_access_token_has_any_scope(row: &OAuthAccessTokenRow, scopes: &[&str]) -> bool {
+    oauth_access_token_has_any_scope_json(&row.scopes_json, scopes)
 }
 
 fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
@@ -184,6 +203,20 @@ pub(crate) async fn find_oauth_app_by_client_id(
     .await
 }
 
+pub(crate) async fn find_oauth_app_by_id(db: &D1Database, id: i64) -> Result<Option<OAuthAppRow>> {
+    let binding = D1Type::Integer(i32::try_from(id).unwrap_or(i32::MAX));
+    db.prepare(
+        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+                client_id, client_secret, client_secret_expires_at
+         FROM oauth_apps
+         WHERE id = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&[binding])?
+    .first::<OAuthAppRow>(None)
+    .await
+}
+
 pub(crate) async fn find_oauth_app_id_by_bearer_token(
     db: &D1Database,
     token: &str,
@@ -191,6 +224,64 @@ pub(crate) async fn find_oauth_app_id_by_bearer_token(
     Ok(find_oauth_app_by_bearer_token(db, token)
         .await?
         .map(|row| row.id))
+}
+
+pub(crate) async fn find_oauth_access_token_by_bearer_token(
+    db: &D1Database,
+    token: &str,
+) -> Result<Option<OAuthAccessTokenRow>> {
+    let binding = D1Type::Text(token);
+    db.prepare(
+        "SELECT access_token, oauth_app_id, account_id, scopes_json
+         FROM oauth_access_tokens
+         WHERE access_token = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&[binding])?
+    .first::<OAuthAccessTokenRow>(None)
+    .await
+}
+
+pub(crate) async fn issue_oauth_access_token(
+    db: &D1Database,
+    oauth_app_id: i64,
+    account_id: &str,
+    scopes: &[String],
+) -> Result<OAuthAccessTokenRow> {
+    let access_token = generate_entity_id(32)?;
+    let scopes_json = serde_json::to_string(scopes).map_err(|error| {
+        worker::Error::RustError(format!("failed to serialize access token scopes: {error}"))
+    })?;
+    let bindings = [
+        D1Type::Text(access_token.as_str()),
+        D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
+        D1Type::Text(account_id),
+        D1Type::Text(scopes_json.as_str()),
+    ];
+    db.prepare(
+        "INSERT INTO oauth_access_tokens (
+            access_token,
+            oauth_app_id,
+            account_id,
+            scopes_json,
+            created_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(OAuthAccessTokenRow {
+        access_token,
+        oauth_app_id,
+        account_id: account_id.to_owned(),
+        scopes_json,
+    })
 }
 
 fn normalize_required_client_name(value: Option<String>) -> std::result::Result<String, String> {

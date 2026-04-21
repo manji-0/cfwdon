@@ -46,6 +46,7 @@ pub(crate) async fn collect_mention_notification_entries(
             language: mention.language,
             quote_approval_policy: None,
             quote_state: mention.quote_state.clone(),
+            application_id: None,
             created_at: mention.created_at.clone(),
         };
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?

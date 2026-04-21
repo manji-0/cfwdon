@@ -141,8 +141,9 @@ pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> 
         {
             statuses.push(status);
         }
+        let collection = entry.value.get("collection").cloned();
 
-        groups.push(serde_json::json!({
+        let mut group = serde_json::json!({
             "group_key": entry
                 .value
                 .get("group_key")
@@ -160,7 +161,11 @@ pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> 
             "notifications_count": 1,
             "sample_account_ids": account_id.into_iter().collect::<Vec<_>>(),
             "status_id": status_id,
-        }));
+        });
+        if let Some(collection) = collection {
+            group["collection"] = collection;
+        }
+        groups.push(group);
     }
 
     serde_json::json!({

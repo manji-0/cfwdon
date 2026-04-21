@@ -5,7 +5,8 @@ use crate::responses::MastodonAccountResponse;
 use crate::search_text_match_rank;
 use crate::{
     actor_url, find_account_by_username, find_remote_actor_by_username_domain,
-    load_remote_actor_status_summary, parse_lookup_handle, strip_html_tags,
+    load_remote_actor_status_summary, normalize_search_match_text, normalize_search_query_input,
+    parse_lookup_handle, strip_html_tags,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -14,11 +15,15 @@ use worker::{D1Database, Error, Result};
 
 pub(crate) fn normalized_account_search_query(query: &str) -> String {
     let query = query.trim().trim_start_matches('@');
-    query
-        .strip_prefix("acct:")
-        .unwrap_or(query)
-        .trim()
-        .to_ascii_lowercase()
+    let query = if query
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
+    {
+        &query[5..]
+    } else {
+        query
+    };
+    query.trim().to_ascii_lowercase()
 }
 
 pub(crate) fn account_search_term(query: &str, config: &AppConfig) -> String {
@@ -33,9 +38,111 @@ pub(crate) fn account_search_term(query: &str, config: &AppConfig) -> String {
     }
 }
 
+fn tokenize_account_search_query(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in normalize_search_query_input(query).chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(current);
+                    current = String::new();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+fn account_query_terms(query: &str) -> Vec<String> {
+    tokenize_account_search_query(query)
+        .into_iter()
+        .map(|value| normalize_search_match_text(value.trim_matches('"')))
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+pub(crate) fn account_search_terms(query: &str, config: &AppConfig) -> Vec<String> {
+    tokenize_account_search_query(query)
+        .into_iter()
+        .map(|value| account_search_term(&value, config))
+        .map(|value| value.trim_matches('"').trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn account_search_seed_term(query: &str, config: &AppConfig) -> String {
+    account_search_terms(query, config)
+        .into_iter()
+        .max_by_key(|value| value.len())
+        .unwrap_or_else(|| account_search_term(query, config))
+}
+
+pub(crate) fn account_search_query_terms(query: &str, config: &AppConfig) -> Vec<String> {
+    let mut terms = account_search_terms(query, config)
+        .into_iter()
+        .map(|term| term.trim().to_owned())
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        let seed = account_search_seed_term(query, config).trim().to_owned();
+        if !seed.is_empty() {
+            terms.push(seed);
+        }
+        return terms;
+    }
+
+    let normalized = account_search_term(query, config).trim().to_owned();
+    if !normalized.is_empty() && !terms.iter().any(|term| term == &normalized) {
+        terms.push(normalized);
+    }
+
+    terms
+}
+
+pub(crate) fn account_matches_search_terms(
+    terms: &[String],
+    username: &str,
+    acct: &str,
+    display_name: &str,
+    note: &str,
+) -> bool {
+    if terms.is_empty() {
+        return true;
+    }
+    let username = normalize_search_match_text(username);
+    let acct = normalize_search_match_text(acct);
+    let display_name = normalize_search_match_text(display_name);
+    let note = normalize_search_match_text(note);
+    terms.iter().all(|term| {
+        let term = normalize_search_match_text(term);
+        !term.is_empty()
+            && (username.contains(&term)
+                || acct.contains(&term)
+                || display_name.contains(&term)
+                || note.contains(&term))
+    })
+}
+
 pub(crate) fn account_search_is_complete_handle(query: &str, config: &AppConfig) -> bool {
     let query = query.trim().trim_start_matches('@');
-    query.contains('@') && parse_lookup_handle(query, config).is_ok()
+    !query.is_empty()
+        && !query.chars().any(char::is_whitespace)
+        && query.contains('@')
+        && parse_lookup_handle(query, config).is_ok()
 }
 
 pub(crate) fn account_search_non_exact_limit(
@@ -44,6 +151,9 @@ pub(crate) fn account_search_non_exact_limit(
     limit: u32,
     exact_match_present: bool,
 ) -> u32 {
+    if query.trim_start().starts_with('#') {
+        return 0;
+    }
     if viewer.is_none() && normalized_account_search_query(query).len() < 3 {
         return 0;
     }
@@ -62,24 +172,41 @@ pub(crate) fn account_search_rank(
     display_name: &str,
     note: &str,
 ) -> (u8, u8, String) {
-    let query = normalized_account_search_query(query);
+    let query = normalized_account_search_query(&normalize_search_query_input(query));
     let candidates = if query.contains('@') {
         [
-            (search_text_match_rank(&query, acct), 0u8),
-            (search_text_match_rank(&query, username), 1u8),
-            (search_text_match_rank(&query, display_name), 2u8),
-            (search_text_match_rank(&query, note), 3u8),
+            (account_text_match_rank(&query, acct), 0u8),
+            (account_text_match_rank(&query, username), 1u8),
+            (account_text_match_rank(&query, display_name), 2u8),
+            (account_text_match_rank(&query, note), 3u8),
         ]
     } else {
         [
-            (search_text_match_rank(&query, username), 0u8),
-            (search_text_match_rank(&query, acct), 1u8),
-            (search_text_match_rank(&query, display_name), 2u8),
-            (search_text_match_rank(&query, note), 3u8),
+            (account_text_match_rank(&query, username), 0u8),
+            (account_text_match_rank(&query, acct), 1u8),
+            (account_text_match_rank(&query, display_name), 2u8),
+            (account_text_match_rank(&query, note), 3u8),
         ]
     };
     let (match_rank, field_rank) = candidates.into_iter().min().unwrap_or((3, 3));
     (match_rank, field_rank, acct.to_ascii_lowercase())
+}
+
+fn account_text_match_rank(query: &str, candidate: &str) -> u8 {
+    let phrase_rank = search_text_match_rank(query, candidate);
+    if phrase_rank < 3 || !query.contains(char::is_whitespace) {
+        return phrase_rank;
+    }
+
+    let candidate = normalize_search_match_text(candidate);
+    if account_query_terms(query)
+        .iter()
+        .all(|term| candidate.contains(term))
+    {
+        2
+    } else {
+        3
+    }
 }
 
 pub(crate) fn account_relationship_rank(is_self: bool, is_following: bool) -> u8 {
@@ -123,54 +250,85 @@ pub(crate) async fn search_local_accounts(
     following_only: bool,
     viewer_account_id: Option<&str>,
 ) -> Result<Vec<LocalAccount>> {
-    let pattern = format!("%{}%", account_search_term(query, config));
+    let query_terms = account_search_query_terms(query, config);
+    let patterns = query_terms
+        .iter()
+        .map(|term| format!("%{}%", term.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
     let local_host = instance_host(config);
+    let search_clause_list = if following_only {
+        patterns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let binding = index + 2;
+                format!(
+                    "lower(a.username) LIKE ?{binding} OR lower(a.display_name) LIKE ?{binding} OR lower(a.bio_text) LIKE ?{binding} OR lower(a.username || '@' || ?{}) LIKE ?{binding}",
+                    patterns.len() + 2
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    } else {
+        patterns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let binding = index + 1;
+                format!(
+                    "lower(username) LIKE ?{binding} OR lower(display_name) LIKE ?{binding} OR lower(bio_text) LIKE ?{binding} OR lower(username || '@' || ?{}) LIKE ?{binding}",
+                    patterns.len() + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
     let sql = if following_only {
-        "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+        format!(
+            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
          FROM accounts a
          JOIN follows f
            ON f.target_account_id = a.id
           AND f.follower_account_id = ?1
           AND f.state = 'accepted'
-         WHERE lower(a.username) LIKE ?2
-            OR lower(a.display_name) LIKE ?2
-            OR lower(a.bio_text) LIKE ?2
-            OR lower(a.username || '@' || ?3) LIKE ?2
+         WHERE ({search_clause_list})
          ORDER BY a.username ASC
-         LIMIT ?4
-         OFFSET ?5"
+         LIMIT ?{}
+         OFFSET ?{}",
+            patterns.len() + 3,
+            patterns.len() + 4
+        )
     } else {
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+        format!(
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
          FROM accounts
-         WHERE lower(username) LIKE ?1
-            OR lower(display_name) LIKE ?1
-            OR lower(bio_text) LIKE ?1
-            OR lower(username || '@' || ?2) LIKE ?1
+         WHERE ({search_clause_list})
          ORDER BY username ASC
-         LIMIT ?3
-         OFFSET ?4"
+         LIMIT ?{}
+         OFFSET ?{}",
+            patterns.len() + 2,
+            patterns.len() + 3
+        )
     };
 
     let result = if following_only {
-        let bindings = [
-            D1Type::Text(
-                viewer_account_id
-                    .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
-            ),
-            D1Type::Text(pattern.as_str()),
-            D1Type::Text(local_host.as_str()),
-            D1Type::Integer(limit as i32),
-            D1Type::Integer(offset as i32),
-        ];
-        db.prepare(sql).bind_refs(bindings.iter())?.all().await?
+        let mut bindings = Vec::with_capacity(patterns.len() + 4);
+        bindings.push(D1Type::Text(
+            viewer_account_id
+                .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
+        ));
+        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Text(local_host.as_str()));
+        bindings.push(D1Type::Integer(limit as i32));
+        bindings.push(D1Type::Integer(offset as i32));
+        db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     } else {
-        let bindings = [
-            D1Type::Text(pattern.as_str()),
-            D1Type::Text(local_host.as_str()),
-            D1Type::Integer(limit as i32),
-            D1Type::Integer(offset as i32),
-        ];
-        db.prepare(sql).bind_refs(bindings.iter())?.all().await?
+        let mut bindings = Vec::with_capacity(patterns.len() + 3);
+        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Text(local_host.as_str()));
+        bindings.push(D1Type::Integer(limit as i32));
+        bindings.push(D1Type::Integer(offset as i32));
+        db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     };
 
     Ok(result
@@ -189,53 +347,80 @@ pub(crate) async fn search_remote_accounts(
     following_only: bool,
     viewer_account_id: Option<&str>,
 ) -> Result<Vec<RemoteActorRow>> {
-    let pattern = format!("%{}%", account_search_term(query, config));
+    let query_terms = account_search_query_terms(query, config);
+    let patterns = query_terms
+        .iter()
+        .map(|term| format!("%{}%", term.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    let search_clause_list = if following_only {
+        patterns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let binding = index + 2;
+                format!(
+                    "lower(ra.username) LIKE ?{binding} OR lower(ra.display_name) LIKE ?{binding} OR lower(ra.summary_html) LIKE ?{binding} OR lower(ra.domain) LIKE ?{binding} OR lower(ra.username || '@' || ra.domain) LIKE ?{binding}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    } else {
+        patterns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let binding = index + 1;
+                format!(
+                    "lower(username) LIKE ?{binding} OR lower(display_name) LIKE ?{binding} OR lower(summary_html) LIKE ?{binding} OR lower(domain) LIKE ?{binding} OR lower(username || '@' || domain) LIKE ?{binding}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
     let sql = if following_only {
-        "SELECT ra.actor_uri, ra.username, ra.domain, ra.locked, ra.bot, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+        format!(
+            "SELECT ra.actor_uri, ra.username, ra.domain, ra.locked, ra.bot, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
          FROM remote_actors ra
          JOIN follows f
            ON f.target_actor_uri = ra.actor_uri
           AND f.follower_account_id = ?1
           AND f.state = 'accepted'
-         WHERE lower(ra.username) LIKE ?2
-            OR lower(ra.display_name) LIKE ?2
-            OR lower(ra.summary_html) LIKE ?2
-            OR lower(ra.domain) LIKE ?2
-            OR lower(ra.username || '@' || ra.domain) LIKE ?2
+         WHERE ({search_clause_list})
          ORDER BY ra.username ASC, ra.domain ASC
-         LIMIT ?3
-         OFFSET ?4"
+         LIMIT ?{}
+         OFFSET ?{}",
+            patterns.len() + 2,
+            patterns.len() + 3
+        )
     } else {
-        "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        format!(
+            "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
-         WHERE lower(username) LIKE ?1
-            OR lower(display_name) LIKE ?1
-            OR lower(summary_html) LIKE ?1
-            OR lower(domain) LIKE ?1
-            OR lower(username || '@' || domain) LIKE ?1
+         WHERE ({search_clause_list})
          ORDER BY username ASC, domain ASC
-         LIMIT ?2
-         OFFSET ?3"
+         LIMIT ?{}
+         OFFSET ?{}",
+            patterns.len() + 1,
+            patterns.len() + 2
+        )
     };
 
     let result = if following_only {
-        let bindings = [
-            D1Type::Text(
-                viewer_account_id
-                    .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
-            ),
-            D1Type::Text(pattern.as_str()),
-            D1Type::Integer(limit as i32),
-            D1Type::Integer(offset as i32),
-        ];
-        db.prepare(sql).bind_refs(bindings.iter())?.all().await?
+        let mut bindings = Vec::with_capacity(patterns.len() + 3);
+        bindings.push(D1Type::Text(
+            viewer_account_id
+                .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
+        ));
+        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Integer(limit as i32));
+        bindings.push(D1Type::Integer(offset as i32));
+        db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     } else {
-        let bindings = [
-            D1Type::Text(pattern.as_str()),
-            D1Type::Integer(limit as i32),
-            D1Type::Integer(offset as i32),
-        ];
-        db.prepare(sql).bind_refs(bindings.iter())?.all().await?
+        let mut bindings = Vec::with_capacity(patterns.len() + 2);
+        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Integer(limit as i32));
+        bindings.push(D1Type::Integer(offset as i32));
+        db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     };
 
     result.results::<RemoteActorRow>()
@@ -252,7 +437,8 @@ pub(crate) async fn search_cached_accounts(
 ) -> Result<Vec<MastodonAccountResponse>> {
     let mut accounts = Vec::new();
     let viewer_account_id = viewer.map(|account| account.id.as_str());
-    let query_limit = limit.saturating_add(offset).clamp(limit, 200);
+    let query_limit = limit.saturating_add(offset).saturating_mul(4).clamp(limit, 200);
+    let search_terms = account_search_terms(query, config);
 
     for account in search_local_accounts(
         db,
@@ -266,9 +452,16 @@ pub(crate) async fn search_cached_accounts(
     .await?
     {
         let stats = load_account_stats(db, &account.id).await?;
-        accounts.push(MastodonAccountResponse::from_account_with_stats(
-            &account, config, &stats,
-        ));
+        let response = MastodonAccountResponse::from_account_with_stats(&account, config, &stats);
+        if account_matches_search_terms(
+            &search_terms,
+            &response.username,
+            &response.acct,
+            &response.display_name,
+            &strip_html_tags(&response.note),
+        ) {
+            accounts.push(response);
+        }
     }
     for actor in search_remote_accounts(
         db,
@@ -285,7 +478,15 @@ pub(crate) async fn search_cached_accounts(
         let stats = load_remote_actor_status_summary(db, &actor.actor_uri).await?;
         response.statuses_count = stats.statuses_count;
         response.last_status_at = stats.last_status_at;
-        accounts.push(response);
+        if account_matches_search_terms(
+            &search_terms,
+            &response.username,
+            &response.acct,
+            &response.display_name,
+            &strip_html_tags(&response.note),
+        ) {
+            accounts.push(response);
+        }
     }
 
     let rank_query = account_search_term(query, config);

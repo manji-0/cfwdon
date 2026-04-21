@@ -1,3 +1,7 @@
+use super::set_instance_translation_enabled;
+use super::status_placeholder_routes::{
+    configured_translation_provider, load_translation_provider_languages,
+};
 use super::{
     Request, Response, Result, RouteContext, build_default_privacy_policy_document,
     build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
@@ -140,7 +144,7 @@ fn configured_announcement_exists(config: &cfwdon_core::AppConfig, announcement_
     })
 }
 
-async fn list_announcement_read_ids(
+pub(crate) async fn list_announcement_read_ids(
     db: &worker::D1Database,
     account_id: &str,
 ) -> Result<HashSet<String>> {
@@ -157,7 +161,7 @@ async fn list_announcement_read_ids(
     Ok(rows.into_iter().map(|row| row.announcement_id).collect())
 }
 
-async fn load_announcement_reaction_state(
+pub(crate) async fn load_announcement_reaction_state(
     db: &worker::D1Database,
     account_id: &str,
 ) -> Result<HashMap<(String, String), (u64, bool)>> {
@@ -278,8 +282,13 @@ pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Respon
     let db = ctx.d1(&config.database_binding)?;
     let summary = load_instance_summary(&db, config.clone()).await?;
     let active_month = load_active_month_users(&db).await?;
+    let mut document = build_instance_v2_document(&summary, &config, active_month);
+    set_instance_translation_enabled(
+        &mut document,
+        configured_translation_provider(&ctx).is_some(),
+    );
 
-    Response::from_json(&build_instance_v2_document(&summary, &config, active_month))
+    Response::from_json(&document)
 }
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -409,8 +418,12 @@ pub(crate) async fn instance_languages_response(ctx: RouteContext<()>) -> Result
 }
 
 pub(crate) async fn instance_translation_languages_response(
-    _ctx: RouteContext<()>,
+    ctx: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(provider_config) = configured_translation_provider(&ctx) {
+        return Response::from_json(&load_translation_provider_languages(&provider_config).await?);
+    }
+
     Response::from_json(&serde_json::json!({}))
 }
 

@@ -1,13 +1,15 @@
-use crate::auth::find_authenticated_local_account;
+use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::responses::MastodonSearchResponse;
 use crate::runtime_config::load_config;
 use crate::tags::{resolve_search_tag, search_tags_for_v2};
 use crate::{
     LocalAccount, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query,
-    account_search_non_exact_limit, resolve_cached_exact_search_account, resolve_search_account,
+    account_search_non_exact_limit, effective_search_v2_following, effective_search_v2_offset,
+    normalize_search_query_input, resolve_cached_exact_search_account, resolve_search_account,
     resolve_search_status, search_cached_accounts, search_category_flags, search_statuses_for_v2,
     search_v2_limit, search_v2_requires_auth, search_v2_unauthenticated_error,
-    search_v2_url_query_mode,
+    search_v2_type_allows_url_resource, search_v2_url_query_mode,
+    oauth_access_token_has_any_scope,
 };
 use worker::{Request, Response, Result, RouteContext};
 
@@ -28,23 +30,25 @@ pub(crate) async fn search_v1(req: Request, ctx: RouteContext<()>) -> Result<Res
         worker::Error::RustError(format!("failed to serialize search response: {error}"))
     })?;
 
-    if let Some(object) = value.as_object_mut()
-        && let Some(hashtags) = object
+    if let Some(object) = value.as_object_mut() {
+        if let Some(hashtags) = object
             .get_mut("hashtags")
             .and_then(serde_json::Value::as_array_mut)
-    {
-        let names = hashtags
-            .drain(..)
-            .filter_map(|value| match value {
-                serde_json::Value::String(name) => Some(serde_json::Value::String(name)),
-                serde_json::Value::Object(object) => object
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|name| serde_json::Value::String(name.to_owned())),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        *hashtags = names;
+        {
+            let names = hashtags
+                .drain(..)
+                .filter_map(|value| match value {
+                    serde_json::Value::String(name) => Some(serde_json::Value::String(name)),
+                    serde_json::Value::Object(object) => object
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|name| serde_json::Value::String(name.to_owned())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            *hashtags = names;
+        }
+        object.remove("collections");
     }
 
     Response::from_json(&value)
@@ -56,7 +60,8 @@ async fn search_impl(
 ) -> std::result::Result<MastodonSearchResponse, Response> {
     let config = load_config(ctx);
     let query: SearchV2Query = req.query().unwrap_or_default();
-    let q = query.q.trim();
+    let normalized_query = normalize_search_query_input(&query.q);
+    let q = normalized_query.trim();
     if q.is_empty() {
         return Ok(MastodonSearchResponse::default());
     }
@@ -66,25 +71,40 @@ async fn search_impl(
         Err(error) => return Err(Response::error(error.to_string(), 500).unwrap()),
     };
     let requires_auth = search_v2_requires_auth(&query);
-    let viewer = match find_authenticated_local_account(req, &db, &config)
+    let viewer = match authenticate_local_api_request(req, &db, &config)
         .await
         .map_err(|error| Response::error(error.to_string(), 500).unwrap())?
     {
-        Some(account) => Some(account),
-        None if requires_auth => {
+        LocalApiAuthentication::Access(account) => Some(account),
+        LocalApiAuthentication::OAuthToken(auth) => {
+            if !oauth_access_token_has_any_scope(&auth.token, &["read:search", "read"]) {
+                return Err(Response::error("This action is outside the authorized scopes", 403).unwrap());
+            }
+            Some(auth.account)
+        }
+        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             return Err(Response::error(
-                search_v2_unauthenticated_error(&query)
-                    .unwrap_or("Cloudflare Access authentication required"),
+                "The access token is invalid",
                 401,
             )
             .unwrap());
         }
-        None => None,
+        LocalApiAuthentication::None => {
+            if requires_auth {
+                return Err(Response::error(
+                    search_v2_unauthenticated_error(&query)
+                        .unwrap_or("Cloudflare Access authentication required"),
+                    401,
+                )
+                .unwrap());
+            }
+            None
+        }
     };
 
     let search_flags: SearchCategoryFlags = search_category_flags(query.search_type.as_deref());
     let limit = search_v2_limit(query.limit);
-    let offset = query.offset.unwrap_or(0);
+    let offset = effective_search_v2_offset(&query);
     let resolve_enabled = query.resolve.unwrap_or(false);
     match search_v2_url_query_mode(q, resolve_enabled, offset) {
         SearchUrlQueryMode::None => {}
@@ -97,6 +117,7 @@ async fn search_impl(
                 &config,
                 viewer.as_ref(),
                 q,
+                query.search_type.as_deref(),
                 search_flags,
             )
             .await
@@ -107,7 +128,7 @@ async fn search_impl(
     let mut response = MastodonSearchResponse::default();
 
     if search_flags.accounts {
-        let following_only = query.following.unwrap_or(false);
+        let following_only = effective_search_v2_following(&query, viewer.is_some());
         let exact_account = if offset == 0 {
             resolve_cached_exact_search_account(&db, &config, viewer.as_ref(), q, following_only)
                 .await
@@ -202,6 +223,7 @@ async fn resolve_search_url_only_response(
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query: &str,
+    search_type: Option<&str>,
     search_flags: SearchCategoryFlags,
 ) -> Result<MastodonSearchResponse> {
     let mut response = MastodonSearchResponse::default();
@@ -209,21 +231,27 @@ async fn resolve_search_url_only_response(
     if let Some(viewer) = viewer
         && let Some(status) = resolve_search_status(db, config, viewer, query).await?
     {
-        if search_flags.statuses {
+        if search_flags.statuses
+            && search_v2_type_allows_url_resource(search_type, "statuses")
+        {
             response.statuses.push(status);
         }
         return Ok(response);
     }
 
     if let Some(account) = resolve_search_account(db, config, query).await? {
-        if search_flags.accounts {
+        if search_flags.accounts
+            && search_v2_type_allows_url_resource(search_type, "accounts")
+        {
             response.accounts.push(account);
         }
         return Ok(response);
     }
 
     if let Some(tag) = resolve_search_tag(db, config, query).await? {
-        if search_flags.hashtags {
+        if search_flags.hashtags
+            && search_v2_type_allows_url_resource(search_type, "hashtags")
+        {
             response.hashtags.push(tag);
         }
     }

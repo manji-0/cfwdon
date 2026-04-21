@@ -66,7 +66,13 @@ pub(crate) fn paginate_tag_search_matches(
 }
 
 pub(crate) fn normalize_hashtag(value: &str) -> String {
-    value.trim().trim_start_matches('#').to_ascii_lowercase()
+    crate::normalize_search_match_text(value.trim().trim_start_matches('#'))
+}
+
+pub(crate) fn tag_matches_search_query(query: &str, tag: &str) -> bool {
+    let query = normalize_hashtag(query);
+    let tag = normalize_hashtag(tag);
+    !query.is_empty() && tag.starts_with(&query)
 }
 
 pub(crate) async fn resolve_search_tag(
@@ -115,11 +121,19 @@ pub(crate) fn search_tag_name_from_path(path: &str) -> Option<String> {
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
     let tag = match segments.as_slice() {
-        ["tags", tag] => *tag,
-        ["explore", "tags", tag] => *tag,
+        [prefix, tag] if prefix.eq_ignore_ascii_case("tags") => *tag,
+        [explore, prefix, tag]
+            if explore.eq_ignore_ascii_case("explore") && prefix.eq_ignore_ascii_case("tags") =>
+        {
+            *tag
+        }
         _ => return None,
     };
-    let normalized = normalize_hashtag(tag);
+    let normalized = normalize_hashtag(
+        &urlencoding::decode(tag)
+            .map(|value| value.into_owned())
+            .unwrap_or_else(|_| tag.to_owned()),
+    );
     (!normalized.is_empty()).then_some(normalized)
 }
 
@@ -142,7 +156,7 @@ pub(crate) async fn search_tags_for_v2(
     let cursor = ResolvedTimelineCursor::default();
     for status in list_local_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_text(&status._text_content) {
-            if tag.contains(&needle) && seen.insert(tag.clone()) {
+            if tag_matches_search_query(&needle, &tag) && seen.insert(tag.clone()) {
                 matches.push(tag);
             }
         }
@@ -150,7 +164,7 @@ pub(crate) async fn search_tags_for_v2(
 
     for (status, _) in list_remote_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_html(&status.content_html) {
-            if tag.contains(&needle) && seen.insert(tag.clone()) {
+            if tag_matches_search_query(&needle, &tag) && seen.insert(tag.clone()) {
                 matches.push(tag);
             }
         }

@@ -45,7 +45,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             if viewer.id == account.id {
                 return Response::error("cannot reblog your own status", 422);
             }
-            upsert_reblog_local_status(&db, &viewer.id, &status, &visibility).await?;
+            upsert_reblog_local_status(&db, &config, &viewer.id, &status, &visibility).await?;
             let wrapper = upsert_reblog_wrapper_status(
                 &db,
                 &config,
