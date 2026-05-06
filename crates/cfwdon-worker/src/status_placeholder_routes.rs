@@ -320,6 +320,7 @@ fn translation_language_code_variants(value: &str) -> Vec<String> {
     variants
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn translation_provider_language_matches(
     supported_languages: &serde_json::Value,
     source_language: &str,
