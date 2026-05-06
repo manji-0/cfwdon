@@ -5,11 +5,11 @@ use crate::tags::{resolve_search_tag, search_tags_for_v2};
 use crate::{
     LocalAccount, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query,
     account_search_non_exact_limit, effective_search_v2_following, effective_search_v2_offset,
-    normalize_search_query_input, resolve_cached_exact_search_account, resolve_search_account,
-    resolve_search_status, search_cached_accounts, search_category_flags, search_statuses_for_v2,
-    search_v2_limit, search_v2_requires_auth, search_v2_unauthenticated_error,
-    search_v2_type_allows_url_resource, search_v2_url_query_mode,
-    oauth_access_token_has_any_scope,
+    normalize_search_query_input, oauth_access_token_has_any_scope,
+    resolve_cached_exact_search_account, resolve_search_account, resolve_search_status,
+    search_cached_accounts, search_category_flags, search_statuses_for_v2, search_v2_limit,
+    search_v2_requires_auth, search_v2_type_allows_url_resource, search_v2_unauthenticated_error,
+    search_v2_url_query_mode,
 };
 use worker::{Request, Response, Result, RouteContext};
 
@@ -78,16 +78,14 @@ async fn search_impl(
         LocalApiAuthentication::Access(account) => Some(account),
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["read:search", "read"]) {
-                return Err(Response::error("This action is outside the authorized scopes", 403).unwrap());
+                return Err(
+                    Response::error("This action is outside the authorized scopes", 403).unwrap(),
+                );
             }
             Some(auth.account)
         }
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-            return Err(Response::error(
-                "The access token is invalid",
-                401,
-            )
-            .unwrap());
+            return Err(Response::error("The access token is invalid", 401).unwrap());
         }
         LocalApiAuthentication::None => {
             if requires_auth {
@@ -231,27 +229,21 @@ async fn resolve_search_url_only_response(
     if let Some(viewer) = viewer
         && let Some(status) = resolve_search_status(db, config, viewer, query).await?
     {
-        if search_flags.statuses
-            && search_v2_type_allows_url_resource(search_type, "statuses")
-        {
+        if search_flags.statuses && search_v2_type_allows_url_resource(search_type, "statuses") {
             response.statuses.push(status);
         }
         return Ok(response);
     }
 
     if let Some(account) = resolve_search_account(db, config, query).await? {
-        if search_flags.accounts
-            && search_v2_type_allows_url_resource(search_type, "accounts")
-        {
+        if search_flags.accounts && search_v2_type_allows_url_resource(search_type, "accounts") {
             response.accounts.push(account);
         }
         return Ok(response);
     }
 
     if let Some(tag) = resolve_search_tag(db, config, query).await? {
-        if search_flags.hashtags
-            && search_v2_type_allows_url_resource(search_type, "hashtags")
-        {
+        if search_flags.hashtags && search_v2_type_allows_url_resource(search_type, "hashtags") {
             response.hashtags.push(tag);
         }
     }

@@ -944,7 +944,10 @@ pub(crate) async fn search_statuses_for_v2(
         return Ok(Vec::new());
     }
     // Oversample to keep relevance-ranked matches from being truncated before the final sort.
-    let query_limit = limit.saturating_add(offset).saturating_mul(4).clamp(limit, 200);
+    let query_limit = limit
+        .saturating_add(offset)
+        .saturating_mul(4)
+        .clamp(limit, 200);
     let cursor_max_timestamp = resolve_search_status_bound_timestamp(db, max_id).await?;
     let cursor_min_timestamp = resolve_search_status_bound_timestamp(db, min_id).await?;
     let max_timestamp =

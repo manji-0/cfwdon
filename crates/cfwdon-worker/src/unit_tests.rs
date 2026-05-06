@@ -14,6 +14,7 @@ use super::{
     build_activitypub_actor_document, build_activitypub_delete_with_published_at,
     build_add_featured_activity_with_id, build_announcements_document,
     build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
+    build_deepl_request_body, build_deepl_translation_languages_document,
     build_delete_quote_authorization_activity, build_donation_campaign_document,
     build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
     build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
@@ -24,8 +25,7 @@ use super::{
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
-    build_deepl_request_body, build_translation_document_for_language,
-    build_translation_languages_document, build_deepl_translation_languages_document,
+    build_translation_document_for_language, build_translation_languages_document,
     build_update_person_activity_with_id, classify_media_kind, configured_html_document,
     context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
     describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
@@ -42,28 +42,28 @@ use super::{
     nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    notification_sort_key, notification_timestamp_sort_token, object_attributed_to_remote_actor,
+    notification_sort_key, notification_timestamp_sort_token,
+    oauth_access_token_has_any_scope_json, object_attributed_to_remote_actor,
     optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
     paginate_tag_search_matches, parse_basic_authorization_header,
-    parse_bearer_authorization_header, parse_csv_list, parse_http_url_parts,
-    parse_deepl_translated_text, parse_internal_pagination_id,
-    parse_libretranslate_translated_text, parse_lookup_handle,
-    parse_media_focus, parse_remote_actor_profile_document, parse_status_search_query,
-    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
-    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
-    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
-    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
-    remote_poll_should_refresh, remote_quote_state_for_local_target,
-    remote_status_has_active_quote, remote_status_targets_local_viewer,
-    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
-    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
-    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
-    oauth_access_token_has_any_scope_json, search_v2_unauthenticated_error, search_v2_url_query_mode, set_instance_translation_enabled,
-    search_v2_type_allows_url_resource,
-    status_search_query_terms,
-    status_has_active_quote, status_is_searchable_by_scope, status_matches_search_metadata,
-    status_matches_search_scope, status_matches_search_syntax, status_matches_search_timestamp,
-    status_search_rank, streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
+    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
+    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
+    parse_lookup_handle, parse_media_focus, parse_remote_actor_profile_document,
+    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
+    pending_quote_document, quote_document_with_state, quote_placeholder_document,
+    quote_target_uri_from_object, remap_remote_poll_vote_positions, remote_account_rest_id,
+    remote_actor_uri_from_rest_id, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_quote_state_for_local_target, remote_status_has_active_quote,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
+    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
+    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
+    set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
+    status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
+    status_matches_search_timestamp, status_search_query_terms, status_search_rank,
+    streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
     tag_search_sort_key, text_mentions_search_library_viewer, timeline_fetch_limit, timeline_limit,
     translation_cache_source_fingerprint, translation_provider_language_code,
     translation_provider_language_matches, translation_provider_supported_target_language,
@@ -581,7 +581,10 @@ fn translation_document_uses_provider_display_name() {
         "DeepL.com",
     );
 
-    assert_eq!(document.pointer("/provider"), Some(&serde_json::json!("DeepL.com")));
+    assert_eq!(
+        document.pointer("/provider"),
+        Some(&serde_json::json!("DeepL.com"))
+    );
 }
 
 #[test]
@@ -2141,10 +2144,22 @@ fn search_v2_url_query_mode_matches_mastodon_url_resolution_rules() {
 #[test]
 fn search_v2_type_allows_url_resource_matches_requested_category() {
     assert!(search_v2_type_allows_url_resource(None, "accounts"));
-    assert!(search_v2_type_allows_url_resource(Some("accounts"), "accounts"));
-    assert!(!search_v2_type_allows_url_resource(Some("statuses"), "accounts"));
-    assert!(!search_v2_type_allows_url_resource(Some("hashtags"), "statuses"));
-    assert!(!search_v2_type_allows_url_resource(Some("other"), "accounts"));
+    assert!(search_v2_type_allows_url_resource(
+        Some("accounts"),
+        "accounts"
+    ));
+    assert!(!search_v2_type_allows_url_resource(
+        Some("statuses"),
+        "accounts"
+    ));
+    assert!(!search_v2_type_allows_url_resource(
+        Some("hashtags"),
+        "statuses"
+    ));
+    assert!(!search_v2_type_allows_url_resource(
+        Some("other"),
+        "accounts"
+    ));
 }
 
 #[test]

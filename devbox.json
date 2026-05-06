@@ -4,8 +4,9 @@
     "rustup@latest",
     "nodejs@22",
     "wrangler@latest",
+    "worker-build@0.7.4",
     "binaryen@latest",
-    "wasm-bindgen-cli@latest",
+    "wasm-bindgen-cli",
     "cargo-generate@latest",
     "pkg-config@latest",
     "openssl@latest",
@@ -17,6 +18,8 @@
       "export RUSTUP_TOOLCHAIN=\"${RUSTUP_TOOLCHAIN:-stable}\"",
       "rustup toolchain list | grep -q \"^${RUSTUP_TOOLCHAIN}\" || rustup toolchain install \"${RUSTUP_TOOLCHAIN}\" --profile minimal",
       "rustup target list --installed --toolchain \"${RUSTUP_TOOLCHAIN}\" | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown --toolchain \"${RUSTUP_TOOLCHAIN}\"",
+      "rustup component list --toolchain \"${RUSTUP_TOOLCHAIN}\" | grep -qx 'rustfmt-x86_64-unknown-linux-gnu (installed)' || rustup component add rustfmt --toolchain \"${RUSTUP_TOOLCHAIN}\"",
+      "if [ ! -x \"$HOME/.cargo/bin/wasm-bindgen\" ] || ! \"$HOME/.cargo/bin/wasm-bindgen\" --version 2>/dev/null | grep -qx 'wasm-bindgen 0.2.118'; then cargo install -f wasm-bindgen-cli --version 0.2.118; fi",
       "export WASM_BINDGEN_BIN=\"$(command -v wasm-bindgen)\"",
       "export WASM_OPT_BIN=\"$(command -v wasm-opt)\""
     ],
@@ -24,11 +27,20 @@
       "fmt": [
         "cargo fmt --all"
       ],
+      "fmt:check": [
+        "cargo fmt --all --check"
+      ],
       "check": [
         "RUSTC=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN:-stable}\" rustc)\" cargo check --workspace --target wasm32-unknown-unknown"
       ],
       "test": [
         "cargo test --workspace"
+      ],
+      "ci": [
+        "cargo fmt --all --check",
+        "RUSTC=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN:-stable}\" rustc)\" cargo check --workspace --target wasm32-unknown-unknown",
+        "cargo test --workspace",
+        "WRANGLER_LOG=error wrangler deploy --dry-run"
       ],
       "worker:dev": [
         "wrangler dev"

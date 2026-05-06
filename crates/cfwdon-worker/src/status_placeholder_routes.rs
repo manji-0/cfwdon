@@ -222,10 +222,7 @@ pub(crate) fn translation_provider_language_code(language: &str) -> String {
         .to_owned()
 }
 
-fn translation_provider_request_source_language(
-    provider: &str,
-    language: &str,
-) -> Option<String> {
+fn translation_provider_request_source_language(provider: &str, language: &str) -> Option<String> {
     match translation_provider_kind(provider) {
         Some(TranslationProviderKind::DeepL) => {
             let normalized = language.trim().replace('_', "-");
@@ -239,10 +236,7 @@ fn translation_provider_request_source_language(
     }
 }
 
-fn translation_provider_request_target_language(
-    provider: &str,
-    language: &str,
-) -> String {
+fn translation_provider_request_target_language(provider: &str, language: &str) -> String {
     match translation_provider_kind(provider) {
         Some(TranslationProviderKind::DeepL) => language.trim().replace('_', "-"),
         _ => translation_provider_language_code(language),
@@ -318,7 +312,9 @@ fn translation_language_code_variants(value: &str) -> Vec<String> {
         return Vec::new();
     };
     let mut variants = vec![value.clone()];
-    if let Some(primary) = value.split(['-', '_']).next() && primary != value {
+    if let Some(primary) = value.split(['-', '_']).next()
+        && primary != value
+    {
         variants.push(primary.to_owned());
     }
     variants
@@ -437,7 +433,11 @@ pub(crate) fn build_deepl_translation_languages_document(
     source_languages: &[String],
     target_languages: &[String],
 ) -> serde_json::Value {
-    fn push_unique(codes: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, value: &str) {
+    fn push_unique(
+        codes: &mut Vec<String>,
+        seen: &mut std::collections::HashSet<String>,
+        value: &str,
+    ) {
         let Some(code) = normalize_translation_language_code(value) else {
             return;
         };
@@ -515,7 +515,9 @@ pub(crate) async fn load_translation_provider_languages(
                 headers.set("Authorization", &format!("DeepL-Auth-Key {api_key}"))?;
             }
             let mut source_init = RequestInit::new();
-            source_init.with_method(Method::Get).with_headers(headers.clone());
+            source_init
+                .with_method(Method::Get)
+                .with_headers(headers.clone());
             let mut target_init = RequestInit::new();
             target_init.with_method(Method::Get).with_headers(headers);
 
@@ -586,9 +588,10 @@ pub(crate) fn build_deepl_request_body(
         format!("text={}", urlencoding::encode(text)),
         format!(
             "target_lang={}",
-            urlencoding::encode(
-                &translation_provider_request_target_language("deepl", target_language)
-            )
+            urlencoding::encode(&translation_provider_request_target_language(
+                "deepl",
+                target_language
+            ))
         ),
         "tag_handling=html".to_owned(),
     ];
@@ -853,17 +856,24 @@ async fn build_translation_document_with_provider(
     if let Some(content) = status.get("content").and_then(serde_json::Value::as_str) {
         let translated = match translation_provider_kind(&provider_config.provider) {
             Some(TranslationProviderKind::DeepL) => {
-                translate_text_with_deepl(provider_config, content, source_language, target_language)
-                    .await?
+                translate_text_with_deepl(
+                    provider_config,
+                    content,
+                    source_language,
+                    target_language,
+                )
+                .await?
             }
-            _ => translate_text_with_libretranslate(
-                provider_config,
-                content,
-                source_language,
-                target_language,
-                "html",
-            )
-            .await?,
+            _ => {
+                translate_text_with_libretranslate(
+                    provider_config,
+                    content,
+                    source_language,
+                    target_language,
+                    "html",
+                )
+                .await?
+            }
         };
         set_json_pointer_value(&mut document, "/content", translated);
     }
@@ -874,17 +884,24 @@ async fn build_translation_document_with_provider(
     {
         let translated = match translation_provider_kind(&provider_config.provider) {
             Some(TranslationProviderKind::DeepL) => {
-                translate_text_with_deepl(provider_config, spoiler_text, source_language, target_language)
-                    .await?
+                translate_text_with_deepl(
+                    provider_config,
+                    spoiler_text,
+                    source_language,
+                    target_language,
+                )
+                .await?
             }
-            _ => translate_text_with_libretranslate(
-                provider_config,
-                spoiler_text,
-                source_language,
-                target_language,
-                "text",
-            )
-            .await?,
+            _ => {
+                translate_text_with_libretranslate(
+                    provider_config,
+                    spoiler_text,
+                    source_language,
+                    target_language,
+                    "text",
+                )
+                .await?
+            }
         };
         set_json_pointer_value(&mut document, "/spoiler_text", translated);
     }
@@ -902,17 +919,24 @@ async fn build_translation_document_with_provider(
             };
             let translated = match translation_provider_kind(&provider_config.provider) {
                 Some(TranslationProviderKind::DeepL) => {
-                    translate_text_with_deepl(provider_config, description, source_language, target_language)
-                        .await?
+                    translate_text_with_deepl(
+                        provider_config,
+                        description,
+                        source_language,
+                        target_language,
+                    )
+                    .await?
                 }
-                _ => translate_text_with_libretranslate(
-                    provider_config,
-                    description,
-                    source_language,
-                    target_language,
-                    "text",
-                )
-                .await?,
+                _ => {
+                    translate_text_with_libretranslate(
+                        provider_config,
+                        description,
+                        source_language,
+                        target_language,
+                        "text",
+                    )
+                    .await?
+                }
             };
             set_json_pointer_value(
                 &mut document,
@@ -935,17 +959,24 @@ async fn build_translation_document_with_provider(
             };
             let translated = match translation_provider_kind(&provider_config.provider) {
                 Some(TranslationProviderKind::DeepL) => {
-                    translate_text_with_deepl(provider_config, title, source_language, target_language)
-                        .await?
+                    translate_text_with_deepl(
+                        provider_config,
+                        title,
+                        source_language,
+                        target_language,
+                    )
+                    .await?
                 }
-                _ => translate_text_with_libretranslate(
-                    provider_config,
-                    title,
-                    source_language,
-                    target_language,
-                    "text",
-                )
-                .await?,
+                _ => {
+                    translate_text_with_libretranslate(
+                        provider_config,
+                        title,
+                        source_language,
+                        target_language,
+                        "text",
+                    )
+                    .await?
+                }
             };
             set_json_pointer_value(
                 &mut document,

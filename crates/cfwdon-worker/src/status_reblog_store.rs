@@ -3,8 +3,8 @@ use crate::{
     send_push_notification,
 };
 use serde::Deserialize;
-use worker::d1::D1Type;
 use worker::Result;
+use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogActivityRow {

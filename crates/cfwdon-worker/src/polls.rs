@@ -192,7 +192,14 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
             .await
             .is_ok()
         {
-            let _ = send_poll_end_notifications(&db, &config, &row.poll_id, &row.status_id, &row.account_id).await;
+            let _ = send_poll_end_notifications(
+                &db,
+                &config,
+                &row.poll_id,
+                &row.status_id,
+                &row.account_id,
+            )
+            .await;
             mark_status_poll_federated_closed(&db, &row.poll_id).await?;
             summary.queued += 1;
         }

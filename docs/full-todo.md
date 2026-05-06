@@ -28,6 +28,7 @@
 - `GET /api/v1/accounts/:id/statuses`
 - `verify_credentials` counts
 - `devbox check` の toolchain/rustc 固定化
+- CI
 - local `follows` テーブル
 - local follow / unfollow API
 - `GET /users/:username/following` 実データ化
@@ -166,4 +167,3 @@
 - compatibility fixtures
 - e2e API tests
 - federation interop tests
-- CI

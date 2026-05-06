@@ -50,7 +50,11 @@ pub(crate) async fn search_local_status_rows(
     let result = if let Some(account_id) = account_id {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(account_id));
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(match max_timestamp {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
@@ -96,7 +100,11 @@ pub(crate) async fn search_local_status_rows(
         .await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(match max_timestamp {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
@@ -159,7 +167,11 @@ pub(crate) async fn search_remote_status_rows(
     let result = if let Some(actor_uri) = actor_uri {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(actor_uri));
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(match max_timestamp {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
@@ -178,9 +190,8 @@ pub(crate) async fn search_remote_status_rows(
         });
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = 1 + patterns.len();
-        db.prepare(
-            &format!(
-                "SELECT
+        db.prepare(&format!(
+            "SELECT
                 rs.id,
                 rs.actor_uri,
                 rs.object_uri,
@@ -218,20 +229,23 @@ pub(crate) async fn search_remote_status_rows(
                     OR (rs.published_at = ?{min_ts} AND rs.id > ?{min_id}))
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
-                search_clauses,
-                max_ts = pattern_max_index + 1,
-                max_id = pattern_max_index + 2,
-                min_ts = pattern_max_index + 3,
-                min_id = pattern_max_index + 4,
-                limit = pattern_max_index + 5,
-            ),
-        )
+            search_clauses,
+            max_ts = pattern_max_index + 1,
+            max_id = pattern_max_index + 2,
+            min_ts = pattern_max_index + 3,
+            min_id = pattern_max_index + 4,
+            limit = pattern_max_index + 5,
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(match max_timestamp {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
@@ -250,9 +264,8 @@ pub(crate) async fn search_remote_status_rows(
         });
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = patterns.len();
-        db.prepare(
-            &format!(
-                "SELECT
+        db.prepare(&format!(
+            "SELECT
                 rs.id,
                 rs.actor_uri,
                 rs.object_uri,
@@ -289,14 +302,13 @@ pub(crate) async fn search_remote_status_rows(
                     OR (rs.published_at = ?{min_ts} AND rs.id > ?{min_id}))
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
-                search_clauses,
-                max_ts = pattern_max_index + 1,
-                max_id = pattern_max_index + 2,
-                min_ts = pattern_max_index + 3,
-                min_id = pattern_max_index + 4,
-                limit = pattern_max_index + 5,
-            ),
-        )
+            search_clauses,
+            max_ts = pattern_max_index + 1,
+            max_id = pattern_max_index + 2,
+            min_ts = pattern_max_index + 3,
+            min_id = pattern_max_index + 4,
+            limit = pattern_max_index + 5,
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?

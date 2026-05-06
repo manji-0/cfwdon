@@ -1,7 +1,6 @@
 use super::{
     AppConfig, D1Database, Error, FollowAccountRequest, FormEntry, LocalAccount, Result, actor_url,
-    parse_optional_bool,
-    send_push_notification,
+    parse_optional_bool, send_push_notification,
 };
 use worker::Request;
 use worker::d1::D1Type;

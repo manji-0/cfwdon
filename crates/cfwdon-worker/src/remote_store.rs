@@ -223,9 +223,7 @@ pub(crate) async fn upsert_remote_status(
         Error::RustError(format!("failed to serialize remote status object: {error}"))
     })?;
     let previous = find_remote_status_edit_state_by_object_uri(db, &object_uri).await?;
-    let previous_raw_object_json = previous
-        .as_ref()
-        .map(|value| value.raw_object_json.clone());
+    let previous_raw_object_json = previous.as_ref().map(|value| value.raw_object_json.clone());
     let visibility = visibility_from_activitypub_object(object);
     let content_html = object
         .get("content")

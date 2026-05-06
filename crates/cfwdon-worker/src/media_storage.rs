@@ -1,7 +1,6 @@
 use crate::{
-    D1Database, Error, LocalAccount, MediaAttachmentRow, MediaKind, MediaUploadDraft,
-    OrphanMediaRow, Result, delete_media_attachment_row, generate_entity_id,
-    require_media_attachment_by_id,
+    D1Database, LocalAccount, MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow,
+    Result, delete_media_attachment_row, generate_entity_id, require_media_attachment_by_id,
 };
 use worker::{Bucket, HttpMetadata, d1::D1Type};
 
@@ -19,7 +18,7 @@ pub(crate) async fn store_media_attachment(
         media_id
     );
 
-    let upload = bucket
+    bucket
         .put(&object_key, draft.bytes.clone())
         .http_metadata(HttpMetadata {
             content_type: Some(draft.content_type.clone()),
@@ -28,11 +27,6 @@ pub(crate) async fn store_media_attachment(
         })
         .execute()
         .await?;
-    if upload.is_none() {
-        return Err(Error::RustError(
-            "failed to persist media object to R2".to_owned(),
-        ));
-    }
 
     let bindings = [
         D1Type::Text(media_id.as_str()),

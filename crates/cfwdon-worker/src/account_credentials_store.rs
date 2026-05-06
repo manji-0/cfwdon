@@ -177,7 +177,7 @@ async fn store_profile_media(
         "profiles/{}/{}/{}",
         account.id, upload.object_kind, media_id
     );
-    let result = bucket
+    bucket
         .put(&object_key, upload.bytes.clone())
         .http_metadata(HttpMetadata {
             content_type: Some(upload.content_type.clone()),
@@ -186,11 +186,5 @@ async fn store_profile_media(
         })
         .execute()
         .await?;
-    if result.is_none() {
-        return Err(Error::RustError(format!(
-            "failed to persist {} object to R2",
-            upload.object_kind
-        )));
-    }
     Ok((object_key, upload.content_type.clone()))
 }

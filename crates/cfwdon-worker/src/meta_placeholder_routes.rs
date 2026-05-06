@@ -42,10 +42,10 @@ use futures_util::{StreamExt, pin_mut};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
+use wasm_bindgen_futures::spawn_local;
 use worker::{
     D1Database, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair, d1::D1Type,
 };
-use wasm_bindgen_futures::spawn_local;
 
 #[derive(Debug, Deserialize)]
 struct OembedQuery {
@@ -2138,8 +2138,8 @@ fn build_streaming_event_stream(
     list: Option<String>,
     viewer: Option<crate::LocalAccount>,
 ) -> impl futures_util::TryStream<Ok = Vec<u8>, Error = worker::Error>
-       + futures_util::Stream<Item = std::result::Result<Vec<u8>, worker::Error>>
-       + 'static {
++ futures_util::Stream<Item = std::result::Result<Vec<u8>, worker::Error>>
++ 'static {
     try_stream! {
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut since_id = None::<String>;

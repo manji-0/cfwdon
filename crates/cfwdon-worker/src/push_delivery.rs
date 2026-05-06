@@ -1,13 +1,15 @@
 use crate::{
-    AppConfig, Error, Result, StatusRow, find_local_status_by_object_uri,
-    load_push_subscription, local_status_target_uri, push_subscription_alert_enabled,
+    AppConfig, Error, Result, StatusRow, find_local_status_by_object_uri, load_push_subscription,
+    local_status_target_uri, push_subscription_alert_enabled,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use js_sys::Uint8Array;
 use serde::Deserialize;
 use serde_json::json;
 use wasm_bindgen::JsValue;
-use web_push_native::{Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey};
+use web_push_native::{
+    Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey,
+};
 use worker::{D1Database, Fetch, Headers, Method, Request, RequestInit};
 
 #[derive(Debug, Deserialize)]
@@ -20,11 +22,7 @@ async fn load_account_ids(
     sql: &str,
     bindings: &[worker::d1::D1Type<'_>],
 ) -> Result<Vec<String>> {
-    let result = db
-        .prepare(sql)
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
     Ok(result
         .results::<AccountIdRow>()?
         .into_iter()
@@ -66,7 +64,11 @@ fn decode_urlsafe_bytes(value: &str, field: &str) -> Result<Vec<u8>> {
         .map_err(|error| Error::RustError(format!("invalid base64url {field}: {error}")))
 }
 
-fn notification_payload(notification_type: &str, account_id: &str, details: serde_json::Value) -> Vec<u8> {
+fn notification_payload(
+    notification_type: &str,
+    account_id: &str,
+    details: serde_json::Value,
+) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "type": notification_type,
         "account_id": account_id,
@@ -86,15 +88,21 @@ async fn build_push_request(
         .web_push_vapid_private_key
         .as_deref()
         .ok_or_else(|| Error::RustError("missing WEB_PUSH_VAPID_PRIVATE_KEY".to_owned()))?;
-    let key_pair = ES256KeyPair::from_bytes(&decode_urlsafe_bytes(private_key, "VAPID private key")?)
-        .map_err(|error| Error::RustError(format!("failed to load VAPID private key: {error}")))?;
+    let key_pair =
+        ES256KeyPair::from_bytes(&decode_urlsafe_bytes(private_key, "VAPID private key")?)
+            .map_err(|error| {
+                Error::RustError(format!("failed to load VAPID private key: {error}"))
+            })?;
     let subject = vapid_subject(config);
     let builder = WebPushBuilder::new(
         endpoint
             .parse()
             .map_err(|error| Error::RustError(format!("invalid push endpoint URL: {error}")))?,
-        PublicKey::from_sec1_bytes(&decode_urlsafe_bytes(p256dh_key, "subscription public key")?)
-            .map_err(|error| Error::RustError(format!("failed to load push public key: {error}")))?,
+        PublicKey::from_sec1_bytes(&decode_urlsafe_bytes(
+            p256dh_key,
+            "subscription public key",
+        )?)
+        .map_err(|error| Error::RustError(format!("failed to load push public key: {error}")))?,
         Auth::clone_from_slice(&decode_urlsafe_bytes(auth_key, "subscription auth secret")?),
     )
     .with_vapid(&key_pair, &subject);

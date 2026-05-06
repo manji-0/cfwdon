@@ -313,18 +313,25 @@ pub(crate) async fn search_local_accounts(
 
     let result = if following_only {
         let mut bindings = Vec::with_capacity(patterns.len() + 4);
-        bindings.push(D1Type::Text(
-            viewer_account_id
-                .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
-        ));
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Text(viewer_account_id.ok_or_else(|| {
+            Error::RustError("missing viewer account id".to_owned())
+        })?));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(D1Type::Text(local_host.as_str()));
         bindings.push(D1Type::Integer(limit as i32));
         bindings.push(D1Type::Integer(offset as i32));
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 3);
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(D1Type::Text(local_host.as_str()));
         bindings.push(D1Type::Integer(limit as i32));
         bindings.push(D1Type::Integer(offset as i32));
@@ -407,17 +414,24 @@ pub(crate) async fn search_remote_accounts(
 
     let result = if following_only {
         let mut bindings = Vec::with_capacity(patterns.len() + 3);
-        bindings.push(D1Type::Text(
-            viewer_account_id
-                .ok_or_else(|| Error::RustError("missing viewer account id".to_owned()))?,
-        ));
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.push(D1Type::Text(viewer_account_id.ok_or_else(|| {
+            Error::RustError("missing viewer account id".to_owned())
+        })?));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(D1Type::Integer(limit as i32));
         bindings.push(D1Type::Integer(offset as i32));
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 2);
-        bindings.extend(patterns.iter().map(|pattern| D1Type::Text(pattern.as_str())));
+        bindings.extend(
+            patterns
+                .iter()
+                .map(|pattern| D1Type::Text(pattern.as_str())),
+        );
         bindings.push(D1Type::Integer(limit as i32));
         bindings.push(D1Type::Integer(offset as i32));
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
@@ -437,7 +451,10 @@ pub(crate) async fn search_cached_accounts(
 ) -> Result<Vec<MastodonAccountResponse>> {
     let mut accounts = Vec::new();
     let viewer_account_id = viewer.map(|account| account.id.as_str());
-    let query_limit = limit.saturating_add(offset).saturating_mul(4).clamp(limit, 200);
+    let query_limit = limit
+        .saturating_add(offset)
+        .saturating_mul(4)
+        .clamp(limit, 200);
     let search_terms = account_search_terms(query, config);
 
     for account in search_local_accounts(
