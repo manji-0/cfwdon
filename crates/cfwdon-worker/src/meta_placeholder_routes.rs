@@ -1208,7 +1208,7 @@ pub(crate) async fn annual_report_action_response(
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
-        return Ok(Response::empty()?);
+        return Response::empty();
     };
     let db = ctx.d1(&config.database_binding)?;
     let account = resolve_local_account(&db, &user).await?;
@@ -1216,17 +1216,17 @@ pub(crate) async fn annual_report_action_response(
 
     if url.path().ends_with("/read") {
         mark_generated_annual_report_viewed(&db, &account.id, year).await?;
-        return Ok(Response::empty()?);
+        return Response::empty();
     }
 
     if year != current_campaign_year() {
-        return Ok(Response::empty()?);
+        return Response::empty();
     }
     if find_generated_annual_report(&db, &account.id, year)
         .await?
         .is_some()
     {
-        return Ok(Response::empty()?);
+        return Response::empty();
     }
 
     create_generated_annual_report(&db, &account, year).await?;
@@ -2137,9 +2137,11 @@ fn build_streaming_event_stream(
     tag: Option<String>,
     list: Option<String>,
     viewer: Option<crate::LocalAccount>,
-) -> impl futures_util::TryStream<Ok = Vec<u8>, Error = worker::Error>
-+ futures_util::Stream<Item = std::result::Result<Vec<u8>, worker::Error>>
-+ 'static {
+) -> impl futures_util::TryStream<
+    Ok = Vec<u8>,
+    Error = worker::Error,
+    Item = std::result::Result<Vec<u8>, worker::Error>,
+> + 'static {
     try_stream! {
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut since_id = None::<String>;
@@ -2381,16 +2383,11 @@ pub(crate) async fn streaming_placeholder_response(
                 viewer_for_ws,
             );
             pin_mut!(event_stream);
-            loop {
-                match event_stream.next().await {
-                    Some(Ok(bytes)) => {
-                        if let Ok(text) = std::str::from_utf8(&bytes) {
-                            if websocket.send_with_str(text).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Err(_)) | None => break,
+            while let Some(Ok(bytes)) = event_stream.next().await {
+                if let Ok(text) = std::str::from_utf8(&bytes)
+                    && websocket.send_with_str(text).is_err()
+                {
+                    break;
                 }
             }
             let _ = websocket.close(Some(1000), Some("stream closed"));
@@ -2423,7 +2420,7 @@ pub(crate) async fn streaming_placeholder_response(
             .headers_mut()
             .set("Content-Type", "text/event-stream")?;
         response.headers_mut().set("Cache-Control", "no-cache")?;
-        return Ok(response);
+        Ok(response)
     } else {
         let mut body = format!(": cfwdon-placeholder stream={stream}\n");
         if let Some(tag) = query
@@ -2448,7 +2445,7 @@ pub(crate) async fn streaming_placeholder_response(
             .headers_mut()
             .set("Content-Type", "text/event-stream")?;
         response.headers_mut().set("Cache-Control", "no-cache")?;
-        return Ok(response);
+        Ok(response)
     }
 }
 

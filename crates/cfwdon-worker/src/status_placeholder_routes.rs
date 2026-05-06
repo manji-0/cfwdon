@@ -272,9 +272,7 @@ pub(crate) fn configured_translation_provider(
         .map(|value| normalize_translation_provider(&value.to_string()))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "libretranslate".to_owned());
-    if translation_provider_kind(&provider).is_none() {
-        return None;
-    }
+    translation_provider_kind(&provider)?;
 
     let endpoint_url = ctx
         .var("TRANSLATION_API_URL")

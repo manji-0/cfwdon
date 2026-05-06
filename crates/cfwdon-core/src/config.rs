@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TimelineAccessLevel {
+    #[default]
     Public,
     Authenticated,
     Disabled,
@@ -15,12 +16,6 @@ impl TimelineAccessLevel {
             Self::Authenticated => "authenticated",
             Self::Disabled => "disabled",
         }
-    }
-}
-
-impl Default for TimelineAccessLevel {
-    fn default() -> Self {
-        Self::Public
     }
 }
 
