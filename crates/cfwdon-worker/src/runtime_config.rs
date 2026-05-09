@@ -12,6 +12,11 @@ pub(crate) struct RootDocument {
 pub(crate) const MAX_IMAGE_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_AV_UPLOAD_BYTES: usize = 40 * 1024 * 1024;
 
+const DEFAULT_INSTANCE_DOMAIN: &str = "example.com";
+const DEFAULT_INSTANCE_NAME: &str = "cfwdon";
+const DEFAULT_INSTANCE_DESCRIPTION: &str =
+    "Cloudflare Workers + D1 + R2 based Mastodon-compatible server";
+
 const ROOT_ENDPOINTS: &[&str] = &[
     "/",
     "/healthz",
@@ -194,11 +199,10 @@ pub(crate) fn root_document() -> RootDocument {
 
 pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
     let mut config = AppConfig::new(
-        optional_var(ctx, "INSTANCE_DOMAIN").unwrap_or_else(|| "example.com".to_owned()),
-        optional_var(ctx, "INSTANCE_NAME").unwrap_or_else(|| "cfwdon".to_owned()),
-        optional_var(ctx, "INSTANCE_DESCRIPTION").unwrap_or_else(|| {
-            "Cloudflare Workers + D1 + R2 based Mastodon-compatible server".to_owned()
-        }),
+        optional_var(ctx, "INSTANCE_DOMAIN").unwrap_or_else(|| DEFAULT_INSTANCE_DOMAIN.to_owned()),
+        optional_var(ctx, "INSTANCE_NAME").unwrap_or_else(|| DEFAULT_INSTANCE_NAME.to_owned()),
+        optional_var(ctx, "INSTANCE_DESCRIPTION")
+            .unwrap_or_else(|| DEFAULT_INSTANCE_DESCRIPTION.to_owned()),
     );
 
     set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
@@ -448,5 +452,12 @@ mod tests {
         assert_eq!(document.version, build.version);
         assert_eq!(document.runtime, build.runtime);
         assert_eq!(document.endpoints, ROOT_ENDPOINTS);
+    }
+
+    #[test]
+    fn default_instance_metadata_is_non_empty() {
+        assert!(!DEFAULT_INSTANCE_DOMAIN.is_empty());
+        assert!(!DEFAULT_INSTANCE_NAME.is_empty());
+        assert!(!DEFAULT_INSTANCE_DESCRIPTION.is_empty());
     }
 }
