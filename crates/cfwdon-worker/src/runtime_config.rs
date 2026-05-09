@@ -409,4 +409,15 @@ mod tests {
         let unique = endpoints.iter().collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), endpoints.len());
     }
+
+    #[test]
+    fn root_document_reflects_build_metadata() {
+        let build = build_metadata();
+        let document = root_document();
+
+        assert_eq!(document.service, build.service_name);
+        assert_eq!(document.version, build.version);
+        assert_eq!(document.runtime, build.runtime);
+        assert_eq!(document.endpoints, ROOT_ENDPOINTS);
+    }
 }
