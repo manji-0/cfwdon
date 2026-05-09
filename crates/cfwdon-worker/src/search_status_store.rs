@@ -78,6 +78,14 @@ fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
     }
 }
 
+fn push_search_pattern_bindings<'a>(bindings: &mut Vec<D1Type<'a>>, patterns: &'a [String]) {
+    bindings.extend(
+        patterns
+            .iter()
+            .map(|pattern| D1Type::Text(pattern.as_str())),
+    );
+}
+
 fn push_cursor_bindings<'a>(
     bindings: &mut Vec<D1Type<'a>>,
     max_timestamp: Option<&'a str>,
@@ -181,11 +189,7 @@ pub(crate) async fn search_local_status_rows(
     let result = if let Some(account_id) = account_id {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(account_id));
-        bindings.extend(
-            patterns
-                .iter()
-                .map(|pattern| D1Type::Text(pattern.as_str())),
-        );
+        push_search_pattern_bindings(&mut bindings, &patterns);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -218,11 +222,7 @@ pub(crate) async fn search_local_status_rows(
         .await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        bindings.extend(
-            patterns
-                .iter()
-                .map(|pattern| D1Type::Text(pattern.as_str())),
-        );
+        push_search_pattern_bindings(&mut bindings, &patterns);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -272,11 +272,7 @@ pub(crate) async fn search_remote_status_rows(
     let result = if let Some(actor_uri) = actor_uri {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(actor_uri));
-        bindings.extend(
-            patterns
-                .iter()
-                .map(|pattern| D1Type::Text(pattern.as_str())),
-        );
+        push_search_pattern_bindings(&mut bindings, &patterns);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -309,11 +305,7 @@ pub(crate) async fn search_remote_status_rows(
         .await?
     } else {
         let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        bindings.extend(
-            patterns
-                .iter()
-                .map(|pattern| D1Type::Text(pattern.as_str())),
-        );
+        push_search_pattern_bindings(&mut bindings, &patterns);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
