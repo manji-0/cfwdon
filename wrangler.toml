@@ -23,8 +23,8 @@ EMAIL_FROM = "cfwdon <noreply@fedi.manji.app>"
 # Protected routes are expected to sit behind Cloudflare Auth / Access.
 ACCESS_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email"
 ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+ACCESS_TEAM_DOMAIN = "manji0.cloudflareaccess.com"
+ACCESS_AUD = "d7680c2b52911c0feec79055d780e432a7b8a4665b2e9f33118fa24b88c421fb"
 
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.
