@@ -222,17 +222,13 @@ pub(crate) fn remote_poll_draft_acknowledges_vote(
         return false;
     }
 
-    if poll.multiple != 0 {
-        let expected_voters_count = if had_existing_votes || new_choices.is_empty() {
-            poll.voters_count.map(|value| value.max(0) as u64)
-        } else {
-            Some(poll.voters_count.unwrap_or(0).saturating_add(1).max(0) as u64)
-        };
-        if let Some(expected_voters_count) = expected_voters_count
-            && fetched_poll.voters_count.unwrap_or(0) < expected_voters_count
-        {
-            return false;
-        }
+    if poll.multiple != 0
+        && !remote_poll_has_expected_voters_count(
+            fetched_poll,
+            expected_voters_count_after_vote(poll, had_existing_votes, new_choices),
+        )
+    {
+        return false;
     }
 
     let remote_votes_by_title = remote_poll_votes_by_title(fetched_poll);
@@ -266,8 +262,10 @@ pub(crate) fn remote_poll_draft_acknowledges_local_snapshot(
     }
 
     if poll.multiple != 0
-        && let Some(expected_voters_count) = poll.voters_count.map(|value| value.max(0) as u64)
-        && fetched_poll.voters_count.unwrap_or(0) < expected_voters_count
+        && !remote_poll_has_expected_voters_count(
+            fetched_poll,
+            poll.voters_count.map(|value| value.max(0) as u64),
+        )
     {
         return false;
     }
@@ -293,6 +291,27 @@ fn remote_poll_votes_by_title(fetched_poll: &RemotePollDraft) -> HashMap<&str, u
         .iter()
         .map(|option| (option.title.as_str(), option.votes_count))
         .collect()
+}
+
+fn expected_voters_count_after_vote(
+    poll: &RemoteStatusPollRow,
+    had_existing_votes: bool,
+    new_choices: &[u32],
+) -> Option<u64> {
+    if had_existing_votes || new_choices.is_empty() {
+        poll.voters_count.map(|value| value.max(0) as u64)
+    } else {
+        Some(poll.voters_count.unwrap_or(0).saturating_add(1).max(0) as u64)
+    }
+}
+
+fn remote_poll_has_expected_voters_count(
+    fetched_poll: &RemotePollDraft,
+    expected_voters_count: Option<u64>,
+) -> bool {
+    expected_voters_count
+        .map(|expected| fetched_poll.voters_count.unwrap_or(0) >= expected)
+        .unwrap_or(true)
 }
 
 async fn refresh_remote_poll_after_vote_if_acknowledged(
