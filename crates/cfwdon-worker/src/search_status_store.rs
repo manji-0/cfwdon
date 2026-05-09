@@ -78,6 +78,21 @@ fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
     }
 }
 
+fn push_cursor_bindings<'a>(
+    bindings: &mut Vec<D1Type<'a>>,
+    max_timestamp: Option<&'a str>,
+    max_id: Option<&'a str>,
+    min_timestamp: Option<&'a str>,
+    min_id: Option<&'a str>,
+    limit: u32,
+) {
+    bindings.push(optional_text_binding(max_timestamp));
+    bindings.push(optional_text_binding(max_id));
+    bindings.push(optional_text_binding(min_timestamp));
+    bindings.push(optional_text_binding(min_id));
+    bindings.push(D1Type::Integer(limit as i32));
+}
+
 fn cursor_window_clause(
     timestamp_column: &str,
     id_column: &str,
@@ -171,11 +186,14 @@ pub(crate) async fn search_local_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(optional_text_binding(max_timestamp));
-        bindings.push(optional_text_binding(max_id));
-        bindings.push(optional_text_binding(min_timestamp));
-        bindings.push(optional_text_binding(min_id));
-        bindings.push(D1Type::Integer(limit as i32));
+        push_cursor_bindings(
+            &mut bindings,
+            max_timestamp,
+            max_id,
+            min_timestamp,
+            min_id,
+            limit,
+        );
         let pattern_max_index = 1 + patterns.len();
         let cursor_clause = cursor_window_clause(
             "created_at",
@@ -205,11 +223,14 @@ pub(crate) async fn search_local_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(optional_text_binding(max_timestamp));
-        bindings.push(optional_text_binding(max_id));
-        bindings.push(optional_text_binding(min_timestamp));
-        bindings.push(optional_text_binding(min_id));
-        bindings.push(D1Type::Integer(limit as i32));
+        push_cursor_bindings(
+            &mut bindings,
+            max_timestamp,
+            max_id,
+            min_timestamp,
+            min_id,
+            limit,
+        );
         let pattern_max_index = patterns.len();
         let cursor_clause = cursor_window_clause(
             "created_at",
@@ -256,11 +277,14 @@ pub(crate) async fn search_remote_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(optional_text_binding(max_timestamp));
-        bindings.push(optional_text_binding(max_id));
-        bindings.push(optional_text_binding(min_timestamp));
-        bindings.push(optional_text_binding(min_id));
-        bindings.push(D1Type::Integer(limit as i32));
+        push_cursor_bindings(
+            &mut bindings,
+            max_timestamp,
+            max_id,
+            min_timestamp,
+            min_id,
+            limit,
+        );
         let pattern_max_index = 1 + patterns.len();
         let cursor_clause = cursor_window_clause(
             "rs.published_at",
@@ -290,11 +314,14 @@ pub(crate) async fn search_remote_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(optional_text_binding(max_timestamp));
-        bindings.push(optional_text_binding(max_id));
-        bindings.push(optional_text_binding(min_timestamp));
-        bindings.push(optional_text_binding(min_id));
-        bindings.push(D1Type::Integer(limit as i32));
+        push_cursor_bindings(
+            &mut bindings,
+            max_timestamp,
+            max_id,
+            min_timestamp,
+            min_id,
+            limit,
+        );
         let pattern_max_index = patterns.len();
         let cursor_clause = cursor_window_clause(
             "rs.published_at",
