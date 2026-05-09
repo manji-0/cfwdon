@@ -454,6 +454,23 @@ fn apply_status_search_prefixed_filter(
     true
 }
 
+fn collect_status_search_term(
+    parsed: &mut ParsedStatusSearchQuery,
+    terms: &mut Vec<String>,
+    token: &str,
+    negated: bool,
+) {
+    let value = fallback_status_search_term(token);
+    if value.is_empty() {
+        return;
+    }
+    if negated {
+        parsed.excluded_text_terms.push(value);
+    } else {
+        terms.push(value);
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -466,15 +483,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                 continue;
             }
         }
-        let value = fallback_status_search_term(token);
-        if value.is_empty() {
-            continue;
-        }
-        if negated {
-            parsed.excluded_text_terms.push(value);
-        } else {
-            terms.push(value);
-        }
+        collect_status_search_term(&mut parsed, &mut terms, token, negated);
     }
 
     set_status_search_text_terms(&mut parsed, terms);
