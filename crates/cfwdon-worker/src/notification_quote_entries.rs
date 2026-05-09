@@ -177,3 +177,50 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
         created_at: update.created_at.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::QuotedUpdateNotificationRow;
+
+    #[test]
+    fn quoted_update_status_row_preserves_status_fields() {
+        let update = QuotedUpdateNotificationRow {
+            id: "status-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            ap_id: Some("https://example.com/users/alice/statuses/1".to_owned()),
+            in_reply_to_id: Some("status-0".to_owned()),
+            boost_of_uri: Some("https://remote.example/statuses/boost".to_owned()),
+            quote_of_uri: Some("https://remote.example/statuses/quoted".to_owned()),
+            content_html: "<p>hello</p>".to_owned(),
+            text_content: "hello".to_owned(),
+            spoiler_text: "spoiler".to_owned(),
+            visibility: "unlisted".to_owned(),
+            sensitive: 1,
+            language: Some("en".to_owned()),
+            quote_state: "accepted".to_owned(),
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+            remote_actor_uri: "https://remote.example/users/bob".to_owned(),
+            remote_updated_at: "2025-01-02T00:00:00Z".to_owned(),
+        };
+
+        let status = quoted_update_status_row(&update);
+
+        assert_eq!(status.id, update.id);
+        assert_eq!(status.account_id, update.account_id);
+        assert_eq!(status.ap_id, update.ap_id);
+        assert_eq!(status.in_reply_to_id, update.in_reply_to_id);
+        assert_eq!(status.boost_of_uri, update.boost_of_uri);
+        assert_eq!(status.quote_of_uri, update.quote_of_uri);
+        assert_eq!(status.content_html, update.content_html);
+        assert_eq!(status._text_content, update.text_content);
+        assert_eq!(status.spoiler_text, update.spoiler_text);
+        assert_eq!(status.visibility, update.visibility);
+        assert_eq!(status.sensitive, update.sensitive);
+        assert_eq!(status.language, update.language);
+        assert_eq!(status.quote_state, update.quote_state);
+        assert_eq!(status.created_at, update.created_at);
+        assert!(status.quote_approval_policy.is_none());
+        assert!(status.application_id.is_none());
+    }
+}
