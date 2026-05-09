@@ -3,7 +3,7 @@ use crate::notifications::{
     notification_type_allowed, push_notification_entry,
 };
 use crate::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusRow, StatusRow, actor_url,
+    AppConfig, MastodonAccountResponse, NotificationsQuery, StatusRow, actor_url,
     build_local_status_response, build_remote_status_response, can_view_local_status,
     find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     list_local_quote_notifications_for_account, list_quoted_update_notifications_for_account,
@@ -77,31 +77,15 @@ pub(crate) async fn collect_quote_notification_entries(
         ) {
             continue;
         }
-        let status = RemoteStatusRow {
-            id: quote.id.clone(),
-            actor_uri: quote.actor_uri.clone(),
-            object_uri: quote.object_uri.clone(),
-            url: quote.url.clone(),
-            in_reply_to_uri: quote.in_reply_to_uri.clone(),
-            boost_of_uri: quote.boost_of_uri.clone(),
-            quote_of_uri: quote.quote_of_uri.clone(),
-            content_html: quote.content_html.clone(),
-            spoiler_text: quote.spoiler_text.clone(),
-            visibility: quote.visibility.clone(),
-            sensitive: quote.sensitive,
-            language: quote.language.clone(),
-            quote_state: quote.quote_state.clone(),
-            published_at: quote.published_at.clone(),
-        };
         let status_response =
-            build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
+            build_remote_status_response(db, config, Some(viewer), &quote, &actor).await?;
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("quote-remote-{}-{}", remote_id, status.id),
+                id: format!("quote-remote-{}-{}", remote_id, quote.id),
                 notification_type: "quote".to_owned(),
-                group_key: format!("quote-remote-{}-{}", remote_id, status.id),
-                created_at: status.published_at,
+                group_key: format!("quote-remote-{}-{}", remote_id, quote.id),
+                created_at: quote.published_at,
                 account: MastodonAccountResponse::from_remote_actor(&actor),
                 status: Some(status_response),
                 report: None,
@@ -142,24 +126,7 @@ pub(crate) async fn collect_quoted_update_notification_entries(
         ) {
             continue;
         }
-        let status = StatusRow {
-            id: update.id.clone(),
-            account_id: update.account_id.clone(),
-            ap_id: update.ap_id.clone(),
-            in_reply_to_id: update.in_reply_to_id.clone(),
-            boost_of_uri: update.boost_of_uri.clone(),
-            quote_of_uri: update.quote_of_uri.clone(),
-            content_html: update.content_html.clone(),
-            _text_content: update.text_content.clone(),
-            spoiler_text: update.spoiler_text.clone(),
-            visibility: update.visibility.clone(),
-            sensitive: update.sensitive,
-            language: update.language.clone(),
-            quote_approval_policy: None,
-            quote_state: update.quote_state.clone(),
-            application_id: None,
-            created_at: update.created_at.clone(),
-        };
+        let status = quoted_update_status_row(&update);
         let media = find_media_attachments_by_status_id(db, &status.id).await?;
         let status_response = build_local_status_response(
             db,
@@ -188,4 +155,25 @@ pub(crate) async fn collect_quoted_update_notification_entries(
     }
 
     Ok(())
+}
+
+fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> StatusRow {
+    StatusRow {
+        id: update.id.clone(),
+        account_id: update.account_id.clone(),
+        ap_id: update.ap_id.clone(),
+        in_reply_to_id: update.in_reply_to_id.clone(),
+        boost_of_uri: update.boost_of_uri.clone(),
+        quote_of_uri: update.quote_of_uri.clone(),
+        content_html: update.content_html.clone(),
+        _text_content: update.text_content.clone(),
+        spoiler_text: update.spoiler_text.clone(),
+        visibility: update.visibility.clone(),
+        sensitive: update.sensitive,
+        language: update.language.clone(),
+        quote_approval_policy: None,
+        quote_state: update.quote_state.clone(),
+        application_id: None,
+        created_at: update.created_at.clone(),
+    }
 }
