@@ -400,6 +400,21 @@ fn merge_status_search_has_filter(
     }
 }
 
+fn merge_status_search_in_filter(parsed: &mut ParsedStatusSearchQuery, value: &str, negated: bool) {
+    match unquote_status_search_token(value)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "public" => {
+            merge_boolean_filter(&mut parsed.in_public, !negated, &mut parsed.unsatisfiable)
+        }
+        "library" => {
+            merge_boolean_filter(&mut parsed.in_library, !negated, &mut parsed.unsatisfiable)
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -447,22 +462,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                     continue;
                 }
                 "in" => {
-                    match unquote_status_search_token(value)
-                        .to_ascii_lowercase()
-                        .as_str()
-                    {
-                        "public" => merge_boolean_filter(
-                            &mut parsed.in_public,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "library" => merge_boolean_filter(
-                            &mut parsed.in_library,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        _ => {}
-                    }
+                    merge_status_search_in_filter(&mut parsed, value, negated);
                     continue;
                 }
                 _ => {}
