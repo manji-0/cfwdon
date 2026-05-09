@@ -480,6 +480,15 @@ mod tests {
     }
 
     #[test]
+    fn root_endpoints_use_absolute_paths() {
+        assert!(
+            root_endpoint_list()
+                .iter()
+                .all(|endpoint| endpoint.starts_with('/'))
+        );
+    }
+
+    #[test]
     fn root_document_reflects_build_metadata() {
         let build = build_metadata();
         let document = root_document();
