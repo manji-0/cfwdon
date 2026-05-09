@@ -203,3 +203,34 @@ async fn store_profile_media(
         .await?;
     Ok((object_key, upload.content_type.clone()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_media_was_replaced_only_when_new_key_differs() {
+        let unchanged = (
+            "profiles/account/avatar/same".to_owned(),
+            "image/png".to_owned(),
+        );
+        let changed = (
+            "profiles/account/avatar/new".to_owned(),
+            "image/png".to_owned(),
+        );
+
+        assert!(!profile_media_was_replaced(None, Some(&changed)));
+        assert!(!profile_media_was_replaced(
+            Some("profiles/account/avatar/same"),
+            None
+        ));
+        assert!(!profile_media_was_replaced(
+            Some("profiles/account/avatar/same"),
+            Some(&unchanged)
+        ));
+        assert!(profile_media_was_replaced(
+            Some("profiles/account/avatar/old"),
+            Some(&changed)
+        ));
+    }
+}
