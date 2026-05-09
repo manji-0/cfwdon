@@ -189,15 +189,19 @@ pub(crate) async fn replace_remote_status_attachments(
 }
 
 pub(crate) async fn remote_status_has_media(db: &D1Database, status_id: &str) -> Result<bool> {
-    Ok(crate::count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM remote_status_attachments
-         WHERE status_id = ?1",
-        status_id,
-    )
-    .await?
-        > 0)
+    let status_id = D1Type::Text(status_id);
+    let row = db
+        .prepare(
+            "SELECT 1 AS found
+             FROM remote_status_attachments
+             WHERE status_id = ?1
+             LIMIT 1",
+        )
+        .bind_refs(&status_id)?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    Ok(row.is_some())
 }
 
 pub(crate) async fn list_orphan_media(
