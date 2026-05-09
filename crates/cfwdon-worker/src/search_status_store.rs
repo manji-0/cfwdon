@@ -36,6 +36,9 @@ const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
              FROM remote_statuses rs
              JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri";
 
+const LOCAL_STATUS_SEARCH_COLUMNS: &[&str] = &["text_content", "spoiler_text"];
+const REMOTE_STATUS_SEARCH_COLUMNS: &[&str] = &["content_html", "spoiler_text"];
+
 fn normalized_search_patterns(queries: &[String]) -> Vec<String> {
     let mut patterns = Vec::new();
     let mut seen = HashSet::new();
@@ -208,7 +211,7 @@ pub(crate) async fn search_local_status_rows(
     min_timestamp: Option<&str>,
 ) -> Result<Vec<StatusRow>> {
     let patterns = normalized_search_patterns(queries);
-    let search_clauses = search_like_clauses(&["text_content", "spoiler_text"], 2, patterns.len());
+    let search_clauses = search_like_clauses(LOCAL_STATUS_SEARCH_COLUMNS, 2, patterns.len());
     let result = if let Some(account_id) = account_id {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(account_id));
@@ -279,7 +282,7 @@ pub(crate) async fn search_remote_status_rows(
     min_timestamp: Option<&str>,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     let patterns = normalized_search_patterns(queries);
-    let search_clauses = search_like_clauses(&["content_html", "spoiler_text"], 2, patterns.len());
+    let search_clauses = search_like_clauses(REMOTE_STATUS_SEARCH_COLUMNS, 2, patterns.len());
     let result = if let Some(actor_uri) = actor_uri {
         let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
         bindings.push(D1Type::Text(actor_uri));
