@@ -1,8 +1,9 @@
-use crate::{Request, Response, Result, RouteContext, generate_entity_id, load_config};
+use crate::{
+    Request, Response, Result, RouteContext, generate_entity_id, load_config, now_unix_timestamp,
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
-use time::OffsetDateTime;
 use url::Url;
 use worker::{D1Database, d1::D1Type};
 
@@ -57,7 +58,7 @@ pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> ser
         "access_token": access_token,
         "token_type": "Bearer",
         "scope": scope,
-        "created_at": OffsetDateTime::now_utc().unix_timestamp(),
+        "created_at": now_unix_timestamp(),
     })
 }
 

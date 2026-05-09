@@ -17,6 +17,17 @@ pub(crate) fn now_iso_string() -> Result<String> {
         .ok_or_else(|| Error::RustError("failed to build ISO timestamp".to_owned()))
 }
 
+pub(crate) fn now_unix_timestamp() -> i64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        (js_sys::Date::now() / 1000.0).floor() as i64
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        OffsetDateTime::now_utc().unix_timestamp()
+    }
+}
+
 pub(crate) fn add_seconds_to_iso_string(value: &str, seconds: u64) -> Result<String> {
     let timestamp = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|error| Error::RustError(format!("invalid ISO timestamp {value}: {error}")))?;

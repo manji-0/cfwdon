@@ -4,7 +4,7 @@ use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{CryptoKey, CryptoKeyPair, WorkerGlobalScope};
+use web_sys::CryptoKey;
 use worker::{Error, Result};
 
 #[derive(Debug)]
@@ -22,12 +22,13 @@ pub(crate) async fn generate_account_key_material() -> Result<AccountKeyMaterial
 
     let key_pair =
         JsFuture::from(subtle.generate_key_with_object(&algorithm, true, &key_usages.into())?)
-            .await?
-            .dyn_into::<CryptoKeyPair>()
-            .map_err(|_| Error::RustError("failed to generate RSA account key pair".to_owned()))?;
-
-    let private_key = key_pair.get_private_key();
-    let public_key = key_pair.get_public_key();
+            .await?;
+    let private_key = Reflect::get(&key_pair, &JsValue::from_str("privateKey"))?
+        .dyn_into::<CryptoKey>()
+        .map_err(|_| Error::RustError("failed to read generated private key".to_owned()))?;
+    let public_key = Reflect::get(&key_pair, &JsValue::from_str("publicKey"))?
+        .dyn_into::<CryptoKey>()
+        .map_err(|_| Error::RustError("failed to read generated public key".to_owned()))?;
 
     Ok(AccountKeyMaterial {
         private_key_jwk: export_private_key_jwk(&subtle, &private_key).await?,
@@ -36,10 +37,10 @@ pub(crate) async fn generate_account_key_material() -> Result<AccountKeyMaterial
 }
 
 pub(crate) fn subtle_crypto() -> Result<web_sys::SubtleCrypto> {
-    let global = js_sys::global()
-        .dyn_into::<WorkerGlobalScope>()
-        .map_err(|_| Error::RustError("failed to access WorkerGlobalScope".to_owned()))?;
-    Ok(global.crypto().map_err(Error::from)?.subtle())
+    let crypto = Reflect::get(&js_sys::global(), &JsValue::from_str("crypto"))?
+        .dyn_into::<web_sys::Crypto>()
+        .map_err(|_| Error::RustError("failed to access global crypto".to_owned()))?;
+    Ok(crypto.subtle())
 }
 
 pub(crate) fn rsa_signing_algorithm(modulus_length: u32) -> Result<Object> {

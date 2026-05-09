@@ -180,7 +180,7 @@ pub(crate) fn root_document() -> RootDocument {
             "/api/v2/suggestions",
             "/api/v2/instance",
             "/api/v1/streaming",
-            "/api/v1/streaming/(*any)",
+            "/api/v1/streaming/*any",
             "/oauth/userinfo",
             "/api/oembed",
             "/.well-known/nodeinfo",

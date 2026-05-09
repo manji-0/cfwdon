@@ -363,7 +363,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/api/v1/streaming", |req, ctx| async move {
             streaming_placeholder_response(req, ctx).await
         })
-        .get_async("/api/v1/streaming/(*any)", |req, ctx| async move {
+        .get_async("/api/v1/streaming/*any", |req, ctx| async move {
             streaming_placeholder_response(req, ctx).await
         })
         .get_async("/users/:username/outbox", |_req, ctx| async move {
