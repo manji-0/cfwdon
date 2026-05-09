@@ -489,6 +489,14 @@ mod tests {
     }
 
     #[test]
+    fn root_endpoints_include_service_entrypoints() {
+        let endpoints = root_endpoint_list();
+
+        assert!(endpoints.contains(&"/"));
+        assert!(endpoints.contains(&"/healthz"));
+    }
+
+    #[test]
     fn root_document_reflects_build_metadata() {
         let build = build_metadata();
         let document = root_document();
