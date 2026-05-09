@@ -760,6 +760,11 @@ mod tests {
         assert!(!quote_state_uses_placeholder("pending"));
         assert!(!quote_state_uses_placeholder("accepted"));
     }
+
+    #[test]
+    fn remote_media_attachment_values_allows_empty_attachments() {
+        assert!(remote_media_attachment_values(&[]).is_empty());
+    }
 }
 
 async fn build_local_reblog_wrapper_response(
