@@ -138,6 +138,10 @@ fn limit_binding_index(pattern_max_index: usize) -> usize {
     pattern_max_index + 5
 }
 
+fn pattern_max_binding_index(pattern_count: usize, leading_filter_count: usize) -> usize {
+    leading_filter_count + pattern_count
+}
+
 fn json_string(value: &serde_json::Value, key: &str) -> String {
     value
         .get(key)
@@ -217,7 +221,7 @@ pub(crate) async fn search_local_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = 1 + patterns.len();
+        let pattern_max_index = pattern_max_binding_index(patterns.len(), 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
@@ -244,7 +248,7 @@ pub(crate) async fn search_local_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = patterns.len();
+        let pattern_max_index = pattern_max_binding_index(patterns.len(), 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
@@ -288,7 +292,7 @@ pub(crate) async fn search_remote_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = 1 + patterns.len();
+        let pattern_max_index = pattern_max_binding_index(patterns.len(), 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
@@ -315,7 +319,7 @@ pub(crate) async fn search_remote_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = patterns.len();
+        let pattern_max_index = pattern_max_binding_index(patterns.len(), 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
@@ -389,6 +393,12 @@ mod tests {
     #[test]
     fn limit_binding_index_follows_cursor_bindings() {
         assert_eq!(limit_binding_index(3), 8);
+    }
+
+    #[test]
+    fn pattern_max_binding_index_accounts_for_leading_filters() {
+        assert_eq!(pattern_max_binding_index(2, 0), 2);
+        assert_eq!(pattern_max_binding_index(2, 1), 3);
     }
 
     #[test]
