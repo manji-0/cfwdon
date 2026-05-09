@@ -2390,15 +2390,13 @@ async fn timestamp_is_after_current_timestamp_modifier(
     let bindings = [D1Type::Text(timestamp), D1Type::Text(modifier)];
     let row = db
         .prepare(
-            "SELECT CASE
-                    WHEN datetime(replace(replace(?1, 'T', ' '), 'Z', '')) > datetime(CURRENT_TIMESTAMP, ?2)
-                    THEN 1 ELSE 0
-             END AS count",
+            "SELECT 1 AS found
+             WHERE datetime(replace(replace(?1, 'T', ' '), 'Z', '')) > datetime(CURRENT_TIMESTAMP, ?2)",
         )
         .bind_refs(bindings.iter())?
         .first::<CountRow>(None)
         .await?;
-    Ok(row.map(|row| row.count).unwrap_or(0) > 0)
+    Ok(row.is_some())
 }
 
 async fn collection_notification_filtered(
