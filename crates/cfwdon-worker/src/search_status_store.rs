@@ -348,4 +348,12 @@ mod tests {
             "(lower(content_html) LIKE ?2 OR lower(spoiler_text) LIKE ?2) OR (lower(content_html) LIKE ?3 OR lower(spoiler_text) LIKE ?3)"
         );
     }
+
+    #[test]
+    fn cursor_window_clause_uses_supplied_columns_and_bindings() {
+        assert_eq!(
+            cursor_window_clause("rs.published_at", "rs.id", 4, 5, 6, 7),
+            "AND (?4 IS NULL\n                    OR rs.published_at < ?4\n                    OR (rs.published_at = ?4 AND rs.id < ?5))\n               AND (?6 IS NULL\n                    OR rs.published_at > ?6\n                    OR (rs.published_at = ?6 AND rs.id > ?7))"
+        );
+    }
 }
