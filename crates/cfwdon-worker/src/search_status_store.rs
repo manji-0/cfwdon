@@ -74,6 +74,47 @@ fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
     }
 }
 
+fn json_string(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|field| field.as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|field| field.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatusRow {
+    RemoteStatusRow {
+        id: json_string(value, "id"),
+        actor_uri: json_string(value, "actor_uri"),
+        object_uri: json_string(value, "object_uri"),
+        url: optional_json_string(value, "url"),
+        in_reply_to_uri: optional_json_string(value, "in_reply_to_uri"),
+        boost_of_uri: optional_json_string(value, "boost_of_uri"),
+        quote_of_uri: optional_json_string(value, "quote_of_uri"),
+        content_html: json_string(value, "content_html"),
+        spoiler_text: json_string(value, "spoiler_text"),
+        visibility: json_string(value, "visibility"),
+        sensitive: value
+            .get("sensitive")
+            .and_then(|field| field.as_i64())
+            .unwrap_or_default() as i32,
+        language: optional_json_string(value, "language"),
+        quote_state: value
+            .get("quote_state")
+            .and_then(|field| field.as_str())
+            .unwrap_or("accepted")
+            .to_owned(),
+        published_at: json_string(value, "published_at"),
+    }
+}
+
 pub(crate) async fn search_local_status_rows(
     db: &D1Database,
     queries: &[String],
@@ -255,72 +296,7 @@ pub(crate) async fn search_remote_status_rows(
     let mut rows = Vec::with_capacity(values.len());
     for value in values {
         rows.push((
-            RemoteStatusRow {
-                id: value
-                    .get("id")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                actor_uri: value
-                    .get("actor_uri")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                object_uri: value
-                    .get("object_uri")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                url: value
-                    .get("url")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned),
-                in_reply_to_uri: value
-                    .get("in_reply_to_uri")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned),
-                boost_of_uri: value
-                    .get("boost_of_uri")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned),
-                quote_of_uri: value
-                    .get("quote_of_uri")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned),
-                content_html: value
-                    .get("content_html")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                spoiler_text: value
-                    .get("spoiler_text")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                visibility: value
-                    .get("visibility")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                sensitive: value
-                    .get("sensitive")
-                    .and_then(|field| field.as_i64())
-                    .unwrap_or_default() as i32,
-                language: value
-                    .get("language")
-                    .and_then(|field| field.as_str())
-                    .map(ToOwned::to_owned),
-                quote_state: value
-                    .get("quote_state")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or("accepted")
-                    .to_owned(),
-                published_at: value
-                    .get("published_at")
-                    .and_then(|field| field.as_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-            },
+            remote_status_row_from_search_value(&value),
             RemoteActorRow::from_value(&value),
         ));
     }
