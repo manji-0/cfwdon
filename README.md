@@ -23,7 +23,7 @@ For the detailed route inventory, see [Mastodon API Compatibility](docs/mastodon
 The development shell installs the Rust toolchain, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `binaryen`, and supporting tools declared in [devbox.json](devbox.json).
 
 ## Quick Start
-<!-- derived-from ./docs/getting-started/development.md -->
+<!-- derived-from ./docs/getting-started/clone-and-run.md -->
 
 ```sh
 devbox shell
@@ -36,12 +36,13 @@ To run the Worker locally:
 devbox run worker:dev
 ```
 
-Local routes that depend on D1, R2, or Cloudflare Access need matching local or remote bindings. Start with [Development Workflow](docs/getting-started/development.md), then configure the values described in [Configuration Reference](docs/reference/configuration.md).
+Local routes that depend on D1, R2, or Cloudflare Access need matching local or remote bindings. Start with [Clone And Run](docs/getting-started/clone-and-run.md), then use [Development Workflow](docs/getting-started/development.md) for the day-to-day loop and [Configuration Reference](docs/reference/configuration.md) for runtime values.
 
 ## Documentation
 <!-- derived-from ./docs/README.md -->
 
 - [Documentation Index](docs/README.md)
+- [Clone And Run](docs/getting-started/clone-and-run.md)
 - [Development Workflow](docs/getting-started/development.md)
 - [Configuration Reference](docs/reference/configuration.md)
 - [Cloudflare Deploy Checklist](docs/operations/cloudflare-deploy.md)

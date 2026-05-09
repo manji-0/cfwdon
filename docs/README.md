@@ -7,6 +7,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 
 - [Development Workflow](getting-started/development.md)
   Local environment setup, common validation commands, local Worker execution, and compatibility document refresh steps.
+- [Clone And Run](getting-started/clone-and-run.md)
+  Fresh clone bootstrap, `wrangler.toml.example` setup, Cloudflare resource creation, migrations, and first deploy steps.
 - [Configuration Reference](reference/configuration.md)
   Cloudflare bindings, `wrangler.toml` vars, secrets, and runtime configuration behavior.
 - [Cloudflare Deploy Checklist](operations/cloudflare-deploy.md)
@@ -21,7 +23,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 
 | Directory | Purpose |
 | --- | --- |
-| `getting-started/` | Contributor setup and day-to-day development workflow. |
+| `getting-started/` | Fresh clone setup, contributor setup, and day-to-day development workflow. |
 | `reference/` | Stable reference material for configuration and runtime behavior. |
 | `operations/` | Deployment and production-operation checklists. |
 | `architecture/` | Design documents and architecture decisions. |

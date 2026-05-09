@@ -2,6 +2,8 @@
 
 `cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
 
+For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.example) to `wrangler.toml` and replace the placeholder values before deploying.
+
 ## Cloudflare Bindings
 
 | Binding | Type | Required | Notes |

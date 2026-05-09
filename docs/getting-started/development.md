@@ -2,6 +2,8 @@
 
 `cfwdon` pins its Rust workspace and Cloudflare Worker tooling through `devbox`. Run commands from the repository root unless a command says otherwise.
 
+For a fresh clone and first deploy path, see [Clone And Run](clone-and-run.md).
+
 ## Prerequisites
 
 - `devbox`
