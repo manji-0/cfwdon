@@ -78,6 +78,10 @@ fn profile_media_value<'a>(
     }
 }
 
+fn bool_binding(value: bool) -> D1Type<'static> {
+    D1Type::Integer(if value { 1 } else { 0 })
+}
+
 pub(crate) async fn apply_account_credentials_update(
     db: &D1Database,
     bucket: &Bucket,
@@ -128,12 +132,12 @@ pub(crate) async fn apply_account_credentials_update(
         D1Type::Text(bio_html.as_str()),
         D1Type::Text(bio_text.as_str()),
         D1Type::Text(fields_json.as_str()),
-        D1Type::Integer(if locked { 1 } else { 0 }),
-        D1Type::Integer(if bot { 1 } else { 0 }),
-        D1Type::Integer(if discoverable { 1 } else { 0 }),
+        bool_binding(locked),
+        bool_binding(bot),
+        bool_binding(discoverable),
         D1Type::Text(source_defaults.post_visibility.as_str()),
         D1Type::Text(source_defaults.quote_policy.as_str()),
-        D1Type::Integer(if source_defaults.sensitive { 1 } else { 0 }),
+        bool_binding(source_defaults.sensitive),
         match source_defaults.language.as_deref() {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
