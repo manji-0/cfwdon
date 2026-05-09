@@ -138,3 +138,87 @@ fn remote_mention_row_targets_viewer(
         .into_iter()
         .any(|handle| handle.username == viewer.username)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> AppConfig {
+        AppConfig::new(
+            "example.com".to_owned(),
+            "cfwdon".to_owned(),
+            "test".to_owned(),
+        )
+    }
+
+    fn test_viewer() -> LocalAccount {
+        LocalAccount {
+            id: "acct-alice".to_owned(),
+            username: "alice".to_owned(),
+            access_email: "alice@example.com".to_owned(),
+            display_name: "Alice".to_owned(),
+            bio_html: String::new(),
+            bio_text: String::new(),
+            fields: Vec::new(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
+            default_sensitive: false,
+            default_language: None,
+            avatar_object_key: None,
+            avatar_content_type: None,
+            header_object_key: None,
+            header_content_type: None,
+            private_key_jwk: "{}".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn local_mention_row_targets_viewer_uses_exact_mentions() {
+        let viewer = test_viewer();
+        let config = test_config();
+        let row = MentionNotificationRow {
+            id: "s1".to_owned(),
+            account_id: "acct-bob".to_owned(),
+            ap_id: None,
+            in_reply_to_id: None,
+            quote_of_uri: None,
+            content_html: String::new(),
+            text_content: "hello @alice".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: None,
+            quote_state: "accepted".to_owned(),
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+        };
+        assert!(local_mention_row_targets_viewer(&row, &viewer, &config));
+    }
+
+    #[test]
+    fn remote_mention_row_targets_viewer_strips_html() {
+        let viewer = test_viewer();
+        let config = test_config();
+        let row = RemoteMentionNotificationRow {
+            id: "rs1".to_owned(),
+            actor_uri: "https://remote.example/users/bob".to_owned(),
+            object_uri: "https://remote.example/statuses/1".to_owned(),
+            url: None,
+            in_reply_to_uri: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>hello <a>@alice@example.com</a></p>".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: None,
+            quote_state: "accepted".to_owned(),
+            published_at: "2025-01-01T00:00:00Z".to_owned(),
+        };
+        assert!(remote_mention_row_targets_viewer(&row, &viewer, &config));
+    }
+}
