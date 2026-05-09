@@ -204,17 +204,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         config_string_or_default(ctx, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
     );
 
-    set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
-
-    set_non_empty_csv_list(ctx, "INSTANCE_LANGUAGES", &mut config.instance_languages);
-    set_csv_list(ctx, "ADMIN_EMAILS", &mut config.admin_emails);
-
-    set_trimmed_optional(ctx, "CONTACT_EMAIL", &mut config.contact_email);
-    set_trimmed_optional(
-        ctx,
-        "INSTANCE_THUMBNAIL_URL",
-        &mut config.instance_thumbnail_url,
-    );
+    set_instance_metadata_config(ctx, &mut config);
     set_web_push_config(ctx, &mut config);
     set_instance_document_config(ctx, &mut config);
 
@@ -259,6 +249,18 @@ fn set_web_push_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
         ctx,
         "WEB_PUSH_VAPID_SUBJECT",
         &mut config.web_push_vapid_subject,
+    );
+}
+
+fn set_instance_metadata_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+    set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
+    set_non_empty_csv_list(ctx, "INSTANCE_LANGUAGES", &mut config.instance_languages);
+    set_csv_list(ctx, "ADMIN_EMAILS", &mut config.admin_emails);
+    set_trimmed_optional(ctx, "CONTACT_EMAIL", &mut config.contact_email);
+    set_trimmed_optional(
+        ctx,
+        "INSTANCE_THUMBNAIL_URL",
+        &mut config.instance_thumbnail_url,
     );
 }
 
