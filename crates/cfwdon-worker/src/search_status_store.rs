@@ -38,6 +38,13 @@ fn search_like_clauses(columns: &[&str], start_index: usize, pattern_count: usiz
         .join(" OR ")
 }
 
+fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
+    match value {
+        Some(value) => D1Type::Text(value),
+        None => D1Type::Null,
+    }
+}
+
 pub(crate) async fn search_local_status_rows(
     db: &D1Database,
     queries: &[String],
@@ -58,22 +65,10 @@ pub(crate) async fn search_local_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(match max_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match max_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
+        bindings.push(optional_text_binding(max_timestamp));
+        bindings.push(optional_text_binding(max_id));
+        bindings.push(optional_text_binding(min_timestamp));
+        bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = 1 + patterns.len();
         db.prepare(
@@ -108,22 +103,10 @@ pub(crate) async fn search_local_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(match max_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match max_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
+        bindings.push(optional_text_binding(max_timestamp));
+        bindings.push(optional_text_binding(max_id));
+        bindings.push(optional_text_binding(min_timestamp));
+        bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = patterns.len();
         db.prepare(
@@ -175,22 +158,10 @@ pub(crate) async fn search_remote_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(match max_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match max_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
+        bindings.push(optional_text_binding(max_timestamp));
+        bindings.push(optional_text_binding(max_id));
+        bindings.push(optional_text_binding(min_timestamp));
+        bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = 1 + patterns.len();
         db.prepare(&format!(
@@ -249,22 +220,10 @@ pub(crate) async fn search_remote_status_rows(
                 .iter()
                 .map(|pattern| D1Type::Text(pattern.as_str())),
         );
-        bindings.push(match max_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match max_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_timestamp {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
-        bindings.push(match min_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        });
+        bindings.push(optional_text_binding(max_timestamp));
+        bindings.push(optional_text_binding(max_id));
+        bindings.push(optional_text_binding(min_timestamp));
+        bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = patterns.len();
         db.prepare(&format!(
