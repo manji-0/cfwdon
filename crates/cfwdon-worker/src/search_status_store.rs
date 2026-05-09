@@ -134,6 +134,10 @@ fn cursor_window_clause_after_patterns(
     )
 }
 
+fn limit_binding_index(pattern_max_index: usize) -> usize {
+    pattern_max_index + 5
+}
+
 fn json_string(value: &serde_json::Value, key: &str) -> String {
     value
         .get(key)
@@ -224,7 +228,7 @@ pub(crate) async fn search_local_status_rows(
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
             search_clauses,
-            limit = pattern_max_index + 5,
+            limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -250,7 +254,7 @@ pub(crate) async fn search_local_status_rows(
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
             search_clauses,
-            limit = pattern_max_index + 5,
+            limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -295,7 +299,7 @@ pub(crate) async fn search_remote_status_rows(
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
             search_clauses,
-            limit = pattern_max_index + 5,
+            limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -321,7 +325,7 @@ pub(crate) async fn search_remote_status_rows(
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
             search_clauses,
-            limit = pattern_max_index + 5,
+            limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
