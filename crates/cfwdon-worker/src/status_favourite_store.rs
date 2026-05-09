@@ -193,21 +193,17 @@ pub(crate) async fn is_remote_status_favourited_by(
     let account_id = D1Type::Text(account_id);
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM favourites
              WHERE account_id = ?1
-               AND remote_status_id = ?2",
+               AND remote_status_id = ?2
+             LIMIT 1",
         )
         .bind_refs(&[account_id, remote_status_id])?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 pub(crate) async fn list_favourites_for_account(
