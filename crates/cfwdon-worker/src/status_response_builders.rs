@@ -166,6 +166,10 @@ fn remote_quote_visibility_is_embeddable(visibility: &str) -> bool {
     matches!(visibility, "public" | "unlisted")
 }
 
+fn accepted_quote_document_state() -> &'static str {
+    "accepted"
+}
+
 async fn local_quoted_status_document_state(
     db: &D1Database,
     config: &AppConfig,
@@ -173,12 +177,12 @@ async fn local_quoted_status_document_state(
     local_account: &LocalAccount,
 ) -> Result<&'static str> {
     let Some(viewer) = viewer else {
-        return Ok("accepted");
+        return Ok(accepted_quote_document_state());
     };
     Ok(
         quote_state_for_local_quoted_status(db, config, viewer, local_account)
             .await?
-            .unwrap_or("accepted"),
+            .unwrap_or(accepted_quote_document_state()),
     )
 }
 
@@ -188,11 +192,11 @@ async fn remote_quoted_status_document_state(
     actor: &RemoteActorRow,
 ) -> Result<&'static str> {
     let Some(viewer) = viewer else {
-        return Ok("accepted");
+        return Ok(accepted_quote_document_state());
     };
     Ok(quote_state_for_remote_quoted_status(db, viewer, actor)
         .await?
-        .unwrap_or("accepted"))
+        .unwrap_or(accepted_quote_document_state()))
 }
 
 pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &str {
@@ -776,6 +780,11 @@ mod tests {
         assert!(remote_quote_visibility_is_embeddable("unlisted"));
         assert!(!remote_quote_visibility_is_embeddable("private"));
         assert!(!remote_quote_visibility_is_embeddable("direct"));
+    }
+
+    #[test]
+    fn accepted_quote_document_state_matches_mastodon_state_name() {
+        assert_eq!(accepted_quote_document_state(), "accepted");
     }
 }
 
