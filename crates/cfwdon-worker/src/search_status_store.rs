@@ -137,6 +137,20 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatu
     }
 }
 
+fn remote_search_rows_from_values(
+    values: Vec<serde_json::Value>,
+) -> Vec<(RemoteStatusRow, RemoteActorRow)> {
+    values
+        .into_iter()
+        .map(|value| {
+            (
+                remote_status_row_from_search_value(&value),
+                RemoteActorRow::from_value(&value),
+            )
+        })
+        .collect()
+}
+
 pub(crate) async fn search_local_status_rows(
     db: &D1Database,
     queries: &[String],
@@ -304,16 +318,9 @@ pub(crate) async fn search_remote_status_rows(
         .await?
     };
 
-    let values = result.results::<serde_json::Value>()?;
-    let mut rows = Vec::with_capacity(values.len());
-    for value in values {
-        rows.push((
-            remote_status_row_from_search_value(&value),
-            RemoteActorRow::from_value(&value),
-        ));
-    }
-
-    Ok(rows)
+    Ok(remote_search_rows_from_values(
+        result.results::<serde_json::Value>()?,
+    ))
 }
 
 #[cfg(test)]
