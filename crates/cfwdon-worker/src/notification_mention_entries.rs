@@ -4,9 +4,9 @@ use crate::notifications::{
 };
 use crate::{
     AppConfig, MastodonAccountResponse, MentionNotificationRow, NotificationsQuery,
-    RemoteStatusRow, StatusRow, actor_url, build_local_status_response,
-    build_remote_status_response, can_view_local_status, find_account_by_id,
-    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
+    RemoteMentionNotificationRow, RemoteStatusRow, StatusRow, actor_url,
+    build_local_status_response, build_remote_status_response, can_view_local_status,
+    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     is_public_activitypub_visibility, list_local_mention_notifications_for_account,
     list_remote_mention_notifications_for_account, load_in_reply_to_account_id,
     muted_notifications_for_actor, remote_account_rest_id,
@@ -32,6 +32,25 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
         quote_state: mention.quote_state.clone(),
         application_id: None,
         created_at: mention.created_at.clone(),
+    }
+}
+
+fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteStatusRow {
+    RemoteStatusRow {
+        id: mention.id,
+        actor_uri: mention.actor_uri.clone(),
+        object_uri: mention.object_uri,
+        url: mention.url,
+        in_reply_to_uri: mention.in_reply_to_uri,
+        boost_of_uri: mention.boost_of_uri,
+        quote_of_uri: mention.quote_of_uri,
+        content_html: mention.content_html,
+        spoiler_text: mention.spoiler_text,
+        visibility: mention.visibility,
+        sensitive: mention.sensitive,
+        language: mention.language,
+        quote_state: mention.quote_state,
+        published_at: mention.published_at.clone(),
     }
 }
 
@@ -106,22 +125,7 @@ pub(crate) async fn collect_mention_notification_entries(
         ) {
             continue;
         }
-        let status = RemoteStatusRow {
-            id: mention.id,
-            actor_uri: mention.actor_uri.clone(),
-            object_uri: mention.object_uri,
-            url: mention.url,
-            in_reply_to_uri: mention.in_reply_to_uri,
-            boost_of_uri: mention.boost_of_uri,
-            quote_of_uri: mention.quote_of_uri,
-            content_html: mention.content_html,
-            spoiler_text: mention.spoiler_text,
-            visibility: mention.visibility,
-            sensitive: mention.sensitive,
-            language: mention.language,
-            quote_state: mention.quote_state,
-            published_at: mention.published_at.clone(),
-        };
+        let status = remote_mention_status_row(mention);
         let status_response =
             build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
         push_notification_entry(
