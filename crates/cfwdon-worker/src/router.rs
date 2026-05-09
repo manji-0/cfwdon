@@ -47,12 +47,12 @@ use super::{
     notification_request_response, notification_requests_merged_response,
     notification_requests_response, notification_response, notifications_clear_response,
     notifications_policy_response, notifications_response, notifications_unread_count_response,
-    notifications_v2_response, oauth_authorization_server_response, oauth_token_response,
-    oauth_userinfo_response, oembed_response, outbox_response, pin_account_response,
-    pin_status_response, poll_response, preferences_response, process_expired_polls,
-    process_outbox_deliveries, profile_response, prune_orphan_media, public_timeline_response,
-    push_subscription_response, read_conversation_response, reblog_status,
-    reject_follow_request_response, remove_from_followers_response,
+    notifications_v2_response, oauth_authorization_server_response, oauth_authorize_response,
+    oauth_token_response, oauth_userinfo_response, oembed_response, outbox_response,
+    pin_account_response, pin_status_response, poll_response, preferences_response,
+    process_expired_polls, process_outbox_deliveries, profile_response, prune_orphan_media,
+    public_timeline_response, push_subscription_response, read_conversation_response,
+    reblog_status, reject_follow_request_response, remove_from_followers_response,
     revoke_alpha_collection_item_response, revoke_quote_response, root_document,
     save_markers_response, scheduled_status_response, scheduled_statuses_response, search_v1,
     search_v2, shared_inbox_response, status_api_response, status_card_response,
@@ -75,7 +75,15 @@ use super::{
 use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
-    Router::new()
+    let request_url = req.url()?;
+    let request_path = request_url.path().to_owned();
+    let request_method = req.method().to_string();
+    let request_origin = req.headers().get("Origin")?;
+    if request_method == "OPTIONS" && is_cors_enabled_path(&request_path) {
+        return cors_preflight_response(request_origin.as_deref());
+    }
+
+    let mut response = Router::new()
         .get("/", |_req, _ctx| Response::from_json(&root_document()))
         .get("/healthz", |_req, _ctx| Response::ok("ok"))
         .get_async("/.well-known/oauth-authorization-server", |_req, ctx| async move {
@@ -324,6 +332,12 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         })
         .post_async("/oauth/userinfo", |req, ctx| async move {
             oauth_userinfo_response(req, ctx).await
+        })
+        .get_async("/oauth/authorize", |req, ctx| async move {
+            oauth_authorize_response(req, ctx).await
+        })
+        .post_async("/oauth/authorize", |req, ctx| async move {
+            oauth_authorize_response(req, ctx).await
         })
         .post_async("/oauth/token", |req, ctx| async move {
             oauth_token_response(req, ctx).await
@@ -843,5 +857,43 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             account_response(ctx).await
         })
         .run(req, env)
-        .await
+        .await?;
+    if is_cors_enabled_path(&request_path) {
+        apply_cors_headers(&mut response, request_origin.as_deref())?;
+    }
+    Ok(response)
+}
+
+pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
+    path.starts_with("/api/")
+        || path.starts_with("/oauth/")
+        || path == "/.well-known/oauth-authorization-server"
+}
+
+fn cors_preflight_response(origin: Option<&str>) -> Result<Response> {
+    let mut response = Response::empty()?.with_status(204);
+    apply_cors_headers(&mut response, origin)?;
+    response
+        .headers_mut()
+        .set("Access-Control-Max-Age", "86400")?;
+    Ok(response)
+}
+
+fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<()> {
+    response
+        .headers_mut()
+        .set("Access-Control-Allow-Origin", origin.unwrap_or("*"))?;
+    response.headers_mut().set(
+        "Access-Control-Allow-Methods",
+        "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+    )?;
+    response.headers_mut().set(
+        "Access-Control-Allow-Headers",
+        "Authorization,Content-Type,Accept,Idempotency-Key",
+    )?;
+    response
+        .headers_mut()
+        .set("Access-Control-Expose-Headers", "Link,Authorization")?;
+    response.headers_mut().set("Vary", "Origin")?;
+    Ok(())
 }

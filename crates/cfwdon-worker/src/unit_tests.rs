@@ -1,5 +1,6 @@
 use base64::Engine;
 
+use super::router::is_cors_enabled_path;
 use super::{
     AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest,
     MastodonAccountResponse, MastodonReportResponse, NotificationEntry, NotificationsQuery,
@@ -34,12 +35,12 @@ use super::{
     extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
     extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
     extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
-    follow_targets_local_actor, format_async_refresh_header_value, include_local_source,
-    include_remote_source, initial_local_quote_approval_policy, instance_base_url,
-    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
-    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
-    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
-    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
+    include_local_source, include_remote_source, initial_local_quote_approval_policy,
+    instance_base_url, is_activitypub_actor_type, is_admin_account, is_follow_undo,
+    local_quote_policy_allows, local_username_from_actor_uri, local_username_from_status_uri,
+    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
+    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
     notification_sort_key, notification_timestamp_sort_token,
@@ -70,7 +71,7 @@ use super::{
     translation_target_language, trim_context_ancestors, trim_context_descendants,
     validate_account_registration_request, validate_poll_vote_submission,
     validate_scheduled_at_minimum_offset, validate_streaming_channel_request,
-    visibility_from_activitypub_object,
+    verify_account_password_hash, visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -372,6 +373,31 @@ fn parse_basic_authorization_header_extracts_client_credentials() {
         parse_basic_authorization_header(&header),
         Some(("client-id".to_owned(), "client-secret".to_owned()))
     );
+}
+
+#[test]
+fn account_password_hash_verifies_only_matching_password() {
+    let hash = hash_account_password("correct horse battery staple", "salt-1");
+
+    assert!(verify_account_password_hash(
+        "correct horse battery staple",
+        &hash
+    ));
+    assert!(!verify_account_password_hash("wrong password", &hash));
+    assert!(!verify_account_password_hash(
+        "correct horse battery staple",
+        "pbkdf2-sha256$1$salt-1$invalid"
+    ));
+}
+
+#[test]
+fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
+    assert!(is_cors_enabled_path("/api/v1/apps"));
+    assert!(is_cors_enabled_path("/oauth/token"));
+    assert!(is_cors_enabled_path(
+        "/.well-known/oauth-authorization-server"
+    ));
+    assert!(!is_cors_enabled_path("/users/alice"));
 }
 
 #[test]

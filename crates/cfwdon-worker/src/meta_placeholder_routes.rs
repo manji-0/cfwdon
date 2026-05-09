@@ -34,7 +34,7 @@ use crate::{
     queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
     remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, resolve_timeline_cursor, send_push_notification,
-    status_has_active_quote, timeline_fetch_limit, timeline_limit,
+    status_has_active_quote, store_account_password, timeline_fetch_limit, timeline_limit,
     update_remote_status_quote_state,
 };
 use async_stream::try_stream;
@@ -819,7 +819,7 @@ async fn insert_registered_account(
     Ok(id)
 }
 
-async fn link_oauth_app_to_account(
+pub(crate) async fn link_oauth_app_to_account(
     db: &D1Database,
     oauth_app_id: i64,
     account_id: &str,
@@ -2899,6 +2899,15 @@ pub(crate) async fn create_account_placeholder_response(
             .as_deref()
             .expect("validated username presence"),
         request.email.as_deref().expect("validated email presence"),
+    )
+    .await?;
+    store_account_password(
+        &db,
+        &account_id,
+        request
+            .password
+            .as_deref()
+            .expect("validated password presence"),
     )
     .await?;
     let app_id = find_oauth_app_id_by_bearer_token(&db, &token)
