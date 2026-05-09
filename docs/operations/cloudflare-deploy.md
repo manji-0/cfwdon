@@ -11,6 +11,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
+- A self-hosted Mastodon Web UI bundle uploaded to the `MEDIA` bucket under `WEB_UI_R2_PREFIX`
 
 ## Provisioning Steps
 
@@ -48,13 +49,26 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler d1 migrations apply DB --remote
    ```
 
-7. Run the full local gate.
+7. Upload the self-hosted Mastodon Web UI bundle to R2.
+<!-- constrained-by ../reference/configuration.md#web-ui-bundle -->
+
+   The Worker expects `index.html` and referenced static files under `WEB_UI_R2_PREFIX`, which defaults to `webui`.
+
+   ```sh
+   wrangler r2 object put cfwdon-media/webui/index.html --file path/to/mastodon-webui/index.html --remote
+   wrangler r2 object put cfwdon-media/webui/manifest --file path/to/mastodon-webui/manifest --remote
+   wrangler r2 object put cfwdon-media/webui/packs/assets/application.js --file path/to/mastodon-webui/packs/assets/application.js --remote
+   ```
+
+   Upload all static files referenced by the bundle; the commands above are examples, not a complete asset list.
+
+8. Run the full local gate.
 
    ```sh
    devbox run ci
    ```
 
-8. Deploy the Worker.
+9. Deploy the Worker.
 
    ```sh
    wrangler deploy
@@ -68,6 +82,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB` and `MEDIA`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `migrations/` contains the schema required by the Worker code
+- the `MEDIA` bucket contains `${WEB_UI_R2_PREFIX}/index.html` and the referenced Web UI static assets
 
 ## Current Caveat
 

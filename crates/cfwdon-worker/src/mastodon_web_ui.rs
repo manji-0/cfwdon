@@ -1,7 +1,7 @@
 use super::{AppConfig, Request, Response, Result, RouteContext, root_document};
-use worker::{Fetch, Headers, Method, RequestInit, ResponseBody};
+use worker::ResponseBody;
 
-const DEFAULT_MASTODON_WEB_UI_ORIGIN: &str = "https://mastodon.social";
+const DEFAULT_WEB_UI_R2_PREFIX: &str = "webui";
 const WEB_UI_ASSET_PREFIXES: &[&str] = &[
     "/assets/",
     "/css/",
@@ -46,7 +46,7 @@ pub(crate) async fn fallback_response(req: Request, ctx: RouteContext<()>) -> Re
     let path = url.path();
 
     if is_web_ui_asset_path(path) {
-        return proxy_web_ui_path(ctx, &asset_request_target(&url)).await;
+        return web_ui_asset_response(ctx, path).await;
     }
 
     if is_reserved_backend_path(path) {
@@ -62,60 +62,60 @@ pub(crate) async fn fallback_response(req: Request, ctx: RouteContext<()>) -> Re
 
 async fn web_ui_html_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = super::load_config(&ctx);
-    let mut response = proxy_web_ui_path(ctx, "/").await?;
-    let status = response.status_code();
-    if status / 100 != 2 {
-        return Ok(response);
-    }
-
-    let html = response.text().await?;
-    let html = configured_mastodon_web_ui_html(&html, &config)?;
-    let mut response =
-        Response::from_body(ResponseBody::Body(html.into_bytes()))?.with_status(status);
+    let Some((html, etag)) = load_web_ui_object_bytes(&ctx, "index.html").await? else {
+        return web_ui_missing_response();
+    };
+    let html = String::from_utf8(html)
+        .map_err(|error| worker::Error::RustError(format!("invalid Web UI index HTML: {error}")))?;
+    let html = configured_mastodon_web_ui_html(&html, &config);
+    let mut response = Response::from_body(ResponseBody::Body(html.into_bytes()))?.with_status(200);
     response
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;
     response.headers_mut().set("Cache-Control", "no-cache")?;
+    response.headers_mut().set("ETag", &etag)?;
     Ok(response)
 }
 
-async fn proxy_web_ui_path(ctx: RouteContext<()>, path_and_query: &str) -> Result<Response> {
+async fn web_ui_asset_response(ctx: RouteContext<()>, path: &str) -> Result<Response> {
     let config = super::load_config(&ctx);
-    let origin = web_ui_origin(&ctx);
-    let target = format!("{origin}{path_and_query}");
-    let headers = Headers::new();
-    headers.set("Accept", "*/*")?;
+    let object_key = web_ui_object_key_for_path(path);
+    let Some((body, etag)) = load_web_ui_object_bytes(&ctx, &object_key).await? else {
+        return Response::error("web ui asset not found", 404);
+    };
+    let body = configured_web_ui_asset_body(path, body, &config)?;
 
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let request = worker::Request::new_with_init(&target, &init)?;
-    let mut response = Fetch::Request(request).send().await?;
-    let status = response.status_code();
-    let content_type = response.headers().get("Content-Type")?;
-    let cache_control = response.headers().get("Cache-Control")?;
-    let etag = response.headers().get("ETag")?;
-    let last_modified = response.headers().get("Last-Modified")?;
-    let body = configured_web_ui_asset_body(path_and_query, response.bytes().await?, &config)?;
-
-    let mut response = Response::from_body(ResponseBody::Body(body))?.with_status(status);
-    if let Some(content_type) = content_type.as_deref() {
-        response.headers_mut().set("Content-Type", content_type)?;
-    }
-    if is_cacheable_web_ui_asset(path_and_query) {
+    let mut response = Response::from_body(ResponseBody::Body(body))?.with_status(200);
+    response
+        .headers_mut()
+        .set("Content-Type", content_type_for_path(path))?;
+    if is_cacheable_web_ui_asset(path) {
         response
             .headers_mut()
             .set("Cache-Control", "public, max-age=31536000, immutable")?;
-    } else if let Some(cache_control) = cache_control.as_deref() {
-        response.headers_mut().set("Cache-Control", cache_control)?;
+    } else {
+        response.headers_mut().set("Cache-Control", "no-cache")?;
     }
-    if let Some(etag) = etag.as_deref() {
-        response.headers_mut().set("ETag", etag)?;
-    }
-    if let Some(last_modified) = last_modified.as_deref() {
-        response.headers_mut().set("Last-Modified", last_modified)?;
-    }
+    response.headers_mut().set("ETag", &etag)?;
 
     Ok(response)
+}
+
+async fn load_web_ui_object_bytes(
+    ctx: &RouteContext<()>,
+    key: &str,
+) -> Result<Option<(Vec<u8>, String)>> {
+    let config = super::load_config(ctx);
+    let bucket = ctx.bucket(&config.media_binding)?;
+    let object_key = format!("{}/{}", web_ui_r2_prefix(ctx), key.trim_start_matches('/'));
+    let Some(object) = bucket.get(&object_key).execute().await? else {
+        return Ok(None);
+    };
+    let etag = object.http_etag();
+    let Some(body) = object.body() else {
+        return Ok(None);
+    };
+    Ok(Some((body.bytes().await?, etag)))
 }
 
 fn request_accepts_html(req: &Request) -> bool {
@@ -127,13 +127,13 @@ fn request_accepts_html(req: &Request) -> bool {
         .unwrap_or(false)
 }
 
-fn web_ui_origin(ctx: &RouteContext<()>) -> String {
-    ctx.var("MASTODON_WEB_UI_ORIGIN")
+fn web_ui_r2_prefix(ctx: &RouteContext<()>) -> String {
+    ctx.var("WEB_UI_R2_PREFIX")
         .ok()
         .map(|value| value.to_string())
-        .map(|value| value.trim().trim_end_matches('/').to_owned())
-        .filter(|value| value.starts_with("https://") && !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_MASTODON_WEB_UI_ORIGIN.to_owned())
+        .map(|value| trim_object_key_segment(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_WEB_UI_R2_PREFIX.to_owned())
 }
 
 fn is_web_ui_asset_path(path: &str) -> bool {
@@ -156,27 +156,23 @@ fn is_reserved_backend_path(path: &str) -> bool {
         .any(|prefix| path.starts_with(prefix))
 }
 
-fn asset_request_target(url: &url::Url) -> String {
-    match url.query() {
-        Some(query) => format!("{}?{query}", url.path()),
-        None => url.path().to_owned(),
-    }
+fn web_ui_object_key_for_path(path: &str) -> String {
+    trim_object_key_segment(path)
 }
 
-fn configured_mastodon_web_ui_html(html: &str, config: &AppConfig) -> Result<String> {
-    let html = replace_initial_state(html, config)?;
-    Ok(html
-        .replace("https://mastodon.social/css/", "/css/")
+fn trim_object_key_segment(value: &str) -> String {
+    value.trim().trim_matches('/').to_owned()
+}
+
+fn configured_mastodon_web_ui_html(html: &str, config: &AppConfig) -> String {
+    let html = replace_initial_state(html, config);
+    html.replace("https://mastodon.social/css/", "/css/")
         .replace("https://mastodon.social/packs/", "/packs/")
-        .replace("https://mastodon.social", &instance_base_url(config)))
+        .replace("https://mastodon.social", &instance_base_url(config))
 }
 
-fn configured_web_ui_asset_body(
-    path_and_query: &str,
-    body: Vec<u8>,
-    config: &AppConfig,
-) -> Result<Vec<u8>> {
-    if path_and_query != "/manifest" {
+fn configured_web_ui_asset_body(path: &str, body: Vec<u8>, config: &AppConfig) -> Result<Vec<u8>> {
+    if path != "/manifest" {
         return Ok(body);
     }
 
@@ -188,36 +184,35 @@ fn configured_web_ui_asset_body(
         .into_bytes())
 }
 
-fn replace_initial_state(html: &str, config: &AppConfig) -> Result<String> {
+fn replace_initial_state(html: &str, config: &AppConfig) -> String {
     let Some(script_start) = html.find("<script id=\"initial-state\"") else {
-        return Ok(html.to_owned());
+        return html.to_owned();
     };
     let Some(json_start_offset) = html[script_start..].find('>') else {
-        return Ok(html.to_owned());
+        return html.to_owned();
     };
     let json_start = script_start + json_start_offset + 1;
     let Some(json_end_offset) = html[json_start..].find("</script>") else {
-        return Ok(html.to_owned());
+        return html.to_owned();
     };
     let json_end = json_start + json_end_offset;
 
-    let mut initial_state: serde_json::Value = serde_json::from_str(&html[json_start..json_end])
-        .map_err(|error| {
-            worker::Error::RustError(format!("failed to parse Mastodon initial state: {error}"))
-        })?;
+    let Ok(mut initial_state) =
+        serde_json::from_str::<serde_json::Value>(&html[json_start..json_end])
+    else {
+        return html.to_owned();
+    };
     apply_initial_state_config(&mut initial_state, config);
-    let configured_json = serde_json::to_string(&initial_state).map_err(|error| {
-        worker::Error::RustError(format!(
-            "failed to serialize Mastodon initial state: {error}"
-        ))
-    })?;
+    let Ok(configured_json) = serde_json::to_string(&initial_state) else {
+        return html.to_owned();
+    };
 
-    Ok(format!(
+    format!(
         "{}{}{}",
         &html[..json_start],
         configured_json,
         &html[json_end..]
-    ))
+    )
 }
 
 fn apply_initial_state_config(initial_state: &mut serde_json::Value, config: &AppConfig) {
@@ -273,6 +268,37 @@ fn instance_base_url(config: &AppConfig) -> String {
     }
 }
 
+fn content_type_for_path(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or_default() {
+        "avif" => "image/avif",
+        "css" => "text/css; charset=utf-8",
+        "gif" => "image/gif",
+        "html" => "text/html; charset=utf-8",
+        "ico" => "image/x-icon",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" | "webmanifest" => "application/json; charset=utf-8",
+        "mp3" => "audio/mpeg",
+        "ogg" => "audio/ogg",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "txt" => "text/plain; charset=utf-8",
+        "wasm" => "application/wasm",
+        "webp" => "image/webp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "xml" => "application/xml; charset=utf-8",
+        _ if path == "/manifest" => "application/json; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+fn web_ui_missing_response() -> Result<Response> {
+    Response::error(
+        "web ui bundle missing: upload Mastodon Web UI files to R2 under WEB_UI_R2_PREFIX",
+        503,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,7 +309,7 @@ mod tests {
         config.source_url = Some("https://github.com/manji-0/cfwdon".to_owned());
         let html = r#"<html><head><link rel="stylesheet" href="https://mastodon.social/css/custom.css"><meta content="https://mastodon.social/" property="og:url"><meta content="https://files.mastodon.social/site/logo.png" property="og:image"></head><body><script id="initial-state" type="application/json">{"meta":{"domain":"mastodon.social","title":"Mastodon","version":"4.6.0","source_url":"https://github.com/mastodon/mastodon","streaming_api_base_url":"wss://streaming.mastodon.social","registrations_open":true,"repository":"mastodon/mastodon"}}</script></body></html>"#;
 
-        let configured = configured_mastodon_web_ui_html(html, &config).unwrap();
+        let configured = configured_mastodon_web_ui_html(html, &config);
 
         assert!(configured.contains("\"domain\":\"fedi.manji.app\""));
         assert!(configured.contains("\"title\":\"cfwdon\""));
@@ -302,9 +328,26 @@ mod tests {
     }
 
     #[test]
-    fn asset_request_target_keeps_query_string() {
-        let url = url::Url::parse("https://fedi.manji.app/packs/app.js?v=1").unwrap();
-        assert_eq!(asset_request_target(&url), "/packs/app.js?v=1");
+    fn web_ui_object_key_trims_leading_slashes() {
+        assert_eq!(web_ui_object_key_for_path("/packs/app.js"), "packs/app.js");
+        assert_eq!(web_ui_object_key_for_path("packs/app.js"), "packs/app.js");
+    }
+
+    #[test]
+    fn web_ui_content_type_uses_common_asset_types() {
+        assert_eq!(
+            content_type_for_path("/packs/application.js"),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for_path("/packs/application.css"),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for_path("/manifest"),
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(content_type_for_path("/packs/logo.svg"), "image/svg+xml");
     }
 
     #[test]
