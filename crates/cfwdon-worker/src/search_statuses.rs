@@ -363,6 +363,25 @@ fn merge_status_search_during_filter(
     }
 }
 
+fn merge_status_search_is_filter(parsed: &mut ParsedStatusSearchQuery, value: &str, negated: bool) {
+    match unquote_status_search_token(value)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "reply" => merge_boolean_filter(&mut parsed.is_reply, !negated, &mut parsed.unsatisfiable),
+        "sensitive" => merge_boolean_filter(
+            &mut parsed.is_sensitive,
+            !negated,
+            &mut parsed.unsatisfiable,
+        ),
+        "boost" | "reblog" => {
+            merge_boolean_filter(&mut parsed.is_boost, !negated, &mut parsed.unsatisfiable)
+        }
+        "quote" => merge_boolean_filter(&mut parsed.is_quote, !negated, &mut parsed.unsatisfiable),
+        _ => {}
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -402,32 +421,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                     continue;
                 }
                 "is" => {
-                    match unquote_status_search_token(value)
-                        .to_ascii_lowercase()
-                        .as_str()
-                    {
-                        "reply" => merge_boolean_filter(
-                            &mut parsed.is_reply,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "sensitive" => merge_boolean_filter(
-                            &mut parsed.is_sensitive,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "boost" | "reblog" => merge_boolean_filter(
-                            &mut parsed.is_boost,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "quote" => merge_boolean_filter(
-                            &mut parsed.is_quote,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        _ => {}
-                    }
+                    merge_status_search_is_filter(&mut parsed, value, negated);
                     continue;
                 }
                 "has" => {
