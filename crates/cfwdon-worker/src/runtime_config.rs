@@ -257,36 +257,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         &mut config.terms_of_service_effective_date,
     );
 
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL",
-        &mut config.timeline_live_feeds_local,
-    );
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE",
-        &mut config.timeline_live_feeds_remote,
-    );
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL",
-        &mut config.timeline_hashtag_feeds_local,
-    );
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE",
-        &mut config.timeline_hashtag_feeds_remote,
-    );
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL",
-        &mut config.timeline_trending_link_feeds_local,
-    );
-    set_timeline_access_level(
-        ctx,
-        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE",
-        &mut config.timeline_trending_link_feeds_remote,
-    );
+    set_timeline_access_config(ctx, &mut config);
 
     set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
     set_trimmed_optional(
@@ -360,6 +331,39 @@ fn set_timeline_access_level(ctx: &RouteContext<()>, key: &str, target: &mut Tim
     if let Some(value) = parse_timeline_access_level(optional_var(ctx, key)) {
         *target = value;
     }
+}
+
+fn set_timeline_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL",
+        &mut config.timeline_live_feeds_local,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE",
+        &mut config.timeline_live_feeds_remote,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL",
+        &mut config.timeline_hashtag_feeds_local,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE",
+        &mut config.timeline_hashtag_feeds_remote,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL",
+        &mut config.timeline_trending_link_feeds_local,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE",
+        &mut config.timeline_trending_link_feeds_remote,
+    );
 }
 
 fn set_raw_string(ctx: &RouteContext<()>, key: &str, target: &mut String) {
