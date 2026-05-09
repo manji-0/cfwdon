@@ -332,4 +332,20 @@ mod tests {
         assert!(defaults.sensitive);
         assert_eq!(defaults.language.as_deref(), Some("ja"));
     }
+
+    #[test]
+    fn account_source_defaults_falls_back_to_account_values() {
+        let mut account = test_account();
+        account.default_post_visibility = "unlisted".to_owned();
+        account.default_quote_policy = "followers".to_owned();
+        account.default_sensitive = true;
+        account.default_language = Some("en".to_owned());
+
+        let defaults = account_source_defaults(&account, &UpdateCredentialsRequest::default());
+
+        assert_eq!(defaults.post_visibility, "unlisted");
+        assert_eq!(defaults.quote_policy, "followers");
+        assert!(defaults.sensitive);
+        assert_eq!(defaults.language.as_deref(), Some("en"));
+    }
 }
