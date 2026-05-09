@@ -3157,3 +3157,19 @@ async fn list_remote_status_quotes_by_uri(
         .await?;
     result.results::<crate::RemoteStatusRow>()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annual_report_bounds_cover_exact_calendar_year() {
+        assert_eq!(
+            annual_report_bounds(2025),
+            (
+                "2025-01-01T00:00:00Z".to_owned(),
+                "2026-01-01T00:00:00Z".to_owned()
+            )
+        );
+    }
+}
