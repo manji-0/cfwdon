@@ -146,10 +146,7 @@ pub(crate) async fn parse_status_draft(
                 .map(|value| value.trim().to_ascii_lowercase())
                 .filter(|value| !value.is_empty()),
             quote_approval_policy,
-            in_reply_to_id: request
-                .in_reply_to_id
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty()),
+            in_reply_to_id: normalized_optional_string(request.in_reply_to_id),
             media_ids,
             poll,
         },
@@ -157,11 +154,14 @@ pub(crate) async fn parse_status_draft(
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty()),
         scheduled_at,
-        quoted_status_id: request
-            .quoted_status_id
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty()),
+        quoted_status_id: normalized_optional_string(request.quoted_status_id),
     })
+}
+
+fn normalized_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn normalize_status_media_ids(media_ids: Option<Vec<String>>) -> Vec<String> {
