@@ -274,24 +274,17 @@ pub(crate) async fn list_remote_reblog_actor_uris_for_status(
     status_id: &str,
     limit: u32,
 ) -> Result<Vec<String>> {
-    let bindings = [D1Type::Text(status_id), D1Type::Integer(limit as i32)];
-    let result = db
-        .prepare(
-            "SELECT remote_actor_uri
-             FROM remote_reblogs
-             WHERE status_id = ?1
-             ORDER BY created_at DESC
-             LIMIT ?2",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-
-    Ok(result
-        .results::<InteractionActorUriRow>()?
-        .into_iter()
-        .map(|row| row.remote_actor_uri)
-        .collect())
+    list_interaction_actor_uris(
+        db,
+        "SELECT remote_actor_uri
+         FROM remote_reblogs
+         WHERE status_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+        status_id,
+        limit,
+    )
+    .await
 }
 
 async fn is_reblog_target_for_account(
@@ -332,5 +325,21 @@ async fn list_interaction_account_ids(
         .results::<InteractionAccountIdRow>()?
         .into_iter()
         .map(|row| row.account_id)
+        .collect())
+}
+
+async fn list_interaction_actor_uris(
+    db: &D1Database,
+    sql: &str,
+    target_id: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
+    let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<InteractionActorUriRow>()?
+        .into_iter()
+        .map(|row| row.remote_actor_uri)
         .collect())
 }
