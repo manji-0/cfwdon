@@ -63,6 +63,16 @@ fn quote_document_for_local_state(local_quote_state: Option<&str>) -> Option<ser
     }
 }
 
+fn quote_document_from_response(
+    state: &str,
+    response: MastodonStatusResponse,
+) -> serde_json::Value {
+    quote_document_with_state(
+        state,
+        serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
+    )
+}
+
 async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
     Ok(count_rows(
         db,
@@ -529,10 +539,7 @@ async fn build_quoted_status_value(
             None => None,
         }
         .unwrap_or("accepted");
-        return Ok(Some(quote_document_with_state(
-            state,
-            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-        )));
+        return Ok(Some(quote_document_from_response(state, response)));
     }
 
     if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, quote_of_uri).await? {
@@ -605,10 +612,7 @@ async fn build_quoted_status_value(
             None => None,
         }
         .unwrap_or("accepted");
-        return Ok(Some(quote_document_with_state(
-            state,
-            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-        )));
+        return Ok(Some(quote_document_from_response(state, response)));
     }
 
     Ok(None)
