@@ -70,7 +70,7 @@ pub(crate) async fn verify_access_jwt(token: &str, config: &AppConfig) -> Result
     }
 
     let claims: AccessJwtClaims = decode_jwt_segment(payload_segment)?;
-    let expected_issuer = config.access_team_domain.trim_end_matches('/').to_owned();
+    let expected_issuer = normalized_access_team_origin(&config.access_team_domain);
     if claims.iss != expected_issuer {
         return Err(Error::RustError(
             "Cloudflare Access JWT issuer mismatch".to_owned(),
@@ -141,7 +141,7 @@ fn decode_base64url(value: &str) -> Result<Vec<u8>> {
 async fn fetch_access_jwk(config: &AppConfig, expected_kid: &str) -> Result<AccessJwk> {
     let certs_url = format!(
         "{}/cdn-cgi/access/certs",
-        config.access_team_domain.trim_end_matches('/')
+        normalized_access_team_origin(&config.access_team_domain)
     );
     let request = Request::new(&certs_url, Method::Get)?;
     let mut response = Fetch::Request(request).send().await?;
@@ -154,6 +154,15 @@ async fn fetch_access_jwk(config: &AppConfig, expected_kid: &str) -> Result<Acce
         .ok_or_else(|| {
             Error::RustError("matching Cloudflare Access signing key was not found".to_owned())
         })
+}
+
+fn normalized_access_team_origin(team_domain: &str) -> String {
+    let trimmed = team_domain.trim().trim_end_matches('/');
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_owned()
+    } else {
+        format!("https://{trimmed}")
+    }
 }
 
 async fn verify_rs256_signature(jwk: &AccessJwk, data: &[u8], signature: &[u8]) -> Result<()> {
@@ -216,4 +225,21 @@ async fn verify_rs256_signature(jwk: &AccessJwk, data: &[u8], signature: &[u8]) 
 
 fn current_unix_timestamp() -> u64 {
     (js_sys::Date::now() / 1000.0) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_access_team_origin;
+
+    #[test]
+    fn normalized_access_team_origin_adds_https_for_bare_team_domain() {
+        assert_eq!(
+            normalized_access_team_origin("manji0.cloudflareaccess.com/"),
+            "https://manji0.cloudflareaccess.com"
+        );
+        assert_eq!(
+            normalized_access_team_origin("https://manji0.cloudflareaccess.com/"),
+            "https://manji0.cloudflareaccess.com"
+        );
+    }
 }
