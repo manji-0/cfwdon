@@ -311,21 +311,17 @@ async fn is_favourite_target_for_account(
     let bindings = [D1Type::Text(account_id), D1Type::Text(target_uri)];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM favourites
              WHERE account_id = ?1
-               AND target_uri = ?2",
+               AND target_uri = ?2
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 async fn list_interaction_account_ids(
