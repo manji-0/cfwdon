@@ -499,6 +499,14 @@ mod tests {
     }
 
     #[test]
+    fn root_endpoints_include_discovery_entrypoints() {
+        let endpoints = root_endpoint_list();
+
+        assert!(endpoints.contains(&"/.well-known/webfinger"));
+        assert!(endpoints.contains(&"/.well-known/oauth-authorization-server"));
+    }
+
+    #[test]
     fn root_document_reflects_build_metadata() {
         let build = build_metadata();
         let document = root_document();
