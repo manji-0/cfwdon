@@ -402,4 +402,11 @@ mod tests {
         );
         assert_eq!(normalize_optional_base_url("   "), "");
     }
+
+    #[test]
+    fn root_endpoint_list_has_no_duplicates() {
+        let endpoints = root_document().endpoints;
+        let unique = endpoints.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), endpoints.len());
+    }
 }
