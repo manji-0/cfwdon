@@ -3074,20 +3074,7 @@ async fn list_local_status_quotes_by_uri(
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<crate::StatusRow>> {
-    let bindings = [
-        D1Type::Text(status_uri),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
     let result = db
         .prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
@@ -3119,20 +3106,7 @@ async fn list_remote_status_quotes_by_uri(
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<crate::RemoteStatusRow>> {
-    let bindings = [
-        D1Type::Text(status_uri),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
     let result = db
         .prepare(
             "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
@@ -3156,6 +3130,27 @@ async fn list_remote_status_quotes_by_uri(
         .all()
         .await?;
     result.results::<crate::RemoteStatusRow>()
+}
+
+fn quote_cursor_bindings<'a>(
+    status_uri: &'a str,
+    cursor: &'a crate::ResolvedTimelineCursor,
+    limit: u32,
+) -> [D1Type<'a>; 6] {
+    [
+        D1Type::Text(status_uri),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]
 }
 
 #[cfg(test)]
