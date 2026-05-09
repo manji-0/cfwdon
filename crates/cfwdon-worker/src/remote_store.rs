@@ -198,6 +198,17 @@ fn remote_status_language(object: &serde_json::Value) -> Option<String> {
         .and_then(|map| map.keys().next().cloned())
 }
 
+fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
+    match value {
+        Some(value) => D1Type::Text(value),
+        None => D1Type::Null,
+    }
+}
+
+fn bool_binding(value: bool) -> D1Type<'static> {
+    D1Type::Integer(i32::from(value))
+}
+
 async fn find_remote_status_edit_state_by_object_uri(
     db: &D1Database,
     object_uri: &str,
@@ -290,27 +301,15 @@ pub(crate) async fn upsert_remote_status(
         D1Type::Text(status_id.as_str()),
         D1Type::Text(actor.actor_uri.as_str()),
         D1Type::Text(object_uri.as_str()),
-        match object.get("url").and_then(serde_json::Value::as_str) {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
-        match object.get("inReplyTo").and_then(serde_json::Value::as_str) {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
+        optional_text_binding(object.get("url").and_then(serde_json::Value::as_str)),
+        optional_text_binding(object.get("inReplyTo").and_then(serde_json::Value::as_str)),
         D1Type::Null,
-        match quote_of_uri.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
+        optional_text_binding(quote_of_uri.as_deref()),
         D1Type::Text(content_html.as_str()),
         D1Type::Text(spoiler_text.as_str()),
         D1Type::Text(visibility.as_str()),
-        D1Type::Integer(if sensitive { 1 } else { 0 }),
-        match language.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
+        bool_binding(sensitive),
+        optional_text_binding(language.as_deref()),
         D1Type::Text(quote_state),
         D1Type::Text(published_at.as_str()),
         D1Type::Text(raw_object_json.as_str()),
@@ -514,10 +513,7 @@ pub(crate) async fn upsert_remote_reblog_status(
         D1Type::Null,
         D1Type::Null,
         D1Type::Text(boost_of_uri.as_str()),
-        match quote_of_uri.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
+        optional_text_binding(quote_of_uri.as_deref()),
         D1Type::Text(""),
         D1Type::Text(""),
         D1Type::Text(visibility.as_str()),
