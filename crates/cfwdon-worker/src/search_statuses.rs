@@ -382,6 +382,24 @@ fn merge_status_search_is_filter(parsed: &mut ParsedStatusSearchQuery, value: &s
     }
 }
 
+fn merge_status_search_has_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    value: &str,
+    negated: bool,
+) {
+    match unquote_status_search_token(value)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "media" => merge_boolean_filter(&mut parsed.has_media, !negated, &mut parsed.unsatisfiable),
+        "poll" => merge_boolean_filter(&mut parsed.has_poll, !negated, &mut parsed.unsatisfiable),
+        "embed" | "link" | "preview" => {
+            merge_boolean_filter(&mut parsed.has_embed, !negated, &mut parsed.unsatisfiable)
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -425,27 +443,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                     continue;
                 }
                 "has" => {
-                    match unquote_status_search_token(value)
-                        .to_ascii_lowercase()
-                        .as_str()
-                    {
-                        "media" => merge_boolean_filter(
-                            &mut parsed.has_media,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "poll" => merge_boolean_filter(
-                            &mut parsed.has_poll,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        "embed" | "link" | "preview" => merge_boolean_filter(
-                            &mut parsed.has_embed,
-                            !negated,
-                            &mut parsed.unsatisfiable,
-                        ),
-                        _ => {}
-                    }
+                    merge_status_search_has_filter(&mut parsed, value, negated);
                     continue;
                 }
                 "in" => {
