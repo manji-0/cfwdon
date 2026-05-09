@@ -4,6 +4,35 @@ use crate::{RemoteActorRow, RemoteStatusRow, Result, StatusRow};
 use worker::D1Database;
 use worker::d1::D1Type;
 
+const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
+                rs.id,
+                rs.actor_uri,
+                rs.object_uri,
+                rs.url,
+                rs.in_reply_to_uri,
+                rs.boost_of_uri,
+                rs.quote_of_uri,
+                rs.content_html,
+                rs.spoiler_text,
+                rs.visibility,
+                rs.sensitive,
+                rs.language,
+                rs.quote_state,
+                rs.published_at,
+                ra.username,
+                ra.domain,
+                ra.display_name,
+                ra.summary_html,
+                ra.profile_url,
+                ra.avatar_url,
+                ra.header_url,
+                ra.locked,
+                ra.bot,
+                ra.discoverable,
+                ra.indexable
+             FROM remote_statuses rs
+             JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri";
+
 fn normalized_search_patterns(queries: &[String]) -> Vec<String> {
     let mut patterns = Vec::new();
     let mut seen = HashSet::new();
@@ -165,34 +194,7 @@ pub(crate) async fn search_remote_status_rows(
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = 1 + patterns.len();
         db.prepare(&format!(
-            "SELECT
-                rs.id,
-                rs.actor_uri,
-                rs.object_uri,
-                rs.url,
-                rs.in_reply_to_uri,
-                rs.boost_of_uri,
-                rs.quote_of_uri,
-                rs.content_html,
-                rs.spoiler_text,
-                rs.visibility,
-                rs.sensitive,
-                rs.language,
-                rs.quote_state,
-                rs.published_at,
-                ra.username,
-                ra.domain,
-                ra.display_name,
-                ra.summary_html,
-                ra.profile_url,
-                ra.avatar_url,
-                ra.header_url,
-                ra.locked,
-                ra.bot,
-                ra.discoverable,
-                ra.indexable
-             FROM remote_statuses rs
-             JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+            "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE rs.actor_uri = ?1
                AND ({})
                AND (?{max_ts} IS NULL
@@ -227,34 +229,7 @@ pub(crate) async fn search_remote_status_rows(
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = patterns.len();
         db.prepare(&format!(
-            "SELECT
-                rs.id,
-                rs.actor_uri,
-                rs.object_uri,
-                rs.url,
-                rs.in_reply_to_uri,
-                rs.boost_of_uri,
-                rs.quote_of_uri,
-                rs.content_html,
-                rs.spoiler_text,
-                rs.visibility,
-                rs.sensitive,
-                rs.language,
-                rs.quote_state,
-                rs.published_at,
-                ra.username,
-                ra.domain,
-                ra.display_name,
-                ra.summary_html,
-                ra.profile_url,
-                ra.avatar_url,
-                ra.header_url,
-                ra.locked,
-                ra.bot,
-                ra.discoverable,
-                ra.indexable
-             FROM remote_statuses rs
-             JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+            "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE ({})
                AND (?{max_ts} IS NULL
                     OR rs.published_at < ?{max_ts}
