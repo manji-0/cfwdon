@@ -119,6 +119,21 @@ fn cursor_window_clause(
     )
 }
 
+fn cursor_window_clause_after_patterns(
+    timestamp_column: &str,
+    id_column: &str,
+    pattern_max_index: usize,
+) -> String {
+    cursor_window_clause(
+        timestamp_column,
+        id_column,
+        pattern_max_index + 1,
+        pattern_max_index + 2,
+        pattern_max_index + 3,
+        pattern_max_index + 4,
+    )
+}
+
 fn json_string(value: &serde_json::Value, key: &str) -> String {
     value
         .get(key)
@@ -199,14 +214,8 @@ pub(crate) async fn search_local_status_rows(
             limit,
         );
         let pattern_max_index = 1 + patterns.len();
-        let cursor_clause = cursor_window_clause(
-            "created_at",
-            "id",
-            pattern_max_index + 1,
-            pattern_max_index + 2,
-            pattern_max_index + 3,
-            pattern_max_index + 4,
-        );
+        let cursor_clause =
+            cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE account_id = ?1
@@ -232,14 +241,8 @@ pub(crate) async fn search_local_status_rows(
             limit,
         );
         let pattern_max_index = patterns.len();
-        let cursor_clause = cursor_window_clause(
-            "created_at",
-            "id",
-            pattern_max_index + 1,
-            pattern_max_index + 2,
-            pattern_max_index + 3,
-            pattern_max_index + 4,
-        );
+        let cursor_clause =
+            cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE ({})
@@ -282,14 +285,8 @@ pub(crate) async fn search_remote_status_rows(
             limit,
         );
         let pattern_max_index = 1 + patterns.len();
-        let cursor_clause = cursor_window_clause(
-            "rs.published_at",
-            "rs.id",
-            pattern_max_index + 1,
-            pattern_max_index + 2,
-            pattern_max_index + 3,
-            pattern_max_index + 4,
-        );
+        let cursor_clause =
+            cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE rs.actor_uri = ?1
@@ -315,14 +312,8 @@ pub(crate) async fn search_remote_status_rows(
             limit,
         );
         let pattern_max_index = patterns.len();
-        let cursor_clause = cursor_window_clause(
-            "rs.published_at",
-            "rs.id",
-            pattern_max_index + 1,
-            pattern_max_index + 2,
-            pattern_max_index + 3,
-            pattern_max_index + 4,
-        );
+        let cursor_clause =
+            cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE ({})
