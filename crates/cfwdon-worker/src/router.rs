@@ -3,24 +3,24 @@ use super::{
     account_email_subscriptions_response, account_endorsements_response,
     account_featured_tags_response, account_followers_response, account_following_response,
     account_lists_response, account_lookup, account_relationships, account_response,
-    account_search, account_statuses_response, accounts_index_response, actor_response,
-    add_list_accounts_response, alpha_account_collections_response,
-    alpha_account_in_collections_response, alpha_collection_response,
-    announcement_reaction_mutation_response, announcements_response, annual_report_action_response,
-    annual_report_response, annual_report_state_response, annual_reports_response,
-    app_verify_credentials_response, async_refresh_response, authorize_follow_request_response,
-    block_account, blocks_response, bookmark_status, bookmarks_response,
-    check_email_confirmation_response, conversations_response, create_account_placeholder_response,
-    create_alpha_collection_item_response, create_alpha_collection_response, create_app_response,
-    create_domain_block_response, create_email_confirmation_response,
-    create_filter_keyword_response, create_filter_status_response, create_filter_v1_response,
-    create_filter_v2_response, create_list_response, create_media_attachment,
-    create_push_subscription_response, create_report, create_status, custom_emojis_response,
-    delete_alpha_collection_item_response, delete_alpha_collection_response,
-    delete_conversation_response, delete_domain_block_response, delete_filter_keyword_response,
-    delete_filter_status_response, delete_filter_v1_response, delete_filter_v2_response,
-    delete_list_accounts_response, delete_list_response, delete_media_attachment,
-    delete_profile_avatar_response, delete_profile_header_response,
+    account_search, account_statuses_by_username_response, account_statuses_response,
+    accounts_index_response, actor_response, add_list_accounts_response,
+    alpha_account_collections_response, alpha_account_in_collections_response,
+    alpha_collection_response, announcement_reaction_mutation_response, announcements_response,
+    annual_report_action_response, annual_report_response, annual_report_state_response,
+    annual_reports_response, app_verify_credentials_response, async_refresh_response,
+    authorize_follow_request_response, block_account, blocks_response, bookmark_status,
+    bookmarks_response, check_email_confirmation_response, conversations_response,
+    create_account_placeholder_response, create_alpha_collection_item_response,
+    create_alpha_collection_response, create_app_response, create_domain_block_response,
+    create_email_confirmation_response, create_filter_keyword_response,
+    create_filter_status_response, create_filter_v1_response, create_filter_v2_response,
+    create_list_response, create_media_attachment, create_push_subscription_response,
+    create_report, create_status, custom_emojis_response, delete_alpha_collection_item_response,
+    delete_alpha_collection_response, delete_conversation_response, delete_domain_block_response,
+    delete_filter_keyword_response, delete_filter_status_response, delete_filter_v1_response,
+    delete_filter_v2_response, delete_list_accounts_response, delete_list_response,
+    delete_media_attachment, delete_profile_avatar_response, delete_profile_header_response,
     delete_push_subscription_response, delete_scheduled_status_response, delete_status,
     delete_suggestion_response, direct_timeline_response, dismiss_announcement_mutation_response,
     dismiss_notification_request_response, dismiss_notification_requests_response,
@@ -52,10 +52,10 @@ use super::{
     pin_account_response, pin_status_response, poll_response, preferences_response,
     process_expired_polls, process_outbox_deliveries, profile_response, prune_orphan_media,
     public_timeline_response, push_subscription_response, read_conversation_response,
-    reblog_status, reject_follow_request_response, remove_from_followers_response,
-    revoke_alpha_collection_item_response, revoke_quote_response, root_document,
-    save_markers_response, scheduled_status_response, scheduled_statuses_response, search_v1,
-    search_v2, shared_inbox_response, status_api_response, status_card_response,
+    reblog_status, reject_follow_request_response, remote_follow_response,
+    remove_from_followers_response, revoke_alpha_collection_item_response, revoke_quote_response,
+    root_document, save_markers_response, scheduled_status_response, scheduled_statuses_response,
+    search_v1, search_v2, shared_inbox_response, status_api_response, status_card_response,
     status_context_response, status_favourited_by_response, status_history_response,
     status_interaction_policy_response, status_object_response, status_quotes_response,
     status_reblogged_by_response, status_source_response, statuses_index_placeholder_response,
@@ -359,8 +359,14 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/nodeinfo/2.0", |_req, ctx| async move {
             nodeinfo_response(ctx).await
         })
-        .get_async("/users/:username", |_req, ctx| async move {
-            actor_response(ctx).await
+        .get_async("/users/:username", |req, ctx| async move {
+            actor_response(req, ctx).await
+        })
+        .get_async("/users/:username/statuses", |req, ctx| async move {
+            account_statuses_by_username_response(req, ctx).await
+        })
+        .get_async("/users/:username/remote-follow", |req, ctx| async move {
+            remote_follow_response(req, ctx).await
         })
         .get_async("/users/:username/followers", |req, ctx| async move {
             followers_collection_response(req, ctx).await
