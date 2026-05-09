@@ -111,13 +111,7 @@ pub(crate) async fn parse_status_draft(
 
     let text = request.status.unwrap_or_default().trim().to_owned();
     let poll = normalize_status_poll(request.poll)?;
-    let media_ids = request
-        .media_ids
-        .unwrap_or_default()
-        .into_iter()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
+    let media_ids = normalize_status_media_ids(request.media_ids);
     if text.is_empty() && media_ids.is_empty() && poll.is_none() {
         return Err("status, media_ids, or poll must be present".to_owned());
     }
@@ -168,6 +162,15 @@ pub(crate) async fn parse_status_draft(
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty()),
     })
+}
+
+fn normalize_status_media_ids(media_ids: Option<Vec<String>>) -> Vec<String> {
+    media_ids
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 pub(crate) fn normalize_scheduled_at(
