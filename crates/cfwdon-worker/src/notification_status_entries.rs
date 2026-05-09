@@ -3,14 +3,34 @@ use crate::notifications::{
     notification_type_allowed, push_notification_entry,
 };
 use crate::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusRow, actor_url,
-    build_local_status_response, build_remote_status_response, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    list_local_status_notifications_for_account, list_remote_status_notifications_for_account,
-    load_in_reply_to_account_id, muted_notifications_for_actor, remote_account_rest_id,
+    AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusNotificationRow,
+    RemoteStatusRow, actor_url, build_local_status_response, build_remote_status_response,
+    can_view_local_status, find_account_by_id, find_media_attachments_by_status_id,
+    find_remote_actor_by_actor_uri, list_local_status_notifications_for_account,
+    list_remote_status_notifications_for_account, load_in_reply_to_account_id,
+    muted_notifications_for_actor, remote_account_rest_id,
 };
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
+
+fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> RemoteStatusRow {
+    RemoteStatusRow {
+        id: status.id.clone(),
+        actor_uri: status.actor_uri.clone(),
+        object_uri: status.object_uri.clone(),
+        url: status.url.clone(),
+        in_reply_to_uri: status.in_reply_to_uri.clone(),
+        boost_of_uri: status.boost_of_uri.clone(),
+        quote_of_uri: status.quote_of_uri.clone(),
+        content_html: status.content_html.clone(),
+        spoiler_text: status.spoiler_text.clone(),
+        visibility: status.visibility.clone(),
+        sensitive: status.sensitive,
+        language: status.language.clone(),
+        quote_state: status.quote_state.clone(),
+        published_at: status.published_at.clone(),
+    }
+}
 
 pub(crate) async fn collect_status_notification_entries(
     entries: &mut Vec<NotificationEntry>,
@@ -82,22 +102,7 @@ pub(crate) async fn collect_status_notification_entries(
         ) {
             continue;
         }
-        let status_row = RemoteStatusRow {
-            id: status.id.clone(),
-            actor_uri: status.actor_uri.clone(),
-            object_uri: status.object_uri.clone(),
-            url: status.url.clone(),
-            in_reply_to_uri: status.in_reply_to_uri.clone(),
-            boost_of_uri: status.boost_of_uri.clone(),
-            quote_of_uri: status.quote_of_uri.clone(),
-            content_html: status.content_html.clone(),
-            spoiler_text: status.spoiler_text.clone(),
-            visibility: status.visibility.clone(),
-            sensitive: status.sensitive,
-            language: status.language.clone(),
-            quote_state: status.quote_state.clone(),
-            published_at: status.published_at.clone(),
-        };
+        let status_row = remote_status_notification_row(&status);
         let status_response =
             build_remote_status_response(db, config, Some(viewer), &status_row, &actor).await?;
         push_notification_entry(
