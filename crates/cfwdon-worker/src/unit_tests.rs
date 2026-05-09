@@ -28,20 +28,20 @@ use super::{
     build_timeline_link_header_for_url, build_translation_document,
     build_translation_document_for_language, build_translation_languages_document,
     build_update_person_activity_with_id, classify_media_kind, cloudflare_access_login_url,
-    configured_html_document, context_async_refresh_id, delivery_retry_delay_modifier,
-    derive_link_timeline_match_urls, describe_outbound_activity, directory_order,
-    effective_local_quote_approval_policy, effective_remote_status_quote_state,
-    effective_search_v2_following, effective_search_v2_offset, effective_status_quote_state,
-    extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
-    extract_html_preview_metadata, extract_inbox_target_username, extract_mentions_from_text,
-    extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
-    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
-    format_async_refresh_header_value, hash_account_password, include_local_source,
-    include_remote_source, initial_local_quote_approval_policy, instance_base_url,
-    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
-    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
-    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
-    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    cloudflare_access_logout_url, cloudflare_access_team_logout_url, configured_html_document,
+    context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
+    describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
+    effective_remote_status_quote_state, effective_search_v2_following, effective_search_v2_offset,
+    effective_status_quote_state, extract_account_handles_from_text, extract_hashtags_from_html,
+    extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
+    extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
+    extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
+    follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
+    include_local_source, include_remote_source, initial_local_quote_approval_policy,
+    instance_base_url, is_activitypub_actor_type, is_admin_account, is_follow_undo,
+    local_quote_policy_allows, local_username_from_actor_uri, local_username_from_status_uri,
+    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
+    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
     notification_sort_key, notification_timestamp_sort_token,
@@ -421,6 +421,21 @@ fn cloudflare_access_login_url_matches_access_plugin_shape() {
     assert_eq!(
         params.get("redirect_url").map(|value| value.as_ref()),
         Some("/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F")
+    );
+}
+
+#[test]
+fn cloudflare_access_logout_urls_match_access_session_management_shape() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
+
+    assert_eq!(
+        cloudflare_access_logout_url(&config),
+        "https://social.example/cdn-cgi/access/logout"
+    );
+    assert_eq!(
+        cloudflare_access_team_logout_url(&config).unwrap().as_str(),
+        "https://example.cloudflareaccess.com/cdn-cgi/access/logout"
     );
 }
 
