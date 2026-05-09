@@ -415,15 +415,15 @@ mod tests {
     #[test]
     fn parse_timeline_access_level_accepts_supported_values() {
         assert_eq!(
-            parse_timeline_access_level(Some(" public ".to_owned())),
+            parse_timeline_access_level(Some(format!(" {TIMELINE_ACCESS_PUBLIC} "))),
             Some(TimelineAccessLevel::Public)
         );
         assert_eq!(
-            parse_timeline_access_level(Some("authenticated".to_owned())),
+            parse_timeline_access_level(Some(TIMELINE_ACCESS_AUTHENTICATED.to_owned())),
             Some(TimelineAccessLevel::Authenticated)
         );
         assert_eq!(
-            parse_timeline_access_level(Some("disabled".to_owned())),
+            parse_timeline_access_level(Some(TIMELINE_ACCESS_DISABLED.to_owned())),
             Some(TimelineAccessLevel::Disabled)
         );
     }
