@@ -176,3 +176,15 @@ async fn collect_descendants_for_local_root(
         viewer.is_some(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_depth_exceeds_limit_only_after_limit() {
+        assert!(!context_depth_exceeds_limit(None, usize::MAX));
+        assert!(!context_depth_exceeds_limit(Some(2), 2));
+        assert!(context_depth_exceeds_limit(Some(2), 3));
+    }
+}
