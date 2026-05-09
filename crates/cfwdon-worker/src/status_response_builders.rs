@@ -148,6 +148,35 @@ async fn quote_state_for_remote_quoted_status(
     Ok(None)
 }
 
+async fn local_quoted_status_document_state(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    local_account: &LocalAccount,
+) -> Result<&'static str> {
+    let Some(viewer) = viewer else {
+        return Ok("accepted");
+    };
+    Ok(
+        quote_state_for_local_quoted_status(db, config, viewer, local_account)
+            .await?
+            .unwrap_or("accepted"),
+    )
+}
+
+async fn remote_quoted_status_document_state(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    actor: &RemoteActorRow,
+) -> Result<&'static str> {
+    let Some(viewer) = viewer else {
+        return Ok("accepted");
+    };
+    Ok(quote_state_for_remote_quoted_status(db, viewer, actor)
+        .await?
+        .unwrap_or("accepted"))
+}
+
 pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &str {
     if matches!(status.visibility.as_str(), "private" | "direct") {
         "nobody"
@@ -532,13 +561,7 @@ async fn build_quoted_status_value(
             None => false,
         };
         response.quote = None;
-        let state = match viewer {
-            Some(viewer) => {
-                quote_state_for_local_quoted_status(db, config, viewer, &local_account).await?
-            }
-            None => None,
-        }
-        .unwrap_or("accepted");
+        let state = local_quoted_status_document_state(db, config, viewer, &local_account).await?;
         return Ok(Some(quote_document_from_response(state, response)));
     }
 
@@ -607,11 +630,7 @@ async fn build_quoted_status_value(
         };
         response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
         response.quote = None;
-        let state = match viewer {
-            Some(viewer) => quote_state_for_remote_quoted_status(db, viewer, &actor).await?,
-            None => None,
-        }
-        .unwrap_or("accepted");
+        let state = remote_quoted_status_document_state(db, viewer, &actor).await?;
         return Ok(Some(quote_document_from_response(state, response)));
     }
 
