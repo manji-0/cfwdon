@@ -16,6 +16,9 @@ const DEFAULT_INSTANCE_DOMAIN: &str = "example.com";
 const DEFAULT_INSTANCE_NAME: &str = "cfwdon";
 const DEFAULT_INSTANCE_DESCRIPTION: &str =
     "Cloudflare Workers + D1 + R2 based Mastodon-compatible server";
+const TIMELINE_ACCESS_PUBLIC: &str = "public";
+const TIMELINE_ACCESS_AUTHENTICATED: &str = "authenticated";
+const TIMELINE_ACCESS_DISABLED: &str = "disabled";
 
 const ROOT_ENDPOINTS: &[&str] = &[
     "/",
@@ -179,9 +182,9 @@ const ROOT_ENDPOINTS: &[&str] = &[
 
 fn parse_timeline_access_level(value: Option<String>) -> Option<TimelineAccessLevel> {
     match value.as_deref().map(str::trim) {
-        Some("public") => Some(TimelineAccessLevel::Public),
-        Some("authenticated") => Some(TimelineAccessLevel::Authenticated),
-        Some("disabled") => Some(TimelineAccessLevel::Disabled),
+        Some(TIMELINE_ACCESS_PUBLIC) => Some(TimelineAccessLevel::Public),
+        Some(TIMELINE_ACCESS_AUTHENTICATED) => Some(TimelineAccessLevel::Authenticated),
+        Some(TIMELINE_ACCESS_DISABLED) => Some(TimelineAccessLevel::Disabled),
         _ => None,
     }
 }
