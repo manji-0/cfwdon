@@ -53,6 +53,10 @@ pub(crate) fn quote_placeholder_document(state: &str) -> serde_json::Value {
     })
 }
 
+fn unauthorized_quote_document() -> serde_json::Value {
+    quote_placeholder_document("unauthorized")
+}
+
 fn quote_state_uses_placeholder(state: &str) -> bool {
     matches!(state, "revoked" | "rejected" | "unauthorized" | "deleted")
 }
@@ -526,7 +530,7 @@ async fn build_quoted_status_value(
             return Ok(None);
         };
         if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
-            return Ok(Some(quote_placeholder_document("unauthorized")));
+            return Ok(Some(unauthorized_quote_document()));
         }
         let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
         let mut response = MastodonStatusResponse::from_row(
@@ -572,7 +576,7 @@ async fn build_quoted_status_value(
             return Ok(Some(pending_quote_document()));
         }
         if !remote_quote_visibility_is_embeddable(&remote_status.visibility) {
-            return Ok(Some(quote_placeholder_document("unauthorized")));
+            return Ok(Some(unauthorized_quote_document()));
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
         else {
@@ -785,6 +789,14 @@ mod tests {
     #[test]
     fn accepted_quote_document_state_matches_mastodon_state_name() {
         assert_eq!(accepted_quote_document_state(), "accepted");
+    }
+
+    #[test]
+    fn unauthorized_quote_document_uses_placeholder_shape() {
+        let document = unauthorized_quote_document();
+
+        assert_eq!(document["state"], serde_json::json!("unauthorized"));
+        assert_eq!(document["quoted_status"], serde_json::Value::Null);
     }
 }
 
