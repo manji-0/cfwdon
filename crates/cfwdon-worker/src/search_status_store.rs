@@ -4,6 +4,9 @@ use crate::{RemoteActorRow, RemoteStatusRow, Result, StatusRow};
 use worker::D1Database;
 use worker::d1::D1Type;
 
+const LOCAL_STATUS_SEARCH_SELECT: &str = "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+             FROM statuses";
+
 const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
                 rs.id,
                 rs.actor_uri,
@@ -142,10 +145,8 @@ pub(crate) async fn search_local_status_rows(
         bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = 1 + patterns.len();
-        db.prepare(
-            &format!(
-                "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
-             FROM statuses
+        db.prepare(&format!(
+            "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE account_id = ?1
                AND ({})
                AND (?{max_ts} IS NULL
@@ -156,14 +157,13 @@ pub(crate) async fn search_local_status_rows(
                     OR (created_at = ?{min_ts} AND id > ?{min_id}))
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
-                search_clauses,
-                max_ts = pattern_max_index + 1,
-                max_id = pattern_max_index + 2,
-                min_ts = pattern_max_index + 3,
-                min_id = pattern_max_index + 4,
-                limit = pattern_max_index + 5,
-            ),
-        )
+            search_clauses,
+            max_ts = pattern_max_index + 1,
+            max_id = pattern_max_index + 2,
+            min_ts = pattern_max_index + 3,
+            min_id = pattern_max_index + 4,
+            limit = pattern_max_index + 5,
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?
@@ -180,10 +180,8 @@ pub(crate) async fn search_local_status_rows(
         bindings.push(optional_text_binding(min_id));
         bindings.push(D1Type::Integer(limit as i32));
         let pattern_max_index = patterns.len();
-        db.prepare(
-            &format!(
-                "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
-             FROM statuses
+        db.prepare(&format!(
+            "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE ({})
                AND (?{max_ts} IS NULL
                     OR created_at < ?{max_ts}
@@ -193,14 +191,13 @@ pub(crate) async fn search_local_status_rows(
                     OR (created_at = ?{min_ts} AND id > ?{min_id}))
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
-                search_clauses,
-                max_ts = pattern_max_index + 1,
-                max_id = pattern_max_index + 2,
-                min_ts = pattern_max_index + 3,
-                min_id = pattern_max_index + 4,
-                limit = pattern_max_index + 5,
-            ),
-        )
+            search_clauses,
+            max_ts = pattern_max_index + 1,
+            max_id = pattern_max_index + 2,
+            min_ts = pattern_max_index + 3,
+            min_id = pattern_max_index + 4,
+            limit = pattern_max_index + 5,
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?
