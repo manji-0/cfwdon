@@ -23,6 +23,10 @@ fn local_context_object_uri(
     })
 }
 
+fn context_depth_exceeds_limit(max_depth: Option<usize>, depth: usize) -> bool {
+    max_depth.is_some_and(|limit| depth > limit)
+}
+
 pub(crate) async fn build_local_status_context(
     db: &D1Database,
     config: &AppConfig,
@@ -97,7 +101,7 @@ async fn collect_descendants_for_local_root(
                 continue;
             }
             let child_depth = depth.saturating_add(1);
-            if max_depth.is_some_and(|limit| child_depth > limit) {
+            if context_depth_exceeds_limit(max_depth, child_depth) {
                 continue;
             }
             let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
@@ -132,7 +136,7 @@ async fn collect_descendants_for_local_root(
                 continue;
             }
             let child_depth = depth.saturating_add(1);
-            if max_depth.is_some_and(|limit| child_depth > limit) {
+            if context_depth_exceeds_limit(max_depth, child_depth) {
                 continue;
             }
             if !is_public_activitypub_visibility(&status.visibility) {
@@ -152,7 +156,7 @@ async fn collect_descendants_for_local_root(
                 continue;
             }
             let child_depth = depth.saturating_add(1);
-            if max_depth.is_some_and(|limit| child_depth > limit) {
+            if context_depth_exceeds_limit(max_depth, child_depth) {
                 continue;
             }
             if !is_public_activitypub_visibility(&status.visibility) {
