@@ -214,6 +214,7 @@ async fn store_profile_media(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::UpdateCredentialsField;
 
     fn test_account() -> LocalAccount {
         LocalAccount {
@@ -276,5 +277,31 @@ mod tests {
         let update = UpdateCredentialsRequest::default();
 
         assert_eq!(account_profile_fields(&account, &update), account.fields);
+    }
+
+    #[test]
+    fn account_profile_fields_uses_complete_update_fields() {
+        let account = test_account();
+        let update = UpdateCredentialsRequest {
+            fields_attributes: Some(vec![
+                UpdateCredentialsField {
+                    name: Some("Git".to_owned()),
+                    value: Some("https://example.com/git".to_owned()),
+                },
+                UpdateCredentialsField {
+                    name: Some("Ignored".to_owned()),
+                    value: None,
+                },
+            ]),
+            ..UpdateCredentialsRequest::default()
+        };
+
+        assert_eq!(
+            account_profile_fields(&account, &update),
+            vec![ProfileField {
+                name: "Git".to_owned(),
+                value: "https://example.com/git".to_owned(),
+            }]
+        );
     }
 }
