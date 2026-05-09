@@ -191,6 +191,13 @@ fn remote_status_published_at(object: &serde_json::Value) -> String {
         .to_owned()
 }
 
+fn remote_status_language(object: &serde_json::Value) -> Option<String> {
+    object
+        .get("contentMap")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|map| map.keys().next().cloned())
+}
+
 async fn find_remote_status_edit_state_by_object_uri(
     db: &D1Database,
     object_uri: &str,
@@ -259,10 +266,7 @@ pub(crate) async fn upsert_remote_status(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let published_at = remote_status_published_at(object);
-    let language = object
-        .get("contentMap")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|map| map.keys().next().cloned());
+    let language = remote_status_language(object);
     let status_id = generate_entity_id(16)?;
     let quote_of_uri = quote_target_uri_from_object(object);
     let quote_state =
@@ -662,5 +666,23 @@ mod tests {
         });
 
         assert_eq!(remote_status_published_at(&object), "2026-05-10T04:05:06Z");
+    }
+
+    #[test]
+    fn remote_status_language_extracts_content_map_key() {
+        let object = json!({
+            "contentMap": {
+                "ja": "こんにちは",
+            },
+        });
+
+        assert_eq!(remote_status_language(&object).as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn remote_status_language_ignores_missing_content_map() {
+        let object = json!({});
+
+        assert_eq!(remote_status_language(&object), None);
     }
 }
