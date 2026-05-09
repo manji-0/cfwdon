@@ -2342,16 +2342,17 @@ async fn accepted_follow_exists(
     ];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM follows
              WHERE follower_account_id = ?1
                AND target_actor_uri = ?2
-               AND state = 'accepted'",
+               AND state = 'accepted'
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<CountRow>(None)
         .await?;
-    Ok(row.map(|row| row.count).unwrap_or(0) > 0)
+    Ok(row.is_some())
 }
 
 async fn recent_accepted_follow_exists(
@@ -2367,17 +2368,18 @@ async fn recent_accepted_follow_exists(
     ];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM follows
              WHERE follower_account_id = ?1
                AND target_actor_uri = ?2
                AND state = 'accepted'
-               AND datetime(replace(replace(created_at, 'T', ' '), 'Z', '')) > datetime(CURRENT_TIMESTAMP, ?3)",
+               AND datetime(replace(replace(created_at, 'T', ' '), 'Z', '')) > datetime(CURRENT_TIMESTAMP, ?3)
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<CountRow>(None)
         .await?;
-    Ok(row.map(|row| row.count).unwrap_or(0) > 0)
+    Ok(row.is_some())
 }
 
 async fn timestamp_is_after_current_timestamp_modifier(
