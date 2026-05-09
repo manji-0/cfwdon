@@ -193,8 +193,12 @@ pub(crate) fn root_document() -> RootDocument {
         service: build.service_name.to_owned(),
         version: build.version.to_owned(),
         runtime: build.runtime.to_owned(),
-        endpoints: ROOT_ENDPOINTS.to_vec(),
+        endpoints: root_endpoint_list(),
     }
+}
+
+fn root_endpoint_list() -> Vec<&'static str> {
+    ROOT_ENDPOINTS.to_vec()
 }
 
 pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
@@ -462,7 +466,7 @@ mod tests {
 
     #[test]
     fn root_endpoint_list_has_no_duplicates() {
-        let endpoints = root_document().endpoints;
+        let endpoints = root_endpoint_list();
         let unique = endpoints.iter().collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), endpoints.len());
     }
