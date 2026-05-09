@@ -9,29 +9,29 @@ command = "WASM_BINDGEN_BIN=\"$HOME/.cargo/bin/wasm-bindgen\" worker-build --rel
 crons = ["17 * * * *"]
 
 [vars]
-INSTANCE_DOMAIN = "example.com"
+INSTANCE_DOMAIN = "fedi.manji.app"
 INSTANCE_NAME = "cfwdon"
 INSTANCE_DESCRIPTION = "Cloudflare Workers + D1 + R2 based Mastodon-compatible server"
-SOURCE_URL = "https://example.com/your-cfwdon-repository"
+SOURCE_URL = "https://github.com/manji-0/cfwdon"
 INSTANCE_LANGUAGES = "ja,en"
-CONTACT_EMAIL = "admin@example.com"
-INSTANCE_THUMBNAIL_URL = "https://media.example.com/site/thumbnail.png"
-MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
+CONTACT_EMAIL = "admin@manji.app"
+INSTANCE_THUMBNAIL_URL = "https://media.fedi.manji.app/site/thumbnail.png"
+MEDIA_PUBLIC_BASE_URL = "https://media.fedi.manji.app"
 # Optional e-mail confirmation dispatch via Resend.
 # RESEND_API_KEY should normally be configured as a secret, not here.
-EMAIL_FROM = "cfwdon <noreply@example.com>"
+EMAIL_FROM = "cfwdon <noreply@fedi.manji.app>"
 # Protected routes are expected to sit behind Cloudflare Auth / Access.
 ACCESS_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email"
 ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
-ACCESS_TEAM_DOMAIN = "https://your-team.cloudflareaccess.com"
-ACCESS_AUD = "replace-with-your-access-aud"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
 
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.
 [[d1_databases]]
 binding = "DB"
 database_name = "cfwdon"
-database_id = "replace-with-your-d1-database-id"
+database_id = "69ce1fde-3bda-454e-8b30-f5bfa71e6212"
 
 [[r2_buckets]]
 binding = "MEDIA"
