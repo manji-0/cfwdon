@@ -34,14 +34,14 @@ struct OAuthTokenRequest {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-struct OAuthAuthorizeRequest {
-    response_type: Option<String>,
-    client_id: Option<String>,
-    redirect_uri: Option<String>,
-    scope: Option<String>,
-    state: Option<String>,
-    code_challenge: Option<String>,
-    code_challenge_method: Option<String>,
+pub(crate) struct OAuthAuthorizeRequest {
+    pub(crate) response_type: Option<String>,
+    pub(crate) client_id: Option<String>,
+    pub(crate) redirect_uri: Option<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) code_challenge: Option<String>,
+    pub(crate) code_challenge_method: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -219,7 +219,47 @@ pub(crate) fn oauth_access_token_has_any_scope(row: &OAuthAccessTokenRow, scopes
 }
 
 fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(&row.redirect_uris_json).unwrap_or_default()
+    let redirect_uris = serde_json::from_str::<Vec<String>>(&row.redirect_uris_json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>();
+    if !redirect_uris.is_empty() {
+        return redirect_uris;
+    }
+    row.redirect_uri_legacy
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+pub(crate) fn redirect_uri_matches_registered(registered: &str, requested: &str) -> bool {
+    if registered == requested {
+        return true;
+    }
+    let (Ok(registered_url), Ok(requested_url)) = (Url::parse(registered), Url::parse(requested))
+    else {
+        return false;
+    };
+    if registered_url.scheme() != requested_url.scheme()
+        || registered_url.username() != requested_url.username()
+        || registered_url.password() != requested_url.password()
+        || registered_url.host_str() != requested_url.host_str()
+        || registered_url.port_or_known_default() != requested_url.port_or_known_default()
+        || registered_url.query() != requested_url.query()
+        || registered_url.fragment() != requested_url.fragment()
+    {
+        return false;
+    }
+    if matches!(registered_url.scheme(), "http" | "https") {
+        return registered_url.path() == requested_url.path();
+    }
+    matches!(
+        (registered_url.path(), requested_url.path()),
+        ("", "/") | ("/", "")
+    )
 }
 
 pub(crate) fn build_app_verify_credentials_document_from_parts(
@@ -552,7 +592,7 @@ fn validate_redirect_uri(value: &str) -> std::result::Result<String, String> {
 fn normalize_redirect_uris(values: Vec<String>) -> std::result::Result<Vec<String>, String> {
     let mut redirect_uris = Vec::new();
     for value in values {
-        for candidate in value.lines() {
+        for candidate in value.split_whitespace() {
             let candidate = candidate.trim();
             if candidate.is_empty() {
                 continue;
@@ -656,6 +696,49 @@ fn access_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Resu
     redirect_response(login_url.as_str())
 }
 
+pub(crate) fn oauth_authorize_url_from_form(
+    base_url: &Url,
+    request: &OAuthAuthorizeRequest,
+) -> std::result::Result<Url, String> {
+    let mut authorize_url = base_url.clone();
+    authorize_url.set_path("/oauth/authorize");
+    authorize_url.set_query(None);
+    {
+        let mut query = authorize_url.query_pairs_mut();
+        for (name, value) in [
+            ("response_type", request.response_type.as_deref()),
+            ("client_id", request.client_id.as_deref()),
+            ("redirect_uri", request.redirect_uri.as_deref()),
+            ("scope", request.scope.as_deref()),
+            ("state", request.state.as_deref()),
+            ("code_challenge", request.code_challenge.as_deref()),
+            (
+                "code_challenge_method",
+                request.code_challenge_method.as_deref(),
+            ),
+        ] {
+            if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+                query.append_pair(name, value);
+            }
+        }
+    }
+    Ok(authorize_url)
+}
+
+async fn access_login_redirect_from_authorize_form(
+    config: &cfwdon_core::AppConfig,
+    req: &mut Request,
+) -> Result<Response> {
+    let login = parse_oauth_authorize_login_request(req)
+        .await
+        .map_err(worker::Error::RustError)?;
+    let authorize_url = oauth_authorize_url_from_form(&req.url()?, &login.authorize)
+        .map_err(worker::Error::RustError)?;
+    let login_url =
+        cloudflare_access_login_url(config, &authorize_url).map_err(worker::Error::RustError)?;
+    redirect_response(login_url.as_str())
+}
+
 fn redirect_response(location: &str) -> Result<Response> {
     let body = redirect_fallback_body(location);
     let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
@@ -695,6 +778,16 @@ fn html_response(body: &str, status: u16) -> Result<Response> {
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;
     Ok(response.with_status(status))
+}
+
+fn oauth_authorize_error_response(message: &str, status: u16) -> Result<Response> {
+    html_response(
+        &format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorization error</title></head><body><main><h1>Authorization error</h1><p>{}</p></main></body></html>",
+            escape_html(message)
+        ),
+        status,
+    )
 }
 
 fn oauth_login_page(
@@ -805,7 +898,7 @@ async fn validate_authorize_request(
         .expect("normalized redirect_uri");
     if !oauth_app_redirect_uris(&app)
         .iter()
-        .any(|value| value == redirect_uri)
+        .any(|value| redirect_uri_matches_registered(value, redirect_uri))
     {
         return Err("Redirect URI is not registered for this OAuth client".to_owned());
     }
@@ -894,6 +987,7 @@ async fn parse_create_app_request(
             .filter(|values| !values.is_empty())
             .unwrap_or_else(|| {
                 form.get_field("redirect_uris")
+                    .or_else(|| form.get_field("redirect_uri"))
                     .map(|value| vec![value])
                     .unwrap_or_default()
             });
@@ -1063,7 +1157,7 @@ pub(crate) async fn oauth_authorize_response(
     let db = ctx.d1(&config.database_binding)?;
     if req.method().as_ref() == "POST" {
         if access_login_configured(&config) {
-            return access_login_redirect(&config, &req);
+            return access_login_redirect_from_authorize_form(&config, &mut req).await;
         }
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
@@ -1084,11 +1178,11 @@ pub(crate) async fn oauth_authorize_response(
 
     let authorize = match req.query::<OAuthAuthorizeRequest>() {
         Ok(query) => query,
-        Err(_) => return Response::error("Invalid authorization request", 400),
+        Err(_) => return oauth_authorize_error_response("Invalid authorization request", 400),
     };
     let (authorize, app, scopes) = match validate_authorize_request(&db, authorize).await {
         Ok(value) => value,
-        Err(message) => return Response::error(&message, 400),
+        Err(message) => return oauth_authorize_error_response(&message, 400),
     };
     if let Some(account) = crate::find_authenticated_local_account(&req, &db, &config).await? {
         return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;

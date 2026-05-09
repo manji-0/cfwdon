@@ -1815,14 +1815,6 @@ async fn streaming_home_batch(
         }
     }
 
-    let mut notification_batch = streaming_notification_batch(db, config, viewer, since_id).await?;
-    entries.extend(
-        notification_batch
-            .events
-            .drain(..)
-            .map(|event| (event.created_at, event.id, event.data)),
-    );
-
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let last_id = entries.last().map(|(_, id, _)| id.clone());
     let events = entries
@@ -2144,10 +2136,13 @@ fn build_streaming_event_stream(
         let mut tracked_status_id_set = HashSet::<String>::new();
         let mut deleted_status_ids = HashSet::<String>::new();
         let mut updated_status_ids = HashSet::<String>::new();
+        let mut emitted_event_ids = HashSet::<String>::new();
         let mut last_filter_updated_at = None::<String>;
         let mut last_announcements = HashMap::<String, String>::new();
         let mut last_announcement_reactions = HashMap::<(String, String), (u64, bool)>::new();
+        let mut initialized = false;
         loop {
+            let is_initial_poll = !initialized;
             let batch = if stream_name == "user" {
                 let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
                     "missing authenticated viewer for user stream".to_owned()
@@ -2197,8 +2192,15 @@ fn build_streaming_event_stream(
                 let removed = tracked_status_ids.remove(0);
                 tracked_status_id_set.remove(&removed);
             }
-            let mut events = batch.events;
-            if stream_name != "user:notification" {
+            let mut events = if is_initial_poll {
+                for event in &batch.events {
+                    emitted_event_ids.insert(format!("{}:{}", event.event, event.id));
+                }
+                Vec::new()
+            } else {
+                batch.events
+            };
+            if !is_initial_poll && stream_name != "user:notification" {
                 let delta_events = streaming_status_delta_events(
                     &db,
                     &config,
@@ -2221,7 +2223,7 @@ fn build_streaming_event_stream(
                         .as_deref()
                         .map(|value| value != current_filter_updated_at.as_str())
                         .unwrap_or(false);
-                    if changed {
+                    if !is_initial_poll && changed {
                         events.push(StreamingEvent {
                             created_at: current_filter_updated_at.clone(),
                             id: current_filter_updated_at.clone(),
@@ -2251,7 +2253,7 @@ fn build_streaming_event_stream(
                     })?;
                     let current_reactions = announcement_reaction_entries_for_id(&reaction_state, &id);
                     let previous_reactions = announcement_reaction_entries_for_id(&last_announcement_reactions, &id);
-                    if current_reactions != previous_reactions {
+                    if !is_initial_poll && current_reactions != previous_reactions {
                         for (name, (count, _me)) in &current_reactions {
                             let previous = last_announcement_reactions
                                 .get(&(id.clone(), name.clone()))
@@ -2275,7 +2277,7 @@ fn build_streaming_event_stream(
                                 });
                             }
                         }
-                    } else if last_announcements.get(&id) != Some(&payload) {
+                    } else if !is_initial_poll && last_announcements.get(&id) != Some(&payload) {
                         events.push(StreamingEvent {
                             created_at: announcement
                                 .get("published_at")
@@ -2296,16 +2298,20 @@ fn build_streaming_event_stream(
                     .cloned()
                     .collect::<Vec<_>>()
                 {
-                    events.push(StreamingEvent {
-                        created_at: now_iso_string()?,
-                        id: removed_id.clone(),
-                        event: "announcement.delete",
-                        data: removed_id,
-                    });
+                    if !is_initial_poll {
+                        events.push(StreamingEvent {
+                            created_at: now_iso_string()?,
+                            id: removed_id.clone(),
+                            event: "announcement.delete",
+                            data: removed_id,
+                        });
+                    }
                 }
                 last_announcement_reactions = reaction_state;
                 last_announcements = current_announcements;
             }
+            initialized = true;
+            events.retain(|event| emitted_event_ids.insert(format!("{}:{}", event.event, event.id)));
             if events.is_empty() {
                 yield sse_comment_bytes("thump");
             } else {

@@ -4,13 +4,13 @@ use super::router::is_cors_enabled_path;
 use super::{
     AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest,
     MastodonAccountResponse, MastodonReportResponse, NotificationEntry, NotificationsQuery,
-    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow,
-    RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow, SearchCategoryFlags,
-    SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow,
-    StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery,
-    TranslationProviderLanguageRow, account_matches_search_terms, account_relationship_rank,
-    account_search_is_complete_handle, account_search_non_exact_limit, account_search_rank,
-    account_search_sort_key, account_search_term, account_search_terms,
+    OAuthAuthorizeRequest, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
+    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
+    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
+    StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
+    TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
+    account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
+    account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
     activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
     build_activitypub_actor_document, build_activitypub_delete_with_published_at,
     build_add_featured_activity_with_id, build_announcements_document,
@@ -45,22 +45,22 @@ use super::{
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
     notification_sort_key, notification_timestamp_sort_token,
-    oauth_access_token_has_any_scope_json, object_attributed_to_remote_actor,
-    optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
-    paginate_tag_search_matches, parse_basic_authorization_header,
-    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
-    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
-    parse_lookup_handle, parse_media_focus, parse_remote_actor_profile_document,
-    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
-    pending_quote_document, quote_document_with_state, quote_placeholder_document,
-    quote_target_uri_from_object, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, remote_poll_draft_acknowledges_local_snapshot,
-    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_quote_state_for_local_target, remote_status_has_active_quote,
-    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
-    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
-    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
+    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
+    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
+    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
+    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
+    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
+    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
+    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
+    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
+    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
+    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
+    remote_poll_should_refresh, remote_quote_state_for_local_target,
+    remote_status_has_active_quote, remote_status_targets_local_viewer,
+    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
+    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
+    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -422,6 +422,53 @@ fn cloudflare_access_login_url_matches_access_plugin_shape() {
         params.get("redirect_url").map(|value| value.as_ref()),
         Some("/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F")
     );
+}
+
+#[test]
+fn oauth_authorize_form_redirect_preserves_authorize_parameters_for_access() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
+    config.access_audience = "aud-1".to_owned();
+    let base_url = Url::parse("https://social.example/oauth/authorize").unwrap();
+    let authorize_url = oauth_authorize_url_from_form(
+        &base_url,
+        &OAuthAuthorizeRequest {
+            response_type: Some("code".to_owned()),
+            client_id: Some("client-1".to_owned()),
+            redirect_uri: Some("mastodon://authorize".to_owned()),
+            scope: Some("read write".to_owned()),
+            state: Some("state-1".to_owned()),
+            code_challenge: Some("challenge-1".to_owned()),
+            code_challenge_method: Some("S256".to_owned()),
+        },
+    )
+    .unwrap();
+
+    let login_url = cloudflare_access_login_url(&config, &authorize_url).unwrap();
+
+    let params = login_url.query_pairs().collect::<HashMap<_, _>>();
+    assert_eq!(
+        params.get("redirect_url").map(|value| value.as_ref()),
+        Some(
+            "/oauth/authorize?response_type=code&client_id=client-1&redirect_uri=mastodon%3A%2F%2Fauthorize&scope=read+write&state=state-1&code_challenge=challenge-1&code_challenge_method=S256"
+        )
+    );
+}
+
+#[test]
+fn mobile_custom_scheme_redirect_uri_allows_empty_path_slash_variants() {
+    assert!(redirect_uri_matches_registered(
+        "mastodon://authorize",
+        "mastodon://authorize/"
+    ));
+    assert!(redirect_uri_matches_registered(
+        "mastodon://authorize/",
+        "mastodon://authorize"
+    ));
+    assert!(!redirect_uri_matches_registered(
+        "https://app.example/callback",
+        "https://app.example/callback/"
+    ));
 }
 
 #[test]

@@ -100,6 +100,86 @@ pub(crate) fn timeline_outside_authorized_scopes_response() -> Result<Response> 
     .with_status(403))
 }
 
+type TimelineEntry = (String, String, serde_json::Value);
+
+fn timeline_cursor_requested(pagination: &TimelinePaginationQuery) -> bool {
+    let has_max_id = pagination
+        .max_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let has_min_id = pagination
+        .min_id
+        .as_deref()
+        .or(pagination.since_id.as_deref())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+
+    has_max_id || has_min_id
+}
+
+fn timeline_cursor_is_unresolved(
+    pagination: &TimelinePaginationQuery,
+    cursor: &crate::ResolvedTimelineCursor,
+) -> bool {
+    let has_max_id = pagination
+        .max_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let has_min_id = pagination
+        .min_id
+        .as_deref()
+        .or(pagination.since_id.as_deref())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+
+    (has_max_id && cursor.max_timestamp.is_none()) || (has_min_id && cursor.min_timestamp.is_none())
+}
+
+fn empty_timeline_response() -> Result<Response> {
+    Response::from_json(&Vec::<serde_json::Value>::new())
+}
+
+fn timeline_response_from_entries(
+    req: &Request,
+    limit: u32,
+    entries: Vec<TimelineEntry>,
+) -> Result<Response> {
+    let (response, first_id, last_id) = timeline_page_response(entries, limit);
+    let mut builder = Response::from_json(&response)?;
+    if let Some(link) =
+        build_timeline_link_header(req, limit, first_id.as_deref(), last_id.as_deref())?
+    {
+        builder.headers_mut().set("Link", &link)?;
+    }
+    Ok(builder)
+}
+
+fn timeline_page_response(
+    mut entries: Vec<TimelineEntry>,
+    limit: u32,
+) -> (Vec<serde_json::Value>, Option<String>, Option<String>) {
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    let has_next_page = entries.len() > limit as usize;
+    let page = entries.into_iter().take(limit as usize).collect::<Vec<_>>();
+    let first_id = page
+        .first()
+        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
+    let last_id = has_next_page
+        .then(|| {
+            page.last()
+                .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()))
+        })
+        .flatten();
+    let response = page
+        .into_iter()
+        .map(|(_, _, value)| value)
+        .collect::<Vec<_>>();
+
+    (response, first_id, last_id)
+}
+
 fn status_card_url_matches_targets(text: &str, targets: &HashSet<String>) -> bool {
     build_status_card_value(text)
         .and_then(|card| {
@@ -133,6 +213,9 @@ pub(crate) async fn home_timeline_response(
     let limit = timeline_limit(&query.pagination);
     let query_limit = timeline_fetch_limit(limit);
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+        return empty_timeline_response();
+    }
     let mut entries = Vec::new();
     let mut seen_status_ids = HashSet::new();
 
@@ -153,16 +236,19 @@ pub(crate) async fn home_timeline_response(
         entries.push((
             status.created_at.clone(),
             status.id.clone(),
-            build_local_status_response(
-                &db,
-                &config,
-                Some(&viewer),
-                &status,
-                &account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
+            serde_json::to_value(
+                build_local_status_response(
+                    &db,
+                    &config,
+                    Some(&viewer),
+                    &status,
+                    &account,
+                    load_in_reply_to_account_id(&db, &status).await?,
+                    media,
+                )
+                .await?,
             )
-            .await?,
+            .unwrap_or(serde_json::Value::Null),
         ));
     }
 
@@ -178,7 +264,10 @@ pub(crate) async fn home_timeline_response(
         entries.push((
             status.published_at.clone(),
             status.id.clone(),
-            build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
+            serde_json::to_value(
+                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
+            )
+            .unwrap_or(serde_json::Value::Null),
         ));
     }
 
@@ -200,16 +289,19 @@ pub(crate) async fn home_timeline_response(
             entries.push((
                 status.created_at.clone(),
                 status.id.clone(),
-                build_local_status_response(
-                    &db,
-                    &config,
-                    Some(&viewer),
-                    &status,
-                    &account,
-                    load_in_reply_to_account_id(&db, &status).await?,
-                    media,
+                serde_json::to_value(
+                    build_local_status_response(
+                        &db,
+                        &config,
+                        Some(&viewer),
+                        &status,
+                        &account,
+                        load_in_reply_to_account_id(&db, &status).await?,
+                        media,
+                    )
+                    .await?,
                 )
-                .await?,
+                .unwrap_or(serde_json::Value::Null),
             ));
         }
 
@@ -225,30 +317,16 @@ pub(crate) async fn home_timeline_response(
             entries.push((
                 status.published_at.clone(),
                 status.id.clone(),
-                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
+                serde_json::to_value(
+                    build_remote_status_response(&db, &config, Some(&viewer), &status, &actor)
+                        .await?,
+                )
+                .unwrap_or(serde_json::Value::Null),
             ));
         }
     }
 
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let first_id = entries
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = entries
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let response = entries
-        .into_iter()
-        .map(|(_, _, value)| value)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&response)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
+    timeline_response_from_entries(&req, limit, entries)
 }
 
 pub(crate) async fn public_timeline_response(
@@ -274,6 +352,9 @@ pub(crate) async fn public_timeline_response(
     }
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+        return empty_timeline_response();
+    }
     let mut entries = Vec::new();
 
     if include_local {
@@ -324,25 +405,7 @@ pub(crate) async fn public_timeline_response(
         }
     }
 
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let first_id = entries
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = entries
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let response = entries
-        .into_iter()
-        .map(|(_, _, value)| value)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&response)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
+    timeline_response_from_entries(&req, limit, entries)
 }
 
 pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -370,6 +433,9 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     }
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+        return empty_timeline_response();
+    }
     let mut entries = Vec::new();
 
     if include_local {
@@ -393,16 +459,19 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             entries.push((
                 status.created_at.clone(),
                 status.id.clone(),
-                build_local_status_response(
-                    &db,
-                    &config,
-                    viewer,
-                    &status,
-                    &account,
-                    load_in_reply_to_account_id(&db, &status).await?,
-                    media,
+                serde_json::to_value(
+                    build_local_status_response(
+                        &db,
+                        &config,
+                        viewer,
+                        &status,
+                        &account,
+                        load_in_reply_to_account_id(&db, &status).await?,
+                        media,
+                    )
+                    .await?,
                 )
-                .await?,
+                .unwrap_or(serde_json::Value::Null),
             ));
         }
     }
@@ -423,30 +492,15 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             entries.push((
                 status.published_at.clone(),
                 status.id.clone(),
-                build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+                serde_json::to_value(
+                    build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+                )
+                .unwrap_or(serde_json::Value::Null),
             ));
         }
     }
 
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let first_id = entries
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = entries
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let response = entries
-        .into_iter()
-        .map(|(_, _, status)| status)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&response)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
+    timeline_response_from_entries(&req, limit, entries)
 }
 
 pub(crate) async fn link_timeline_response(
@@ -484,6 +538,9 @@ pub(crate) async fn link_timeline_response(
         .collect::<HashSet<_>>();
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+        return empty_timeline_response();
+    }
     let mut entries = Vec::new();
 
     for status in
@@ -537,38 +594,81 @@ pub(crate) async fn link_timeline_response(
         entries.push((status.published_at.clone(), status.id.clone(), value));
     }
 
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    if entries.is_empty() {
+    if entries.is_empty() && !timeline_cursor_requested(&query.pagination) {
         return Response::error("Record not found", 404);
     }
-    let first_id = entries
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = entries
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let response = entries
-        .into_iter()
-        .map(|(_, _, value)| value)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&response)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
+    timeline_response_from_entries(&req, limit, entries)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        status_card_url_matches_targets, timeline_request_requires_authorization,
-        timeline_source_requires_authorization,
+        status_card_url_matches_targets, timeline_page_response,
+        timeline_request_requires_authorization, timeline_source_requires_authorization,
     };
     use cfwdon_core::TimelineAccessLevel;
     use std::collections::HashSet;
+
+    fn timeline_test_entry(created_at: &str, id: &str) -> super::TimelineEntry {
+        (
+            created_at.to_owned(),
+            id.to_owned(),
+            serde_json::json!({ "id": id }),
+        )
+    }
+
+    #[test]
+    fn timeline_page_response_uses_returned_page_for_cursor_bounds() {
+        let entries = vec![
+            timeline_test_entry("2026-05-09T00:00:01Z", "first"),
+            timeline_test_entry("2026-05-09T00:00:00Z", "second"),
+            timeline_test_entry("2026-05-08T23:59:59Z", "not-returned"),
+        ];
+
+        let (page, first_id, last_id) = timeline_page_response(entries, 2);
+
+        assert_eq!(
+            page.iter()
+                .filter_map(|value| value.get("id").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert_eq!(first_id.as_deref(), Some("first"));
+        assert_eq!(last_id.as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn timeline_page_response_sorts_timestamp_and_id_descending() {
+        let entries = vec![
+            timeline_test_entry("2026-05-09T00:00:00Z", "b"),
+            timeline_test_entry("2026-05-09T00:00:00Z", "c"),
+            timeline_test_entry("2026-05-09T00:00:00Z", "a"),
+        ];
+
+        let (page, first_id, last_id) = timeline_page_response(entries, 2);
+
+        assert_eq!(
+            page.iter()
+                .filter_map(|value| value.get("id").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["c", "b"]
+        );
+        assert_eq!(first_id.as_deref(), Some("c"));
+        assert_eq!(last_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn timeline_page_response_omits_next_cursor_when_page_is_exhausted() {
+        let entries = vec![
+            timeline_test_entry("2026-05-09T00:00:01Z", "first"),
+            timeline_test_entry("2026-05-09T00:00:00Z", "second"),
+        ];
+
+        let (_page, first_id, last_id) = timeline_page_response(entries, 20);
+
+        assert_eq!(first_id.as_deref(), Some("first"));
+        assert_eq!(last_id, None);
+    }
 
     #[test]
     fn timeline_source_requires_authorization_for_non_public_levels() {
