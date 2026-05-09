@@ -215,21 +215,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         "INSTANCE_THUMBNAIL_URL",
         &mut config.instance_thumbnail_url,
     );
-    set_trimmed_optional(
-        ctx,
-        "WEB_PUSH_VAPID_PUBLIC_KEY",
-        &mut config.web_push_vapid_public_key,
-    );
-    set_trimmed_optional(
-        ctx,
-        "WEB_PUSH_VAPID_PRIVATE_KEY",
-        &mut config.web_push_vapid_private_key,
-    );
-    set_trimmed_optional(
-        ctx,
-        "WEB_PUSH_VAPID_SUBJECT",
-        &mut config.web_push_vapid_subject,
-    );
+    set_web_push_config(ctx, &mut config);
     set_instance_document_config(ctx, &mut config);
 
     set_timeline_access_config(ctx, &mut config);
@@ -256,6 +242,24 @@ fn set_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
     set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
     set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
     set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
+}
+
+fn set_web_push_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_PUBLIC_KEY",
+        &mut config.web_push_vapid_public_key,
+    );
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_PRIVATE_KEY",
+        &mut config.web_push_vapid_private_key,
+    );
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_SUBJECT",
+        &mut config.web_push_vapid_subject,
+    );
 }
 
 fn set_instance_document_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
