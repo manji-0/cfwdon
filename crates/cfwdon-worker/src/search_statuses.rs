@@ -270,6 +270,11 @@ fn split_status_search_negation(token: &str) -> (bool, &str) {
     }
 }
 
+fn set_status_search_text_terms(parsed: &mut ParsedStatusSearchQuery, terms: Vec<String>) {
+    parsed.text_query = terms.join(" ").trim().to_owned();
+    parsed.included_text_terms = terms;
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -447,8 +452,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
         }
     }
 
-    parsed.included_text_terms = terms.clone();
-    parsed.text_query = terms.join(" ").trim().to_owned();
+    set_status_search_text_terms(&mut parsed, terms);
     parsed
 }
 
