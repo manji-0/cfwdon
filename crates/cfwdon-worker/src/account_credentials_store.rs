@@ -214,7 +214,7 @@ async fn store_profile_media(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UpdateCredentialsField;
+    use crate::{UpdateCredentialsField, UpdateCredentialsSource};
 
     fn test_account() -> LocalAccount {
         LocalAccount {
@@ -303,5 +303,26 @@ mod tests {
                 value: "https://example.com/git".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn account_source_defaults_prefers_update_source_values() {
+        let account = test_account();
+        let update = UpdateCredentialsRequest {
+            source: Some(UpdateCredentialsSource {
+                privacy: Some("private".to_owned()),
+                quote_policy: Some("nobody".to_owned()),
+                sensitive: Some(true),
+                language: Some("ja".to_owned()),
+            }),
+            ..UpdateCredentialsRequest::default()
+        };
+
+        let defaults = account_source_defaults(&account, &update);
+
+        assert_eq!(defaults.post_visibility, "private");
+        assert_eq!(defaults.quote_policy, "nobody");
+        assert!(defaults.sensitive);
+        assert_eq!(defaults.language.as_deref(), Some("ja"));
     }
 }
