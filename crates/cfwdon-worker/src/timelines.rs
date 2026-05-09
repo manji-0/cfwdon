@@ -1,6 +1,6 @@
 use crate::auth::{
-    LocalApiAuthentication, authenticate_local_api_request, extract_authenticated_user,
-    find_account_by_id, find_authenticated_local_account, resolve_local_account,
+    LocalApiAuthentication, authenticate_local_api_request, find_account_by_id,
+    find_authenticated_local_account,
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::find_media_attachments_by_status_id;
@@ -21,8 +21,8 @@ use crate::{
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_link,
     list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
     load_in_reply_to_account_id, matches_tag_timeline_filters, normalize_hashtag,
-    remote_status_has_media, resolve_timeline_cursor, strip_html_tags, timeline_fetch_limit,
-    timeline_limit,
+    remote_status_has_media, require_authenticated_local_account, resolve_timeline_cursor,
+    strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
@@ -627,15 +627,14 @@ pub(crate) async fn direct_timeline_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let query: TimelinePaginationQuery = req.query().unwrap_or_default();
     let limit = timeline_limit(&query);
     let query_limit = timeline_fetch_limit(limit);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
+    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
     let mut entries = Vec::new();
 

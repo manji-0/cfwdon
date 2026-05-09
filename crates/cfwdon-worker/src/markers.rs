@@ -1,4 +1,6 @@
-use crate::{Request, Response, Result, RouteContext, extract_authenticated_user, load_config};
+use crate::{
+    Request, Response, Result, RouteContext, load_config, require_authenticated_local_account,
+};
 use serde::Deserialize;
 use worker::Error;
 use worker::d1::D1Type;
@@ -110,13 +112,11 @@ fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
 
 pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let account = crate::resolve_local_account(&db, &user).await?;
     let (wants_home, wants_notifications) = requested_marker_scopes(&req)?;
 
     Response::from_json(&serde_json::json!({
@@ -138,17 +138,16 @@ pub(crate) async fn save_markers_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
 
     let request = req
         .json::<SaveMarkersRequest>()
         .await
         .map_err(|error| worker::Error::RustError(format!("invalid markers payload: {error}")))?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = crate::resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
 
     Response::from_json(&serde_json::json!({
         "home": match request.home {

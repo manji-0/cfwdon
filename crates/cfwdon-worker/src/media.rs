@@ -1,8 +1,8 @@
 use super::{
     Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext,
     apply_media_update, delete_media_attachment_row, delete_orphan_media,
-    extract_authenticated_user, find_media_attachment_by_id, list_orphan_media, load_config,
-    media_object_url, parse_media_update_request, parse_media_upload, resolve_local_account,
+    find_media_attachment_by_id, list_orphan_media, load_config, media_object_url,
+    parse_media_update_request, parse_media_upload, require_authenticated_local_account,
     store_media_attachment,
 };
 use serde::{Deserialize, Serialize};
@@ -48,12 +48,12 @@ pub(crate) struct OrphanMediaRow {
 
 pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    match extract_authenticated_user(&req, &config).await? {
+    let db = ctx.d1(&config.database_binding)?;
+    match require_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
         None => return Response::error("Cloudflare Access authentication required", 401),
     }
 
-    let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     let orphans = list_orphan_media(&db, 24, 128).await?;
     let deleted = delete_orphan_media(&db, &bucket, &orphans).await?;
@@ -66,11 +66,6 @@ pub(crate) async fn create_media_attachment(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
-
     let draft = match parse_media_upload(&mut req).await {
         Ok(draft) => draft,
         Err(message) => return Response::error(message, 422),
@@ -78,7 +73,10 @@ pub(crate) async fn create_media_attachment(
 
     let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let media = store_media_attachment(&db, &bucket, &account, &draft).await?;
 
     Response::from_json(&MastodonMediaAttachmentResponse::from_row(&media, &config))
@@ -145,10 +143,6 @@ pub(crate) async fn update_media_attachment(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let media_id = match ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -163,7 +157,10 @@ pub(crate) async fn update_media_attachment(
     };
 
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
         Some(media) if media.account_id == account.id => media,
         _ => return Response::error("media not found", 404),
@@ -178,10 +175,6 @@ pub(crate) async fn delete_media_attachment(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let media_id = match ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -192,7 +185,10 @@ pub(crate) async fn delete_media_attachment(
     };
 
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
         Some(media) if media.account_id == account.id => media,
         _ => return Response::error("media not found", 404),

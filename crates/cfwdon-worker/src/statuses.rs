@@ -207,11 +207,11 @@ async fn resolve_create_status_access(
         return Ok(None);
     }
 
-    let Some(user) = extract_authenticated_user(req, config).await? else {
+    let Some(account) = find_authenticated_local_account(req, db, config).await? else {
         return Ok(None);
     };
     Ok(Some(CreateStatusAccess {
-        account: resolve_local_account(db, &user).await?,
+        account,
         application_id: None,
     }))
 }
@@ -401,16 +401,15 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Ok(status_id) => status_id,
         Err(_) => return Response::error("missing status id route parameter", 400),
     };
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let request: UpdateStatusRequest = match parse_update_status_request(&mut req).await {
         Ok(request) => request,
         Err(message) => return Response::error(message, 422),
     };
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let Some(status) = find_status_by_id(&db, &status_id).await? else {
         return Response::error("status not found", 404);
     };

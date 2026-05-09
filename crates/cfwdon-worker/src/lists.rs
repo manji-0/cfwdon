@@ -1,13 +1,12 @@
 use crate::{
     AccountReference, Request, Response, Result, RouteContext, TimelinePaginationQuery,
     build_local_status_response, build_remote_status_response, build_timeline_link_header,
-    extract_authenticated_user, find_account_by_id, find_account_by_username,
-    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_username_domain, generate_entity_id, is_local_status_thread_muted_by,
-    is_muted_actor, list_local_public_timeline_statuses, list_remote_public_timeline_statuses,
-    load_account_stats, load_config, load_in_reply_to_account_id, parse_lookup_handle,
-    resolve_account_reference, resolve_local_account, resolve_timeline_cursor,
-    timeline_fetch_limit, timeline_limit,
+    find_account_by_id, find_account_by_username, find_media_attachments_by_status_id,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, generate_entity_id,
+    is_local_status_thread_muted_by, is_muted_actor, list_local_public_timeline_statuses,
+    list_remote_public_timeline_statuses, load_account_stats, load_config,
+    load_in_reply_to_account_id, parse_lookup_handle, require_authenticated_local_account,
+    resolve_account_reference, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -423,17 +422,16 @@ pub(crate) async fn account_lists_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let account_ref = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let Some(target_refs) =
         requested_account_membership_variants(&db, &config, &account_ref).await?
     else {
@@ -460,16 +458,15 @@ pub(crate) async fn list_timeline_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let query: ListTimelineQuery = req.query().unwrap_or_default();
     let limit = timeline_limit(&query.pagination);
     let query_limit = timeline_fetch_limit(limit);
     let list_id = list_id_from_context(&ctx)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let Some(list) = list_row_by_id(&db, &account.id, &list_id).await? else {
         return Response::error("list not found", 404);
     };
@@ -557,12 +554,11 @@ pub(crate) async fn list_timeline_response(
 
 pub(crate) async fn lists_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let documents = list_rows_for_account(&db, &account.id)
         .await?
         .into_iter()
@@ -576,27 +572,25 @@ pub(crate) async fn create_list_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let row = create_list_row(&db, &account.id, &request).await?;
     Response::from_json(&list_document(&row))
 }
 
 pub(crate) async fn list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let list_id = list_id_from_context(&ctx)?;
     match list_row_by_id(&db, &account.id, &list_id).await? {
         Some(row) => Response::from_json(&list_document(&row)),
@@ -609,16 +603,15 @@ pub(crate) async fn update_list_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let list_id = list_id_from_context(&ctx)?;
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match update_list_row(&db, &account.id, &list_id, &request).await? {
         Some(row) => Response::from_json(&list_document(&row)),
         None => Response::error("list not found", 404),
@@ -627,13 +620,12 @@ pub(crate) async fn update_list_response(
 
 pub(crate) async fn delete_list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let list_id = list_id_from_context(&ctx)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if !delete_list_row(&db, &account.id, &list_id).await? {
         return Response::error("list not found", 404);
     }
@@ -645,12 +637,11 @@ pub(crate) async fn list_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let list_id = list_id_from_context(&ctx)?;
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
         return Response::error("list not found", 404);
@@ -686,16 +677,15 @@ pub(crate) async fn add_list_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let list_id = list_id_from_context(&ctx)?;
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
         return Response::error("list not found", 404);
     }
@@ -709,16 +699,15 @@ pub(crate) async fn delete_list_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let list_id = list_id_from_context(&ctx)?;
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
         return Response::error("list not found", 404);
     }

@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     AccountReference, Request, Response, Result, RouteContext, actor_url,
-    extract_authenticated_user, extract_hashtags_from_text, find_account_by_username,
-    instance_base_url, load_config, normalize_hashtag, resolve_account_reference,
-    resolve_local_account,
+    extract_hashtags_from_text, find_account_by_username, instance_base_url, load_config,
+    normalize_hashtag, require_authenticated_local_account, resolve_account_reference,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -304,12 +303,11 @@ pub(crate) async fn featured_tags_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
 
     let mut documents = Vec::new();
     for row in list_featured_tags_for_account(&db, &account.id).await? {
@@ -360,12 +358,11 @@ pub(crate) async fn featured_tag_suggestions_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
 
     let documents = suggested_featured_tag_names(&db, &account.id)
         .await?
@@ -380,15 +377,14 @@ pub(crate) async fn feature_tag_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let tag = parse_feature_tag_request(req)
         .await
         .map_err(worker::Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
 
     if count_featured_tags(&db, &account.id).await? >= MAX_FEATURED_TAGS as u64
         && !is_featured_tag_present(&db, &account.id, &tag).await?
@@ -412,17 +408,16 @@ pub(crate) async fn unfeature_tag_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let tag = ctx
         .param("id")
         .map(|value| normalize_hashtag(&value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
 
     if !delete_featured_tag(&db, &account.id, &tag).await? {
         return Response::error("featured tag not found", 404);

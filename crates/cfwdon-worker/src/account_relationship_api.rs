@@ -1,7 +1,7 @@
 use super::{
     MastodonAccountResponse, Request, Response, Result, RouteContext,
-    build_internal_cursor_link_header, extract_authenticated_user, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_remote_actor_by_actor_uri,
+    build_internal_cursor_link_header, find_account_by_id, find_account_by_username,
+    find_authenticated_local_account, find_remote_actor_by_actor_uri,
     find_remote_actor_by_username_domain, list_blocks_for_account,
     list_familiar_local_accounts_for_local_target, list_familiar_local_accounts_for_remote_target,
     list_familiar_remote_actors_for_local_target, list_local_followers_for_account,
@@ -9,7 +9,7 @@ use super::{
     list_local_following_for_remote_actor, list_mutes_for_account,
     list_remote_followers_for_account, list_remote_following_for_account, load_account_stats,
     load_config, parse_internal_pagination_id, parse_lookup_handle, remote_account_rest_id,
-    resolve_account_reference, resolve_local_account,
+    resolve_account_reference,
 };
 use crate::{AccountReference, actor_url, build_relationship_for_target};
 use std::collections::HashSet;
@@ -29,13 +29,12 @@ struct AccountCollectionQuery {
 
 pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let mut relationships = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {

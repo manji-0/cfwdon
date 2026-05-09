@@ -1,8 +1,8 @@
 use super::{
     AccountReference, Request, Response, Result, RouteContext, actor_url,
-    build_relationship_for_target, delete_follow_by_target, extract_authenticated_user,
-    follow_remote_account, load_config, parse_follow_account_request, resolve_account_reference,
-    resolve_local_account, unfollow_remote_account, upsert_local_follow,
+    build_relationship_for_target, delete_follow_by_target, follow_remote_account, load_config,
+    parse_follow_account_request, require_authenticated_local_account, resolve_account_reference,
+    unfollow_remote_account, upsert_local_follow,
 };
 use worker::Error;
 
@@ -15,10 +15,6 @@ pub(crate) struct FollowAccountRequest {
 
 pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -27,7 +23,10 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
     let request = parse_follow_account_request(&mut req).await?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let follower = resolve_local_account(&db, &user).await?;
+    let follower = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             if follower.id == target.id {
@@ -56,10 +55,6 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
 
 pub(crate) async fn unfollow_account(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -67,7 +62,10 @@ pub(crate) async fn unfollow_account(req: Request, ctx: RouteContext<()>) -> Res
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let follower = resolve_local_account(&db, &user).await?;
+    let follower = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             let target_actor_uri = actor_url(&config, &target.username);

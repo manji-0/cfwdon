@@ -9,18 +9,18 @@ use crate::{
     build_relationship_for_target, build_remote_status_response, build_timeline_link_header,
     can_view_local_status, clear_local_status_quote, collect_visible_notifications,
     delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
-    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_authenticated_user,
-    extract_hashtags_from_html, extract_hashtags_from_text, filter_notification_entries_by_query,
-    find_account_by_email, find_account_by_id, find_account_by_username,
-    find_authenticated_local_account, find_conversation_for_account,
-    find_conversation_id_by_status_id, find_follower_follow_activity_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
-    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
-    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
-    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
-    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
-    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
+    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_email,
+    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    find_conversation_for_account, find_conversation_id_by_status_id,
+    find_follower_follow_activity_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_app_by_bearer_token,
+    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
+    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
+    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
+    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
+    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
+    list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
@@ -33,8 +33,8 @@ use crate::{
     oauth_app_has_any_scope, oauth_app_scopes, parse_optional_bool, parse_relationship_query_ids,
     queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
     remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
-    resolve_local_account, resolve_status_reference, resolve_timeline_cursor,
-    send_push_notification, status_has_active_quote, timeline_fetch_limit, timeline_limit,
+    resolve_status_reference, resolve_timeline_cursor, send_push_notification,
+    status_has_active_quote, timeline_fetch_limit, timeline_limit,
     update_remote_status_quote_state,
 };
 use async_stream::try_stream;
@@ -640,12 +640,14 @@ async fn mark_generated_annual_report_viewed(
     Ok(())
 }
 
-async fn is_authenticated_request(req: &Request, config: &cfwdon_core::AppConfig) -> Result<bool> {
-    Ok(extract_authenticated_user(req, config).await?.is_some())
-}
-
-fn request_has_bearer_authorization(req: &Request) -> Result<bool> {
-    Ok(app_bearer_token_from_request(req)?.is_some())
+async fn is_authenticated_request(
+    req: &Request,
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+) -> Result<bool> {
+    Ok(find_authenticated_local_account(req, db, config)
+        .await?
+        .is_some())
 }
 
 fn invalid_access_token_response() -> Result<Response> {
@@ -1147,7 +1149,8 @@ pub(crate) async fn donation_campaigns_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if !is_authenticated_request(&req, &config).await? {
+    let db = ctx.d1(&config.database_binding)?;
+    if !is_authenticated_request(&req, &db, &config).await? {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "This method requires an authenticated user",
         }))?
@@ -1164,12 +1167,11 @@ pub(crate) async fn annual_reports_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let reports = list_generated_annual_reports(&db, &account.id, true).await?;
     let response = reports
         .iter()
@@ -1183,15 +1185,14 @@ pub(crate) async fn annual_report_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::error("annual report not found", 404);
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let Some(report) = find_generated_annual_report(&db, &account.id, year).await? else {
         return Response::error("annual report not found", 404);
     };
@@ -1203,15 +1204,14 @@ pub(crate) async fn annual_report_action_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::empty();
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let url = req.url()?;
 
     if url.path().ends_with("/read") {
@@ -1238,8 +1238,9 @@ pub(crate) async fn annual_report_state_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
@@ -1248,9 +1249,6 @@ pub(crate) async fn annual_report_state_response(
             "available": false,
         }));
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
-
     if let Some(report) = find_generated_annual_report(&db, &account.id, year).await? {
         return Response::from_json(&serde_json::json!({
             "state": if report.viewed_at.is_some() { "viewed" } else { "ready" },
@@ -1383,9 +1381,6 @@ pub(crate) async fn check_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    if request_has_bearer_authorization(&req)? || !is_authenticated_request(&req, &config).await? {
-        return invalid_access_token_response();
-    }
     let db = ctx.d1(&config.database_binding)?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return invalid_access_token_response();

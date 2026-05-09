@@ -1,8 +1,8 @@
 use crate::{
     Request, Response, Result, RouteContext, build_local_status_response,
     enqueue_add_featured_status_activity, enqueue_remove_featured_status_activity,
-    extract_authenticated_user, find_media_attachments_by_status_id, find_status_by_id,
-    load_config, load_in_reply_to_account_id, resolve_local_account,
+    find_media_attachments_by_status_id, find_status_by_id, load_config,
+    load_in_reply_to_account_id, require_authenticated_local_account,
 };
 use worker::d1::D1Type;
 
@@ -105,17 +105,16 @@ async fn pinned_status_response(
 
 pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let status_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
+    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let Some(status) = find_status_by_id(&db, &status_id).await? else {
         return Response::error("status not found", 404);
     };
@@ -130,17 +129,16 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
 
 pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let status_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
+    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let Some(status) = find_status_by_id(&db, &status_id).await? else {
         return Response::error("status not found", 404);
     };

@@ -1,14 +1,14 @@
 use crate::{
     AccountReference, MastodonAccountResponse, Request, Response, Result, RouteContext, actor_url,
-    build_internal_cursor_link_header, build_relationship_for_target, extract_authenticated_user,
+    build_internal_cursor_link_header, build_relationship_for_target,
     fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
     find_account_by_username, find_follow_by_target, find_remote_actor_by_actor_uri,
     find_remote_actor_by_profile_url_or_actor_uri, is_activitypub_actor_type,
     list_endorsed_accounts_for_owner, load_account_stats, load_config,
     local_username_from_actor_uri, parse_internal_pagination_id,
-    parse_remote_actor_profile_document, resolve_account_reference, resolve_local_account,
-    set_account_email_subscription, set_account_endorsement, set_account_note, upsert_remote_actor,
-    validate_remote_actor_profile_urls,
+    parse_remote_actor_profile_document, require_authenticated_local_account,
+    resolve_account_reference, set_account_email_subscription, set_account_endorsement,
+    set_account_note, upsert_remote_actor, validate_remote_actor_profile_urls,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -55,17 +55,16 @@ async fn resolve_relationship_target(
     )>,
 > {
     let config = load_config(ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Ok(None),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
+    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Ok(None),
+    };
     let target = match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => (
             Some(target.id.clone()),
@@ -85,8 +84,8 @@ async fn resolve_relationship_target(
 pub(crate) async fn endorsements_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => resolve_local_account(&db, &user).await?,
+    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let query: AccountCollectionQuery = req.query().unwrap_or_default();

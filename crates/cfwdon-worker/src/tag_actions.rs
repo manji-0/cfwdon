@@ -1,7 +1,7 @@
 use crate::{
     Request, Response, Result, RouteContext, build_internal_cursor_link_header, build_tag_response,
-    extract_authenticated_user, load_config, normalize_hashtag, parse_internal_pagination_id,
-    resolve_local_account,
+    load_config, normalize_hashtag, parse_internal_pagination_id,
+    require_authenticated_local_account,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -193,11 +193,10 @@ async fn resolve_authenticated_account(
     )>,
 > {
     let config = load_config(ctx);
-    let Some(user) = extract_authenticated_user(req, &config).await? else {
+    let db = ctx.d1(&config.database_binding)?;
+    let Some(account) = require_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     Ok(Some((db, config, account)))
 }
 

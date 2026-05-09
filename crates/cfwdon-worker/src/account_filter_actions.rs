@@ -1,18 +1,13 @@
 use super::{
     AccountReference, Request, Response, Result, RouteContext, actor_url,
     build_relationship_for_target, delete_block_by_target, delete_mute_by_target,
-    expiry_from_duration_seconds, extract_authenticated_user, load_config,
-    parse_mute_account_request, remote_account_rest_id, resolve_account_reference,
-    resolve_local_account, upsert_block, upsert_mute,
+    expiry_from_duration_seconds, load_config, parse_mute_account_request, remote_account_rest_id,
+    require_authenticated_local_account, resolve_account_reference, upsert_block, upsert_mute,
 };
 use worker::Error;
 
 pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -20,7 +15,10 @@ pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let blocker = resolve_local_account(&db, &user).await?;
+    let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             if blocker.id == target.id {
@@ -63,10 +61,6 @@ pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result
 
 pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -74,7 +68,10 @@ pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Resu
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let blocker = resolve_local_account(&db, &user).await?;
+    let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             let target_actor_uri = actor_url(&config, &target.username);
@@ -107,10 +104,6 @@ pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Resu
 
 pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -121,7 +114,10 @@ pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Re
         .map_err(Error::RustError)?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let muter = resolve_local_account(&db, &user).await?;
+    let muter = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let notifications = request.notifications.unwrap_or(true);
     let expires_at = request
         .duration
@@ -174,10 +170,6 @@ pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Re
 
 pub(crate) async fn unmute_account(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let target_account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -185,7 +177,10 @@ pub(crate) async fn unmute_account(req: Request, ctx: RouteContext<()>) -> Resul
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
-    let muter = resolve_local_account(&db, &user).await?;
+    let muter = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             let target_actor_uri = actor_url(&config, &target.username);

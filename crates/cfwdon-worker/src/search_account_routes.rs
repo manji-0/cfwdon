@@ -1,8 +1,7 @@
 use crate::account_store::{
     DirectoryOrder, directory_order, list_discoverable_accounts_with_sort_key, load_account_stats,
 };
-use crate::auth::extract_authenticated_user;
-use crate::auth::resolve_local_account;
+use crate::auth::find_authenticated_local_account;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::{
@@ -80,10 +79,6 @@ async fn list_discoverable_remote_actor_rows(
 
 pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let query: AccountSearchQuery = req.query().unwrap_or_default();
     let q = query.q.trim();
     if q.is_empty() {
@@ -91,7 +86,10 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
     }
 
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let offset = query.offset.unwrap_or(0);
     let only_following = query.following.unwrap_or(false);

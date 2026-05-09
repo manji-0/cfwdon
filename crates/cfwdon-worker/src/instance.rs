@@ -7,9 +7,9 @@ use super::{
     build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
     build_nodeinfo_document, build_nodeinfo_links_document, build_status_card_value,
     canonicalize_link_timeline_url, configured_html_document, configured_instance_languages,
-    count_accounts_created_between, count_local_statuses_between, extract_authenticated_user,
-    load_active_month_users, load_config, load_instance_summary, load_known_peer_domains,
-    load_total_local_accounts, load_total_local_statuses, resolve_local_account, strip_html_tags,
+    count_accounts_created_between, count_local_statuses_between, load_active_month_users,
+    load_config, load_instance_summary, load_known_peer_domains, load_total_local_accounts,
+    load_total_local_statuses, require_authenticated_local_account, strip_html_tags,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
@@ -432,8 +432,9 @@ pub(crate) async fn announcements_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => {
             return Ok(Response::from_json(&serde_json::json!({
                 "error": "This method requires an authenticated user",
@@ -441,8 +442,6 @@ pub(crate) async fn announcements_response(
             .with_status(422));
         }
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let read_ids = list_announcement_read_ids(&db, &account.id).await?;
     let reaction_state = load_announcement_reaction_state(&db, &account.id).await?;
 
@@ -458,12 +457,11 @@ pub(crate) async fn announcement_reaction_mutation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let Some(announcement_id) = ctx.param("announcement_id") else {
         return Response::error("announcement not found", 404);
     };
@@ -489,12 +487,11 @@ pub(crate) async fn dismiss_announcement_mutation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let Some(announcement_id) = ctx.param("id") else {
         return Response::error("announcement not found", 404);
     };

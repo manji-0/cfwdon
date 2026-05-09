@@ -1,11 +1,11 @@
 use crate::{
     Request, Response, Result, RouteContext, build_internal_cursor_link_for_url,
-    build_local_status_response, delete_conversation_for_account, extract_authenticated_user,
-    find_account_by_id, find_conversation_for_account, find_media_attachments_by_status_id,
+    build_local_status_response, delete_conversation_for_account, find_account_by_id,
+    find_conversation_for_account, find_media_attachments_by_status_id,
     find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, find_status_by_id,
     list_conversation_participants, list_conversations_for_account, load_account_stats,
     load_config, mark_conversation_read, mark_conversation_unread, parse_lookup_handle,
-    resolve_local_account,
+    require_authenticated_local_account,
 };
 use serde::Deserialize;
 
@@ -142,13 +142,12 @@ pub(crate) async fn conversations_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let query: ConversationsQuery = req.query().unwrap_or_default();
     let db = ctx.d1(&config.database_binding)?;
-    let owner = resolve_local_account(&db, &user).await?;
+    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(owner) => owner,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     let rows = list_conversations_for_account(
         &db,
         &owner.id,
@@ -185,10 +184,6 @@ pub(crate) async fn delete_conversation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let conversation_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -197,7 +192,10 @@ pub(crate) async fn delete_conversation_response(
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
     let db = ctx.d1(&config.database_binding)?;
-    let owner = resolve_local_account(&db, &user).await?;
+    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(owner) => owner,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if !delete_conversation_for_account(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
@@ -209,10 +207,6 @@ pub(crate) async fn read_conversation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let conversation_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -221,7 +215,10 @@ pub(crate) async fn read_conversation_response(
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
     let db = ctx.d1(&config.database_binding)?;
-    let owner = resolve_local_account(&db, &user).await?;
+    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(owner) => owner,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if !mark_conversation_read(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
@@ -236,10 +233,6 @@ pub(crate) async fn unread_conversation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
     let conversation_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -248,7 +241,10 @@ pub(crate) async fn unread_conversation_response(
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
     let db = ctx.d1(&config.database_binding)?;
-    let owner = resolve_local_account(&db, &user).await?;
+    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(owner) => owner,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     if !mark_conversation_unread(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }

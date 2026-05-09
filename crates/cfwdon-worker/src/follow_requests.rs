@@ -2,10 +2,10 @@ use crate::{
     AppConfig, D1Database, MastodonAccountResponse, RemoteActorProfile, Request, Response, Result,
     RouteContext, build_internal_cursor_link_header, build_reject_follow_activity,
     build_relationship_for_target, build_stored_accept_follow_activity, count_rows,
-    extract_authenticated_user, find_account_by_id, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_username_domain, load_account_stats, load_config,
-    parse_internal_pagination_id, parse_lookup_handle, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, resolve_local_account, upsert_follower_by_inbox,
+    find_account_by_id, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    load_account_stats, load_config, parse_internal_pagination_id, parse_lookup_handle,
+    remote_account_rest_id, remote_actor_uri_from_rest_id, require_authenticated_local_account,
+    upsert_follower_by_inbox,
 };
 use serde::Deserialize;
 use url::Url;
@@ -18,6 +18,18 @@ struct FollowRequestsQuery {
     max_id: Option<String>,
     #[serde(rename = "since_id")]
     since_id: Option<String>,
+}
+
+async fn authenticated_follow_request_viewer(
+    req: &Request,
+    ctx: &RouteContext<()>,
+    config: &AppConfig,
+) -> Result<Option<(D1Database, cfwdon_domain::LocalAccount)>> {
+    let db = ctx.d1(&config.database_binding)?;
+    let Some(viewer) = require_authenticated_local_account(req, &db, config).await? else {
+        return Ok(None);
+    };
+    Ok(Some((db, viewer)))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -735,8 +747,8 @@ pub(crate) async fn follow_requests_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let query: FollowRequestsQuery = req.query()?;
@@ -744,8 +756,6 @@ pub(crate) async fn follow_requests_response(
     let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
     let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let mut requests = list_pending_follow_requests(&db, &viewer.id).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
@@ -781,8 +791,8 @@ pub(crate) async fn follow_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -793,8 +803,6 @@ pub(crate) async fn follow_request_response(
             worker::Error::RustError("missing follow request id route parameter".to_owned())
         })?;
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
@@ -811,8 +819,8 @@ pub(crate) async fn authorize_follow_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -823,8 +831,6 @@ pub(crate) async fn authorize_follow_request_response(
             worker::Error::RustError("missing follow request id route parameter".to_owned())
         })?;
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
@@ -838,8 +844,8 @@ pub(crate) async fn reject_follow_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -850,8 +856,6 @@ pub(crate) async fn reject_follow_request_response(
             worker::Error::RustError("missing follow request id route parameter".to_owned())
         })?;
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
@@ -865,8 +869,8 @@ pub(crate) async fn notification_requests_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let query: NotificationRequestsQuery = req.query().unwrap_or_default();
@@ -874,8 +878,6 @@ pub(crate) async fn notification_requests_response(
     let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
     let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
     let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let mut requests = list_pending_follow_requests(&db, &viewer.id).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
@@ -912,8 +914,8 @@ pub(crate) async fn notification_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -923,8 +925,6 @@ pub(crate) async fn notification_request_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
@@ -941,7 +941,7 @@ pub(crate) async fn notification_requests_merged_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    match extract_authenticated_user(&req, &config).await? {
+    match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(_) => Response::from_json(&serde_json::json!({
             "merged": true,
         })),
@@ -954,13 +954,11 @@ pub(crate) async fn accept_notification_requests_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let ids = parse_notification_request_ids(req).await?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     for request_id in ids {
         if let Some(request) =
             resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
@@ -976,13 +974,11 @@ pub(crate) async fn dismiss_notification_requests_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let ids = parse_notification_request_ids(req).await?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     for request_id in ids {
         if let Some(request) =
             resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
@@ -998,8 +994,8 @@ pub(crate) async fn accept_notification_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -1009,8 +1005,6 @@ pub(crate) async fn accept_notification_request_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
@@ -1025,8 +1019,8 @@ pub(crate) async fn dismiss_notification_request_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
+        Some(auth) => auth,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let request_id = ctx
@@ -1036,8 +1030,6 @@ pub(crate) async fn dismiss_notification_request_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = resolve_local_account(&db, &user).await?;
     let Some(request) =
         resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
     else {
