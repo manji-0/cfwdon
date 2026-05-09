@@ -41,6 +41,13 @@ pub(crate) fn normalize_status_poll(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
+    if options.is_empty()
+        && poll.expires_in.is_none()
+        && poll.multiple.is_none()
+        && poll.hide_totals.is_none()
+    {
+        return Ok(None);
+    }
     if options.len() < 2 || options.len() > 4 {
         return Err("poll must include between 2 and 4 non-empty options".to_owned());
     }

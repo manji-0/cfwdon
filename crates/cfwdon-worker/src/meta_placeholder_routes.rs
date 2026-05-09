@@ -14,13 +14,13 @@ use crate::{
     find_account_by_id, find_account_by_username, find_authenticated_local_account,
     find_conversation_for_account, find_conversation_id_by_status_id,
     find_follower_follow_activity_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
-    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
-    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
-    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
-    list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    find_media_attachments_by_status_id, find_oauth_access_token_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
+    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
+    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
+    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
@@ -65,6 +65,7 @@ struct StreamingQuery {
     stream: Option<String>,
     tag: Option<String>,
     list: Option<String>,
+    access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -667,6 +668,18 @@ fn streaming_bad_request_response(error: StreamingChannelValidationError) -> Res
         "error": message,
     }))?
     .with_status(400))
+}
+
+fn websocket_protocol_access_token(req: &Request) -> Result<Option<String>> {
+    let Some(protocols) = req.headers().get("Sec-WebSocket-Protocol")? else {
+        return Ok(None);
+    };
+
+    Ok(protocols
+        .split(',')
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned))
 }
 
 fn email_confirmation_unavailable_response() -> Result<Response> {
@@ -2329,12 +2342,23 @@ pub(crate) async fn streaming_placeholder_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let query: StreamingQuery = req.query().unwrap_or_default();
+    let wants_websocket = req
+        .headers()
+        .get("Upgrade")
+        .ok()
+        .flatten()
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    let stream_query = if wants_websocket && query.stream.is_none() {
+        Some("user")
+    } else {
+        query.stream.as_deref()
+    };
     let extra_path = ctx
         .param("any")
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
     let stream = match validate_streaming_channel_request(
-        query.stream.as_deref(),
+        stream_query,
         query.tag.as_deref(),
         query.list.as_deref(),
         extra_path,
@@ -2350,19 +2374,37 @@ pub(crate) async fn streaming_placeholder_response(
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             return invalid_access_token_response();
         }
-        LocalApiAuthentication::None => None,
+        LocalApiAuthentication::None => {
+            let token = query
+                .access_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .or(websocket_protocol_access_token(&req)?);
+            match token {
+                Some(token) => {
+                    let Some(access_token) =
+                        find_oauth_access_token_by_bearer_token(&db, &token).await?
+                    else {
+                        return invalid_access_token_response();
+                    };
+                    if !oauth_access_token_has_any_scope(
+                        &access_token,
+                        &["read", "read:statuses", "read:notifications"],
+                    ) {
+                        return invalid_access_token_response();
+                    }
+                    find_account_by_id(&db, &access_token.account_id).await?
+                }
+                None => None,
+            }
+        }
     };
 
     if streaming_channel_requires_auth(&stream) && authenticated.is_none() {
         return invalid_access_token_response();
     }
-
-    let wants_websocket = req
-        .headers()
-        .get("Upgrade")
-        .ok()
-        .flatten()
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
 
     if wants_websocket {
         let pair = WebSocketPair::new()?;

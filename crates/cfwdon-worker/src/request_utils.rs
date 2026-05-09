@@ -130,13 +130,32 @@ pub(crate) fn parse_internal_pagination_id(
 }
 
 pub(crate) fn parse_media_ids_from_form(form: &FormData) -> Option<Vec<String>> {
-    form.get_all("media_ids[]").map(|entries| {
-        entries
-            .into_iter()
-            .filter_map(|entry| match entry {
-                FormEntry::Field(value) => Some(value),
-                FormEntry::File(_) => None,
-            })
-            .collect()
-    })
+    parse_media_id_fields([
+        form.get_all("media_ids[]"),
+        form.get_all("media_ids"),
+        form.get_all("media_ids[0]"),
+        form.get_all("media_ids[1]"),
+        form.get_all("media_ids[2]"),
+        form.get_all("media_ids[3]"),
+    ])
+}
+
+pub(crate) fn parse_media_id_fields<const N: usize>(
+    fields: [Option<Vec<FormEntry>>; N],
+) -> Option<Vec<String>> {
+    let media_ids = fields
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| match entry {
+            FormEntry::Field(value) => Some(value),
+            FormEntry::File(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    if media_ids.is_empty() {
+        None
+    } else {
+        Some(media_ids)
+    }
 }

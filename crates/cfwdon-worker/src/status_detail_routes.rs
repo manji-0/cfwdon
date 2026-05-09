@@ -12,7 +12,7 @@ use super::{
     list_local_reblog_account_ids_for_status, list_remote_favourite_actor_uris_for_status,
     list_remote_reblog_actor_uris_for_status, list_remote_status_edit_snapshots,
     load_account_stats, load_config, load_in_reply_to_account_id, load_remote_status_updated_at,
-    remote_account_rest_id, status_id_from_context, strip_html_tags,
+    media_object_url, remote_account_rest_id, status_id_from_context, strip_html_tags,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -677,7 +677,10 @@ pub(crate) async fn status_favourited_by_response(
     Response::from_json(&responses)
 }
 
-pub(crate) async fn status_object_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn status_object_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let username = ctx
         .param("username")
@@ -704,8 +707,61 @@ pub(crate) async fn status_object_response(ctx: RouteContext<()>) -> Result<Resp
         return Response::error("status not found", 404);
     }
 
+    if status_object_prefers_html(&req)? {
+        let attachments = find_media_attachments_by_status_id(&db, &status.id).await?;
+        return status_object_html_response(&config, &account, &status, &attachments);
+    }
+
     let note = build_activitypub_note(&db, &config, &account, &status, true).await?;
-    super::json_response(&note, "application/activity+json", &[])
+    super::json_response(&note, "application/activity+json; charset=utf-8", &[])
+}
+
+pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {
+    let accept = req.headers().get("Accept")?.unwrap_or_default();
+    let accept = accept.to_ascii_lowercase();
+    Ok(accept.contains("text/html")
+        && !accept.contains("application/activity+json")
+        && !accept.contains("application/ld+json"))
+}
+
+fn status_object_html_response(
+    config: &crate::AppConfig,
+    account: &crate::LocalAccount,
+    status: &crate::StatusRow,
+    attachments: &[crate::MediaAttachmentRow],
+) -> Result<Response> {
+    let title_text = strip_html_tags(&status.content_html);
+    let fallback_title;
+    let title_source = if title_text.is_empty() {
+        fallback_title = format!("@{}", account.username);
+        fallback_title.as_str()
+    } else {
+        &title_text
+    };
+    let title = crate::escape_html(title_source);
+    let account_name = crate::escape_html(&account.acct());
+    let published = crate::escape_html(&status.created_at);
+    let media_html = attachments
+        .iter()
+        .filter(|attachment| {
+            crate::classify_media_kind(&attachment.content_type) == Some(crate::MediaKind::Image)
+        })
+        .map(|attachment| {
+            let src = crate::escape_html(&media_object_url(config, &attachment.object_key));
+            let alt = crate::escape_html(&attachment.description);
+            format!("<img src=\"{src}\" alt=\"{alt}\" loading=\"lazy\">")
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let html = format!(
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#0f1115;color:#f4f4f5}}main{{max-width:680px;margin:0 auto;padding:24px}}article{{border:1px solid #2b2f36;border-radius:8px;padding:20px;background:#171a21}}.account{{color:#a1a1aa;margin-bottom:12px}}.content{{font-size:18px;line-height:1.6}}.media{{display:grid;gap:12px;margin-top:16px}}img{{max-width:100%;border-radius:8px}}time{{display:block;color:#a1a1aa;margin-top:16px;font-size:14px}}</style></head><body><main><article><div class=\"account\">{account_name}</div><div class=\"content\">{content}</div><div class=\"media\">{media_html}</div><time>{published}</time></article></main></body></html>",
+        content = status.content_html,
+    );
+    let mut response = Response::from_body(worker::ResponseBody::Body(html.into_bytes()))?;
+    response
+        .headers_mut()
+        .set("Content-Type", "text/html; charset=utf-8")?;
+    Ok(response)
 }
 
 pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {

@@ -73,8 +73,18 @@ impl MastodonMediaAttachmentResponse {
             remote_url: None,
             text_url: Some(fallback_url),
             meta: MastodonMediaMeta {
-                original: None,
-                small: None,
+                original: Some(MastodonMediaMetaDetails {
+                    width: None,
+                    height: None,
+                    size: None,
+                    aspect: None,
+                }),
+                small: Some(MastodonMediaMetaDetails {
+                    width: None,
+                    height: None,
+                    size: None,
+                    aspect: None,
+                }),
                 focus,
             },
             description: if row.description.is_empty() {

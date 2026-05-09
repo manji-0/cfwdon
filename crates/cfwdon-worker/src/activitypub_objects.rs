@@ -1,8 +1,8 @@
 use crate::{
     AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
-    count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
+    classify_media_kind, count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
     find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_object_url, status_has_active_quote,
+    media_kind_label, media_object_url, status_has_active_quote,
 };
 use worker::{D1Database, Result};
 
@@ -103,7 +103,7 @@ pub(crate) async fn build_activitypub_note(
             .iter()
             .map(|attachment| {
                 serde_json::json!({
-                    "type": "Document",
+                    "type": activitypub_media_attachment_type(&attachment.content_type),
                     "mediaType": attachment.content_type,
                     "url": media_object_url(config, &attachment.object_key),
                     "name": if attachment.description.is_empty() {
@@ -152,4 +152,16 @@ pub(crate) async fn build_activitypub_note(
     }
 
     Ok(note)
+}
+
+pub(crate) fn activitypub_media_attachment_type(content_type: &str) -> &'static str {
+    classify_media_kind(content_type)
+        .map(media_kind_label)
+        .and_then(|kind| match kind {
+            "image" => Some("Image"),
+            "video" => Some("Video"),
+            "audio" => Some("Audio"),
+            _ => None,
+        })
+        .unwrap_or("Document")
 }

@@ -3,26 +3,27 @@ use base64::Engine;
 use super::router::is_cors_enabled_path;
 use super::{
     AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest,
-    MastodonAccountResponse, MastodonReportResponse, NotificationEntry, NotificationsQuery,
-    OAuthAuthorizeRequest, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
-    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
-    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
-    StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
+    MastodonAccountResponse, MastodonMediaAttachmentResponse, MastodonReportResponse,
+    NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest, RemoteActorRow, RemotePollDraft,
+    RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow,
+    StatusPollRow, StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
     TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
     account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
-    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
-    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
-    build_add_featured_activity_with_id, build_announcements_document,
-    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
-    build_deepl_request_body, build_deepl_translation_languages_document,
-    build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
-    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    activitypub_media_attachment_type, activitypub_profile_attachments,
+    apply_activitypub_poll_fields, apply_html_preview_metadata, build_activitypub_actor_document,
+    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
+    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
+    build_donation_campaign_document, build_email_confirmation_html,
+    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
+    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
@@ -51,16 +52,17 @@ use super::{
     parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
     parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
     parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
-    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
-    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
-    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
-    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
-    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
-    remote_poll_should_refresh, remote_quote_state_for_local_target,
-    remote_status_has_active_quote, remote_status_targets_local_viewer,
-    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
-    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
-    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    parse_media_id_fields, parse_remote_actor_profile_document, parse_status_search_query,
+    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
+    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
+    redirect_uri_matches_registered, remap_remote_poll_vote_positions, remote_account_rest_id,
+    remote_actor_uri_from_rest_id, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_quote_state_for_local_target, remote_status_has_active_quote,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
+    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
+    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -81,6 +83,7 @@ use cfwdon_domain::{
 };
 use std::collections::{HashMap, HashSet};
 use url::Url;
+use worker::FormEntry;
 
 fn actor_fixture_account() -> LocalAccount {
     LocalAccount {
@@ -4379,6 +4382,31 @@ fn media_urls_prefer_custom_domain_and_keep_worker_fallback() {
 }
 
 #[test]
+fn local_media_response_keeps_meta_objects_when_dimensions_unknown() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let response = MastodonMediaAttachmentResponse::from_row(
+        &super::MediaAttachmentRow {
+            id: "media-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            status_id: Some("status-1".to_owned()),
+            object_key: "media/acct-1/image/media-1".to_owned(),
+            content_type: "image/png".to_owned(),
+            description: String::new(),
+            focus_x: None,
+            focus_y: None,
+            _created_at: "2026-05-09 00:00:00".to_owned(),
+        },
+        &config,
+    );
+    let document = serde_json::to_value(response).expect("media response serializes");
+
+    assert!(document.pointer("/meta/original").is_some());
+    assert!(document.pointer("/meta/small").is_some());
+    assert!(document.pointer("/meta/original").unwrap().is_object());
+    assert!(document.pointer("/meta/small").unwrap().is_object());
+}
+
+#[test]
 fn mastodon_report_response_serializes_forwarded_and_nullable_status_ids() {
     let target_account = MastodonAccountResponse {
         id: "acct-1".to_owned(),
@@ -4544,6 +4572,17 @@ fn activitypub_actor_document_reflects_locked_and_bot_flags() {
 }
 
 #[test]
+fn activitypub_media_attachment_type_matches_media_kind() {
+    assert_eq!(activitypub_media_attachment_type("image/png"), "Image");
+    assert_eq!(activitypub_media_attachment_type("video/mp4"), "Video");
+    assert_eq!(activitypub_media_attachment_type("audio/mpeg"), "Audio");
+    assert_eq!(
+        activitypub_media_attachment_type("application/octet-stream"),
+        "Document"
+    );
+}
+
+#[test]
 fn build_update_person_activity_wraps_actor_document() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     let account = LocalAccount {
@@ -4688,6 +4727,20 @@ fn normalize_status_poll_accepts_minimal_valid_poll() {
     assert_eq!(poll.expires_in_seconds, 600);
     assert!(poll.multiple);
     assert!(poll.hide_totals);
+}
+
+#[test]
+fn normalize_status_poll_ignores_empty_form_scaffold() {
+    assert!(
+        normalize_status_poll(Some(CreateStatusPollRequest {
+            options: Some(vec![String::new(), "  ".to_owned()]),
+            expires_in: None,
+            multiple: None,
+            hide_totals: None,
+        }))
+        .unwrap()
+        .is_none()
+    );
 }
 
 #[test]
@@ -5446,4 +5499,25 @@ fn peer_authority_from_uri_normalizes_default_and_custom_ports() {
         peer_authority_from_uri(&config, "https://social.example/users/alice"),
         None
     );
+}
+
+#[test]
+fn parse_media_id_fields_accepts_bracketed_and_plain_form_keys() {
+    assert_eq!(
+        parse_media_id_fields([
+            Some(vec![FormEntry::Field("media-1".to_owned())]),
+            Some(vec![FormEntry::Field("media-2".to_owned())]),
+            Some(vec![FormEntry::Field("media-indexed".to_owned())]),
+        ]),
+        Some(vec![
+            "media-1".to_owned(),
+            "media-2".to_owned(),
+            "media-indexed".to_owned()
+        ])
+    );
+    assert_eq!(
+        parse_media_id_fields([None, Some(vec![FormEntry::Field("media-plain".to_owned())]),]),
+        Some(vec!["media-plain".to_owned()])
+    );
+    assert_eq!(parse_media_id_fields([None, None]), None);
 }

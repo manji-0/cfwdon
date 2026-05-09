@@ -391,8 +391,8 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/users/:username/outbox", |_req, ctx| async move {
             outbox_response(ctx).await
         })
-        .get_async("/users/:username/statuses/:id", |_req, ctx| async move {
-            status_object_response(ctx).await
+        .get_async("/users/:username/statuses/:id", |req, ctx| async move {
+            status_object_response(req, ctx).await
         })
         .get_async("/media/:id", |_req, ctx| async move {
             media_content_response(ctx).await

@@ -2,6 +2,7 @@ use super::{
     MAX_IMAGE_UPLOAD_BYTES, ProfileMediaUpload, classify_media_kind,
     normalize_quote_approval_policy, parse_optional_bool,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde::de::Deserializer;
 use std::collections::BTreeMap;
@@ -211,9 +212,7 @@ async fn parse_profile_media_upload(
     };
     let file = match entry {
         FormEntry::File(file) => file,
-        FormEntry::Field(_) => {
-            return Err(format!("{object_kind} must be sent as multipart file data"));
-        }
+        FormEntry::Field(value) => return parse_profile_media_data_url(&value, object_kind),
     };
     let content_type = file.type_().trim().to_ascii_lowercase();
     if content_type.is_empty() {
@@ -245,9 +244,58 @@ async fn parse_profile_media_upload(
     }))
 }
 
+fn parse_profile_media_data_url(
+    value: &str,
+    object_kind: &'static str,
+) -> std::result::Result<Option<ProfileMediaUpload>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let Some((metadata, encoded)) = value.split_once(',') else {
+        return Err(format!(
+            "{object_kind} must be sent as multipart file data or a data URL"
+        ));
+    };
+    let Some(content_type) = metadata
+        .strip_prefix("data:")
+        .and_then(|metadata| metadata.strip_suffix(";base64"))
+    else {
+        return Err(format!("{object_kind} data URL must be base64 encoded"));
+    };
+    let content_type = content_type.trim().to_ascii_lowercase();
+    if content_type.is_empty() {
+        return Err(format!("{object_kind} is missing a content type"));
+    }
+    let kind = classify_media_kind(&content_type)
+        .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
+    if kind != super::MediaKind::Image {
+        return Err(format!("{object_kind} must be an image"));
+    }
+    let bytes = STANDARD
+        .decode(encoded.as_bytes())
+        .map_err(|error| format!("invalid {object_kind} data URL: {error}"))?;
+    if bytes.is_empty() {
+        return Err(format!("{object_kind} must not be empty"));
+    }
+    if bytes.len() > MAX_IMAGE_UPLOAD_BYTES {
+        return Err(format!(
+            "{object_kind} exceeds the {} byte image limit",
+            MAX_IMAGE_UPLOAD_BYTES
+        ));
+    }
+
+    Ok(Some(ProfileMediaUpload {
+        bytes,
+        content_type,
+        object_kind,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::UpdateCredentialsRequest;
+    use super::{UpdateCredentialsRequest, parse_profile_media_data_url};
 
     #[test]
     fn update_credentials_accepts_json_fields_attributes_map() {
@@ -287,5 +335,16 @@ mod tests {
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].name.as_deref(), Some("Website"));
         assert_eq!(fields[0].value.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn profile_media_upload_accepts_data_url_field() {
+        let upload = parse_profile_media_data_url("data:image/png;base64,aGVsbG8=", "avatar")
+            .expect("data URL should parse")
+            .expect("data URL should produce upload");
+
+        assert_eq!(upload.bytes, b"hello");
+        assert_eq!(upload.content_type, "image/png");
+        assert_eq!(upload.object_kind, "avatar");
     }
 }
