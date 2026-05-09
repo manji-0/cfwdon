@@ -206,19 +206,15 @@ pub(crate) async fn has_remote_poll_votes_created_after(
     let bindings = [D1Type::Text(poll_id), D1Type::Text(created_after)];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM remote_status_poll_votes
              WHERE poll_id = ?1
-               AND datetime(created_at) > datetime(?2)",
+               AND datetime(created_at) > datetime(?2)
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
