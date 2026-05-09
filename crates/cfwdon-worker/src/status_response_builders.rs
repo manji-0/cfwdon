@@ -578,19 +578,8 @@ async fn build_quoted_status_value(
                 .unwrap_or(serde_json::Value::Null)
             })
             .collect();
-        response.filtered = match viewer {
-            Some(viewer) => {
-                load_status_filtered(
-                    db,
-                    &viewer.id,
-                    &remote_status.id,
-                    &text_content,
-                    &remote_status.spoiler_text,
-                )
-                .await?
-            }
-            None => Vec::new(),
-        };
+        response.filtered =
+            remote_status_filtered_for_viewer(db, viewer, &remote_status, &text_content).await?;
         response.mentions = build_status_mentions(db, config, &text_content).await?;
         response.favourites_count = count_remote_status_favourites(db, &remote_status.id).await?;
         response.favourited = match viewer {
@@ -638,6 +627,25 @@ async fn local_status_filtered_for_viewer(
         &viewer.id,
         &status.id,
         &status._text_content,
+        &status.spoiler_text,
+    )
+    .await
+}
+
+async fn remote_status_filtered_for_viewer(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    text_content: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let Some(viewer) = viewer else {
+        return Ok(Vec::new());
+    };
+    load_status_filtered(
+        db,
+        &viewer.id,
+        &status.id,
+        text_content,
         &status.spoiler_text,
     )
     .await
