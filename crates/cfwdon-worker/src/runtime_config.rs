@@ -210,18 +210,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
 
     set_timeline_access_config(ctx, &mut config);
 
-    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
-    set_trimmed_optional(
-        ctx,
-        "DONATION_CAMPAIGN_JSON",
-        &mut config.donation_campaign_json,
-    );
-
-    set_trimmed_base_url(
-        ctx,
-        "MEDIA_PUBLIC_BASE_URL",
-        &mut config.media_public_base_url,
-    );
+    set_content_config(ctx, &mut config);
     set_access_config(ctx, &mut config);
 
     config
@@ -232,6 +221,20 @@ fn set_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
     set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
     set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
     set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
+}
+
+fn set_content_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
+    set_trimmed_optional(
+        ctx,
+        "DONATION_CAMPAIGN_JSON",
+        &mut config.donation_campaign_json,
+    );
+    set_trimmed_base_url(
+        ctx,
+        "MEDIA_PUBLIC_BASE_URL",
+        &mut config.media_public_base_url,
+    );
 }
 
 fn set_web_push_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
