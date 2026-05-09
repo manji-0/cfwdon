@@ -72,15 +72,23 @@ use super::{
     update_push_subscription_response, update_scheduled_status_response, update_status,
     verify_credentials, vote_in_poll, webfinger_response,
 };
-use worker::{Env, Request, Response, Result, Router};
+use worker::{Env, Request, Response, Result, Router, console_log};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let request_url = req.url()?;
     let request_path = request_url.path().to_owned();
     let request_method = req.method().to_string();
     let request_origin = req.headers().get("Origin")?;
+    let request_user_agent = req.headers().get("User-Agent")?.unwrap_or_default();
     if request_method == "OPTIONS" && is_cors_enabled_path(&request_path) {
-        return cors_preflight_response(request_origin.as_deref());
+        let response = cors_preflight_response(request_origin.as_deref())?;
+        log_api_request(
+            &request_method,
+            &request_path,
+            response.status_code(),
+            &request_user_agent,
+        );
+        return Ok(response);
     }
 
     let mut response = Router::new()
@@ -861,7 +869,41 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     if is_cors_enabled_path(&request_path) {
         apply_cors_headers(&mut response, request_origin.as_deref())?;
     }
+    log_api_request(
+        &request_method,
+        &request_path,
+        response.status_code(),
+        &request_user_agent,
+    );
     Ok(response)
+}
+
+fn log_api_request(method: &str, path: &str, status: u16, user_agent: &str) {
+    if !is_logged_api_path(path) {
+        return;
+    }
+    console_log!(
+        "api_request method={} path={} status={} user_agent={}",
+        method,
+        path,
+        status,
+        sanitize_log_value(user_agent)
+    );
+}
+
+fn is_logged_api_path(path: &str) -> bool {
+    path.starts_with("/api/") || path.starts_with("/oauth/") || path.starts_with("/.well-known/")
+}
+
+fn sanitize_log_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => ' ',
+            _ => character,
+        })
+        .take(200)
+        .collect()
 }
 
 pub(crate) fn is_cors_enabled_path(path: &str) -> bool {

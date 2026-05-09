@@ -130,7 +130,7 @@ impl MastodonAccountResponse {
             show_media_replies: Some(true),
             show_featured: Some(true),
             last_status_at: stats.last_status_at.clone(),
-            created_at: account.created_at.clone(),
+            created_at: timestamp_to_mastodon_iso8601(&account.created_at),
             note: account.bio_html.clone(),
             url: profile_url,
             avatar: account_avatar_url(config, account),
@@ -210,4 +210,15 @@ impl MastodonAccountResponse {
             source: None,
         }
     }
+}
+
+pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
+    let value = value.trim();
+    if value.contains('T') {
+        return value.to_owned();
+    }
+    if value.len() == "YYYY-MM-DD HH:MM:SS".len() {
+        return format!("{}T{}.000Z", &value[..10], &value[11..]);
+    }
+    value.to_owned()
 }

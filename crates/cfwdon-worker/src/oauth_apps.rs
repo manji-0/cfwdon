@@ -583,7 +583,7 @@ fn validate_redirect_uri(value: &str) -> std::result::Result<String, String> {
     }
     let url = Url::parse(value)
         .map_err(|_| "Validation failed: Redirect URI must be an absolute URI.".to_owned())?;
-    if url.host_str().is_none() {
+    if matches!(url.scheme(), "http" | "https") && url.host_str().is_none() {
         return Err("Validation failed: Redirect URI must be an absolute URI.".to_owned());
     }
     Ok(value.to_owned())
@@ -1444,7 +1444,7 @@ pub(crate) async fn oauth_token_response(
     }
     if !oauth_app_redirect_uris(&app)
         .iter()
-        .any(|value| value == redirect_uri)
+        .any(|value| redirect_uri_matches_registered(value, redirect_uri))
     {
         return oauth_invalid_client_response();
     }
