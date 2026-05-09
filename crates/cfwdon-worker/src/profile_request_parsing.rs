@@ -3,12 +3,15 @@ use super::{
     normalize_quote_approval_policy, parse_optional_bool,
 };
 use serde::Deserialize;
+use serde::de::Deserializer;
+use std::collections::BTreeMap;
 use worker::{FormData, FormEntry, Request};
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct UpdateCredentialsRequest {
     pub(crate) display_name: Option<String>,
     pub(crate) note: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_fields_attributes")]
     pub(crate) fields_attributes: Option<Vec<UpdateCredentialsField>>,
     pub(crate) discoverable: Option<bool>,
     pub(crate) locked: Option<bool>,
@@ -126,6 +129,32 @@ pub(crate) async fn parse_update_credentials_request(
     Ok(request)
 }
 
+fn deserialize_fields_attributes<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<UpdateCredentialsField>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FieldsAttributes {
+        List(Vec<UpdateCredentialsField>),
+        Map(BTreeMap<String, UpdateCredentialsField>),
+    }
+
+    Ok(
+        match Option::<FieldsAttributes>::deserialize(deserializer)? {
+            Some(FieldsAttributes::List(fields)) => Some(fields),
+            Some(FieldsAttributes::Map(fields)) => {
+                let mut fields = fields.into_iter().collect::<Vec<_>>();
+                fields.sort_by_key(|(key, _)| key.parse::<usize>().ok());
+                Some(fields.into_iter().map(|(_, field)| field).collect())
+            }
+            None => None,
+        },
+    )
+}
+
 fn normalize_optional_text(value: &mut Option<String>, clear_if_empty: bool) {
     if let Some(current) = value.as_mut() {
         *current = current.trim().to_owned();
@@ -214,4 +243,49 @@ async fn parse_profile_media_upload(
         content_type,
         object_kind,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateCredentialsRequest;
+
+    #[test]
+    fn update_credentials_accepts_json_fields_attributes_map() {
+        let request: UpdateCredentialsRequest = serde_json::from_value(serde_json::json!({
+            "display_name": "Alice",
+            "fields_attributes": {
+                "1": { "name": "Second", "value": "https://example.com/second" },
+                "0": { "name": "First", "value": "https://example.com/first" }
+            }
+        }))
+        .expect("map-shaped fields_attributes should deserialize");
+
+        let fields = request.fields_attributes.expect("fields should be present");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name.as_deref(), Some("First"));
+        assert_eq!(
+            fields[0].value.as_deref(),
+            Some("https://example.com/first")
+        );
+        assert_eq!(fields[1].name.as_deref(), Some("Second"));
+        assert_eq!(
+            fields[1].value.as_deref(),
+            Some("https://example.com/second")
+        );
+    }
+
+    #[test]
+    fn update_credentials_accepts_json_fields_attributes_list() {
+        let request: UpdateCredentialsRequest = serde_json::from_value(serde_json::json!({
+            "fields_attributes": [
+                { "name": "Website", "value": "https://example.com" }
+            ]
+        }))
+        .expect("list-shaped fields_attributes should deserialize");
+
+        let fields = request.fields_attributes.expect("fields should be present");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name.as_deref(), Some("Website"));
+        assert_eq!(fields[0].value.as_deref(), Some("https://example.com"));
+    }
 }

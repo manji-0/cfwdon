@@ -93,7 +93,30 @@ pub(crate) async fn find_authenticated_local_account(
 }
 
 fn oauth_access_token_allows_request(req: &Request, token: &OAuthAccessTokenRow) -> bool {
-    match req.method().as_ref() {
+    let path = req
+        .url()
+        .ok()
+        .map(|url| url.path().to_owned())
+        .unwrap_or_default();
+    oauth_access_token_allows_method_path(req.method().as_ref(), &path, token)
+}
+
+fn oauth_access_token_allows_method_path(
+    method: &str,
+    path: &str,
+    token: &OAuthAccessTokenRow,
+) -> bool {
+    if method == "GET"
+        && matches!(
+            path,
+            "/api/v1/accounts/verify_credentials" | "/api/v1/profile"
+        )
+        && oauth_access_token_has_any_scope(token, &["profile"])
+    {
+        return true;
+    }
+
+    match method {
         "GET" | "HEAD" | "OPTIONS" => oauth_access_token_has_any_scope(
             token,
             &[
