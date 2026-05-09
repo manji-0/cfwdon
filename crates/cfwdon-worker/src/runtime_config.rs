@@ -507,6 +507,15 @@ mod tests {
     }
 
     #[test]
+    fn root_endpoints_include_core_mastodon_apis() {
+        let endpoints = root_endpoint_list();
+
+        assert!(endpoints.contains(&"/api/v1/instance"));
+        assert!(endpoints.contains(&"/api/v1/statuses"));
+        assert!(endpoints.contains(&"/api/v1/accounts/verify_credentials"));
+    }
+
+    #[test]
     fn root_document_reflects_build_metadata() {
         let build = build_metadata();
         let document = root_document();
