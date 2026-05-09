@@ -524,19 +524,7 @@ async fn build_quoted_status_value(
         );
         response.card = build_status_card_value(&local_status._text_content);
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
-        response.filtered = match viewer {
-            Some(viewer) => {
-                load_status_filtered(
-                    db,
-                    &viewer.id,
-                    &local_status.id,
-                    &local_status._text_content,
-                    &local_status.spoiler_text,
-                )
-                .await?
-            }
-            None => Vec::new(),
-        };
+        response.filtered = local_status_filtered_for_viewer(db, viewer, &local_status).await?;
         response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
         response.favourites_count = count_local_status_favourites(db, &local_status.id).await?;
         response.favourited = match viewer {
@@ -635,6 +623,24 @@ async fn build_quoted_status_value(
     }
 
     Ok(None)
+}
+
+async fn local_status_filtered_for_viewer(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+) -> Result<Vec<serde_json::Value>> {
+    let Some(viewer) = viewer else {
+        return Ok(Vec::new());
+    };
+    load_status_filtered(
+        db,
+        &viewer.id,
+        &status.id,
+        &status._text_content,
+        &status.spoiler_text,
+    )
+    .await
 }
 
 async fn build_remote_reblog_wrapper_response(
