@@ -246,12 +246,16 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         "MEDIA_PUBLIC_BASE_URL",
         &mut config.media_public_base_url,
     );
+    set_access_config(ctx, &mut config);
+
+    config
+}
+
+fn set_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
     set_raw_string(ctx, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
     set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
     set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
     set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
-
-    config
 }
 
 fn set_instance_document_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
