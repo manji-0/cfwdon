@@ -3,7 +3,7 @@ use super::{
     find_account_by_id, generate_entity_id, profile_field_from_update, render_status_html,
 };
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::d1::D1Type;
 use worker::{Bucket, D1Database, Error, HttpMetadata, Result};
 
@@ -51,6 +51,22 @@ fn profile_media_was_replaced(previous: Option<&str>, next: Option<&(String, Str
     }
 }
 
+fn account_profile_fields(
+    account: &LocalAccount,
+    update: &UpdateCredentialsRequest,
+) -> Vec<ProfileField> {
+    update
+        .fields_attributes
+        .as_ref()
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(profile_field_from_update)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| account.fields.clone())
+}
+
 pub(crate) async fn apply_account_credentials_update(
     db: &D1Database,
     bucket: &Bucket,
@@ -69,16 +85,7 @@ pub(crate) async fn apply_account_credentials_update(
         .unwrap_or(account.bio_text.as_str())
         .to_owned();
     let bio_html = render_status_html(&bio_text);
-    let fields = update
-        .fields_attributes
-        .as_ref()
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(profile_field_from_update)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| account.fields.clone());
+    let fields = account_profile_fields(account, update);
     let fields_json = serde_json::to_string(&fields).map_err(|error| {
         Error::RustError(format!("failed to serialize account fields: {error}"))
     })?;
@@ -208,6 +215,35 @@ async fn store_profile_media(
 mod tests {
     use super::*;
 
+    fn test_account() -> LocalAccount {
+        LocalAccount {
+            id: "acct-1".to_owned(),
+            username: "alice".to_owned(),
+            access_email: "alice@example.com".to_owned(),
+            display_name: "Alice".to_owned(),
+            bio_html: String::new(),
+            bio_text: String::new(),
+            fields: vec![ProfileField {
+                name: "Website".to_owned(),
+                value: "https://example.com".to_owned(),
+            }],
+            locked: false,
+            bot: false,
+            discoverable: true,
+            default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
+            default_sensitive: false,
+            default_language: None,
+            avatar_object_key: None,
+            avatar_content_type: None,
+            header_object_key: None,
+            header_content_type: None,
+            private_key_jwk: "{}".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
     #[test]
     fn profile_media_was_replaced_only_when_new_key_differs() {
         let unchanged = (
@@ -232,5 +268,13 @@ mod tests {
             Some("profiles/account/avatar/old"),
             Some(&changed)
         ));
+    }
+
+    #[test]
+    fn account_profile_fields_keeps_existing_when_update_omits_fields() {
+        let account = test_account();
+        let update = UpdateCredentialsRequest::default();
+
+        assert_eq!(account_profile_fields(&account, &update), account.fields);
     }
 }
