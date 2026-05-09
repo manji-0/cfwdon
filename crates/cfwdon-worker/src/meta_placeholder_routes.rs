@@ -3167,4 +3167,19 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn sse_event_bytes_match_event_stream_format() {
+        let event = StreamingEvent {
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+            id: "event-1".to_owned(),
+            event: "update",
+            data: "{\"id\":\"status-1\"}".to_owned(),
+        };
+
+        assert_eq!(
+            sse_event_bytes(&event),
+            b"event: update\ndata: {\"id\":\"status-1\"}\n\n".to_vec()
+        );
+    }
 }
