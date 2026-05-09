@@ -200,12 +200,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         }),
     );
 
-    if let Some(value) = optional_var(ctx, "SOURCE_URL") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.source_url = Some(value);
-        }
-    }
+    set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
 
     if let Some(value) = optional_var(ctx, "INSTANCE_LANGUAGES") {
         let languages = parse_csv_list(&value);
@@ -218,129 +213,91 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         config.admin_emails = parse_csv_list(&value);
     }
 
-    if let Some(value) = optional_var(ctx, "CONTACT_EMAIL") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.contact_email = Some(value);
-        }
-    }
+    set_trimmed_optional(ctx, "CONTACT_EMAIL", &mut config.contact_email);
+    set_trimmed_optional(
+        ctx,
+        "INSTANCE_THUMBNAIL_URL",
+        &mut config.instance_thumbnail_url,
+    );
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_PUBLIC_KEY",
+        &mut config.web_push_vapid_public_key,
+    );
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_PRIVATE_KEY",
+        &mut config.web_push_vapid_private_key,
+    );
+    set_trimmed_optional(
+        ctx,
+        "WEB_PUSH_VAPID_SUBJECT",
+        &mut config.web_push_vapid_subject,
+    );
+    set_trimmed_optional(
+        ctx,
+        "INSTANCE_EXTENDED_DESCRIPTION_HTML",
+        &mut config.instance_extended_description_html,
+    );
+    set_trimmed_optional(
+        ctx,
+        "INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT",
+        &mut config.instance_extended_description_updated_at,
+    );
+    set_trimmed_optional(ctx, "PRIVACY_POLICY_HTML", &mut config.privacy_policy_html);
+    set_trimmed_optional(
+        ctx,
+        "PRIVACY_POLICY_UPDATED_AT",
+        &mut config.privacy_policy_updated_at,
+    );
+    set_trimmed_optional(
+        ctx,
+        "TERMS_OF_SERVICE_HTML",
+        &mut config.terms_of_service_html,
+    );
+    set_trimmed_optional(
+        ctx,
+        "TERMS_OF_SERVICE_EFFECTIVE_DATE",
+        &mut config.terms_of_service_effective_date,
+    );
 
-    if let Some(value) = optional_var(ctx, "INSTANCE_THUMBNAIL_URL") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.instance_thumbnail_url = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "WEB_PUSH_VAPID_PUBLIC_KEY") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.web_push_vapid_public_key = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "WEB_PUSH_VAPID_PRIVATE_KEY") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.web_push_vapid_private_key = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "WEB_PUSH_VAPID_SUBJECT") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.web_push_vapid_subject = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "INSTANCE_EXTENDED_DESCRIPTION_HTML") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.instance_extended_description_html = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.instance_extended_description_updated_at = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "PRIVACY_POLICY_HTML") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.privacy_policy_html = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "PRIVACY_POLICY_UPDATED_AT") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.privacy_policy_updated_at = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "TERMS_OF_SERVICE_HTML") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.terms_of_service_html = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "TERMS_OF_SERVICE_EFFECTIVE_DATE") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.terms_of_service_effective_date = Some(value);
-        }
-    }
-
-    if let Some(value) =
-        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL"))
-    {
-        config.timeline_live_feeds_local = value;
-    }
-    if let Some(value) =
-        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE"))
-    {
-        config.timeline_live_feeds_remote = value;
-    }
-    if let Some(value) =
-        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL"))
-    {
-        config.timeline_hashtag_feeds_local = value;
-    }
-    if let Some(value) =
-        parse_timeline_access_level(optional_var(ctx, "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE"))
-    {
-        config.timeline_hashtag_feeds_remote = value;
-    }
-    if let Some(value) = parse_timeline_access_level(optional_var(
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL",
+        &mut config.timeline_live_feeds_local,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE",
+        &mut config.timeline_live_feeds_remote,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL",
+        &mut config.timeline_hashtag_feeds_local,
+    );
+    set_timeline_access_level(
+        ctx,
+        "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE",
+        &mut config.timeline_hashtag_feeds_remote,
+    );
+    set_timeline_access_level(
         ctx,
         "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL",
-    )) {
-        config.timeline_trending_link_feeds_local = value;
-    }
-    if let Some(value) = parse_timeline_access_level(optional_var(
+        &mut config.timeline_trending_link_feeds_local,
+    );
+    set_timeline_access_level(
         ctx,
         "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE",
-    )) {
-        config.timeline_trending_link_feeds_remote = value;
-    }
+        &mut config.timeline_trending_link_feeds_remote,
+    );
 
-    if let Some(value) = optional_var(ctx, "ANNOUNCEMENTS_JSON") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.announcements_json = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "DONATION_CAMPAIGN_JSON") {
-        let value = value.trim().to_owned();
-        if !value.is_empty() {
-            config.donation_campaign_json = Some(value);
-        }
-    }
+    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
+    set_trimmed_optional(
+        ctx,
+        "DONATION_CAMPAIGN_JSON",
+        &mut config.donation_campaign_json,
+    );
 
     if let Some(value) = optional_var(ctx, "MEDIA_PUBLIC_BASE_URL") {
         let value = value.trim().trim_end_matches('/').to_owned();
@@ -366,6 +323,20 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
     }
 
     config
+}
+
+fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
+    if let Some(value) = optional_var(ctx, key).map(|value| value.trim().to_owned())
+        && !value.is_empty()
+    {
+        *target = Some(value);
+    }
+}
+
+fn set_timeline_access_level(ctx: &RouteContext<()>, key: &str, target: &mut TimelineAccessLevel) {
+    if let Some(value) = parse_timeline_access_level(optional_var(ctx, key)) {
+        *target = value;
+    }
 }
 
 pub(crate) const fn build_metadata() -> BuildMetadata {
