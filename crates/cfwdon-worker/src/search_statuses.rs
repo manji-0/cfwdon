@@ -18,7 +18,7 @@ use crate::{
     search_remote_status_rows, search_text_match_rank, strip_html_tags,
 };
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{AccountHandle, LocalAccount};
 use time::format_description::parse as parse_format_description;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, OffsetDateTime};
@@ -496,6 +496,26 @@ fn status_search_self_reference(viewer: &LocalAccount, value: &str) -> Option<Ac
         .then(|| AccountReference::Local(viewer.clone()))
 }
 
+async fn resolve_status_search_handle_reference(
+    db: &D1Database,
+    config: &AppConfig,
+    handle: &AccountHandle,
+) -> Result<Option<AccountReference>> {
+    if handle.is_local_to(&config.instance_domain) {
+        return Ok(find_account_by_username(db, &handle.username)
+            .await?
+            .map(AccountReference::Local));
+    }
+
+    Ok(find_remote_actor_by_username_domain(
+        db,
+        &handle.username,
+        handle.domain.as_deref().unwrap_or_default(),
+    )
+    .await?
+    .map(AccountReference::Remote))
+}
+
 async fn resolve_status_search_from_reference(
     db: &D1Database,
     config: &AppConfig,
@@ -511,19 +531,7 @@ async fn resolve_status_search_from_reference(
         Err(_) => return Ok(None),
     };
 
-    if handle.is_local_to(&config.instance_domain) {
-        return Ok(find_account_by_username(db, &handle.username)
-            .await?
-            .map(AccountReference::Local));
-    }
-
-    Ok(find_remote_actor_by_username_domain(
-        db,
-        &handle.username,
-        handle.domain.as_deref().unwrap_or_default(),
-    )
-    .await?
-    .map(AccountReference::Remote))
+    resolve_status_search_handle_reference(db, config, &handle).await
 }
 
 fn account_reference_identity(reference: &AccountReference) -> &str {
