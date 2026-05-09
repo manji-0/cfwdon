@@ -199,10 +199,9 @@ pub(crate) fn root_document() -> RootDocument {
 
 pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
     let mut config = AppConfig::new(
-        optional_var(ctx, "INSTANCE_DOMAIN").unwrap_or_else(|| DEFAULT_INSTANCE_DOMAIN.to_owned()),
-        optional_var(ctx, "INSTANCE_NAME").unwrap_or_else(|| DEFAULT_INSTANCE_NAME.to_owned()),
-        optional_var(ctx, "INSTANCE_DESCRIPTION")
-            .unwrap_or_else(|| DEFAULT_INSTANCE_DESCRIPTION.to_owned()),
+        config_string_or_default(ctx, "INSTANCE_DOMAIN", DEFAULT_INSTANCE_DOMAIN),
+        config_string_or_default(ctx, "INSTANCE_NAME", DEFAULT_INSTANCE_NAME),
+        config_string_or_default(ctx, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
     );
 
     set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
@@ -313,6 +312,10 @@ fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<S
     if let Some(value) = trimmed_non_empty(optional_var(ctx, key).as_deref()) {
         *target = Some(value);
     }
+}
+
+fn config_string_or_default(ctx: &RouteContext<()>, key: &str, default: &str) -> String {
+    optional_var(ctx, key).unwrap_or_else(|| default.to_owned())
 }
 
 fn set_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<String>) {
