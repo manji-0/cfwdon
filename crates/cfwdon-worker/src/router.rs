@@ -225,14 +225,14 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         .get_async("/api/v1/emails/check_confirmation", |req, ctx| async move {
             check_email_confirmation_response(req, ctx).await
         })
-        .get_async("/api/v1/trends", |_req, ctx| async move {
-            trending_tags_response(ctx).await
+        .get_async("/api/v1/trends", |req, ctx| async move {
+            trending_tags_response(req, ctx).await
         })
-        .get_async("/api/v1/trends/statuses", |_req, ctx| async move {
-            trending_statuses_response(ctx).await
+        .get_async("/api/v1/trends/statuses", |req, ctx| async move {
+            trending_statuses_response(req, ctx).await
         })
-        .get_async("/api/v1/trends/tags", |_req, ctx| async move {
-            trending_tags_response(ctx).await
+        .get_async("/api/v1/trends/tags", |req, ctx| async move {
+            trending_tags_response(req, ctx).await
         })
         .get_async("/api/v1/trends/links", |req, ctx| async move {
             trending_links_response(req, ctx).await

@@ -131,7 +131,7 @@ pub(crate) fn build_instance_v1_document(
         },
         "thumbnail": config.instance_thumbnail_url,
         "languages": configured_instance_languages(config),
-        "registrations": false,
+        "registrations": true,
         "approval_required": false,
         "invites_enabled": false,
         "configuration": {
@@ -237,7 +237,7 @@ pub(crate) fn build_instance_v2_document(
     response.insert(
         "registrations".to_owned(),
         serde_json::json!({
-            "enabled": false,
+            "enabled": true,
             "approval_required": false,
             "reason_required": false,
             "message": "Registration is handled by Cloudflare Access.",

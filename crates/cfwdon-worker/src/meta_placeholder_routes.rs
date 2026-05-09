@@ -2400,7 +2400,10 @@ pub(crate) async fn streaming_placeholder_response(
             | "public:remote:media"
             | "hashtag"
             | "hashtag:local"
+            | "user"
             | "user:notification"
+            | "list"
+            | "direct"
     ) {
         let stream_body = build_streaming_event_stream(
             db,

@@ -3,13 +3,18 @@ use super::status_placeholder_routes::{
     configured_translation_provider, load_translation_provider_languages,
 };
 use super::{
-    Request, Response, Result, RouteContext, build_default_privacy_policy_document,
-    build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
-    build_nodeinfo_document, build_nodeinfo_links_document, build_status_card_value,
-    canonicalize_link_timeline_url, configured_html_document, configured_instance_languages,
-    count_accounts_created_between, count_local_statuses_between, load_active_month_users,
-    load_config, load_instance_summary, load_known_peer_domains, load_total_local_accounts,
-    load_total_local_statuses, require_authenticated_local_account, strip_html_tags,
+    Request, ResolvedTimelineCursor, Response, Result, RouteContext,
+    build_default_privacy_policy_document, build_instance_activity_document,
+    build_instance_v1_document, build_instance_v2_document, build_local_status_response,
+    build_nodeinfo_document, build_nodeinfo_links_document, build_remote_status_response,
+    build_status_card_value, build_tag_response, canonicalize_link_timeline_url,
+    configured_html_document, configured_instance_languages, count_accounts_created_between,
+    count_local_statuses_between, extract_hashtags_from_html, extract_hashtags_from_text,
+    find_account_by_id, find_media_attachments_by_status_id, list_local_public_timeline_statuses,
+    list_remote_public_timeline_statuses, load_active_month_users, load_config,
+    load_in_reply_to_account_id, load_instance_summary, load_known_peer_domains,
+    load_total_local_accounts, load_total_local_statuses, require_authenticated_local_account,
+    strip_html_tags,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
@@ -62,6 +67,13 @@ struct TrendingLinkAggregate {
     accounts: HashSet<String>,
     uses_by_day: HashMap<i64, u64>,
     accounts_by_day: HashMap<i64, HashSet<String>>,
+}
+
+#[derive(Debug, Default)]
+struct TrendingTagAggregate {
+    statuses_count: u64,
+    accounts: HashSet<String>,
+    last_status_at: String,
 }
 
 const TRENDING_LINK_HISTORY_DAYS: usize = 7;
@@ -502,8 +514,59 @@ pub(crate) async fn dismiss_announcement_mutation_response(
     Ok(Response::empty()?.with_status(200))
 }
 
-pub(crate) async fn trending_statuses_response(_ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_json(&serde_json::json!([]))
+pub(crate) async fn trending_statuses_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: TrendsQuery = req.query().unwrap_or_default();
+    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    let offset = query.offset.unwrap_or(0);
+    let fetch_limit = limit.saturating_add(offset).clamp(limit, 200);
+    let db = ctx.d1(&config.database_binding)?;
+    let cursor = ResolvedTimelineCursor::default();
+    let mut entries = Vec::<(String, String, serde_json::Value)>::new();
+
+    for status in list_local_public_timeline_statuses(&db, &cursor, fetch_limit).await? {
+        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+            continue;
+        };
+        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+        let response = build_local_status_response(
+            &db,
+            &config,
+            None,
+            &status,
+            &account,
+            load_in_reply_to_account_id(&db, &status).await?,
+            media,
+        )
+        .await?;
+        entries.push((
+            status.created_at.clone(),
+            status.id.clone(),
+            serde_json::to_value(response)?,
+        ));
+    }
+
+    for (status, actor) in list_remote_public_timeline_statuses(&db, &cursor, fetch_limit).await? {
+        let response = build_remote_status_response(&db, &config, None, &status, &actor).await?;
+        entries.push((
+            status.published_at.clone(),
+            status.id.clone(),
+            serde_json::to_value(response)?,
+        ));
+    }
+
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    Response::from_json(
+        &entries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .map(|(_, _, status)| status)
+            .collect::<Vec<_>>(),
+    )
 }
 
 pub(crate) async fn trending_links_response(
@@ -523,8 +586,60 @@ pub(crate) async fn trending_links_response(
     )
 }
 
-pub(crate) async fn trending_tags_response(_ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_json(&serde_json::json!([]))
+pub(crate) async fn trending_tags_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: TrendsQuery = req.query().unwrap_or_default();
+    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    let offset = query.offset.unwrap_or(0);
+    let db = ctx.d1(&config.database_binding)?;
+    let cursor = ResolvedTimelineCursor::default();
+    let mut tags = HashMap::<String, TrendingTagAggregate>::new();
+
+    for status in list_local_public_timeline_statuses(&db, &cursor, 200).await? {
+        for tag in extract_hashtags_from_text(&status._text_content) {
+            let entry = tags.entry(tag).or_default();
+            entry.statuses_count += 1;
+            entry.accounts.insert(status.account_id.clone());
+            if status.created_at > entry.last_status_at {
+                entry.last_status_at = status.created_at.clone();
+            }
+        }
+    }
+
+    for (status, _actor) in list_remote_public_timeline_statuses(&db, &cursor, 200).await? {
+        for tag in extract_hashtags_from_html(&status.content_html) {
+            let entry = tags.entry(tag).or_default();
+            entry.statuses_count += 1;
+            entry.accounts.insert(status.actor_uri.clone());
+            if status.published_at > entry.last_status_at {
+                entry.last_status_at = status.published_at.clone();
+            }
+        }
+    }
+
+    let mut entries = tags.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .1
+            .statuses_count
+            .cmp(&left.1.statuses_count)
+            .then_with(|| right.1.accounts.len().cmp(&left.1.accounts.len()))
+            .then_with(|| right.1.last_status_at.cmp(&left.1.last_status_at))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let mut response = Vec::new();
+    for (tag, _aggregate) in entries
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+    {
+        response.push(build_tag_response(&db, &config, &tag).await?);
+    }
+    Response::from_json(&response)
 }
 
 pub(crate) async fn custom_emojis_response(_ctx: RouteContext<()>) -> Result<Response> {
