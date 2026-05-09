@@ -490,14 +490,20 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
     parsed
 }
 
+fn status_search_self_reference(viewer: &LocalAccount, value: &str) -> Option<AccountReference> {
+    value
+        .eq_ignore_ascii_case("me")
+        .then(|| AccountReference::Local(viewer.clone()))
+}
+
 async fn resolve_status_search_from_reference(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
     value: &str,
 ) -> Result<Option<AccountReference>> {
-    if value.eq_ignore_ascii_case("me") {
-        return Ok(Some(AccountReference::Local(viewer.clone())));
+    if let Some(reference) = status_search_self_reference(viewer, value) {
+        return Ok(Some(reference));
     }
 
     let handle = match parse_lookup_handle(value, config) {
