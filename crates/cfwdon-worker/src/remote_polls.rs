@@ -514,3 +514,24 @@ pub(crate) fn optimistic_remote_poll_vote_deltas(
     };
     (votes_count_delta, voters_count_delta)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_new_remote_poll_choices_preserves_order_and_skips_duplicates() {
+        assert_eq!(
+            collect_new_remote_poll_choices(5, &[1], &[2, 1, 2, 3]).unwrap(),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn collect_new_remote_poll_choices_rejects_out_of_range_choice() {
+        assert_eq!(
+            collect_new_remote_poll_choices(2, &[], &[0, 2]).unwrap_err(),
+            "choices contains an out-of-range option"
+        );
+    }
+}
