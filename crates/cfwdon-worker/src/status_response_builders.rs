@@ -53,10 +53,14 @@ pub(crate) fn quote_placeholder_document(state: &str) -> serde_json::Value {
     })
 }
 
+fn quote_state_uses_placeholder(state: &str) -> bool {
+    matches!(state, "revoked" | "rejected" | "unauthorized" | "deleted")
+}
+
 fn quote_document_for_local_state(local_quote_state: Option<&str>) -> Option<serde_json::Value> {
     match local_quote_state {
         Some("pending") => Some(pending_quote_document()),
-        Some(state @ ("revoked" | "rejected" | "unauthorized" | "deleted")) => {
+        Some(state) if quote_state_uses_placeholder(state) => {
             Some(quote_placeholder_document(state))
         }
         _ => None,
@@ -731,6 +735,16 @@ mod tests {
         assert!(sql.contains("FROM statuses"));
         assert!(sql.contains("FROM remote_statuses"));
         assert!(sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn quote_state_uses_placeholder_for_terminal_states() {
+        assert!(quote_state_uses_placeholder("revoked"));
+        assert!(quote_state_uses_placeholder("rejected"));
+        assert!(quote_state_uses_placeholder("unauthorized"));
+        assert!(quote_state_uses_placeholder("deleted"));
+        assert!(!quote_state_uses_placeholder("pending"));
+        assert!(!quote_state_uses_placeholder("accepted"));
     }
 }
 
