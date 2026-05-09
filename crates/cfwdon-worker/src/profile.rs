@@ -2,10 +2,9 @@ use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
     Result, RouteContext, UpdateCredentialsField, UpdateCredentialsRequest,
     apply_account_credentials_update, count_pending_follow_requests,
-    enqueue_profile_update_activities, extract_authenticated_user, load_account_stats, load_config,
-    media_object_url, normalize_hashtag, parse_update_credentials_request,
-    render_profile_field_value_html, resolve_account_reference, resolve_local_account,
-    resolve_lookup_account,
+    enqueue_profile_update_activities, find_authenticated_local_account, load_account_stats,
+    load_config, media_object_url, normalize_hashtag, parse_update_credentials_request,
+    render_profile_field_value_html, resolve_account_reference, resolve_lookup_account,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -72,13 +71,13 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
 
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    match extract_authenticated_user(&req, &config).await? {
+    let db = ctx.d1(&config.database_binding)?;
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
         None => return Response::error("Cloudflare Access authentication required", 401),
     }
 
     let query: AccountLookupQuery = req.query()?;
-    let db = ctx.d1(&config.database_binding)?;
     match resolve_lookup_account(&db, &config, &query.acct).await {
         Ok(account) => Response::from_json(&account),
         Err(_) => Response::error("account not found", 404),
@@ -87,13 +86,11 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
 
 pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
@@ -111,13 +108,11 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
 
 pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
 
@@ -131,13 +126,11 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
 
 pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
 
     Response::from_json(&serde_json::json!({
@@ -168,15 +161,15 @@ pub(crate) async fn update_credentials(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
     let (account, settings, stats, featured_tags) =
-        update_profile_internal(req, &ctx, &config, &user).await?;
-    let follow_requests_count =
-        count_pending_follow_requests(&ctx.d1(&config.database_binding)?, &account.id).await?;
+        update_profile_internal(req, &ctx, &config, &account).await?;
+    let follow_requests_count = count_pending_follow_requests(&db, &account.id).await?;
     Response::from_json(&build_credentials_document(
         &account,
         &config,
@@ -192,13 +185,14 @@ pub(crate) async fn update_profile_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(req, &config).await? {
-        Some(user) => user,
+    let db = ctx.d1(&config.database_binding)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
     let (account, settings, _stats, featured_tags) =
-        update_profile_internal(req, &ctx, &config, &user).await?;
+        update_profile_internal(req, &ctx, &config, &account).await?;
     Response::from_json(&build_profile_document(
         &account,
         &config,
@@ -225,7 +219,7 @@ async fn update_profile_internal(
     req: &mut Request,
     ctx: &RouteContext<()>,
     config: &AppConfig,
-    user: &cfwdon_core::AuthenticatedUser,
+    account: &cfwdon_domain::LocalAccount,
 ) -> Result<(
     cfwdon_domain::LocalAccount,
     AccountProfileSettings,
@@ -237,7 +231,6 @@ async fn update_profile_internal(
         .map_err(Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = resolve_local_account(&db, user).await?;
     let account = apply_account_credentials_update(&db, &bucket, config, &account, &update).await?;
     save_account_profile_settings(&db, &account.id, &update).await?;
     let stats = load_account_stats(&db, &account.id).await?;
@@ -253,16 +246,17 @@ async fn delete_profile_media_response(
     field: ProfileMediaField,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let user = match extract_authenticated_user(&req, &config).await? {
-        Some(user) => user,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
-
     let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     clear_profile_media(&db, &bucket, &account, field).await?;
-    let account = resolve_local_account(&db, &user).await?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Cloudflare Access authentication required", 401),
+    };
     enqueue_profile_update_activities(&db, &config, &account).await?;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
@@ -654,10 +648,7 @@ pub(crate) async fn require_authenticated_local_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<super::LocalAccount>> {
-    let Some(user) = extract_authenticated_user(req, config).await? else {
-        return Ok(None);
-    };
-    resolve_local_account(db, &user).await.map(Some)
+    find_authenticated_local_account(req, db, config).await
 }
 
 pub(crate) fn profile_field_from_update(field: &UpdateCredentialsField) -> Option<ProfileField> {

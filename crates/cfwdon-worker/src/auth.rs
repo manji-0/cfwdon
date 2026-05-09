@@ -2,7 +2,7 @@ use super::auth_account_store::find_account_by_email;
 use super::auth_jwt::verify_access_jwt;
 use super::oauth_apps::{
     OAuthAccessTokenRow, app_bearer_token_from_request, find_oauth_access_token_by_bearer_token,
-    find_oauth_app_by_bearer_token,
+    find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
 };
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
@@ -75,11 +75,66 @@ pub(crate) async fn find_authenticated_local_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<LocalAccount>> {
+    if let Some(token) = app_bearer_token_from_request(req)? {
+        let Some(access_token) = find_oauth_access_token_by_bearer_token(db, &token).await? else {
+            return Ok(None);
+        };
+        if !oauth_access_token_allows_request(req, &access_token) {
+            return Ok(None);
+        }
+        return find_account_by_id(db, &access_token.account_id).await;
+    }
+
     let Some(user) = extract_authenticated_user(req, config).await? else {
         return Ok(None);
     };
 
     find_account_by_email(db, &user.email).await
+}
+
+fn oauth_access_token_allows_request(req: &Request, token: &OAuthAccessTokenRow) -> bool {
+    match req.method().as_ref() {
+        "GET" | "HEAD" | "OPTIONS" => oauth_access_token_has_any_scope(
+            token,
+            &[
+                "read",
+                "read:accounts",
+                "read:blocks",
+                "read:bookmarks",
+                "read:collections",
+                "read:favourites",
+                "read:filters",
+                "read:follows",
+                "read:lists",
+                "read:mutes",
+                "read:notifications",
+                "read:search",
+                "read:statuses",
+            ],
+        ),
+        _ => oauth_access_token_has_any_scope(
+            token,
+            &[
+                "write",
+                "write:accounts",
+                "write:blocks",
+                "write:bookmarks",
+                "write:collections",
+                "write:conversations",
+                "write:favourites",
+                "write:filters",
+                "write:follows",
+                "write:lists",
+                "write:media",
+                "write:mutes",
+                "write:notifications",
+                "write:reports",
+                "write:statuses",
+                "follow",
+                "push",
+            ],
+        ),
+    }
 }
 
 pub(crate) async fn authenticate_local_api_request(
