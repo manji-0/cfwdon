@@ -359,3 +359,34 @@ pub(crate) const fn build_metadata() -> BuildMetadata {
 fn optional_var(ctx: &RouteContext<()>, key: &str) -> Option<String> {
     ctx.var(key).ok().map(|value| value.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_timeline_access_level_accepts_supported_values() {
+        assert_eq!(
+            parse_timeline_access_level(Some(" public ".to_owned())),
+            Some(TimelineAccessLevel::Public)
+        );
+        assert_eq!(
+            parse_timeline_access_level(Some("authenticated".to_owned())),
+            Some(TimelineAccessLevel::Authenticated)
+        );
+        assert_eq!(
+            parse_timeline_access_level(Some("disabled".to_owned())),
+            Some(TimelineAccessLevel::Disabled)
+        );
+    }
+
+    #[test]
+    fn parse_timeline_access_level_ignores_unknown_values() {
+        assert_eq!(parse_timeline_access_level(None), None);
+        assert_eq!(parse_timeline_access_level(Some("".to_owned())), None);
+        assert_eq!(
+            parse_timeline_access_level(Some("private".to_owned())),
+            None
+        );
+    }
+}
