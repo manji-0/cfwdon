@@ -71,15 +71,22 @@ pub(crate) async fn list_local_mention_notifications_for_account(
 
     let mut rows = Vec::new();
     for row in result.results::<MentionNotificationRow>()? {
-        if extract_mentions_from_text(&row.text_content, config)
-            .into_iter()
-            .any(|handle| handle.username == viewer.username)
-        {
+        if local_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }
     }
 
     Ok(rows)
+}
+
+fn local_mention_row_targets_viewer(
+    row: &MentionNotificationRow,
+    viewer: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    extract_mentions_from_text(&row.text_content, config)
+        .into_iter()
+        .any(|handle| handle.username == viewer.username)
 }
 
 pub(crate) async fn list_remote_mention_notifications_for_account(
@@ -110,16 +117,24 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
         .all()
         .await?;
 
+    // The SQL LIKE is only a cheap prefilter; HTML parsing keeps mention matching exact.
     let mut rows = Vec::new();
     for row in result.results::<RemoteMentionNotificationRow>()? {
-        let text_content = strip_html_tags(&row.content_html);
-        if extract_mentions_from_text(&text_content, config)
-            .into_iter()
-            .any(|handle| handle.username == viewer.username)
-        {
+        if remote_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }
     }
 
     Ok(rows)
+}
+
+fn remote_mention_row_targets_viewer(
+    row: &RemoteMentionNotificationRow,
+    viewer: &LocalAccount,
+    config: &AppConfig,
+) -> bool {
+    let text_content = strip_html_tags(&row.content_html);
+    extract_mentions_from_text(&text_content, config)
+        .into_iter()
+        .any(|handle| handle.username == viewer.username)
 }
