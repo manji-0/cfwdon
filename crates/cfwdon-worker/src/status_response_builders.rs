@@ -148,6 +148,20 @@ async fn quote_state_for_remote_quoted_status(
     Ok(None)
 }
 
+fn remote_media_attachment_values(
+    attachments: &[crate::RemoteStatusAttachmentRow],
+) -> Vec<serde_json::Value> {
+    attachments
+        .iter()
+        .map(|media| {
+            serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
+                media,
+            ))
+            .unwrap_or(serde_json::Value::Null)
+        })
+        .collect()
+}
+
 async fn local_quoted_status_document_state(
     db: &D1Database,
     config: &AppConfig,
@@ -431,15 +445,7 @@ async fn build_remote_status_response_inner(
     let text_content = strip_html_tags(&status.content_html);
     let remote_attachments = find_remote_status_attachments_by_status_id(db, &status.id).await?;
     response.card = build_remote_status_card_value(&text_content, &remote_attachments);
-    response.media_attachments = remote_attachments
-        .iter()
-        .map(|media| {
-            serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
-                media,
-            ))
-            .unwrap_or(serde_json::Value::Null)
-        })
-        .collect();
+    response.media_attachments = remote_media_attachment_values(&remote_attachments);
     response.mentions = build_status_mentions(db, config, &text_content).await?;
     response.favourites_count = count_remote_status_favourites(db, &status.id).await?;
     response.favourited = match viewer {
@@ -569,15 +575,7 @@ async fn build_quoted_status_value(
         let remote_attachments =
             find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
         response.card = build_remote_status_card_value(&text_content, &remote_attachments);
-        response.media_attachments = remote_attachments
-            .iter()
-            .map(|media| {
-                serde_json::to_value(crate::MastodonMediaAttachmentResponse::from_remote_row(
-                    media,
-                ))
-                .unwrap_or(serde_json::Value::Null)
-            })
-            .collect();
+        response.media_attachments = remote_media_attachment_values(&remote_attachments);
         response.filtered =
             remote_status_filtered_for_viewer(db, viewer, &remote_status, &text_content).await?;
         response.mentions = build_status_mentions(db, config, &text_content).await?;
