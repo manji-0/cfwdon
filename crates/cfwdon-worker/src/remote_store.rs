@@ -182,6 +182,15 @@ fn remote_status_content_html(object: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
+fn remote_status_published_at(object: &serde_json::Value) -> String {
+    object
+        .get("published")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| object.get("updated").and_then(serde_json::Value::as_str))
+        .unwrap_or_default()
+        .to_owned()
+}
+
 async fn find_remote_status_edit_state_by_object_uri(
     db: &D1Database,
     object_uri: &str,
@@ -249,16 +258,7 @@ pub(crate) async fn upsert_remote_status(
         .get("sensitive")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    let published_at = object
-        .get("published")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| {
-            object
-                .get("updated")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-        })
-        .to_owned();
+    let published_at = remote_status_published_at(object);
     let language = object
         .get("contentMap")
         .and_then(serde_json::Value::as_object)
@@ -643,5 +643,24 @@ mod tests {
             remote_status_content_html(&object),
             render_status_html("Fallback name")
         );
+    }
+
+    #[test]
+    fn remote_status_published_at_prefers_published() {
+        let object = json!({
+            "published": "2026-05-10T01:02:03Z",
+            "updated": "2026-05-10T04:05:06Z",
+        });
+
+        assert_eq!(remote_status_published_at(&object), "2026-05-10T01:02:03Z");
+    }
+
+    #[test]
+    fn remote_status_published_at_falls_back_to_updated() {
+        let object = json!({
+            "updated": "2026-05-10T04:05:06Z",
+        });
+
+        assert_eq!(remote_status_published_at(&object), "2026-05-10T04:05:06Z");
     }
 }
