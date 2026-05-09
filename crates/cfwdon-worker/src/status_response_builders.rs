@@ -73,25 +73,23 @@ fn quote_document_from_response(
     )
 }
 
+fn accepted_status_quotes_count_sql() -> &'static str {
+    "SELECT COALESCE(SUM(count), 0) AS count
+     FROM (
+         SELECT COUNT(*) AS count
+         FROM statuses
+         WHERE quote_of_uri = ?1
+           AND quote_state = 'accepted'
+         UNION ALL
+         SELECT COUNT(*) AS count
+         FROM remote_statuses
+         WHERE quote_of_uri = ?1
+           AND quote_state = 'accepted'
+     )"
+}
+
 async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
-    Ok(count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-             FROM statuses
-             WHERE quote_of_uri = ?1
-               AND quote_state = 'accepted'",
-        status_uri,
-    )
-    .await?
-        + count_rows(
-            db,
-            "SELECT COUNT(*) AS count
-                 FROM remote_statuses
-                 WHERE quote_of_uri = ?1
-                   AND quote_state = 'accepted'",
-            status_uri,
-        )
-        .await?)
+    count_rows(db, accepted_status_quotes_count_sql(), status_uri).await
 }
 
 async fn viewer_blocks_domain(db: &D1Database, account_id: &str, domain: &str) -> Result<bool> {
@@ -719,6 +717,21 @@ async fn build_remote_reblog_wrapper_response(
     response.poll = None;
     response.quote = None;
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepted_status_quotes_count_sql_counts_local_and_remote_quotes_once() {
+        let sql = accepted_status_quotes_count_sql();
+
+        assert_eq!(sql.matches("quote_of_uri = ?1").count(), 2);
+        assert!(sql.contains("FROM statuses"));
+        assert!(sql.contains("FROM remote_statuses"));
+        assert!(sql.contains("UNION ALL"));
+    }
 }
 
 async fn build_local_reblog_wrapper_response(
