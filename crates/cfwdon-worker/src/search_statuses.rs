@@ -347,6 +347,22 @@ fn merge_status_search_after_filter(
     }
 }
 
+fn merge_status_search_during_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    start: Option<String>,
+    end: Option<String>,
+    negated: bool,
+) {
+    if negated {
+        if let (Some(start), Some(end)) = (start, end) {
+            parsed.excluded_during.push((start, end));
+        }
+    } else {
+        parsed.after = later_status_search_bound(parsed.after.take(), start);
+        parsed.before = earlier_status_search_bound(parsed.before.take(), end);
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -376,14 +392,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                 "during" => {
                     let start = normalize_status_search_timestamp(value);
                     let end = next_day_status_search_timestamp(value);
-                    if negated {
-                        if let (Some(start), Some(end)) = (start, end) {
-                            parsed.excluded_during.push((start, end));
-                        }
-                    } else {
-                        parsed.after = later_status_search_bound(parsed.after.take(), start);
-                        parsed.before = earlier_status_search_bound(parsed.before.take(), end);
-                    }
+                    merge_status_search_during_filter(&mut parsed, start, end, negated);
                     continue;
                 }
                 "language" => {
