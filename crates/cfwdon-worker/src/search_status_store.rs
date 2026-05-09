@@ -386,4 +386,40 @@ mod tests {
         assert_eq!(row.boost_of_uri, None);
         assert_eq!(row.quote_of_uri, None);
     }
+
+    #[test]
+    fn remote_search_rows_from_values_preserves_order() {
+        let first = serde_json::json!({
+            "id": "rs1",
+            "actor_uri": "https://remote.example/users/alice",
+            "object_uri": "https://remote.example/statuses/1",
+            "content_html": "<p>one</p>",
+            "spoiler_text": "",
+            "visibility": "public",
+            "sensitive": 0,
+            "published_at": "2025-01-01T00:00:00Z",
+            "username": "alice",
+            "domain": "remote.example"
+        });
+        let second = serde_json::json!({
+            "id": "rs2",
+            "actor_uri": "https://remote.example/users/bob",
+            "object_uri": "https://remote.example/statuses/2",
+            "content_html": "<p>two</p>",
+            "spoiler_text": "",
+            "visibility": "public",
+            "sensitive": 0,
+            "published_at": "2025-01-02T00:00:00Z",
+            "username": "bob",
+            "domain": "remote.example"
+        });
+
+        let rows = remote_search_rows_from_values(vec![first, second]);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0.id, "rs1");
+        assert_eq!(rows[0].1.username, "alice");
+        assert_eq!(rows[1].0.id, "rs2");
+        assert_eq!(rows[1].1.username, "bob");
+    }
 }
