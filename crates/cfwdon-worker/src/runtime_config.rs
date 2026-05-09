@@ -202,16 +202,8 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
 
     set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
 
-    if let Some(value) = optional_var(ctx, "INSTANCE_LANGUAGES") {
-        let languages = parse_csv_list(&value);
-        if !languages.is_empty() {
-            config.instance_languages = languages;
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "ADMIN_EMAILS") {
-        config.admin_emails = parse_csv_list(&value);
-    }
+    set_non_empty_csv_list(ctx, "INSTANCE_LANGUAGES", &mut config.instance_languages);
+    set_csv_list(ctx, "ADMIN_EMAILS", &mut config.admin_emails);
 
     set_trimmed_optional(ctx, "CONTACT_EMAIL", &mut config.contact_email);
     set_trimmed_optional(
@@ -299,28 +291,15 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         &mut config.donation_campaign_json,
     );
 
-    if let Some(value) = optional_var(ctx, "MEDIA_PUBLIC_BASE_URL") {
-        let value = value.trim().trim_end_matches('/').to_owned();
-        if !value.is_empty() {
-            config.media_public_base_url = Some(value);
-        }
-    }
-
-    if let Some(value) = optional_var(ctx, "ACCESS_EMAIL_HEADER") {
-        config.access_email_header = value;
-    }
-
-    if let Some(value) = optional_var(ctx, "ACCESS_JWT_HEADER") {
-        config.access_jwt_header = value;
-    }
-
-    if let Some(value) = optional_var(ctx, "ACCESS_TEAM_DOMAIN") {
-        config.access_team_domain = value;
-    }
-
-    if let Some(value) = optional_var(ctx, "ACCESS_AUD") {
-        config.access_audience = value;
-    }
+    set_trimmed_base_url(
+        ctx,
+        "MEDIA_PUBLIC_BASE_URL",
+        &mut config.media_public_base_url,
+    );
+    set_raw_string(ctx, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
+    set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
+    set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
+    set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
 
     config
 }
@@ -333,8 +312,38 @@ fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<S
     }
 }
 
+fn set_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<String>) {
+    if let Some(value) = optional_var(ctx, key) {
+        *target = parse_csv_list(&value);
+    }
+}
+
+fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<String>) {
+    if let Some(value) = optional_var(ctx, key) {
+        let values = parse_csv_list(&value);
+        if !values.is_empty() {
+            *target = values;
+        }
+    }
+}
+
+fn set_trimmed_base_url(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
+    if let Some(value) =
+        optional_var(ctx, key).map(|value| value.trim().trim_end_matches('/').to_owned())
+        && !value.is_empty()
+    {
+        *target = Some(value);
+    }
+}
+
 fn set_timeline_access_level(ctx: &RouteContext<()>, key: &str, target: &mut TimelineAccessLevel) {
     if let Some(value) = parse_timeline_access_level(optional_var(ctx, key)) {
+        *target = value;
+    }
+}
+
+fn set_raw_string(ctx: &RouteContext<()>, key: &str, target: &mut String) {
+    if let Some(value) = optional_var(ctx, key) {
         *target = value;
     }
 }
