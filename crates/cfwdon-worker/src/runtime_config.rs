@@ -472,6 +472,11 @@ mod tests {
     }
 
     #[test]
+    fn root_endpoint_list_is_not_empty() {
+        assert!(!root_endpoint_list().is_empty());
+    }
+
+    #[test]
     fn root_document_reflects_build_metadata() {
         let build = build_metadata();
         let document = root_document();
