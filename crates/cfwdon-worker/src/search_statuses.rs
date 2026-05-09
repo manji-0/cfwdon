@@ -260,18 +260,22 @@ fn later_status_search_bound(left: Option<String>, right: Option<String>) -> Opt
     }
 }
 
+fn split_status_search_negation(token: &str) -> (bool, &str) {
+    if let Some(value) = token.strip_prefix('-') {
+        (true, value)
+    } else if let Some(value) = token.strip_prefix('+') {
+        (false, value)
+    } else {
+        (false, token)
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
 
     for token in tokenize_status_search_query(query) {
-        let (negated, token) = if let Some(value) = token.strip_prefix('-') {
-            (true, value)
-        } else if let Some(value) = token.strip_prefix('+') {
-            (false, value)
-        } else {
-            (false, token.as_str())
-        };
+        let (negated, token) = split_status_search_negation(&token);
 
         if let Some((prefix, value)) = token.split_once(':') {
             match prefix.trim().to_ascii_lowercase().as_str() {
