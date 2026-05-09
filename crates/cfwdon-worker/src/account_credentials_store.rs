@@ -67,6 +67,17 @@ fn account_profile_fields(
         .unwrap_or_else(|| account.fields.clone())
 }
 
+fn profile_media_value<'a>(
+    next: Option<&'a (String, String)>,
+    current: Option<&'a str>,
+    field: fn(&(String, String)) -> &String,
+) -> D1Type<'a> {
+    match next.map(field).map(String::as_str).or(current) {
+        Some(value) => D1Type::Text(value),
+        None => D1Type::Null,
+    }
+}
+
 pub(crate) async fn apply_account_credentials_update(
     db: &D1Database,
     bucket: &Bucket,
@@ -127,34 +138,26 @@ pub(crate) async fn apply_account_credentials_update(
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
-        match avatar_profile.as_ref().map(|value| value.0.as_str()) {
-            Some(value) => D1Type::Text(value),
-            None => match account.avatar_object_key.as_deref() {
-                Some(value) => D1Type::Text(value),
-                None => D1Type::Null,
-            },
-        },
-        match avatar_profile.as_ref().map(|value| value.1.as_str()) {
-            Some(value) => D1Type::Text(value),
-            None => match account.avatar_content_type.as_deref() {
-                Some(value) => D1Type::Text(value),
-                None => D1Type::Null,
-            },
-        },
-        match header_profile.as_ref().map(|value| value.0.as_str()) {
-            Some(value) => D1Type::Text(value),
-            None => match account.header_object_key.as_deref() {
-                Some(value) => D1Type::Text(value),
-                None => D1Type::Null,
-            },
-        },
-        match header_profile.as_ref().map(|value| value.1.as_str()) {
-            Some(value) => D1Type::Text(value),
-            None => match account.header_content_type.as_deref() {
-                Some(value) => D1Type::Text(value),
-                None => D1Type::Null,
-            },
-        },
+        profile_media_value(
+            avatar_profile.as_ref(),
+            account.avatar_object_key.as_deref(),
+            |value| &value.0,
+        ),
+        profile_media_value(
+            avatar_profile.as_ref(),
+            account.avatar_content_type.as_deref(),
+            |value| &value.1,
+        ),
+        profile_media_value(
+            header_profile.as_ref(),
+            account.header_object_key.as_deref(),
+            |value| &value.0,
+        ),
+        profile_media_value(
+            header_profile.as_ref(),
+            account.header_content_type.as_deref(),
+            |value| &value.1,
+        ),
         D1Type::Text(account.id.as_str()),
     ];
 
