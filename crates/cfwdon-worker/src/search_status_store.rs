@@ -356,4 +356,27 @@ mod tests {
             "AND (?4 IS NULL\n                    OR rs.published_at < ?4\n                    OR (rs.published_at = ?4 AND rs.id < ?5))\n               AND (?6 IS NULL\n                    OR rs.published_at > ?6\n                    OR (rs.published_at = ?6 AND rs.id > ?7))"
         );
     }
+
+    #[test]
+    fn remote_status_row_from_search_value_defaults_missing_quote_state() {
+        let value = serde_json::json!({
+            "id": "rs1",
+            "actor_uri": "https://remote.example/users/alice",
+            "object_uri": "https://remote.example/statuses/1",
+            "content_html": "<p>hello</p>",
+            "spoiler_text": "",
+            "visibility": "public",
+            "sensitive": 0,
+            "published_at": "2025-01-01T00:00:00Z"
+        });
+
+        let row = remote_status_row_from_search_value(&value);
+
+        assert_eq!(row.id, "rs1");
+        assert_eq!(row.quote_state, "accepted");
+        assert_eq!(row.url, None);
+        assert_eq!(row.in_reply_to_uri, None);
+        assert_eq!(row.boost_of_uri, None);
+        assert_eq!(row.quote_of_uri, None);
+    }
 }
