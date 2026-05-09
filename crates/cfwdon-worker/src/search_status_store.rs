@@ -53,6 +53,7 @@ fn normalized_search_patterns(queries: &[String]) -> Vec<String> {
 }
 
 fn search_like_clauses(columns: &[&str], start_index: usize, pattern_count: usize) -> String {
+    // Each search term gets one numbered binding that is reused across all searched columns.
     (0..pattern_count)
         .map(|pattern_offset| {
             let binding = start_index + pattern_offset;
