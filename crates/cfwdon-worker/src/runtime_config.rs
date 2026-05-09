@@ -230,6 +230,31 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         "WEB_PUSH_VAPID_SUBJECT",
         &mut config.web_push_vapid_subject,
     );
+    set_instance_document_config(ctx, &mut config);
+
+    set_timeline_access_config(ctx, &mut config);
+
+    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
+    set_trimmed_optional(
+        ctx,
+        "DONATION_CAMPAIGN_JSON",
+        &mut config.donation_campaign_json,
+    );
+
+    set_trimmed_base_url(
+        ctx,
+        "MEDIA_PUBLIC_BASE_URL",
+        &mut config.media_public_base_url,
+    );
+    set_raw_string(ctx, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
+    set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
+    set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
+    set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
+
+    config
+}
+
+fn set_instance_document_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
     set_trimmed_optional(
         ctx,
         "INSTANCE_EXTENDED_DESCRIPTION_HTML",
@@ -256,27 +281,6 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         "TERMS_OF_SERVICE_EFFECTIVE_DATE",
         &mut config.terms_of_service_effective_date,
     );
-
-    set_timeline_access_config(ctx, &mut config);
-
-    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
-    set_trimmed_optional(
-        ctx,
-        "DONATION_CAMPAIGN_JSON",
-        &mut config.donation_campaign_json,
-    );
-
-    set_trimmed_base_url(
-        ctx,
-        "MEDIA_PUBLIC_BASE_URL",
-        &mut config.media_public_base_url,
-    );
-    set_raw_string(ctx, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
-    set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
-    set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
-    set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
-
-    config
 }
 
 fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
