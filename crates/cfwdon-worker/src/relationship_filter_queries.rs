@@ -33,21 +33,17 @@ pub(crate) async fn is_blocking_actor(
     ];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM blocks
              WHERE blocker_account_id = ?1
-               AND target_actor_uri = ?2",
+               AND target_actor_uri = ?2
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 pub(crate) async fn find_active_mute(
