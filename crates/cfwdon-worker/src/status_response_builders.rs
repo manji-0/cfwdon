@@ -78,6 +78,8 @@ fn quote_document_from_response(
 }
 
 fn accepted_status_quotes_count_sql() -> &'static str {
+    // Keep local and remote quote counts in one D1 round trip while preserving
+    // separate table indexes on quote_of_uri.
     "SELECT COALESCE(SUM(count), 0) AS count
      FROM (
          SELECT COUNT(*) AS count
