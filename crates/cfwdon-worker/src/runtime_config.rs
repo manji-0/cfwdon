@@ -515,4 +515,9 @@ mod tests {
         assert!(!DEFAULT_INSTANCE_NAME.is_empty());
         assert!(!DEFAULT_INSTANCE_DESCRIPTION.is_empty());
     }
+
+    #[test]
+    fn upload_limits_keep_video_above_image_limit() {
+        assert!(MAX_AV_UPLOAD_BYTES > MAX_IMAGE_UPLOAD_BYTES);
+    }
 }
