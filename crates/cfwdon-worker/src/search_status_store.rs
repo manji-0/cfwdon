@@ -379,6 +379,19 @@ mod tests {
     }
 
     #[test]
+    fn cursor_window_clause_after_patterns_offsets_cursor_bindings() {
+        assert_eq!(
+            cursor_window_clause_after_patterns("created_at", "id", 3),
+            cursor_window_clause("created_at", "id", 4, 5, 6, 7)
+        );
+    }
+
+    #[test]
+    fn limit_binding_index_follows_cursor_bindings() {
+        assert_eq!(limit_binding_index(3), 8);
+    }
+
+    #[test]
     fn remote_status_row_from_search_value_defaults_missing_quote_state() {
         let value = serde_json::json!({
             "id": "rs1",
