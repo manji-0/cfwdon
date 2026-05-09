@@ -211,6 +211,8 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
         config_string_or_default(ctx, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
     );
 
+    // Keep these grouped by product area so new environment variables land near
+    // related defaults and tests.
     set_instance_metadata_config(ctx, &mut config);
     set_web_push_config(ctx, &mut config);
     set_instance_document_config(ctx, &mut config);
