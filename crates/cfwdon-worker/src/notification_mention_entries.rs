@@ -3,15 +3,37 @@ use crate::notifications::{
     notification_type_allowed, push_notification_entry,
 };
 use crate::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusRow, StatusRow, actor_url,
-    build_local_status_response, build_remote_status_response, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
+    AppConfig, MastodonAccountResponse, MentionNotificationRow, NotificationsQuery,
+    RemoteStatusRow, StatusRow, actor_url, build_local_status_response,
+    build_remote_status_response, can_view_local_status, find_account_by_id,
+    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     is_public_activitypub_visibility, list_local_mention_notifications_for_account,
     list_remote_mention_notifications_for_account, load_in_reply_to_account_id,
     muted_notifications_for_actor, remote_account_rest_id,
 };
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
+
+fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
+    StatusRow {
+        id: mention.id,
+        account_id: mention.account_id.clone(),
+        ap_id: mention.ap_id,
+        in_reply_to_id: mention.in_reply_to_id,
+        boost_of_uri: None,
+        quote_of_uri: mention.quote_of_uri,
+        content_html: mention.content_html,
+        _text_content: mention.text_content,
+        spoiler_text: mention.spoiler_text,
+        visibility: mention.visibility,
+        sensitive: mention.sensitive,
+        language: mention.language,
+        quote_approval_policy: None,
+        quote_state: mention.quote_state.clone(),
+        application_id: None,
+        created_at: mention.created_at.clone(),
+    }
+}
 
 pub(crate) async fn collect_mention_notification_entries(
     entries: &mut Vec<NotificationEntry>,
@@ -31,24 +53,7 @@ pub(crate) async fn collect_mention_notification_entries(
         let Some(actor) = find_account_by_id(db, &mention.account_id).await? else {
             continue;
         };
-        let status = StatusRow {
-            id: mention.id,
-            account_id: mention.account_id.clone(),
-            ap_id: mention.ap_id,
-            in_reply_to_id: mention.in_reply_to_id,
-            boost_of_uri: None,
-            quote_of_uri: mention.quote_of_uri,
-            content_html: mention.content_html,
-            _text_content: mention.text_content,
-            spoiler_text: mention.spoiler_text,
-            visibility: mention.visibility,
-            sensitive: mention.sensitive,
-            language: mention.language,
-            quote_approval_policy: None,
-            quote_state: mention.quote_state.clone(),
-            application_id: None,
-            created_at: mention.created_at.clone(),
-        };
+        let status = local_mention_status_row(mention);
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?
             || muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
                 .await?
