@@ -162,6 +162,10 @@ fn remote_media_attachment_values(
         .collect()
 }
 
+fn remote_quote_visibility_is_embeddable(visibility: &str) -> bool {
+    matches!(visibility, "public" | "unlisted")
+}
+
 async fn local_quoted_status_document_state(
     db: &D1Database,
     config: &AppConfig,
@@ -563,7 +567,7 @@ async fn build_quoted_status_value(
         if pending_remote_quote {
             return Ok(Some(pending_quote_document()));
         }
-        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
+        if !remote_quote_visibility_is_embeddable(&remote_status.visibility) {
             return Ok(Some(quote_placeholder_document("unauthorized")));
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
@@ -764,6 +768,14 @@ mod tests {
     #[test]
     fn remote_media_attachment_values_allows_empty_attachments() {
         assert!(remote_media_attachment_values(&[]).is_empty());
+    }
+
+    #[test]
+    fn remote_quote_visibility_is_embeddable_for_public_timelines() {
+        assert!(remote_quote_visibility_is_embeddable("public"));
+        assert!(remote_quote_visibility_is_embeddable("unlisted"));
+        assert!(!remote_quote_visibility_is_embeddable("private"));
+        assert!(!remote_quote_visibility_is_embeddable("direct"));
     }
 }
 
