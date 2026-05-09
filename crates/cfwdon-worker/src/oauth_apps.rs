@@ -597,9 +597,7 @@ fn authorization_redirect_with_params(
             }
         }
     }
-    let mut response = Response::empty()?.with_status(302);
-    response.headers_mut().set("Location", url.as_str())?;
-    Ok(response)
+    redirect_response(url.as_str())
 }
 
 pub(crate) fn access_login_configured(config: &cfwdon_core::AppConfig) -> bool {
@@ -636,9 +634,25 @@ pub(crate) fn cloudflare_access_login_url(
 fn access_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
     let login_url =
         cloudflare_access_login_url(config, &req.url()?).map_err(worker::Error::RustError)?;
-    let mut response = Response::empty()?.with_status(302);
-    response.headers_mut().set("Location", login_url.as_str())?;
+    redirect_response(login_url.as_str())
+}
+
+fn redirect_response(location: &str) -> Result<Response> {
+    let body = redirect_fallback_body(location);
+    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
+    response.headers_mut().set("Location", location)?;
+    response
+        .headers_mut()
+        .set("Content-Type", "text/html; charset=utf-8")?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(response)
+}
+
+fn redirect_fallback_body(location: &str) -> String {
+    let escaped = escape_html(location);
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url={escaped}\"><title>Redirecting</title></head><body><main><p>Redirecting to <a href=\"{escaped}\">{escaped}</a>.</p></main></body></html>"
+    )
 }
 
 fn access_authenticated_without_account_response(
@@ -1330,4 +1344,18 @@ pub(crate) async fn oauth_token_response(
         &app.client_secret,
         &requested_scopes.join(" "),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_fallback_body_is_browser_renderable_html() {
+        let body = redirect_fallback_body("https://phanpy.social?code=abc&state=a&b");
+
+        assert!(body.starts_with("<!doctype html>"));
+        assert!(body.contains("<meta http-equiv=\"refresh\""));
+        assert!(body.contains("https://phanpy.social?code=abc&amp;state=a&amp;b"));
+    }
 }
