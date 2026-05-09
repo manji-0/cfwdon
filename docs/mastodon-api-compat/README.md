@@ -10,7 +10,7 @@
 - Local route definition:
   - `crates/cfwdon-worker/src/router.rs`
 - Existing project TODO:
-  - `docs/full-todo.md`
+  - `docs/planning/full-todo.md`
 
 `docs.joinmastodon.org` と `config/routes/api.rb` の間で deprecated endpoint の記載差分があるため、このディレクトリでは upstream の route 定義を優先する。
 
@@ -47,7 +47,7 @@
 ## Refresh
 
 ```bash
-rtk python scripts/generate_mastodon_api_compat.py
+python3 scripts/generate_mastodon_api_compat.py
 ```
 
 ## Current Extra Routes In cfwdon

@@ -2,10 +2,11 @@
 
 This repository is configured to run as a single Cloudflare Worker backed by D1 and R2.
 
-For local commands and CI gates, see [Development Workflow](development.md).
-For Worker bindings, environment variables, and secrets, see [Configuration Reference](configuration.md).
+For local commands and CI gates, see [Development Workflow](../getting-started/development.md).
+For Worker bindings, environment variables, and secrets, see [Configuration Reference](../reference/configuration.md).
 
 ## Required Cloudflare Resources
+<!-- constrained-by ../reference/configuration.md -->
 
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
@@ -25,9 +26,9 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler r2 bucket create cfwdon-media
    ```
 
-3. Copy the generated D1 `database_id` into [`wrangler.toml`](../wrangler.toml).
+3. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
 
-4. Replace placeholder vars in [`wrangler.toml`](../wrangler.toml).
+4. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
 
    At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `ACCESS_TEAM_DOMAIN`, and `ACCESS_AUD`.
 

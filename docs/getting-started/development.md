@@ -55,14 +55,16 @@ devbox run ci
 Cloudflare Worker として壊れていないことを確認するには、少なくとも `devbox run ci` を通す。
 
 ## Local Worker
+<!-- constrained-by ../reference/configuration.md -->
 
 ```sh
 devbox run worker:dev
 ```
 
-このコマンドは `wrangler dev` を起動する。D1 / R2 / secrets が必要な route を確認する場合は、[Configuration Reference](configuration.md) と [Cloudflare Deploy Checklist](cloudflare-deploy.md) に沿ってローカルまたは remote の binding を準備する。
+このコマンドは `wrangler dev` を起動する。D1 / R2 / secrets が必要な route を確認する場合は、[Configuration Reference](../reference/configuration.md) と [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md) に沿ってローカルまたは remote の binding を準備する。
 
 ## Mastodon API Compatibility Docs
+<!-- derived-from ../mastodon-api-compat/README.md -->
 
 互換性 inventory は script で再生成する。
 
@@ -103,4 +105,3 @@ jj git push -b main
 ```sh
 jj git fetch
 ```
-
