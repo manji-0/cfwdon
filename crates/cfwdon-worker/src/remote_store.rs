@@ -168,6 +168,20 @@ impl RemoteStatusEditStateRow {
     }
 }
 
+fn remote_status_content_html(object: &serde_json::Value) -> String {
+    object
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            object
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(render_status_html)
+        })
+        .unwrap_or_default()
+}
+
 async fn find_remote_status_edit_state_by_object_uri(
     db: &D1Database,
     object_uri: &str,
@@ -225,17 +239,7 @@ pub(crate) async fn upsert_remote_status(
     let previous = find_remote_status_edit_state_by_object_uri(db, &object_uri).await?;
     let previous_raw_object_json = previous.as_ref().map(|value| value.raw_object_json.clone());
     let visibility = visibility_from_activitypub_object(object);
-    let content_html = object
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            object
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(render_status_html)
-        })
-        .unwrap_or_default();
+    let content_html = remote_status_content_html(object);
     let spoiler_text = object
         .get("summary")
         .and_then(serde_json::Value::as_str)
@@ -612,4 +616,32 @@ pub(crate) async fn update_remote_status_quote_state(
     find_remote_status_by_id(db, status_id)
         .await?
         .ok_or_else(|| Error::RustError("remote status not found".to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn remote_status_content_html_prefers_content() {
+        let object = json!({
+            "content": "<p>Remote content</p>",
+            "name": "Fallback name",
+        });
+
+        assert_eq!(remote_status_content_html(&object), "<p>Remote content</p>");
+    }
+
+    #[test]
+    fn remote_status_content_html_renders_name_fallback() {
+        let object = json!({
+            "name": "Fallback name",
+        });
+
+        assert_eq!(
+            remote_status_content_html(&object),
+            render_status_html("Fallback name")
+        );
+    }
 }
