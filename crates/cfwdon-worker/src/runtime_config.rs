@@ -306,9 +306,7 @@ pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
 }
 
 fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) = optional_var(ctx, key).map(|value| value.trim().to_owned())
-        && !value.is_empty()
-    {
+    if let Some(value) = trimmed_non_empty(optional_var(ctx, key).as_deref()) {
         *target = Some(value);
     }
 }
@@ -329,11 +327,20 @@ fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<St
 }
 
 fn set_trimmed_base_url(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) = optional_var(ctx, key).map(|value| normalize_optional_base_url(&value))
-        && !value.is_empty()
+    if let Some(value) = optional_var(ctx, key)
+        .as_deref()
+        .map(normalize_optional_base_url)
+        .and_then(|value| trimmed_non_empty(Some(&value)))
     {
         *target = Some(value);
     }
+}
+
+fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn normalize_optional_base_url(value: &str) -> String {
@@ -401,6 +408,16 @@ mod tests {
             "https://media.example.com"
         );
         assert_eq!(normalize_optional_base_url("   "), "");
+    }
+
+    #[test]
+    fn trimmed_non_empty_discards_blank_values() {
+        assert_eq!(
+            trimmed_non_empty(Some(" cfwdon ")).as_deref(),
+            Some("cfwdon")
+        );
+        assert_eq!(trimmed_non_empty(Some("   ")), None);
+        assert_eq!(trimmed_non_empty(None), None);
     }
 
     #[test]
