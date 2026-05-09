@@ -328,12 +328,15 @@ fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<St
 }
 
 fn set_trimmed_base_url(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) =
-        optional_var(ctx, key).map(|value| value.trim().trim_end_matches('/').to_owned())
+    if let Some(value) = optional_var(ctx, key).map(|value| normalize_optional_base_url(&value))
         && !value.is_empty()
     {
         *target = Some(value);
     }
+}
+
+fn normalize_optional_base_url(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_owned()
 }
 
 fn set_timeline_access_level(ctx: &RouteContext<()>, key: &str, target: &mut TimelineAccessLevel) {
@@ -388,5 +391,14 @@ mod tests {
             parse_timeline_access_level(Some("private".to_owned())),
             None
         );
+    }
+
+    #[test]
+    fn normalize_optional_base_url_trims_space_and_trailing_slashes() {
+        assert_eq!(
+            normalize_optional_base_url(" https://media.example.com/// "),
+            "https://media.example.com"
+        );
+        assert_eq!(normalize_optional_base_url("   "), "");
     }
 }
