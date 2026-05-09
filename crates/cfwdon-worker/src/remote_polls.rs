@@ -14,7 +14,7 @@ use super::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
@@ -235,19 +235,17 @@ pub(crate) fn remote_poll_draft_acknowledges_vote(
         }
     }
 
+    let remote_votes_by_title = remote_poll_votes_by_title(fetched_poll);
     for choice in new_choices {
         let Some(local_option) = options.get(*choice as usize) else {
             return false;
         };
         let expected_option_votes = local_option.votes_count.saturating_add(1).max(0) as u64;
-        let Some(remote_option) = fetched_poll
-            .options
-            .iter()
-            .find(|option| option.title == local_option.title)
+        let Some(remote_option_votes) = remote_votes_by_title.get(local_option.title.as_str())
         else {
             return false;
         };
-        if remote_option.votes_count < expected_option_votes {
+        if *remote_option_votes < expected_option_votes {
             return false;
         }
     }
@@ -274,21 +272,27 @@ pub(crate) fn remote_poll_draft_acknowledges_local_snapshot(
         return false;
     }
 
+    let remote_votes_by_title = remote_poll_votes_by_title(fetched_poll);
     for local_option in options {
         let expected_option_votes = local_option.votes_count.max(0) as u64;
-        let Some(remote_option) = fetched_poll
-            .options
-            .iter()
-            .find(|option| option.title == local_option.title)
+        let Some(remote_option_votes) = remote_votes_by_title.get(local_option.title.as_str())
         else {
             return false;
         };
-        if remote_option.votes_count < expected_option_votes {
+        if *remote_option_votes < expected_option_votes {
             return false;
         }
     }
 
     true
+}
+
+fn remote_poll_votes_by_title(fetched_poll: &RemotePollDraft) -> HashMap<&str, u64> {
+    fetched_poll
+        .options
+        .iter()
+        .map(|option| (option.title.as_str(), option.votes_count))
+        .collect()
 }
 
 async fn refresh_remote_poll_after_vote_if_acknowledged(
