@@ -3305,7 +3305,7 @@ mod tests {
             "type": "FeaturedCollection",
             "name": "Art",
             "attributedTo": actor_uri,
-            "summaryMap": { "ja": "スケッチ" },
+            "summaryMap": { "es": "Boceto" },
             "topic": { "type": "Hashtag", "name": "#Art" },
             "orderedItems": [{
                 "id": "https://remote.example/users/alice/collections/1/items/1",
@@ -3321,7 +3321,7 @@ mod tests {
         ));
         assert_eq!(
             featured_collection_description(&object),
-            ("スケッチ".to_owned(), Some("ja".to_owned()))
+            ("Boceto".to_owned(), Some("es".to_owned()))
         );
         assert_eq!(
             featured_collection_tag_name(&object),

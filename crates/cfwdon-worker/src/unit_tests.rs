@@ -622,9 +622,9 @@ fn libretranslate_request_payload_matches_provider_shape() {
 fn libretranslate_response_extracts_translated_text() {
     assert_eq!(
         parse_libretranslate_translated_text(&serde_json::json!({
-            "translatedText": "<p>こんにちは</p>"
+            "translatedText": "<p>Hola</p>"
         })),
-        Some("<p>こんにちは</p>".to_owned())
+        Some("<p>Hola</p>".to_owned())
     );
     assert_eq!(
         parse_libretranslate_translated_text(&serde_json::json!({ "error": "missing" })),
@@ -681,10 +681,10 @@ fn deepl_response_extracts_translated_text() {
     assert_eq!(
         parse_deepl_translated_text(&serde_json::json!({
             "translations": [
-                { "text": "<p>こんにちは</p>" }
+                { "text": "<p>Hola</p>" }
             ]
         })),
-        Some("<p>こんにちは</p>".to_owned())
+        Some("<p>Hola</p>".to_owned())
     );
     assert_eq!(
         parse_deepl_translated_text(&serde_json::json!({ "translations": [] })),

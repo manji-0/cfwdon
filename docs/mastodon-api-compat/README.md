@@ -1,22 +1,22 @@
 # Mastodon API Compatibility
 
-`cfwdon` の Mastodon API 互換作業を、Mastodon upstream の定義に対するマッピングとして管理する。
+`cfwdon` tracks Mastodon API compatibility as a route-level mapping between upstream Mastodon route definitions and local Worker route handlers.
 
 ## Source of Truth
 
-- Upstream route definition:
+- Upstream route definitions:
   - `https://raw.githubusercontent.com/mastodon/mastodon/main/config/routes.rb`
   - `https://raw.githubusercontent.com/mastodon/mastodon/main/config/routes/api.rb`
 - Local route definition:
   - `crates/cfwdon-worker/src/router.rs`
-- Existing project TODO:
+- Project planning:
   - `docs/planning/full-todo.md`
 
-`docs.joinmastodon.org` と `config/routes/api.rb` の間で deprecated endpoint の記載差分があるため、このディレクトリでは upstream の route 定義を優先する。
+When `docs.joinmastodon.org` and `config/routes/api.rb` disagree about deprecated endpoints, this inventory follows the upstream route definitions.
 
 ## Scope
 
-初回 inventory の対象は、Mastodon の外部公開 API のうち `cfwdon` が互換対象として追う価値が高いものに絞る。
+The inventory focuses on externally visible Mastodon API surfaces that are useful compatibility targets for `cfwdon`.
 
 - discovery / OAuth metadata
 - `/api/oembed`
@@ -24,25 +24,25 @@
 - `/api/v1`
 - `/api/v2`
 
-現時点では次は対象外にしている。
+The current inventory excludes:
 
 - `/api/v1/admin`, `/api/v2/admin`
 - `/api/web`
-- ActivityPub actor / inbox / outbox そのもの
+- ActivityPub actor / inbox / outbox routes themselves
 
 ## Status Labels
 
-- `implemented`: upstream route と同じ path/method が `cfwdon` にある
-- `compat-gap`: route はあるが、既存 TODO や実装メモ上で互換差分が分かっている
-- `missing`: upstream route が `cfwdon` に無い
-- `extra`: `cfwdon` にはあるが、current upstream route には無い
+- `implemented`: `cfwdon` has the same upstream path and method.
+- `compat-gap`: the route exists, but known implementation notes or TODOs describe a compatibility gap.
+- `missing`: the upstream route is not present in `cfwdon`.
+- `extra`: `cfwdon` has a route that is not present in the current upstream route set.
 
 ## Files
 
-- `inventory.md`: upstream API 一覧と `cfwdon` マッピング
-- `todo-unimplemented.md`: `missing` のみを抜き出した TODO
-- `todo-compat.md`: `compat-gap` のみを抜き出した TODO
-- `../scripts/generate_mastodon_api_compat.py`: inventory / TODO 再生成スクリプト
+- `inventory.md`: upstream API list and local route mapping.
+- `todo-unimplemented.md`: TODO list for `missing` routes only.
+- `todo-compat.md`: TODO list for `compat-gap` routes only.
+- `../../scripts/generate_mastodon_api_compat.py`: inventory and TODO regeneration script.
 
 ## Refresh
 
@@ -52,7 +52,7 @@ python3 scripts/generate_mastodon_api_compat.py
 
 ## Current Extra Routes In cfwdon
 
-current upstream の `config/routes/api.rb` には無いが、`cfwdon` にはある route。
+Routes that exist in `cfwdon` but not in the current upstream `config/routes/api.rb` snapshot:
 
 - `GET /api/v1/timelines/direct` via `direct_timeline_response`
 - `GET /api/v1/statuses/:id/card` via `status_card_response`
@@ -61,7 +61,7 @@ current upstream の `config/routes/api.rb` には無いが、`cfwdon` にはあ
 - `GET /api/v1/follow_requests/:id` via `follow_request_response`
 - `GET /api/v1/search` via `search_v1`
 
-deprecated route を残している可能性があるので、削除ではなく upstream 側の扱いを確認してから整理する。
+Treat these as compatibility review items. Some may be deprecated Mastodon routes or deliberate extensions, so confirm upstream behavior before removing them.
 
 ## Snapshot
 

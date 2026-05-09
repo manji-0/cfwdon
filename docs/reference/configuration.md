@@ -1,80 +1,80 @@
 # Configuration Reference
 
-`cfwdon` は単一 Cloudflare Worker として動作し、D1 と R2 を binding で受け取る。実行時設定は主に `wrangler.toml` の `[vars]` と Cloudflare secrets から読む。
+`cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
 
 ## Cloudflare Bindings
 
 | Binding | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `DB` | D1 database | Yes | `crates/cfwdon-core/src/config.rs` の default と Worker code が期待する database binding。 |
-| `MEDIA` | R2 bucket | Yes | media upload body と profile media object を保存する bucket binding。 |
+| `DB` | D1 database | Yes | Database binding expected by the Worker runtime and by the defaults in `crates/cfwdon-core/src/config.rs`. |
+| `MEDIA` | R2 bucket | Yes | Bucket binding used for uploaded media bodies and profile media objects. |
 
-binding 名を変更する場合は、`wrangler.toml`、`cfwdon_core::AppConfig` の default、Worker の runtime code が一致していることを確認する。
+If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync.
 
 ## Public Instance Vars
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `INSTANCE_DOMAIN` | Recommended | `example.com` | WebFinger、actor URI、API payload に使う instance domain。 |
-| `INSTANCE_NAME` | Recommended | `cfwdon` | instance name。 |
-| `INSTANCE_DESCRIPTION` | Recommended | Cloudflare Workers based description | instance description。 |
-| `SOURCE_URL` | Optional | unset | instance source URL。 |
-| `INSTANCE_LANGUAGES` | Optional | app default | comma-separated language list。 |
-| `CONTACT_EMAIL` | Optional | unset | instance contact account metadata。 |
-| `INSTANCE_THUMBNAIL_URL` | Optional | unset | instance thumbnail URL。 |
-| `ADMIN_EMAILS` | Optional | empty | comma-separated admin e-mail list for admin notifications. |
-| `MEDIA_PUBLIC_BASE_URL` | Required for production media URLs | unset | R2 custom domain base URL. trailing slash is trimmed. |
+| `INSTANCE_DOMAIN` | Recommended | `example.com` | Instance domain used in WebFinger, actor URIs, and API payloads. |
+| `INSTANCE_NAME` | Recommended | `cfwdon` | Public instance name. |
+| `INSTANCE_DESCRIPTION` | Recommended | Cloudflare Workers based description | Public instance description. |
+| `SOURCE_URL` | Optional | unset | Source repository URL advertised by instance endpoints. |
+| `INSTANCE_LANGUAGES` | Optional | app default | Comma-separated language list. |
+| `CONTACT_EMAIL` | Optional | unset | Contact metadata for instance payloads. |
+| `INSTANCE_THUMBNAIL_URL` | Optional | unset | Public thumbnail URL. |
+| `ADMIN_EMAILS` | Optional | empty | Comma-separated admin e-mail list for admin notifications. |
+| `MEDIA_PUBLIC_BASE_URL` | Required for production media URLs | unset | R2 custom domain base URL. A trailing slash is trimmed. |
 
-`MEDIA_PUBLIC_BASE_URL` の domain は Cloudflare Access の保護対象から外す。Mastodon entity payload ではこの URL が正規 media URL として使われる。
+Keep the `MEDIA_PUBLIC_BASE_URL` domain outside Cloudflare Access. Mastodon entity payloads use this value as the canonical media URL.
 
 ## Access Authentication Vars
 
-Protected API routes expect Cloudflare Access or an equivalent proxy to provide authenticated user context.
+Protected API routes expect Cloudflare Access, or an equivalent proxy, to provide authenticated user context.
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `ACCESS_EMAIL_HEADER` | Required for protected API | `Cf-Access-Authenticated-User-Email` in sample config | Authenticated user e-mail header name。 |
-| `ACCESS_JWT_HEADER` | Required for JWT validation | `Cf-Access-Jwt-Assertion` in sample config | Cloudflare Access JWT header name。 |
-| `ACCESS_TEAM_DOMAIN` | Required for protected API | unset | Access issuer / team domain. missing with `ACCESS_AUD` blocks protected API. |
-| `ACCESS_AUD` | Required for protected API | unset | Cloudflare Access audience. missing with `ACCESS_TEAM_DOMAIN` blocks protected API. |
+| `ACCESS_EMAIL_HEADER` | Required for protected API | `Cf-Access-Authenticated-User-Email` in sample config | Header containing the authenticated user e-mail. |
+| `ACCESS_JWT_HEADER` | Required for JWT validation | `Cf-Access-Jwt-Assertion` in sample config | Header containing the Cloudflare Access JWT. |
+| `ACCESS_TEAM_DOMAIN` | Required for protected API | unset | Access issuer / team domain. Missing with `ACCESS_AUD` blocks protected API access. |
+| `ACCESS_AUD` | Required for protected API | unset | Cloudflare Access audience. Missing with `ACCESS_TEAM_DOMAIN` blocks protected API access. |
 
-`ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` は実値を設定する。placeholder のまま本番 deploy しない。
+Set real values for `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`. Do not deploy production with placeholders.
 
 ## Policy And Instance Content Vars
 
 | Var | Required | Notes |
 | --- | --- | --- |
-| `INSTANCE_EXTENDED_DESCRIPTION_HTML` | Optional | extended description endpoint body。 |
-| `INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT` | Optional | extended description timestamp。 |
-| `PRIVACY_POLICY_HTML` | Optional | privacy policy endpoint body。 |
-| `PRIVACY_POLICY_UPDATED_AT` | Optional | privacy policy timestamp。 |
-| `TERMS_OF_SERVICE_HTML` | Optional | terms endpoint body。 |
-| `TERMS_OF_SERVICE_EFFECTIVE_DATE` | Optional | terms effective date。 |
+| `INSTANCE_EXTENDED_DESCRIPTION_HTML` | Optional | Body returned by the extended description endpoint. |
+| `INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT` | Optional | Extended description timestamp. |
+| `PRIVACY_POLICY_HTML` | Optional | Privacy policy endpoint body. |
+| `PRIVACY_POLICY_UPDATED_AT` | Optional | Privacy policy timestamp. |
+| `TERMS_OF_SERVICE_HTML` | Optional | Terms endpoint body. |
+| `TERMS_OF_SERVICE_EFFECTIVE_DATE` | Optional | Terms effective date. |
 
-HTML は Worker vars に入るため、サイズが大きい場合は Cloudflare の vars 制限を考慮する。
+These HTML values live in Worker vars, so keep Cloudflare var size limits in mind. Move large or frequently edited content behind a storage-backed path later instead of expanding vars indefinitely.
 
 ## Timeline Access Vars
 
-各 value は `public`、`authenticated`、`disabled` のいずれか。未設定または不正値の場合は application default を使う。
+Each value is one of `public`, `authenticated`, or `disabled`. Missing or invalid values fall back to application defaults.
 
 | Var | Scope |
 | --- | --- |
-| `TIMELINES_ACCESS_LIVE_FEEDS_LOCAL` | local live/public feed access |
-| `TIMELINES_ACCESS_LIVE_FEEDS_REMOTE` | remote live/public feed access |
-| `TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL` | local hashtag feed access |
-| `TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE` | remote hashtag feed access |
-| `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL` | local link timeline access |
-| `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE` | remote link timeline access |
+| `TIMELINES_ACCESS_LIVE_FEEDS_LOCAL` | Local live/public feed access. |
+| `TIMELINES_ACCESS_LIVE_FEEDS_REMOTE` | Remote live/public feed access. |
+| `TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL` | Local hashtag feed access. |
+| `TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE` | Remote hashtag feed access. |
+| `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL` | Local link timeline access. |
+| `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE` | Remote link timeline access. |
 
 ## Push Notification Vars
 
 | Var | Required | Notes |
 | --- | --- | --- |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | Required for advertised push support | Public VAPID key returned in instance/app shapes. |
-| `WEB_PUSH_VAPID_PRIVATE_KEY` | Required for delivery | Store as a secret. push delivery fails without it. |
+| `WEB_PUSH_VAPID_PRIVATE_KEY` | Required for delivery | Store as a secret. Push delivery fails without it. |
 | `WEB_PUSH_VAPID_SUBJECT` | Required for delivery | VAPID subject, usually `mailto:admin@example.com` or an HTTPS URL. |
 
-private key material should be configured with `wrangler secret put`, not committed in `wrangler.toml`.
+Private key material belongs in Cloudflare secrets, not in `wrangler.toml`.
 
 ## E-mail Confirmation Vars
 
@@ -91,16 +91,16 @@ private key material should be configured with `wrangler secret put`, not commit
 | `TRANSLATION_API_URL` | Required for translation provider config | Provider endpoint URL. |
 | `TRANSLATION_API_KEY` | Required for DeepL, optional for LibreTranslate | Store as a secret when set. |
 
-If provider config is incomplete, translation provider integration is not enabled.
+If provider config is incomplete, translation integration is disabled.
 
 ## JSON Content Vars
 
 | Var | Required | Notes |
 | --- | --- | --- |
 | `ANNOUNCEMENTS_JSON` | Optional | JSON source for announcement documents. |
-| `DONATION_CAMPAIGN_JSON` | Optional | JSON source for donation campaign document. |
+| `DONATION_CAMPAIGN_JSON` | Optional | JSON source for donation campaign documents. |
 
-Keep JSON values compact enough for Cloudflare Worker vars. For large or frequently edited content, prefer moving content management behind a future storage-backed path instead of expanding vars indefinitely.
+Keep JSON values compact enough for Worker vars. Prefer a future storage-backed content path for large or frequently edited content.
 
 ## Secret Handling
 
@@ -112,9 +112,8 @@ wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
 wrangler secret put TRANSLATION_API_KEY
 ```
 
-Run a dry-run before deploy.
+Run a dry-run before deployment.
 
 ```sh
 devbox run ci
 ```
-

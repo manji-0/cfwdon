@@ -1,169 +1,85 @@
-# Full TODO
+# Project Plan
+
+This document is the current planning source for `cfwdon`. It replaces the older bootstrap-era running log with a status-oriented view: what is in place, what is intentionally limited, and what should happen next.
 
 ## Principles
-- GoToSocial の責務分離を参考にしつつ、Workers + D1 + R2 向けに作り直す。
-- `../rustresort` は API 形状と federation 分割の参照に使うが、仕様確認を挟んで採用する。
-- 初期段階では「互換 endpoint を返すこと」より「署名・可視性・所有権が壊れていないこと」を優先する。
 
-## Done
-- Cargo workspace 初期化
-- `devbox` ベースの開発環境
-- Cloudflare Access JWT 検証
-- local actor key 生成と `publicKey` 広告
-- WebFinger
-- actor / outbox / local status object
-- media upload / read / metadata update
-- local status create
-- follower 保存
-- personal inbox / shared inbox
-- incoming HTTP Signature 最小検証
-- outbound queue / target expansion / signed delivery
-- followers / following collection
-- remote actor / remote Note 保存
-- public timeline の local+remote merge
-- `GET /api/v1/statuses/:id`
-- `DELETE /api/v1/statuses/:id`
-- orphan media cleanup
-- `GET /api/v1/accounts/:id`
-- `GET /api/v1/accounts/:id/statuses`
-- `verify_credentials` counts
-- `devbox check` の toolchain/rustc 固定化
-- CI
-- local `follows` テーブル
-- local follow / unfollow API
-- `GET /users/:username/following` 実データ化
-- `POST /users/:username/inbox` の `Accept` / `Reject` 最小反映
-- `GET /api/v1/accounts/relationships`
-- `GET /api/v1/accounts/lookup`
-- outgoing remote `Follow`
-- outgoing remote `Undo(Follow)`
-- remote relationship 解決の最小実装
-- DNS 解決ベースの SSRF 防御
-- `GET /api/v1/accounts/search`
-- `GET /api/v2/search` の最小実装
-- authenticated status search の D1 `LIKE` ベース実装
-- `GET /api/v1/timelines/tag/:hashtag` の最小実装
-- `GET /api/v1/tags/:name` の最小実装
-- `GET /api/v2/search` の hashtag search 最小実装
-- status entity の hashtag 抽出
-- `GET /api/v1/statuses/:id/context` の最小実装
-- `GET /api/v1/timelines/home` の最小実装
-- media `focus` metadata の保存と応答
-- `GET /api/v2/instance` の最小実装
-- `SOURCE_URL` / `INSTANCE_LANGUAGES` / `CONTACT_EMAIL` / `INSTANCE_THUMBNAIL_URL` による instance metadata 設定
-- `PATCH /api/v1/accounts/update_credentials` の最小実装
-- `GET /api/v1/accounts/verify_credentials` の `source` 応答
-- account profile defaults (`bio_text` / default visibility / sensitive / language) の保存
-- `PATCH /api/v1/accounts/update_credentials` の avatar/header upload
-- account entity の avatar/header 実データ化
-- ActivityPub actor の `icon` / `image` 最小実装
-- `GET /api/v1/instance` の Mastodon-compatible shape への拡張
-- `POST /api/v1/accounts/:id/block`
-- `POST /api/v1/accounts/:id/unblock`
-- `GET /api/v1/accounts/relationships` の blocking / blocked_by 実データ化
-- `POST /api/v1/statuses/:id/favourite`
-- `POST /api/v1/statuses/:id/unfavourite`
-- `GET /api/v1/favourites`
-- local/remote cached status の `favourited` / `favourites_count`
-- `POST /api/v1/statuses/:id/bookmark`
-- `POST /api/v1/statuses/:id/unbookmark`
-- `GET /api/v1/bookmarks`
-- local/remote cached status の `bookmarked`
-- `GET /api/v1/notifications` の最小実装
-- `notifications` の `follow` / `favourite` / `reblog` 最小実装
-- `POST /api/v1/statuses/:id/reblog`
-- `POST /api/v1/statuses/:id/unreblog`
-- local/remote cached status の `reblogged` / `reblogs_count`
-- `POST /api/v1/accounts/:id/mute`
-- `POST /api/v1/accounts/:id/unmute`
-- `GET /api/v1/mutes`
-- `GET /api/v1/accounts/relationships` の muting state 実データ化
-- home timeline / notifications の mute filter 最小実装
-- local status entity の local mention 抽出
-- `GET /api/v1/notifications` の `mention` 最小実装
-- local/remote status entity の `mentions` 最小実装
-- `GET /api/v1/notifications` の remote `mention` 最小実装
-- local status delete 時の outgoing `Delete`
-- `POST /users/:username/inbox` / `POST /inbox` の `Delete`
-- `POST /users/:username/inbox` / `POST /inbox` の `Update(Note)`
-- remote status に対する outgoing `Like` / `Undo(Like)`
-- remote status に対する outgoing `Announce` / `Undo(Announce)`
-- `POST /users/:username/inbox` / `POST /inbox` の `Like`
-- `POST /users/:username/inbox` / `POST /inbox` の `Announce`
-- local status の remote `favourite` / `reblog` counts 反映
-- `GET /api/v1/notifications` の remote `favourite` / `reblog` 最小実装
-- incoming signature 検証時の remote actor public key cache 利用
-- `GET /users/:username/followers` paging
-- `GET /users/:username/following` paging
-- inbox replay protection / idempotency table の最小実装
-- remote actor avatar/header cache
-- compatibility test の最小導入
-- `GET /api/v1/mutes` pagination
-- outgoing activity queue の targeted remote activity 共通化
-- `GET /api/v2/search` の URL resolve 拡張
-- remote follow の retry/backoff queue 化
-- `GET /api/v2/search` の hashtag resolve 拡張
-- search pagination / ranking の改善
-- tag history 集計の高速化
-- `GET /api/v1/instance` の nodeinfo / peers / privacy policy / terms 連携
-- `GET /api/v1/notifications/:id`, `POST /api/v1/notifications/:id/dismiss`, `POST /api/v1/notifications/clear`, `GET /api/v1/notifications/unread_count`
-- `GET /api/v1/notifications` の `status` type 最小実装
-- account `discoverable` / profile fields の保存と `verify_credentials` / account entity / ActivityPub actor `attachment` 反映
-- `GET /api/v1/directory` の local discoverable account 最小実装
-- `PATCH /api/v1/accounts/update_credentials` 時の outgoing ActivityPub `Update(Person)`
-- `POST /users/:username/inbox` / `POST /inbox` の `Update(Person)` で remote actor profile refresh
-- local status poll の保存と status entity への `poll` 応答
-- `GET /api/v1/polls/:id`, `POST /api/v1/polls/:id/votes` の local poll 最小実装
-- `GET /api/v1/notifications` の local `poll` type 最小実装
-- `GET /api/v1/notifications` の `admin.sign_up` 最小実装 (`ADMIN_EMAILS` ベース)
-- `POST /api/v1/reports` の最小実装
-- `GET /api/v1/notifications` の `admin.report` 最小実装
-- remote `Question` の受信保存と remote status entity / `GET /api/v1/polls/:id` への read-only poll 反映
-- `POST /api/v1/polls/:id/votes` の remote poll 最小実装
-- incoming `Create(Note)` による local poll への remote vote 最小反映
-- local poll を ActivityPub `Question` として `/users/:username/statuses/:id` / outbox `Create` に反映
-- local poll vote 時の outgoing `Update(Question)` 最小実装
-- expired local poll を一度だけ `Update(Question)` で閉鎖反映する internal job
-- incoming `Undo(Create(Note vote))` による local poll vote 取り消し最小反映
-- remote poll `own_votes` を option title 優先で再解決し、remote `Question` の選択肢並び替えや option 削除後の stale vote を吸収
+- Keep the GoToSocial-inspired responsibility split, but adapt the implementation to Workers, D1, R2, and short request lifetimes.
+- Use `../rustresort` as a reference for API shapes and federation boundaries, not as a direct porting source.
+- Prefer correct signatures, visibility, ownership checks, and idempotency over shallow endpoint coverage.
+- Treat the generated Mastodon compatibility inventory as a route map, not as proof that every route is behaviorally complete.
 
-## Next Up
-- ActivityPub `Question` update での remote vote refresh / option rename 精度の拡張
+## Current Baseline
+<!-- derived-from ../mastodon-api-compat/README.md -->
 
-## Mastodon API
-- `GET /api/v1/directory` の remote directory / ordering 精度拡張
-- `GET /api/v1/notifications` の mention / reblog / poll / admin 系拡張
-- `GET /api/v1/polls/:id` の private/remote permissions 精度拡張
+The generated compatibility inventory currently maps all tracked upstream routes to local handlers, with no route-level `missing` or `compat-gap` entries. The remaining work is behavioral compatibility, operational hardening, data model completeness, and interop testing.
 
-## ActivityPub
-- `POST /inbox` の `Create` paging / dedupe / replay 防止
-- ActivityPub `Question` vote refresh / remote poll update
+## Completed Capability Areas
 
-## Storage / Data
-- pending follow requests
-- remote media attachment 保存方針
-- remote object dedupe
-- status tombstone / soft delete
-- retry dead-letter 状態
-- migration test
+- Rust workspace, `devbox` development environment, CI gate, and Worker dry-run validation.
+- Cloudflare Access authentication, JWT validation, local account provisioning, and protected route checks.
+- D1-backed local accounts, statuses, relationships, notifications, polls, reports, filters, featured tags, and instance metadata.
+- R2-backed media upload, media metadata update, profile avatar/header storage, and media delivery fallback.
+- WebFinger, ActivityPub actor documents, followers/following collections, outbox documents, and local status objects.
+- Personal and shared inbox handling for follow, undo, accept, reject, create, update, delete, like, announce, and poll vote activity slices.
+- Signed outbound delivery, targeted activity queues, retry/backoff, terminal failure reconciliation, and idempotency safeguards.
+- Local and remote timeline/search/status surfaces, including public/home/tag/direct timelines, context, cards, history, favourites, bookmarks, mutes, blocks, and pins.
+- Mastodon-compatible instance v1/v2, app, OAuth metadata, notification, report, list, filter, push, suggestion, trend, announcement, donation, and placeholder surfaces.
+- Local and remote poll support, including ActivityPub `Question` federation, votes, vote undo, own-vote remapping, and expired poll closure updates.
+- DNS-based SSRF defense for remote fetch targets and cached remote actor key use during signature verification.
+- Generated Mastodon API route inventory and response-shape compatibility tests for important DTOs.
 
-## Security
-- actor fetch の DNS 解決ベース SSRF 防御
-- shared inbox abuse rate limit
-- signature clock skew 設定化
-- digest / header canonicalization hardening
-- Cloudflare Access 保護 route の整理
+## Highest Priority Next Work
+
+1. Expand behavioral compatibility tests beyond route presence, especially for placeholders that intentionally return empty or conservative responses.
+2. Add federation interop tests for signed delivery, inbox replay behavior, remote polls, follow state transitions, and private visibility.
+3. Improve remote media attachment handling, including cache policy, attachment normalization, and failure recovery.
+4. Add migration tests and seed tooling so D1 schema changes are safer to review and deploy.
+5. Harden operational controls around shared inbox abuse, signature clock skew, retry dead-letter inspection, and protected internal routes.
+
+## Mastodon API Follow-Up
+
+- Verify whether extra routes are deprecated Mastodon routes, deliberate compatibility aliases, or local-only extensions.
+- Improve behavioral parity for notification grouping, filters, lists, follow requests, suggestions, trends, and WebPush delivery.
+- Review placeholder/meta routes and document which are intentionally empty, read-only, or minimally implemented.
+- Expand private/remote permission checks for polls, conversations, timelines, media, and account/status collections.
+- Keep `docs/mastodon-api-compat/` regenerated whenever `crates/cfwdon-worker/src/router.rs` changes.
+
+## ActivityPub Follow-Up
+
+- Test Create/Update/Delete/Like/Announce/Follow/Accept/Reject flows against real federated implementations.
+- Improve remote `Question` update handling, option rename detection, and vote refresh semantics.
+- Add stronger replay and dedupe coverage for shared inbox traffic.
+- Decide where Queues should replace `waitUntil` or internal cron routes for high-volume delivery.
+- Track tombstones and soft deletes for remote objects more explicitly.
+
+## Storage And Data Follow-Up
+
+- Define a durable remote media attachment policy.
+- Add migration tests and a repeatable D1 migration runner workflow.
+- Add seed data for local Worker development.
+- Decide how to expose retry dead-letter state to operators.
+- Review indexes for timeline, notification, search, poll, and relationship queries as data grows.
+
+## Security Follow-Up
+
+- Add rate limiting and abuse controls for shared inbox and expensive remote resolution paths.
+- Make signature clock skew policy configurable.
+- Harden digest and signed-header canonicalization tests.
+- Audit all internal routes and document which must sit behind Cloudflare Access.
+- Keep public media domains outside Cloudflare Access while preserving cache behavior.
 
 ## Media Delivery Notes
-- 現状の `/media/:id` は Worker が `bucket.get()` した body を返しているため、Cloudflare の main request cache に自動で確実に乗る前提にはしない
-- Worker 経由で確実に edge cache を使いたい場合は `caches.default` か `fetch()` ベースの cache 制御が必要
-- ただし Cache API は Cloudflare Access fronted Worker では使えない制約があるため、public media route は Access から外すか、R2 custom domain + cache rule / fetch subrequest 方式を検討する
-- Tiered Cache を使いたい場合は `bucket.get()` 直返しより、cache rule が効く `fetch()` 経路または R2 custom domain 配信を優先する
 
-## Ops / DX
-- `wrangler dev` 用 seed script
-- D1 migration runner script
-- structured logging
-- compatibility fixtures
-- e2e API tests
-- federation interop tests
+- The fallback `/media/:id` route returns an R2 object through the Worker and should not be treated as guaranteed main-request edge cache coverage.
+- Prefer an R2 custom domain plus Cache Rules or a fetch-based public path for canonical media delivery.
+- Cloudflare Cache API behavior is constrained when a Worker is fronted by Cloudflare Access, so public media should remain outside Access.
+- Entity payloads should continue to advertise `MEDIA_PUBLIC_BASE_URL` as the canonical media base.
+
+## Ops / DX Follow-Up
+
+- `wrangler dev` seed script.
+- D1 migration runner script.
+- Structured logging with request, actor, delivery target, and retry metadata.
+- Compatibility fixtures and e2e API tests.
+- Federation interop tests.
