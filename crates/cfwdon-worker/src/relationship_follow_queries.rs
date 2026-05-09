@@ -129,16 +129,20 @@ pub(crate) async fn has_any_local_followers_for_remote_actor(
     db: &D1Database,
     actor_uri: &str,
 ) -> Result<bool> {
-    Ok(count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM follows
-         WHERE target_actor_uri = ?1
-           AND state = 'accepted'",
-        actor_uri,
-    )
-    .await?
-        > 0)
+    let actor_uri = D1Type::Text(actor_uri);
+    let row = db
+        .prepare(
+            "SELECT 1 AS found
+             FROM follows
+             WHERE target_actor_uri = ?1
+               AND state = 'accepted'
+             LIMIT 1",
+        )
+        .bind_refs(&actor_uri)?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    Ok(row.is_some())
 }
 
 pub(crate) async fn is_local_account_following_remote_actor(
@@ -149,22 +153,18 @@ pub(crate) async fn is_local_account_following_remote_actor(
     let bindings = [D1Type::Text(account_id), D1Type::Text(actor_uri)];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM follows
              WHERE follower_account_id = ?1
                AND target_actor_uri = ?2
-               AND state = 'accepted'",
+               AND state = 'accepted'
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 pub(crate) async fn first_local_follower_for_remote_actor(
@@ -199,22 +199,18 @@ pub(crate) async fn is_local_follower_authorized(
     let viewer = D1Type::Text(viewer_account_id);
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM follows
              WHERE follower_account_id = ?2
                AND target_account_id = ?1
-               AND state = 'accepted'",
+               AND state = 'accepted'
+             LIMIT 1",
         )
         .bind_refs(&[owner, viewer])?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 pub(crate) async fn list_familiar_local_accounts_for_local_target(
