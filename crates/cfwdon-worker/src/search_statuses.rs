@@ -415,6 +415,45 @@ fn merge_status_search_in_filter(parsed: &mut ParsedStatusSearchQuery, value: &s
     }
 }
 
+fn apply_status_search_prefixed_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    prefix: &str,
+    value: &str,
+    negated: bool,
+) -> bool {
+    match prefix.trim().to_ascii_lowercase().as_str() {
+        "from" => {
+            let value = unquote_status_search_token(value);
+            if !value.is_empty() {
+                merge_status_search_from_filter(parsed, value, negated);
+            }
+        }
+        "before" => {
+            let value = normalize_status_search_timestamp(value);
+            merge_status_search_before_filter(parsed, value, negated);
+        }
+        "after" => {
+            let value = normalize_status_search_timestamp(value);
+            merge_status_search_after_filter(parsed, value, negated);
+        }
+        "during" => {
+            let start = normalize_status_search_timestamp(value);
+            let end = next_day_status_search_timestamp(value);
+            merge_status_search_during_filter(parsed, start, end, negated);
+        }
+        "language" => {
+            if let Some(value) = normalize_status_search_language(value) {
+                merge_status_search_language_filter(parsed, value, negated);
+            }
+        }
+        "is" => merge_status_search_is_filter(parsed, value, negated),
+        "has" => merge_status_search_has_filter(parsed, value, negated),
+        "in" => merge_status_search_in_filter(parsed, value, negated),
+        _ => return false,
+    }
+    true
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -423,49 +462,8 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
         let (negated, token) = split_status_search_negation(&token);
 
         if let Some((prefix, value)) = token.split_once(':') {
-            match prefix.trim().to_ascii_lowercase().as_str() {
-                "from" => {
-                    let value = unquote_status_search_token(value);
-                    if !value.is_empty() {
-                        merge_status_search_from_filter(&mut parsed, value, negated);
-                    }
-                    continue;
-                }
-                "before" => {
-                    let value = normalize_status_search_timestamp(value);
-                    merge_status_search_before_filter(&mut parsed, value, negated);
-                    continue;
-                }
-                "after" => {
-                    let value = normalize_status_search_timestamp(value);
-                    merge_status_search_after_filter(&mut parsed, value, negated);
-                    continue;
-                }
-                "during" => {
-                    let start = normalize_status_search_timestamp(value);
-                    let end = next_day_status_search_timestamp(value);
-                    merge_status_search_during_filter(&mut parsed, start, end, negated);
-                    continue;
-                }
-                "language" => {
-                    if let Some(value) = normalize_status_search_language(value) {
-                        merge_status_search_language_filter(&mut parsed, value, negated);
-                    }
-                    continue;
-                }
-                "is" => {
-                    merge_status_search_is_filter(&mut parsed, value, negated);
-                    continue;
-                }
-                "has" => {
-                    merge_status_search_has_filter(&mut parsed, value, negated);
-                    continue;
-                }
-                "in" => {
-                    merge_status_search_in_filter(&mut parsed, value, negated);
-                    continue;
-                }
-                _ => {}
+            if apply_status_search_prefixed_filter(&mut parsed, prefix, value, negated) {
+                continue;
             }
         }
         let value = fallback_status_search_term(token);
