@@ -8,11 +8,16 @@ command = "WASM_BINDGEN_BIN=\"$HOME/.cargo/bin/wasm-bindgen\" worker-build --rel
 [triggers]
 crons = ["17 * * * *"]
 
+[[routes]]
+pattern = "fedi.manji.app"
+custom_domain = true
+
 [vars]
 INSTANCE_DOMAIN = "fedi.manji.app"
 INSTANCE_NAME = "cfwdon"
 INSTANCE_DESCRIPTION = "Cloudflare Workers + D1 + R2 based Mastodon-compatible server"
 SOURCE_URL = "https://github.com/manji-0/cfwdon"
+MASTODON_WEB_UI_ORIGIN = "https://mastodon.social"
 INSTANCE_LANGUAGES = "ja,en"
 CONTACT_EMAIL = "admin@manji.app"
 INSTANCE_THUMBNAIL_URL = "https://media.fedi.manji.app/site/thumbnail.png"
