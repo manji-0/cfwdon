@@ -327,13 +327,15 @@ fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<St
 }
 
 fn set_trimmed_base_url(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) = optional_var(ctx, key)
-        .as_deref()
-        .map(normalize_optional_base_url)
-        .and_then(|value| trimmed_non_empty(Some(&value)))
-    {
+    if let Some(value) = normalized_optional_base_url(optional_var(ctx, key).as_deref()) {
         *target = Some(value);
     }
+}
+
+fn normalized_optional_base_url(value: Option<&str>) -> Option<String> {
+    value
+        .map(normalize_optional_base_url)
+        .and_then(|value| trimmed_non_empty(Some(&value)))
 }
 
 fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
@@ -408,6 +410,16 @@ mod tests {
             "https://media.example.com"
         );
         assert_eq!(normalize_optional_base_url("   "), "");
+    }
+
+    #[test]
+    fn normalized_optional_base_url_discards_blank_urls() {
+        assert_eq!(
+            normalized_optional_base_url(Some(" https://media.example.com/// ")).as_deref(),
+            Some("https://media.example.com")
+        );
+        assert_eq!(normalized_optional_base_url(Some("///")), None);
+        assert_eq!(normalized_optional_base_url(None), None);
     }
 
     #[test]
