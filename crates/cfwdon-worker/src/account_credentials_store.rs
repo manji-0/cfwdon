@@ -7,6 +7,43 @@ use cfwdon_domain::LocalAccount;
 use worker::d1::D1Type;
 use worker::{Bucket, D1Database, Error, HttpMetadata, Result};
 
+struct AccountSourceDefaults {
+    post_visibility: String,
+    quote_policy: String,
+    sensitive: bool,
+    language: Option<String>,
+}
+
+fn account_source_defaults(
+    account: &LocalAccount,
+    update: &UpdateCredentialsRequest,
+) -> AccountSourceDefaults {
+    AccountSourceDefaults {
+        post_visibility: update
+            .source
+            .as_ref()
+            .and_then(|source| source.privacy.as_deref())
+            .unwrap_or(account.default_post_visibility.as_str())
+            .to_owned(),
+        quote_policy: update
+            .source
+            .as_ref()
+            .and_then(|source| source.quote_policy.as_deref())
+            .unwrap_or(account.default_quote_policy.as_str())
+            .to_owned(),
+        sensitive: update
+            .source
+            .as_ref()
+            .and_then(|source| source.sensitive)
+            .unwrap_or(account.default_sensitive),
+        language: update
+            .source
+            .as_ref()
+            .and_then(|source| source.language.clone())
+            .or_else(|| account.default_language.clone()),
+    }
+}
+
 pub(crate) async fn apply_account_credentials_update(
     db: &D1Database,
     bucket: &Bucket,
@@ -41,28 +78,7 @@ pub(crate) async fn apply_account_credentials_update(
     let locked = update.locked.unwrap_or(account.locked);
     let bot = update.bot.unwrap_or(account.bot);
     let discoverable = update.discoverable.unwrap_or(account.discoverable);
-    let default_post_visibility = update
-        .source
-        .as_ref()
-        .and_then(|source| source.privacy.as_deref())
-        .unwrap_or(account.default_post_visibility.as_str())
-        .to_owned();
-    let default_quote_policy = update
-        .source
-        .as_ref()
-        .and_then(|source| source.quote_policy.as_deref())
-        .unwrap_or(account.default_quote_policy.as_str())
-        .to_owned();
-    let default_sensitive = update
-        .source
-        .as_ref()
-        .and_then(|source| source.sensitive)
-        .unwrap_or(account.default_sensitive);
-    let default_language = update
-        .source
-        .as_ref()
-        .and_then(|source| source.language.clone())
-        .or_else(|| account.default_language.clone());
+    let source_defaults = account_source_defaults(account, update);
     let avatar_profile = match update.avatar.as_ref() {
         Some(upload) => Some(store_profile_media(bucket, account, upload).await?),
         None => None,
@@ -98,10 +114,10 @@ pub(crate) async fn apply_account_credentials_update(
         D1Type::Integer(if locked { 1 } else { 0 }),
         D1Type::Integer(if bot { 1 } else { 0 }),
         D1Type::Integer(if discoverable { 1 } else { 0 }),
-        D1Type::Text(default_post_visibility.as_str()),
-        D1Type::Text(default_quote_policy.as_str()),
-        D1Type::Integer(if default_sensitive { 1 } else { 0 }),
-        match default_language.as_deref() {
+        D1Type::Text(source_defaults.post_visibility.as_str()),
+        D1Type::Text(source_defaults.quote_policy.as_str()),
+        D1Type::Integer(if source_defaults.sensitive { 1 } else { 0 }),
+        match source_defaults.language.as_deref() {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
