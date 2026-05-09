@@ -323,6 +323,30 @@ fn merge_status_search_language_filter(
     }
 }
 
+fn merge_status_search_before_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    value: Option<String>,
+    negated: bool,
+) {
+    if negated {
+        parsed.excluded_before = later_status_search_bound(parsed.excluded_before.take(), value);
+    } else {
+        parsed.before = earlier_status_search_bound(parsed.before.take(), value);
+    }
+}
+
+fn merge_status_search_after_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    value: Option<String>,
+    negated: bool,
+) {
+    if negated {
+        parsed.excluded_after = earlier_status_search_bound(parsed.excluded_after.take(), value);
+    } else {
+        parsed.after = later_status_search_bound(parsed.after.take(), value);
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -341,22 +365,12 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                 }
                 "before" => {
                     let value = normalize_status_search_timestamp(value);
-                    if negated {
-                        parsed.excluded_before =
-                            later_status_search_bound(parsed.excluded_before.take(), value);
-                    } else {
-                        parsed.before = earlier_status_search_bound(parsed.before.take(), value);
-                    }
+                    merge_status_search_before_filter(&mut parsed, value, negated);
                     continue;
                 }
                 "after" => {
                     let value = normalize_status_search_timestamp(value);
-                    if negated {
-                        parsed.excluded_after =
-                            earlier_status_search_bound(parsed.excluded_after.take(), value);
-                    } else {
-                        parsed.after = later_status_search_bound(parsed.after.take(), value);
-                    }
+                    merge_status_search_after_filter(&mut parsed, value, negated);
                     continue;
                 }
                 "during" => {
