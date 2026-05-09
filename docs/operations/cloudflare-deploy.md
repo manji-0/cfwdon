@@ -11,7 +11,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
-- A self-hosted Mastodon Web UI bundle uploaded to the `MEDIA` bucket under `WEB_UI_R2_PREFIX`
+- A self-hosted Phanpy bundle uploaded to the `MEDIA` bucket under `WEB_UI_R2_PREFIX`
 
 ## Provisioning Steps
 
@@ -49,18 +49,25 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler d1 migrations apply DB --remote
    ```
 
-7. Upload the self-hosted Mastodon Web UI bundle to R2.
+7. Build and upload the self-hosted Phanpy bundle to R2.
 <!-- constrained-by ../reference/configuration.md#web-ui-bundle -->
 
-   The Worker expects `index.html` and referenced static files under `WEB_UI_R2_PREFIX`, which defaults to `webui`.
+   The Worker expects `index.html` and referenced static files under `WEB_UI_R2_PREFIX`, which defaults to `phanpy`.
 
    ```sh
-   wrangler r2 object put cfwdon-media/webui/index.html --file path/to/mastodon-webui/index.html --remote
-   wrangler r2 object put cfwdon-media/webui/manifest --file path/to/mastodon-webui/manifest --remote
-   wrangler r2 object put cfwdon-media/webui/packs/assets/application.js --file path/to/mastodon-webui/packs/assets/application.js --remote
+   PHANPY_CLIENT_NAME=cfwdon \
+     PHANPY_WEBSITE=https://fedi.manji.app \
+     PHANPY_DEFAULT_INSTANCE=fedi.manji.app \
+     scripts/build_phanpy_webui.sh /tmp/cfwdon-phanpy-dist
+
+   find /tmp/cfwdon-phanpy-dist -type f -print0 |
+     while IFS= read -r -d '' file; do
+       rel=${file#/tmp/cfwdon-phanpy-dist/}
+       wrangler r2 object put "cfwdon-media/phanpy/${rel}" --file "$file" --remote
+     done
    ```
 
-   Upload all static files referenced by the bundle; the commands above are examples, not a complete asset list.
+   Use the same prefix as `WEB_UI_R2_PREFIX` if you change it from `phanpy`.
 
 8. Run the full local gate.
 
@@ -82,7 +89,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB` and `MEDIA`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `migrations/` contains the schema required by the Worker code
-- the `MEDIA` bucket contains `${WEB_UI_R2_PREFIX}/index.html` and the referenced Web UI static assets
+- the `MEDIA` bucket contains `${WEB_UI_R2_PREFIX}/index.html` and the referenced Phanpy static assets
 
 ## Current Caveat
 

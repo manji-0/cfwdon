@@ -24,23 +24,23 @@ binding 名を変更する場合は、`wrangler.toml`、`cfwdon_core::AppConfig`
 | `INSTANCE_THUMBNAIL_URL` | Optional | unset | instance thumbnail URL。 |
 | `ADMIN_EMAILS` | Optional | empty | comma-separated admin e-mail list for admin notifications. |
 | `MEDIA_PUBLIC_BASE_URL` | Required for production media URLs | unset | R2 custom domain base URL. trailing slash is trimmed. |
-| `WEB_UI_R2_PREFIX` | Required for Web UI serving | `webui` | R2 object prefix containing the self-hosted Mastodon Web UI bundle. `index.html` must exist under this prefix. |
+| `WEB_UI_R2_PREFIX` | Required for Web UI serving | `phanpy` | R2 object prefix containing the self-hosted Phanpy bundle. `index.html` must exist under this prefix. |
 
 `MEDIA_PUBLIC_BASE_URL` の domain は Cloudflare Access の保護対象から外す。Mastodon entity payload ではこの URL が正規 media URL として使われる。
 
 ## Web UI Bundle
 <!-- constrained-by #cloudflare-bindings -->
 
-The standard Mastodon Web UI is served only from the configured R2 bucket. `cfwdon` does not proxy `mastodon.social` or any other third-party instance at request time.
+Phanpy is the primary Web UI. It is served only from the configured R2 bucket, and `cfwdon` does not proxy `mastodon.social` or any other third-party instance at request time.
 
-Upload a Web UI bundle under `WEB_UI_R2_PREFIX` so the Worker can read:
+Build Phanpy as a static app for this instance, then upload the `dist` files under `WEB_UI_R2_PREFIX` so the Worker can read:
 
 - `${WEB_UI_R2_PREFIX}/index.html`
-- `${WEB_UI_R2_PREFIX}/manifest`
-- `${WEB_UI_R2_PREFIX}/packs/...`
-- any other static paths referenced by `index.html`, such as `css/`, `assets/`, `emoji/`, or `sounds/`
+- `${WEB_UI_R2_PREFIX}/manifest.webmanifest`
+- `${WEB_UI_R2_PREFIX}/assets/...`
+- any other static paths emitted by the Phanpy build, such as icons, service worker files, locale chunks, `compose/`, or `share`
 
-For the sample configuration, that means objects such as `webui/index.html` and `webui/packs/assets/application-....js` in the `MEDIA` bucket. The Worker rewrites Mastodon instance metadata in `index.html` at response time, but the files themselves are owned and hosted by this deployment.
+For the sample configuration, that means objects such as `phanpy/index.html` and `phanpy/assets/index-....js` in the `MEDIA` bucket. The Worker injects a small cfwdon theme stylesheet into Phanpy HTML responses, but instance-specific Phanpy metadata should be set at build time with variables such as `PHANPY_CLIENT_NAME`, `PHANPY_WEBSITE`, and `PHANPY_DEFAULT_INSTANCE`.
 
 ## Access Authentication Vars
 
