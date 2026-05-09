@@ -234,12 +234,12 @@ mod tests {
     #[test]
     fn normalized_access_team_origin_adds_https_for_bare_team_domain() {
         assert_eq!(
-            normalized_access_team_origin("manji0.cloudflareaccess.com/"),
-            "https://manji0.cloudflareaccess.com"
+            normalized_access_team_origin("team.example.cloudflareaccess.com/"),
+            "https://team.example.cloudflareaccess.com"
         );
         assert_eq!(
-            normalized_access_team_origin("https://manji0.cloudflareaccess.com/"),
-            "https://manji0.cloudflareaccess.com"
+            normalized_access_team_origin("https://team.example.cloudflareaccess.com/"),
+            "https://team.example.cloudflareaccess.com"
         );
     }
 }
