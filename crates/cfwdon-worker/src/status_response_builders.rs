@@ -53,6 +53,16 @@ pub(crate) fn quote_placeholder_document(state: &str) -> serde_json::Value {
     })
 }
 
+fn quote_document_for_local_state(local_quote_state: Option<&str>) -> Option<serde_json::Value> {
+    match local_quote_state {
+        Some("pending") => Some(pending_quote_document()),
+        Some(state @ ("revoked" | "rejected" | "unauthorized" | "deleted")) => {
+            Some(quote_placeholder_document(state))
+        }
+        _ => None,
+    }
+}
+
 async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
     Ok(count_rows(
         db,
@@ -454,14 +464,8 @@ async fn build_quoted_status_value(
     let Some(quote_of_uri) = quote_of_uri else {
         return Ok(None);
     };
-    match local_quote_state {
-        Some("pending") => return Ok(Some(pending_quote_document())),
-        Some("revoked" | "rejected" | "unauthorized" | "deleted") => {
-            return Ok(Some(quote_placeholder_document(
-                local_quote_state.expect("matched above"),
-            )));
-        }
-        _ => {}
+    if let Some(document) = quote_document_for_local_state(local_quote_state) {
+        return Ok(Some(document));
     }
 
     if let Some(local_status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? {
