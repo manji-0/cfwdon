@@ -14,6 +14,7 @@ use super::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
+use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
@@ -329,6 +330,29 @@ async fn refresh_remote_poll_after_vote_if_acknowledged(
     Ok(true)
 }
 
+fn collect_new_remote_poll_choices(
+    option_count: usize,
+    existing: &[u32],
+    choices: &[u32],
+) -> std::result::Result<Vec<u32>, String> {
+    let existing = existing.iter().copied().collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    let mut new_choices = Vec::new();
+
+    for choice in choices {
+        let position = *choice as usize;
+        if position >= option_count {
+            return Err("choices contains an out-of-range option".to_owned());
+        }
+        if existing.contains(choice) || !seen.insert(*choice) {
+            continue;
+        }
+        new_choices.push(*choice);
+    }
+
+    Ok(new_choices)
+}
+
 pub(crate) async fn apply_remote_poll_vote(
     db: &D1Database,
     config: &AppConfig,
@@ -348,21 +372,8 @@ pub(crate) async fn apply_remote_poll_vote(
     validate_poll_vote_submission(existing.len(), poll.multiple != 0, choices.len())
         .map_err(Error::RustError)?;
 
-    let mut new_choices = Vec::new();
-    for choice in choices {
-        let position = *choice as usize;
-        if position >= options.len() {
-            return Err(Error::RustError(
-                "choices contains an out-of-range option".to_owned(),
-            ));
-        }
-        if existing.iter().any(|value| value == choice)
-            || new_choices.iter().any(|value| value == choice)
-        {
-            continue;
-        }
-        new_choices.push(*choice);
-    }
+    let new_choices = collect_new_remote_poll_choices(options.len(), &existing, choices)
+        .map_err(Error::RustError)?;
     if new_choices.is_empty() {
         return Err(Error::RustError(
             "you have already voted in this poll".to_owned(),
