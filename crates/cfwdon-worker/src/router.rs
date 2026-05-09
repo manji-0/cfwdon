@@ -26,23 +26,24 @@ use super::{
     dismiss_notification_request_response, dismiss_notification_requests_response,
     domain_blocks_preview_response, domain_blocks_response, donation_campaigns_response,
     email_confirmation_page_response, endorse_account_response, endorsements_response,
-    familiar_followers_response, favourite_status, favourites_response, feature_tag_response,
-    feature_tag_v1_response, featured_collection_response, featured_tag_suggestions_response,
-    featured_tags_collection_response, featured_tags_response, filter_keyword_response,
-    filter_keywords_response, filter_status_response, filter_statuses_response, filter_v1_response,
-    filter_v2_response, filters_v1_response, filters_v2_response, follow_account,
-    follow_request_response, follow_requests_response, follow_tag_response, followed_tags_response,
-    followers_collection_response, following_collection_response, home_timeline_response,
-    identity_proofs_response, inbox_response, instance_activity_response,
-    instance_domain_blocks_response, instance_extended_description_response,
-    instance_languages_response, instance_peers_response, instance_peers_search_response,
-    instance_privacy_policy_response, instance_rules_response, instance_summary_response,
-    instance_terms_of_service_response, instance_terms_of_service_version_response,
-    instance_translation_languages_response, instance_v2_response, link_timeline_response,
-    list_accounts_response, list_response, list_timeline_response, lists_response,
-    markers_response, media_content_response, media_metadata_response, mute_account,
-    mute_status_response, mutes_response, nodeinfo_links_response, nodeinfo_response,
-    note_account_response, notification_dismiss_response, notification_group_accounts_response,
+    fallback_response, familiar_followers_response, favourite_status, favourites_response,
+    feature_tag_response, feature_tag_v1_response, featured_collection_response,
+    featured_tag_suggestions_response, featured_tags_collection_response, featured_tags_response,
+    filter_keyword_response, filter_keywords_response, filter_status_response,
+    filter_statuses_response, filter_v1_response, filter_v2_response, filters_v1_response,
+    filters_v2_response, follow_account, follow_request_response, follow_requests_response,
+    follow_tag_response, followed_tags_response, followers_collection_response,
+    following_collection_response, home_timeline_response, identity_proofs_response,
+    inbox_response, instance_activity_response, instance_domain_blocks_response,
+    instance_extended_description_response, instance_languages_response, instance_peers_response,
+    instance_peers_search_response, instance_privacy_policy_response, instance_rules_response,
+    instance_summary_response, instance_terms_of_service_response,
+    instance_terms_of_service_version_response, instance_translation_languages_response,
+    instance_v2_response, link_timeline_response, list_accounts_response, list_response,
+    list_timeline_response, lists_response, markers_response, media_content_response,
+    media_metadata_response, mute_account, mute_status_response, mutes_response,
+    nodeinfo_links_response, nodeinfo_response, note_account_response,
+    notification_dismiss_response, notification_group_accounts_response,
     notification_group_dismiss_response, notification_group_response,
     notification_request_response, notification_requests_merged_response,
     notification_requests_response, notification_response, notifications_clear_response,
@@ -53,7 +54,7 @@ use super::{
     process_outbox_deliveries, profile_response, prune_orphan_media, public_timeline_response,
     push_subscription_response, read_conversation_response, reblog_status,
     reject_follow_request_response, remove_from_followers_response,
-    revoke_alpha_collection_item_response, revoke_quote_response, root_document,
+    revoke_alpha_collection_item_response, revoke_quote_response, root_response,
     save_markers_response, scheduled_status_response, scheduled_statuses_response, search_v1,
     search_v2, shared_inbox_response, status_api_response, status_card_response,
     status_context_response, status_favourited_by_response, status_history_response,
@@ -76,7 +77,7 @@ use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     Router::new()
-        .get("/", |_req, _ctx| Response::from_json(&root_document()))
+        .get_async("/", |req, ctx| async move { root_response(req, ctx).await })
         .get("/healthz", |_req, _ctx| Response::ok("ok"))
         .get_async("/.well-known/oauth-authorization-server", |_req, ctx| async move {
             oauth_authorization_server_response(ctx).await
@@ -841,6 +842,9 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         })
         .get_async("/api/v1/accounts/:id", |_req, ctx| async move {
             account_response(ctx).await
+        })
+        .get_async("/*path", |req, ctx| async move {
+            fallback_response(req, ctx).await
         })
         .run(req, env)
         .await
