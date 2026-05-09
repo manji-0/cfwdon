@@ -1,16 +1,19 @@
+use std::collections::HashSet;
+
 use crate::{RemoteActorRow, RemoteStatusRow, Result, StatusRow};
 use worker::D1Database;
 use worker::d1::D1Type;
 
 fn normalized_search_patterns(queries: &[String]) -> Vec<String> {
     let mut patterns = Vec::new();
+    let mut seen = HashSet::new();
     for query in queries {
         let normalized = query.trim().to_ascii_lowercase();
         if normalized.is_empty() {
             continue;
         }
         let pattern = format!("%{}%", normalized);
-        if !patterns.iter().any(|value| value == &pattern) {
+        if seen.insert(pattern.clone()) {
             patterns.push(pattern);
         }
     }
@@ -389,4 +392,38 @@ pub(crate) async fn search_remote_status_rows(
     }
 
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_search_patterns_trims_lowercases_and_deduplicates() {
+        assert_eq!(
+            normalized_search_patterns(&[
+                " Rust ".to_owned(),
+                "rust".to_owned(),
+                "RUST".to_owned(),
+                "fediverse".to_owned(),
+            ]),
+            vec!["%rust%".to_owned(), "%fediverse%".to_owned()]
+        );
+    }
+
+    #[test]
+    fn normalized_search_patterns_defaults_to_wildcard() {
+        assert_eq!(
+            normalized_search_patterns(&[" ".to_owned(), "\t".to_owned()]),
+            vec!["%".to_owned()]
+        );
+    }
+
+    #[test]
+    fn search_like_clauses_uses_expected_binding_offsets() {
+        assert_eq!(
+            search_like_clauses(&["content_html", "spoiler_text"], 2, 2),
+            "(lower(content_html) LIKE ?2 OR lower(spoiler_text) LIKE ?2) OR (lower(content_html) LIKE ?3 OR lower(spoiler_text) LIKE ?3)"
+        );
+    }
 }
