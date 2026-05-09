@@ -44,6 +44,13 @@ fn account_source_defaults(
     }
 }
 
+fn profile_media_was_replaced(previous: Option<&str>, next: Option<&(String, String)>) -> bool {
+    match (previous, next) {
+        (Some(previous), Some(next)) => next.0.as_str() != previous,
+        _ => false,
+    }
+}
+
 pub(crate) async fn apply_account_credentials_update(
     db: &D1Database,
     bucket: &Bucket,
@@ -88,20 +95,12 @@ pub(crate) async fn apply_account_credentials_update(
         None => None,
     };
     if let Some(previous) = account.avatar_object_key.as_deref()
-        && avatar_profile.is_some()
-        && avatar_profile
-            .as_ref()
-            .map(|profile| profile.0.as_str() != previous)
-            .unwrap_or(false)
+        && profile_media_was_replaced(Some(previous), avatar_profile.as_ref())
     {
         bucket.delete(previous).await?;
     }
     if let Some(previous) = account.header_object_key.as_deref()
-        && header_profile.is_some()
-        && header_profile
-            .as_ref()
-            .map(|profile| profile.0.as_str() != previous)
-            .unwrap_or(false)
+        && profile_media_was_replaced(Some(previous), header_profile.as_ref())
     {
         bucket.delete(previous).await?;
     }
