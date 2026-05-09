@@ -98,21 +98,17 @@ async fn viewer_blocks_domain(db: &D1Database, account_id: &str, domain: &str) -
     let bindings = [D1Type::Text(account_id), D1Type::Text(domain)];
     let row = db
         .prepare(
-            "SELECT COUNT(*) AS count
+            "SELECT 1 AS found
              FROM account_domain_blocks
              WHERE account_id = ?1
-               AND domain = ?2",
+               AND domain = ?2
+             LIMIT 1",
         )
         .bind_refs(bindings.iter())?
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row
-        .as_ref()
-        .and_then(|value| value.get("count"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
-        > 0)
+    Ok(row.is_some())
 }
 
 async fn quote_state_for_local_quoted_status(
