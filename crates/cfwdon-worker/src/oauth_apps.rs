@@ -602,6 +602,55 @@ fn authorization_redirect_with_params(
     Ok(response)
 }
 
+pub(crate) fn access_login_configured(config: &cfwdon_core::AppConfig) -> bool {
+    !config.access_team_domain.trim().is_empty() && !config.access_audience.trim().is_empty()
+}
+
+pub(crate) fn cloudflare_access_login_url(
+    config: &cfwdon_core::AppConfig,
+    redirect_url: &Url,
+) -> std::result::Result<Url, String> {
+    let mut team_domain = config.access_team_domain.trim().to_owned();
+    if !team_domain.starts_with("http://") && !team_domain.starts_with("https://") {
+        team_domain = format!("https://{team_domain}");
+    }
+    let team_url = Url::parse(&team_domain)
+        .map_err(|error| format!("invalid Cloudflare Access team domain: {error}"))?;
+    let hostname = redirect_url
+        .host_str()
+        .ok_or_else(|| "OAuth authorize redirect URL did not include a host".to_owned())?;
+    let mut login_url = team_url
+        .join(&format!("/cdn-cgi/access/login/{hostname}"))
+        .map_err(|error| format!("failed to build Cloudflare Access login URL: {error}"))?;
+    let redirect_path = match redirect_url.query() {
+        Some(query) => format!("{}?{query}", redirect_url.path()),
+        None => redirect_url.path().to_owned(),
+    };
+    login_url
+        .query_pairs_mut()
+        .append_pair("kid", config.access_audience.trim())
+        .append_pair("redirect_url", &redirect_path);
+    Ok(login_url)
+}
+
+fn access_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
+    let login_url =
+        cloudflare_access_login_url(config, &req.url()?).map_err(worker::Error::RustError)?;
+    let mut response = Response::empty()?.with_status(302);
+    response.headers_mut().set("Location", login_url.as_str())?;
+    Ok(response)
+}
+
+fn access_authenticated_without_account_response(
+    config: &cfwdon_core::AppConfig,
+) -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "Cloudflare Access authentication succeeded, but no local account is registered for this email.",
+        "registration_url": format!("{}/auth/sign_up", crate::instance_base_url(config)),
+    }))?
+    .with_status(403))
+}
+
 fn html_response(body: &str, status: u16) -> Result<Response> {
     let mut response = Response::from_body(ResponseBody::Body(body.as_bytes().to_vec()))?;
     response
@@ -975,6 +1024,9 @@ pub(crate) async fn oauth_authorize_response(
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     if req.method().as_ref() == "POST" {
+        if access_login_configured(&config) {
+            return access_login_redirect(&config, &req);
+        }
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
             Err(message) => return Response::error(&message, 422),
@@ -1002,6 +1054,15 @@ pub(crate) async fn oauth_authorize_response(
     };
     if let Some(account) = crate::find_authenticated_local_account(&req, &db, &config).await? {
         return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
+    }
+    if access_login_configured(&config) {
+        if crate::extract_authenticated_user(&req, &config)
+            .await?
+            .is_some()
+        {
+            return access_authenticated_without_account_response(&config);
+        }
+        return access_login_redirect(&config, &req);
     }
     oauth_login_page(&authorize, &app, None)
 }

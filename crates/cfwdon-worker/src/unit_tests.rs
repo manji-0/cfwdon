@@ -27,20 +27,21 @@ use super::{
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
     build_translation_document_for_language, build_translation_languages_document,
-    build_update_person_activity_with_id, classify_media_kind, configured_html_document,
-    context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
-    describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
-    effective_remote_status_quote_state, effective_search_v2_following, effective_search_v2_offset,
-    effective_status_quote_state, extract_account_handles_from_text, extract_hashtags_from_html,
-    extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
-    extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
-    extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
-    follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
-    include_local_source, include_remote_source, initial_local_quote_approval_policy,
-    instance_base_url, is_activitypub_actor_type, is_admin_account, is_follow_undo,
-    local_quote_policy_allows, local_username_from_actor_uri, local_username_from_status_uri,
-    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
-    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    build_update_person_activity_with_id, classify_media_kind, cloudflare_access_login_url,
+    configured_html_document, context_async_refresh_id, delivery_retry_delay_modifier,
+    derive_link_timeline_match_urls, describe_outbound_activity, directory_order,
+    effective_local_quote_approval_policy, effective_remote_status_quote_state,
+    effective_search_v2_following, effective_search_v2_offset, effective_status_quote_state,
+    extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
+    extract_html_preview_metadata, extract_inbox_target_username, extract_mentions_from_text,
+    extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
+    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
+    format_async_refresh_header_value, hash_account_password, include_local_source,
+    include_remote_source, initial_local_quote_approval_policy, instance_base_url,
+    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
+    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
+    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
+    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
     notification_sort_key, notification_timestamp_sort_token,
@@ -398,6 +399,29 @@ fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
         "/.well-known/oauth-authorization-server"
     ));
     assert!(!is_cors_enabled_path("/users/alice"));
+}
+
+#[test]
+fn cloudflare_access_login_url_matches_access_plugin_shape() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
+    config.access_audience = "aud-1".to_owned();
+    let redirect_url = Url::parse(
+        "https://social.example/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F",
+    )
+    .unwrap();
+
+    let login_url = cloudflare_access_login_url(&config, &redirect_url).unwrap();
+
+    assert_eq!(login_url.scheme(), "https");
+    assert_eq!(login_url.host_str(), Some("example.cloudflareaccess.com"));
+    assert_eq!(login_url.path(), "/cdn-cgi/access/login/social.example");
+    let params = login_url.query_pairs().collect::<HashMap<_, _>>();
+    assert_eq!(params.get("kid").map(|value| value.as_ref()), Some("aud-1"));
+    assert_eq!(
+        params.get("redirect_url").map(|value| value.as_ref()),
+        Some("/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F")
+    );
 }
 
 #[test]
