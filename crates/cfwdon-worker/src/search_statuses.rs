@@ -297,6 +297,32 @@ fn merge_status_search_from_filter(
     }
 }
 
+fn merge_status_search_language_filter(
+    parsed: &mut ParsedStatusSearchQuery,
+    value: String,
+    negated: bool,
+) {
+    if negated {
+        merge_exact_filter(
+            &mut parsed.not_language,
+            value.clone(),
+            &mut parsed.unsatisfiable,
+        );
+        if parsed.language.as_deref() == Some(value.as_str()) {
+            parsed.unsatisfiable = true;
+        }
+    } else {
+        merge_exact_filter(
+            &mut parsed.language,
+            value.clone(),
+            &mut parsed.unsatisfiable,
+        );
+        if parsed.not_language.as_deref() == Some(value.as_str()) {
+            parsed.unsatisfiable = true;
+        }
+    }
+}
+
 pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery {
     let mut parsed = ParsedStatusSearchQuery::default();
     let mut terms = Vec::new();
@@ -348,25 +374,7 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
                 }
                 "language" => {
                     if let Some(value) = normalize_status_search_language(value) {
-                        if negated {
-                            merge_exact_filter(
-                                &mut parsed.not_language,
-                                value.clone(),
-                                &mut parsed.unsatisfiable,
-                            );
-                            if parsed.language.as_deref() == Some(value.as_str()) {
-                                parsed.unsatisfiable = true;
-                            }
-                        } else {
-                            merge_exact_filter(
-                                &mut parsed.language,
-                                value.clone(),
-                                &mut parsed.unsatisfiable,
-                            );
-                            if parsed.not_language.as_deref() == Some(value.as_str()) {
-                                parsed.unsatisfiable = true;
-                            }
-                        }
+                        merge_status_search_language_filter(&mut parsed, value, negated);
                     }
                     continue;
                 }
