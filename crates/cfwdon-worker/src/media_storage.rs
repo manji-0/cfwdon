@@ -2,7 +2,13 @@ use crate::{
     D1Database, LocalAccount, MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow,
     Result, delete_media_attachment_row, generate_entity_id, require_media_attachment_by_id,
 };
+use serde::Deserialize;
 use worker::{Bucket, HttpMetadata, d1::D1Type};
+
+#[derive(Debug, Deserialize)]
+struct QueuedMediaDeletionRow {
+    object_key: String,
+}
 
 pub(crate) async fn store_media_attachment(
     db: &D1Database,
@@ -73,8 +79,10 @@ pub(crate) async fn delete_media_attachments(
     attachments: &[MediaAttachmentRow],
 ) -> Result<()> {
     for attachment in attachments {
-        bucket.delete(&attachment.object_key).await?;
         delete_media_attachment_row(db, &attachment.id).await?;
+        if let Err(error) = bucket.delete(&attachment.object_key).await {
+            queue_media_deletion(db, &attachment.object_key, &error.to_string()).await?;
+        }
     }
 
     Ok(())
@@ -88,12 +96,90 @@ pub(crate) async fn delete_orphan_media(
     let mut deleted = 0;
 
     for orphan in orphans {
-        bucket.delete(&orphan.object_key).await?;
         delete_media_attachment_row(db, &orphan.id).await?;
-        deleted += 1;
+        match bucket.delete(&orphan.object_key).await {
+            Ok(()) => {
+                deleted += 1;
+            }
+            Err(error) => {
+                queue_media_deletion(db, &orphan.object_key, &error.to_string()).await?;
+            }
+        }
     }
 
     Ok(deleted)
+}
+
+pub(crate) async fn delete_queued_media(
+    db: &D1Database,
+    bucket: &Bucket,
+    limit: u32,
+) -> Result<u32> {
+    let queued = list_queued_media_deletions(db, limit).await?;
+    let mut deleted = 0;
+
+    for row in queued {
+        match bucket.delete(&row.object_key).await {
+            Ok(()) => {
+                delete_queued_media_deletion(db, &row.object_key).await?;
+                deleted += 1;
+            }
+            Err(error) => {
+                queue_media_deletion(db, &row.object_key, &error.to_string()).await?;
+            }
+        }
+    }
+
+    Ok(deleted)
+}
+
+async fn list_queued_media_deletions(
+    db: &D1Database,
+    limit: u32,
+) -> Result<Vec<QueuedMediaDeletionRow>> {
+    let limit = D1Type::Integer(limit as i32);
+    let result = db
+        .prepare(
+            "SELECT object_key
+             FROM media_deletion_queue
+             ORDER BY updated_at ASC, object_key ASC
+             LIMIT ?1",
+        )
+        .bind_refs(&limit)?
+        .all()
+        .await?;
+
+    result.results::<QueuedMediaDeletionRow>()
+}
+
+async fn queue_media_deletion(db: &D1Database, object_key: &str, error: &str) -> Result<()> {
+    let bindings = [D1Type::Text(object_key), D1Type::Text(error)];
+    db.prepare(
+        "INSERT INTO media_deletion_queue (object_key, attempts, last_error, created_at, updated_at)
+         VALUES (?1, 1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(object_key) DO UPDATE SET
+             attempts = attempts + 1,
+             last_error = excluded.last_error,
+             updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    Ok(())
+}
+
+async fn delete_queued_media_deletion(db: &D1Database, object_key: &str) -> Result<()> {
+    let object_key = D1Type::Text(object_key);
+    db.prepare(
+        "DELETE FROM media_deletion_queue
+         WHERE object_key = ?1",
+    )
+    .bind_refs(&object_key)?
+    .run()
+    .await?;
+
+    Ok(())
 }
 pub(crate) fn classify_media_kind(content_type: &str) -> Option<MediaKind> {
     if content_type.starts_with("image/") {

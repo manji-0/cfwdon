@@ -1,4 +1,5 @@
 use crate::{D1Database, ResolvedTimelineCursor, Result, StatusRow, normalize_hashtag};
+use std::collections::HashSet;
 use worker::d1::D1Type;
 
 pub(crate) async fn list_local_home_timeline_statuses(
@@ -119,9 +120,61 @@ pub(crate) async fn list_local_public_statuses_by_tag(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let pattern = format!("%#{}%", normalize_hashtag(tag));
-    let bindings = [
-        D1Type::Text(pattern.as_str()),
+    list_local_public_statuses_by_tags(db, &[normalize_hashtag(tag)], cursor, limit).await
+}
+
+pub(crate) async fn list_local_public_statuses_by_tags(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let mut seen = HashSet::new();
+    let tags = tags
+        .iter()
+        .map(|tag| normalize_hashtag(tag))
+        .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
+        .collect::<Vec<_>>();
+    if tags.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let tag_placeholders = (1..=tags.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let max_timestamp_index = tags.len() + 1;
+    let max_id_index = tags.len() + 2;
+    let min_timestamp_index = tags.len() + 3;
+    let min_id_index = tags.len() + 4;
+    let limit_index = tags.len() + 5;
+    let sql = format!(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
+         FROM statuses
+         WHERE visibility = 'public'
+           AND id IN (
+               SELECT h.status_id
+               FROM status_hashtags h
+               WHERE h.tag IN ({tag_placeholders})
+           )
+           AND (
+                ?{max_timestamp_index} IS NULL
+                OR created_at < ?{max_timestamp_index}
+                OR (created_at = ?{max_timestamp_index} AND id < ?{max_id_index})
+           )
+           AND (
+                ?{min_timestamp_index} IS NULL
+                OR created_at > ?{min_timestamp_index}
+                OR (created_at = ?{min_timestamp_index} AND id > ?{min_id_index})
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?{limit_index}"
+    );
+    let mut bindings = tags
+        .iter()
+        .map(|tag| D1Type::Text(tag.as_str()))
+        .collect::<Vec<_>>();
+    bindings.extend([
         cursor
             .max_timestamp
             .as_deref()
@@ -133,29 +186,86 @@ pub(crate) async fn list_local_public_statuses_by_tag(
             .map_or(D1Type::Null, D1Type::Text),
         cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
-    ];
-    let result = db
-        .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
-             FROM statuses
-             WHERE visibility = 'public'
-               AND lower(text_content) LIKE ?1
-               AND (
-                    ?2 IS NULL
-                    OR created_at < ?2
-                    OR (created_at = ?2 AND id < ?3)
-               )
-               AND (
-                    ?4 IS NULL
-                    OR created_at > ?4
-                    OR (created_at = ?4 AND id > ?5)
-               )
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?6",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+    ]);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    let mut rows = result.results::<StatusRow>()?;
+    let mut seen_ids = rows
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<HashSet<_>>();
+    for status in list_local_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await? {
+        if seen_ids.insert(status.id.clone()) {
+            rows.push(status);
+        }
+    }
+    rows.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    rows.truncate(limit as usize);
+    Ok(rows)
+}
+
+async fn list_local_public_statuses_by_tags_legacy(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let patterns = tags
+        .iter()
+        .map(|tag| format!("%#{}%", normalize_hashtag(tag)))
+        .collect::<Vec<_>>();
+    let match_clause = patterns
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("lower(text_content) LIKE ?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let max_timestamp_index = patterns.len() + 1;
+    let max_id_index = patterns.len() + 2;
+    let min_timestamp_index = patterns.len() + 3;
+    let min_id_index = patterns.len() + 4;
+    let limit_index = patterns.len() + 5;
+    let sql = format!(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
+         FROM statuses
+         WHERE visibility = 'public'
+           AND ({match_clause})
+           AND (
+                ?{max_timestamp_index} IS NULL
+                OR created_at < ?{max_timestamp_index}
+                OR (created_at = ?{max_timestamp_index} AND id < ?{max_id_index})
+           )
+           AND (
+                ?{min_timestamp_index} IS NULL
+                OR created_at > ?{min_timestamp_index}
+                OR (created_at = ?{min_timestamp_index} AND id > ?{min_id_index})
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?{limit_index}"
+    );
+    let mut bindings = patterns
+        .iter()
+        .map(|pattern| D1Type::Text(pattern.as_str()))
+        .collect::<Vec<_>>();
+    bindings.extend([
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     result.results::<StatusRow>()
 }

@@ -243,6 +243,46 @@ pub(crate) async fn remote_status_has_media(db: &D1Database, status_id: &str) ->
     Ok(row.is_some())
 }
 
+#[derive(Debug, Deserialize)]
+struct RemoteMediaStatusIdRow {
+    status_id: String,
+}
+
+pub(crate) async fn find_remote_status_ids_with_media(
+    db: &D1Database,
+    status_ids: &[String],
+) -> Result<HashSet<String>> {
+    let mut seen = HashSet::new();
+    let ids = status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT DISTINCT status_id
+         FROM remote_status_attachments
+         WHERE status_id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<RemoteMediaStatusIdRow>()?
+        .into_iter()
+        .map(|row| row.status_id)
+        .collect())
+}
+
 pub(crate) async fn list_orphan_media(
     db: &D1Database,
     older_than_hours: u32,
@@ -286,8 +326,12 @@ pub(crate) async fn resolve_attachable_media(
     media_ids: &[String],
 ) -> std::result::Result<Vec<MediaAttachmentRow>, String> {
     let mut media = Vec::with_capacity(media_ids.len());
+    let mut seen = HashSet::new();
 
     for media_id in media_ids {
+        if !seen.insert(media_id.clone()) {
+            continue;
+        }
         let row = find_media_attachment_by_id(db, media_id)
             .await
             .map_err(|error| format!("failed to load media attachment {media_id}: {error}"))?
@@ -313,19 +357,33 @@ pub(crate) async fn attach_media_to_status(
     status_id: &str,
     media: &[MediaAttachmentRow],
 ) -> Result<()> {
-    for attachment in media {
-        let bindings = [
-            D1Type::Text(status_id),
-            D1Type::Text(attachment.id.as_str()),
-        ];
-        db.prepare(
-            "UPDATE media_attachments
-             SET status_id = ?1
-             WHERE id = ?2 AND status_id IS NULL",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+    if media.is_empty() {
+        return Ok(());
+    }
+
+    let values_sql = requested_media_values_sql(media.len());
+    let expected_count_param = media.len() + 2;
+    let sql = format!(
+        "WITH requested(id) AS (VALUES {values_sql})
+         UPDATE media_attachments
+         SET status_id = ?1
+         WHERE id IN (SELECT id FROM requested)
+           AND status_id IS NULL
+           AND (
+                SELECT COUNT(*)
+                FROM media_attachments
+                WHERE id IN (SELECT id FROM requested)
+                  AND status_id IS NULL
+           ) = ?{expected_count_param}"
+    );
+    let mut bindings = media_status_bindings(status_id, media);
+    bindings.push(D1Type::Integer(media.len() as i32));
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.run().await?;
+
+    if !d1_result_did_change(&result)? {
+        return Err(Error::RustError(
+            "one or more media attachments are no longer attachable".to_owned(),
+        ));
     }
 
     Ok(())
@@ -369,30 +427,75 @@ pub(crate) async fn replace_status_media(
     status_id: &str,
     media: &[MediaAttachmentRow],
 ) -> Result<()> {
-    let status_binding = D1Type::Text(status_id);
-    db.prepare(
-        "UPDATE media_attachments
-         SET status_id = NULL
-         WHERE status_id = ?1",
-    )
-    .bind_refs(&status_binding)?
-    .run()
-    .await?;
-
-    for attachment in media {
-        let bindings = [
-            D1Type::Text(status_id),
-            D1Type::Text(attachment.id.as_str()),
-        ];
+    if media.is_empty() {
+        let status_binding = D1Type::Text(status_id);
         db.prepare(
             "UPDATE media_attachments
-             SET status_id = ?1
-             WHERE id = ?2",
+             SET status_id = NULL
+             WHERE status_id = ?1",
         )
-        .bind_refs(bindings.iter())?
+        .bind_refs(&status_binding)?
         .run()
         .await?;
+        return Ok(());
+    }
+
+    let values_sql = requested_media_values_sql(media.len());
+    let expected_count_param = media.len() + 2;
+    let sql = format!(
+        "WITH requested(id) AS (VALUES {values_sql})
+         UPDATE media_attachments
+         SET status_id = CASE
+             WHEN id IN (SELECT id FROM requested) THEN ?1
+             ELSE NULL
+         END
+         WHERE (status_id = ?1 OR id IN (SELECT id FROM requested))
+           AND (
+                SELECT COUNT(*)
+                FROM media_attachments
+                WHERE id IN (SELECT id FROM requested)
+                  AND (status_id IS NULL OR status_id = ?1)
+           ) = ?{expected_count_param}"
+    );
+    let mut bindings = media_status_bindings(status_id, media);
+    bindings.push(D1Type::Integer(media.len() as i32));
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.run().await?;
+
+    if !d1_result_did_change(&result)? {
+        return Err(Error::RustError(
+            "one or more media attachments are no longer editable".to_owned(),
+        ));
     }
 
     Ok(())
+}
+
+fn requested_media_values_sql(count: usize) -> String {
+    (0..count)
+        .map(|index| format!("(?{})", index + 2))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn media_status_bindings<'a>(
+    status_id: &'a str,
+    media: &'a [MediaAttachmentRow],
+) -> Vec<D1Type<'a>> {
+    let mut bindings = Vec::with_capacity(media.len() + 2);
+    bindings.push(D1Type::Text(status_id));
+    for attachment in media {
+        bindings.push(D1Type::Text(attachment.id.as_str()));
+    }
+    bindings
+}
+
+fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {
+    Ok(result
+        .meta()?
+        .and_then(|meta| {
+            meta.changed_db
+                .or_else(|| meta.changes.map(|changes| changes > 0))
+                .or_else(|| meta.rows_written.map(|rows_written| rows_written > 0))
+        })
+        .unwrap_or(false))
 }

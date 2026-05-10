@@ -4,6 +4,7 @@ use crate::auth::{
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::find_media_attachments_by_status_id;
+use crate::find_remote_status_ids_with_media;
 use crate::instance_identity::actor_url;
 use crate::oauth_apps::{
     app_bearer_token_from_request, find_oauth_app_by_bearer_token,
@@ -17,12 +18,13 @@ use crate::{
     derive_link_timeline_match_urls, enrich_card_with_remote_preview, include_local_source,
     include_remote_source, list_followed_tag_names, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_link,
-    list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
-    list_remote_home_timeline_statuses, list_remote_public_statuses_by_link,
-    list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
+    list_local_public_statuses_by_tag, list_local_public_statuses_by_tags,
+    list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
+    list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
+    list_remote_public_statuses_by_tags, list_remote_public_timeline_statuses,
     load_in_reply_to_account_id, matches_tag_timeline_filters, normalize_hashtag,
-    remote_status_has_media, require_authenticated_local_account, resolve_timeline_cursor,
-    strip_html_tags, timeline_fetch_limit, timeline_limit,
+    require_authenticated_local_account, resolve_timeline_cursor, strip_html_tags,
+    timeline_fetch_limit, timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
@@ -124,6 +126,22 @@ async fn preload_local_timeline_rows(
         crate::find_accounts_by_ids(db, &account_ids).await?,
         crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
     ))
+}
+
+async fn remote_media_status_ids_for_filter(
+    db: &D1Database,
+    only_media: bool,
+    statuses: &[(crate::RemoteStatusRow, crate::RemoteActorRow)],
+) -> Result<HashSet<String>> {
+    if !only_media {
+        return Ok(HashSet::new());
+    }
+
+    let status_ids = statuses
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<Vec<_>>();
+    find_remote_status_ids_with_media(db, &status_ids).await
 }
 
 fn timeline_cursor_requested(pagination: &TimelinePaginationQuery) -> bool {
@@ -299,9 +317,10 @@ pub(crate) async fn home_timeline_response(
         ));
     }
 
-    for tag in list_followed_tag_names(&db, &viewer.id).await? {
+    let followed_tags = list_followed_tag_names(&db, &viewer.id).await?;
+    if !followed_tags.is_empty() {
         let local_tag_statuses =
-            list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
+            list_local_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?;
         let (accounts_by_id, mut media_by_status_id) =
             preload_local_timeline_rows(&db, &local_tag_statuses).await?;
         for status in local_tag_statuses {
@@ -338,7 +357,7 @@ pub(crate) async fn home_timeline_response(
         }
 
         for (status, actor) in
-            list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
+            list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
         {
             if !seen_status_ids.insert(status.id.clone()) {
                 continue;
@@ -421,12 +440,16 @@ pub(crate) async fn public_timeline_response(
     }
 
     if include_remote {
-        for (status, actor) in
-            list_remote_public_timeline_statuses(&db, &cursor, query_limit).await?
-        {
-            if query.only_media.unwrap_or(false)
-                && !remote_status_has_media(&db, &status.id).await?
-            {
+        let remote_statuses =
+            list_remote_public_timeline_statuses(&db, &cursor, query_limit).await?;
+        let remote_media_status_ids = remote_media_status_ids_for_filter(
+            &db,
+            query.only_media.unwrap_or(false),
+            &remote_statuses,
+        )
+        .await?;
+        for (status, actor) in remote_statuses {
+            if query.only_media.unwrap_or(false) && !remote_media_status_ids.contains(&status.id) {
                 continue;
             }
             entries.push((
@@ -516,16 +539,20 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     }
 
     if include_remote {
-        for (status, actor) in
-            list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
-        {
+        let remote_statuses =
+            list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
+        let remote_media_status_ids = remote_media_status_ids_for_filter(
+            &db,
+            query.only_media.unwrap_or(false),
+            &remote_statuses,
+        )
+        .await?;
+        for (status, actor) in remote_statuses {
             let status_tags = extract_hashtags_from_html(&status.content_html);
             if !matches_tag_timeline_filters(&status_tags, &tag, &query) {
                 continue;
             }
-            if query.only_media.unwrap_or(false)
-                && !remote_status_has_media(&db, &status.id).await?
-            {
+            if query.only_media.unwrap_or(false) && !remote_media_status_ids.contains(&status.id) {
                 continue;
             }
             entries.push((

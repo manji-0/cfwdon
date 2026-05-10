@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::content_helpers::{
     extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
@@ -27,6 +27,19 @@ pub(crate) struct TagSearchMetrics {
     pub(crate) statuses_count: u64,
     pub(crate) accounts_count: u64,
     pub(crate) last_status_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagSearchRow {
+    tag: String,
+    statuses_count: u64,
+    accounts_count: u64,
+    last_status_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IndexedTagRow {
+    tag: String,
 }
 
 pub(crate) fn tag_search_sort_key(
@@ -150,13 +163,97 @@ pub(crate) async fn search_tags_for_v2(
     }
 
     let fetch_limit = limit.saturating_add(offset).clamp(limit, 200);
+    let mut matches = search_indexed_tags_for_v2(db, &needle, fetch_limit).await?;
+    let mut merged = matches.drain(..).collect::<HashMap<_, _>>();
+    for (tag, metrics) in scan_tags_for_v2(db, &needle, fetch_limit).await? {
+        merged.insert(tag, metrics);
+    }
+
+    Ok(
+        paginate_tag_search_matches(&needle, merged.into_iter().collect(), limit, offset)
+            .into_iter()
+            .map(|(tag, metrics)| build_tag_response_with_metrics(config, &tag, metrics))
+            .collect(),
+    )
+}
+
+async fn search_indexed_tags_for_v2(
+    db: &D1Database,
+    needle: &str,
+    fetch_limit: u32,
+) -> Result<Vec<(String, TagSearchMetrics)>> {
+    let upper_bound =
+        tag_prefix_upper_bound(needle).unwrap_or_else(|| format!("{needle}\u{10ffff}"));
+    let bindings = [
+        D1Type::Text(needle),
+        D1Type::Text(upper_bound.as_str()),
+        D1Type::Integer(fetch_limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT tag,
+                    SUM(statuses_count) AS statuses_count,
+                    SUM(accounts_count) AS accounts_count,
+                    MAX(last_status_at) AS last_status_at
+             FROM (
+                 SELECT h.tag AS tag,
+                        COUNT(*) AS statuses_count,
+                        COUNT(DISTINCT h.account_id) AS accounts_count,
+                        MAX(substr(h.created_at, 1, 10)) AS last_status_at
+	                 FROM status_hashtags h
+	                 JOIN statuses s ON s.id = h.status_id
+	                 WHERE s.visibility = 'public'
+	                   AND h.tag >= ?1
+	                   AND h.tag < ?2
+	                 GROUP BY h.tag
+	                 UNION ALL
+	                 SELECT h.tag AS tag,
+                        COUNT(*) AS statuses_count,
+                        COUNT(DISTINCT h.actor_uri) AS accounts_count,
+                        MAX(substr(h.published_at, 1, 10)) AS last_status_at
+	                 FROM remote_status_hashtags h
+	                 JOIN remote_statuses rs ON rs.id = h.status_id
+	                 WHERE rs.visibility = 'public'
+	                   AND h.tag >= ?1
+	                   AND h.tag < ?2
+	                 GROUP BY h.tag
+	             )
+	             GROUP BY tag
+	             ORDER BY statuses_count DESC, last_status_at DESC, tag ASC
+	             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<TagSearchRow>()?
+        .into_iter()
+        .map(|row| {
+            (
+                row.tag,
+                TagSearchMetrics {
+                    statuses_count: row.statuses_count,
+                    accounts_count: row.accounts_count,
+                    last_status_at: row.last_status_at,
+                },
+            )
+        })
+        .collect::<Vec<_>>())
+}
+
+async fn scan_tags_for_v2(
+    db: &D1Database,
+    needle: &str,
+    fetch_limit: u32,
+) -> Result<Vec<(String, TagSearchMetrics)>> {
     let mut matches = Vec::new();
     let mut seen = HashSet::new();
 
     let cursor = ResolvedTimelineCursor::default();
     for status in list_local_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_text(&status._text_content) {
-            if tag_matches_search_query(&needle, &tag) && seen.insert(tag.clone()) {
+            if tag_matches_search_query(needle, &tag) && seen.insert(tag.clone()) {
                 matches.push(tag);
             }
         }
@@ -164,7 +261,7 @@ pub(crate) async fn search_tags_for_v2(
 
     for (status, _) in list_remote_public_timeline_statuses(db, &cursor, fetch_limit).await? {
         for tag in extract_hashtags_from_html(&status.content_html) {
-            if tag_matches_search_query(&needle, &tag) && seen.insert(tag.clone()) {
+            if tag_matches_search_query(needle, &tag) && seen.insert(tag.clone()) {
                 matches.push(tag);
             }
         }
@@ -172,17 +269,135 @@ pub(crate) async fn search_tags_for_v2(
 
     let mut ranked_matches = Vec::with_capacity(matches.len());
     for tag in matches {
-        ranked_matches.push((tag.clone(), load_tag_search_metrics(db, &tag).await?));
+        ranked_matches.push((
+            tag.clone(),
+            load_scanned_tag_search_metrics(db, &tag).await?,
+        ));
     }
 
-    let matches = paginate_tag_search_matches(&needle, ranked_matches, limit, offset);
+    Ok(ranked_matches)
+}
 
-    let mut responses = Vec::with_capacity(matches.len());
-    for (tag, metrics) in matches {
-        responses.push(build_tag_response_with_metrics(config, &tag, metrics));
+fn tag_prefix_upper_bound(value: &str) -> Option<String> {
+    let (last_index, last_char) = value.char_indices().next_back()?;
+    let next_char = char::from_u32(last_char as u32 + 1)?;
+    let mut upper = value[..last_index].to_owned();
+    upper.push(next_char);
+    Some(upper)
+}
+
+pub(crate) async fn replace_local_status_hashtags(
+    db: &D1Database,
+    status_id: &str,
+    account_id: &str,
+    created_at: &str,
+    text: &str,
+) -> Result<()> {
+    let existing = load_local_status_hashtag_names(db, status_id).await?;
+    let next = extract_hashtags_from_text(text)
+        .into_iter()
+        .collect::<HashSet<_>>();
+
+    for tag in existing.difference(&next) {
+        let bindings = [D1Type::Text(status_id), D1Type::Text(tag.as_str())];
+        db.prepare("DELETE FROM status_hashtags WHERE status_id = ?1 AND tag = ?2")
+            .bind_refs(bindings.iter())?
+            .run()
+            .await?;
     }
 
-    Ok(responses)
+    for tag in next.difference(&existing) {
+        let bindings = [
+            D1Type::Text(status_id),
+            D1Type::Text(tag.as_str()),
+            D1Type::Text(account_id),
+            D1Type::Text(created_at),
+        ];
+        db.prepare(
+            "INSERT OR IGNORE INTO status_hashtags (status_id, tag, account_id, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn load_local_status_hashtag_names(
+    db: &D1Database,
+    status_id: &str,
+) -> Result<HashSet<String>> {
+    let status_binding = D1Type::Text(status_id);
+    let result = db
+        .prepare("SELECT tag FROM status_hashtags WHERE status_id = ?1")
+        .bind_refs(&status_binding)?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<IndexedTagRow>()?
+        .into_iter()
+        .map(|row| row.tag)
+        .collect())
+}
+
+pub(crate) async fn replace_remote_status_hashtags(
+    db: &D1Database,
+    status_id: &str,
+    actor_uri: &str,
+    published_at: &str,
+    content_html: &str,
+) -> Result<()> {
+    let existing = load_remote_status_hashtag_names(db, status_id).await?;
+    let next = extract_hashtags_from_html(content_html)
+        .into_iter()
+        .collect::<HashSet<_>>();
+
+    for tag in existing.difference(&next) {
+        let bindings = [D1Type::Text(status_id), D1Type::Text(tag.as_str())];
+        db.prepare("DELETE FROM remote_status_hashtags WHERE status_id = ?1 AND tag = ?2")
+            .bind_refs(bindings.iter())?
+            .run()
+            .await?;
+    }
+
+    for tag in next.difference(&existing) {
+        let bindings = [
+            D1Type::Text(status_id),
+            D1Type::Text(tag.as_str()),
+            D1Type::Text(actor_uri),
+            D1Type::Text(published_at),
+        ];
+        db.prepare(
+            "INSERT OR IGNORE INTO remote_status_hashtags (status_id, tag, actor_uri, published_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn load_remote_status_hashtag_names(
+    db: &D1Database,
+    status_id: &str,
+) -> Result<HashSet<String>> {
+    let status_binding = D1Type::Text(status_id);
+    let result = db
+        .prepare("SELECT tag FROM remote_status_hashtags WHERE status_id = ?1")
+        .bind_refs(&status_binding)?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<IndexedTagRow>()?
+        .into_iter()
+        .map(|row| row.tag)
+        .collect())
 }
 
 pub(crate) async fn build_tag_response(
@@ -231,8 +446,16 @@ pub(crate) async fn load_tag_search_metrics(
     db: &D1Database,
     tag: &str,
 ) -> Result<TagSearchMetrics> {
-    let local = load_local_tag_search_metrics(db, tag).await?;
-    let remote = load_remote_tag_search_metrics(db, tag).await?;
+    let scanned = load_scanned_tag_search_metrics(db, tag).await?;
+    if scanned.statuses_count > 0 {
+        return Ok(scanned);
+    }
+    load_indexed_tag_search_metrics(db, tag).await
+}
+
+async fn load_scanned_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+    let local = load_scanned_local_tag_search_metrics(db, tag).await?;
+    let remote = load_scanned_remote_tag_search_metrics(db, tag).await?;
     Ok(TagSearchMetrics {
         statuses_count: local.statuses_count + remote.statuses_count,
         accounts_count: local.accounts_count + remote.accounts_count,
@@ -245,7 +468,42 @@ pub(crate) async fn load_tag_search_metrics(
     })
 }
 
-async fn load_local_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+async fn load_indexed_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+    let tag = normalize_hashtag(tag);
+    let bindings = [D1Type::Text(tag.as_str())];
+    Ok(db
+        .prepare(
+            "SELECT COALESCE(SUM(statuses_count), 0) AS statuses_count,
+                    COALESCE(SUM(accounts_count), 0) AS accounts_count,
+                    MAX(last_status_at) AS last_status_at
+             FROM (
+                 SELECT COUNT(*) AS statuses_count,
+                        COUNT(DISTINCT h.account_id) AS accounts_count,
+                        MAX(substr(h.created_at, 1, 10)) AS last_status_at
+                 FROM status_hashtags h
+                 JOIN statuses s ON s.id = h.status_id
+                 WHERE s.visibility = 'public'
+                   AND h.tag = ?1
+                 UNION ALL
+                 SELECT COUNT(*) AS statuses_count,
+                        COUNT(DISTINCT h.actor_uri) AS accounts_count,
+                        MAX(substr(h.published_at, 1, 10)) AS last_status_at
+                 FROM remote_status_hashtags h
+                 JOIN remote_statuses rs ON rs.id = h.status_id
+                 WHERE rs.visibility = 'public'
+                   AND h.tag = ?1
+             )",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<TagSearchMetrics>(None)
+        .await?
+        .unwrap_or_default())
+}
+
+async fn load_scanned_local_tag_search_metrics(
+    db: &D1Database,
+    tag: &str,
+) -> Result<TagSearchMetrics> {
     let pattern = format!("%#{}%", normalize_hashtag(tag));
     let bindings = [D1Type::Text(pattern.as_str())];
     Ok(db
@@ -263,7 +521,10 @@ async fn load_local_tag_search_metrics(db: &D1Database, tag: &str) -> Result<Tag
         .unwrap_or_default())
 }
 
-async fn load_remote_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
+async fn load_scanned_remote_tag_search_metrics(
+    db: &D1Database,
+    tag: &str,
+) -> Result<TagSearchMetrics> {
     let pattern = format!("%#{}%", normalize_hashtag(tag));
     let bindings = [D1Type::Text(pattern.as_str())];
     Ok(db

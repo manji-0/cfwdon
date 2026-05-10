@@ -7,6 +7,7 @@ const ACTOR_PROFILE_HTML_PREFIX: &str = "actor_profile_html:v1:";
 const STATUS_API_PREFIX: &str = "status_api:v1:";
 const ACCOUNT_CACHE_TTL_SECONDS: u64 = 300;
 const STATUS_API_CACHE_TTL_SECONDS: u64 = 60;
+const ACCEPT_VARY_HEADER: &str = "Accept";
 
 pub(crate) async fn cached_account_api_response(
     ctx: &RouteContext<()>,
@@ -17,6 +18,7 @@ pub(crate) async fn cached_account_api_response(
         &account_api_cache_key(account_id),
         "application/json",
         "public, max-age=60, stale-while-revalidate=300",
+        None,
     )
     .await
 }
@@ -45,6 +47,7 @@ pub(crate) async fn cached_actor_json_response(
         &actor_json_cache_key(username),
         "application/activity+json",
         "public, max-age=60, stale-while-revalidate=300",
+        Some(ACCEPT_VARY_HEADER),
     )
     .await
 }
@@ -73,6 +76,7 @@ pub(crate) async fn cached_actor_profile_html_response(
         &actor_profile_html_cache_key(username),
         "text/html; charset=utf-8",
         "public, max-age=60, stale-while-revalidate=300",
+        Some(ACCEPT_VARY_HEADER),
     )
     .await
 }
@@ -100,6 +104,7 @@ pub(crate) async fn cached_status_api_response(
         &status_api_cache_key(status_id),
         "application/json",
         "public, max-age=30, stale-while-revalidate=60",
+        None,
     )
     .await
 }
@@ -123,14 +128,29 @@ pub(crate) async fn invalidate_status_api_cache(ctx: &RouteContext<()>, status_i
     delete_cache_key(ctx, &status_api_cache_key(status_id)).await;
 }
 
-pub(crate) async fn invalidate_account_public_cache(
+pub(crate) async fn invalidate_account_dynamic_public_cache(
     ctx: &RouteContext<()>,
     account_id: &str,
     username: &str,
 ) {
     delete_cache_key(ctx, &account_api_cache_key(account_id)).await;
-    delete_cache_key(ctx, &actor_json_cache_key(username)).await;
     delete_cache_key(ctx, &actor_profile_html_cache_key(username)).await;
+}
+
+pub(crate) async fn invalidate_account_public_cache(
+    ctx: &RouteContext<()>,
+    account_id: &str,
+    username: &str,
+) {
+    invalidate_account_dynamic_public_cache(ctx, account_id, username).await;
+    invalidate_account_actor_document_cache(ctx, username).await;
+}
+
+pub(crate) async fn invalidate_account_actor_document_cache(
+    ctx: &RouteContext<()>,
+    username: &str,
+) {
+    delete_cache_key(ctx, &actor_json_cache_key(username)).await;
 }
 
 async fn cached_text_response(
@@ -138,6 +158,7 @@ async fn cached_text_response(
     key: &str,
     content_type: &str,
     cache_control: &str,
+    vary: Option<&str>,
 ) -> Result<Option<Response>> {
     let Ok(kv) = ctx.kv(RESPONSE_CACHE_BINDING) else {
         return Ok(None);
@@ -148,6 +169,9 @@ async fn cached_text_response(
     let mut response = Response::ok(body)?;
     response.headers_mut().set("Content-Type", content_type)?;
     response.headers_mut().set("Cache-Control", cache_control)?;
+    if let Some(vary) = vary {
+        response.headers_mut().set("Vary", vary)?;
+    }
     response.headers_mut().set("X-Cfwdon-Cache", "kv")?;
     Ok(Some(response))
 }

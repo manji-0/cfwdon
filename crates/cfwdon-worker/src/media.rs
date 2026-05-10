@@ -1,6 +1,6 @@
 use super::{
     Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext,
-    apply_media_update, delete_media_attachment_row, delete_orphan_media,
+    apply_media_update, delete_media_attachment_row, delete_orphan_media, delete_queued_media,
     find_media_attachment_by_id, list_orphan_media, load_config, media_object_url,
     parse_media_update_request, parse_media_upload, require_authenticated_local_account,
     store_media_attachment,
@@ -55,8 +55,9 @@ pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> R
     }
 
     let bucket = ctx.bucket(&config.media_binding)?;
+    let queued_deleted = delete_queued_media(&db, &bucket, 128).await?;
     let orphans = list_orphan_media(&db, 24, 128).await?;
-    let deleted = delete_orphan_media(&db, &bucket, &orphans).await?;
+    let deleted = queued_deleted + delete_orphan_media(&db, &bucket, &orphans).await?;
 
     Response::from_json(&OrphanMediaPruneResponse { deleted })
 }

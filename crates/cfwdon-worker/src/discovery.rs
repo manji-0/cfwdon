@@ -131,7 +131,11 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
     let response = build_activitypub_actor_document(&config, &account);
     cache_actor_json_response(&ctx, &username, &response).await?;
 
-    json_response(&response, "application/activity+json", &[])
+    json_response(
+        &response,
+        "application/activity+json",
+        &[("Vary", "Accept")],
+    )
 }
 
 pub(crate) async fn remote_follow_response(
@@ -350,6 +354,7 @@ fn profile_html_response(html: String) -> Result<Response> {
     response
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;
+    response.headers_mut().set("Vary", "Accept")?;
     Ok(response)
 }
 
