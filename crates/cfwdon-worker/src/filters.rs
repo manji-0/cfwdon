@@ -3,6 +3,7 @@ use crate::{
     parse_optional_bool, require_authenticated_local_account,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::d1::D1Type;
 
@@ -26,6 +27,8 @@ struct FilterKeywordRow {
 #[derive(Debug, Deserialize)]
 struct FilterStatusRow {
     id: String,
+    #[serde(default)]
+    filter_id: String,
     status_id: String,
 }
 
@@ -37,6 +40,13 @@ struct V1FilterRow {
     expires_at: Option<String>,
     filter_action: String,
     whole_word: i32,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AccountFilterMatcher {
+    filters: Vec<FilterRow>,
+    keywords_by_filter_id: HashMap<String, Vec<FilterKeywordRow>>,
+    statuses_by_filter_id: HashMap<String, Vec<FilterStatusRow>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -279,6 +289,40 @@ async fn list_filter_keywords(
     result.results::<FilterKeywordRow>()
 }
 
+async fn list_filter_keywords_for_filters(
+    db: &worker::D1Database,
+    filters: &[FilterRow],
+) -> Result<HashMap<String, Vec<FilterKeywordRow>>> {
+    if filters.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=filters.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, filter_id, keyword, whole_word
+         FROM filter_keywords
+         WHERE filter_id IN ({placeholders})
+         ORDER BY filter_id ASC, created_at ASC, id ASC"
+    );
+    let bindings = filters
+        .iter()
+        .map(|filter| D1Type::Text(filter.id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut by_filter_id = HashMap::new();
+    for keyword in result.results::<FilterKeywordRow>()? {
+        by_filter_id
+            .entry(keyword.filter_id.clone())
+            .or_insert_with(Vec::new)
+            .push(keyword);
+    }
+
+    Ok(by_filter_id)
+}
+
 async fn find_filter_keyword(
     db: &worker::D1Database,
     account_id: &str,
@@ -314,6 +358,40 @@ async fn list_filter_statuses(
         .all()
         .await?;
     result.results::<FilterStatusRow>()
+}
+
+async fn list_filter_statuses_for_filters(
+    db: &worker::D1Database,
+    filters: &[FilterRow],
+) -> Result<HashMap<String, Vec<FilterStatusRow>>> {
+    if filters.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=filters.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, filter_id, status_id
+         FROM filter_statuses
+         WHERE filter_id IN ({placeholders})
+         ORDER BY filter_id ASC, created_at ASC, id ASC"
+    );
+    let bindings = filters
+        .iter()
+        .map(|filter| D1Type::Text(filter.id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut by_filter_id = HashMap::new();
+    for status in result.results::<FilterStatusRow>()? {
+        by_filter_id
+            .entry(status.filter_id.clone())
+            .or_insert_with(Vec::new)
+            .push(status);
+    }
+
+    Ok(by_filter_id)
 }
 
 async fn find_filter_status(
@@ -635,6 +713,81 @@ fn filter_is_expired(expires_at: Option<&str>) -> bool {
     })
 }
 
+impl AccountFilterMatcher {
+    pub(crate) fn filtered_status(
+        &self,
+        status_id: &str,
+        text: &str,
+        spoiler_text: &str,
+    ) -> Vec<serde_json::Value> {
+        if self.filters.is_empty() {
+            return Vec::new();
+        }
+
+        let haystack = format!("{}\n{}", text, spoiler_text).to_ascii_lowercase();
+        let mut filtered = Vec::new();
+
+        for filter in &self.filters {
+            if filter_is_expired(filter.expires_at.as_deref()) {
+                continue;
+            }
+
+            let keyword_matches = self
+                .keywords_by_filter_id
+                .get(&filter.id)
+                .into_iter()
+                .flatten()
+                .filter_map(|keyword| {
+                    let normalized = keyword.keyword.trim().to_ascii_lowercase();
+                    phrase_matches_text(&haystack, &normalized, keyword.whole_word != 0)
+                        .then_some(keyword.keyword.clone())
+                })
+                .collect::<Vec<_>>();
+            let status_matches = self
+                .statuses_by_filter_id
+                .get(&filter.id)
+                .into_iter()
+                .flatten()
+                .filter_map(|status_filter| {
+                    (status_filter.status_id == status_id)
+                        .then_some(status_filter.status_id.clone())
+                })
+                .collect::<Vec<_>>();
+
+            if keyword_matches.is_empty() && status_matches.is_empty() {
+                continue;
+            }
+
+            filtered.push(serde_json::json!({
+                "filter": filter_summary_document(filter),
+                "keyword_matches": if keyword_matches.is_empty() { serde_json::Value::Null } else { serde_json::json!(keyword_matches) },
+                "status_matches": if status_matches.is_empty() { serde_json::Value::Null } else { serde_json::json!(status_matches) },
+            }));
+        }
+
+        filtered
+    }
+}
+
+pub(crate) async fn load_account_filter_matcher(
+    db: &worker::D1Database,
+    account_id: &str,
+) -> Result<AccountFilterMatcher> {
+    let filters = list_filters(db, account_id).await?;
+    if filters.is_empty() {
+        return Ok(AccountFilterMatcher::default());
+    }
+
+    let keywords_by_filter_id = list_filter_keywords_for_filters(db, &filters).await?;
+    let statuses_by_filter_id = list_filter_statuses_for_filters(db, &filters).await?;
+
+    Ok(AccountFilterMatcher {
+        filters,
+        keywords_by_filter_id,
+        statuses_by_filter_id,
+    })
+}
+
 pub(crate) async fn load_status_filtered(
     db: &worker::D1Database,
     account_id: &str,
@@ -642,48 +795,9 @@ pub(crate) async fn load_status_filtered(
     text: &str,
     spoiler_text: &str,
 ) -> Result<Vec<serde_json::Value>> {
-    let filters = list_filters(db, account_id).await?;
-    if filters.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let haystack = format!("{}\n{}", text, spoiler_text).to_ascii_lowercase();
-    let mut filtered = Vec::new();
-
-    for filter in filters {
-        if filter_is_expired(filter.expires_at.as_deref()) {
-            continue;
-        }
-
-        let keywords = list_filter_keywords(db, &filter.id).await?;
-        let status_filters = list_filter_statuses(db, &filter.id).await?;
-        let keyword_matches = keywords
-            .into_iter()
-            .filter_map(|keyword| {
-                let normalized = keyword.keyword.trim().to_ascii_lowercase();
-                phrase_matches_text(&haystack, &normalized, keyword.whole_word != 0)
-                    .then_some(keyword.keyword)
-            })
-            .collect::<Vec<_>>();
-        let status_matches = status_filters
-            .into_iter()
-            .filter_map(|status_filter| {
-                (status_filter.status_id == status_id).then_some(status_filter.status_id)
-            })
-            .collect::<Vec<_>>();
-
-        if keyword_matches.is_empty() && status_matches.is_empty() {
-            continue;
-        }
-
-        filtered.push(serde_json::json!({
-            "filter": filter_summary_document(&filter),
-            "keyword_matches": if keyword_matches.is_empty() { serde_json::Value::Null } else { serde_json::json!(keyword_matches) },
-            "status_matches": if status_matches.is_empty() { serde_json::Value::Null } else { serde_json::json!(status_matches) },
-        }));
-    }
-
-    Ok(filtered)
+    Ok(load_account_filter_matcher(db, account_id)
+        .await?
+        .filtered_status(status_id, text, spoiler_text))
 }
 
 fn normalize_keyword(value: Option<&str>) -> std::result::Result<String, Error> {
@@ -1505,5 +1619,48 @@ mod tests {
         assert!(phrase_matches_text("hello world", "world", true));
         assert!(!phrase_matches_text("helloworld", "world", true));
         assert!(phrase_matches_text("helloworld", "world", false));
+    }
+
+    #[test]
+    fn account_filter_matcher_matches_keywords_and_status_ids() {
+        let matcher = AccountFilterMatcher {
+            filters: vec![FilterRow {
+                id: "filter-1".to_owned(),
+                title: "Quiet words".to_owned(),
+                context_csv: "home".to_owned(),
+                expires_at: None,
+                filter_action: "warn".to_owned(),
+            }],
+            keywords_by_filter_id: HashMap::from([(
+                "filter-1".to_owned(),
+                vec![FilterKeywordRow {
+                    id: "keyword-1".to_owned(),
+                    filter_id: "filter-1".to_owned(),
+                    keyword: "launch".to_owned(),
+                    whole_word: 1,
+                }],
+            )]),
+            statuses_by_filter_id: HashMap::from([(
+                "filter-1".to_owned(),
+                vec![FilterStatusRow {
+                    id: "status-filter-1".to_owned(),
+                    filter_id: "filter-1".to_owned(),
+                    status_id: "status-1".to_owned(),
+                }],
+            )]),
+        };
+
+        let filtered = matcher.filtered_status("status-1", "Launch day", "");
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["filter"]["id"], serde_json::json!("filter-1"));
+        assert_eq!(
+            filtered[0]["keyword_matches"],
+            serde_json::json!(["launch"])
+        );
+        assert_eq!(
+            filtered[0]["status_matches"],
+            serde_json::json!(["status-1"])
+        );
     }
 }

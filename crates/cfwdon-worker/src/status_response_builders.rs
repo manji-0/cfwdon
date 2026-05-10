@@ -1,17 +1,17 @@
 use crate::{
-    AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url, build_remote_status_card_value, build_status_card_value,
-    can_view_local_status, count_rows, effective_remote_status_quote_state,
-    effective_status_quote_state, find_account_by_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_app_by_id, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
-    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
-    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
-    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
-    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
-    load_in_reply_to_account_id, load_local_status_counts, load_mastodon_poll_response,
-    load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
-    load_status_filtered, load_status_updated_at, strip_html_tags,
+    AccountFilterMatcher, AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow,
+    RemoteActorRow, RemoteStatusRow, StatusRow, actor_url, build_remote_status_card_value,
+    build_status_card_value, can_view_local_status, count_rows,
+    effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
+    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
+    is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
+    is_remote_status_reblogged_by, load_in_reply_to_account_id, load_local_status_counts,
+    load_mastodon_poll_response, load_remote_mastodon_poll_response, load_remote_status_counts,
+    load_remote_status_updated_at, load_status_filtered, load_status_updated_at, strip_html_tags,
 };
 use worker::{D1Database, Result, d1::D1Type};
 
@@ -318,6 +318,29 @@ pub(crate) async fn build_local_status_response(
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
 ) -> Result<MastodonStatusResponse> {
+    build_local_status_response_with_filter_matcher(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        in_reply_to_account_id,
+        media_attachments,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn build_local_status_response_with_filter_matcher(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    media_attachments: Vec<MediaAttachmentRow>,
+    filter_matcher: Option<&AccountFilterMatcher>,
+) -> Result<MastodonStatusResponse> {
     build_local_status_response_inner(
         db,
         config,
@@ -326,6 +349,7 @@ pub(crate) async fn build_local_status_response(
         account,
         in_reply_to_account_id,
         media_attachments,
+        filter_matcher,
         true,
     )
     .await
@@ -339,6 +363,7 @@ async fn build_local_status_response_inner(
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
+    filter_matcher: Option<&AccountFilterMatcher>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -350,6 +375,7 @@ async fn build_local_status_response_inner(
             account,
             in_reply_to_account_id,
             boost_of_uri,
+            filter_matcher,
             include_quote,
         )
         .await;
@@ -400,8 +426,9 @@ async fn build_local_status_response_inner(
     };
     response.filtered = match viewer {
         Some(viewer) => {
-            load_status_filtered(
+            filtered_status_for_viewer(
                 db,
+                filter_matcher,
                 &viewer.id,
                 &status.id,
                 &status._text_content,
@@ -420,6 +447,7 @@ async fn build_local_status_response_inner(
             status.quote_of_uri.as_deref(),
             Some(effective_status_quote_state(status)),
             true,
+            filter_matcher,
         )
         .await?;
     }
@@ -433,7 +461,19 @@ pub(crate) async fn build_remote_status_response(
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
 ) -> Result<MastodonStatusResponse> {
-    build_remote_status_response_inner(db, config, viewer, status, actor, true).await
+    build_remote_status_response_with_filter_matcher(db, config, viewer, status, actor, None).await
+}
+
+pub(crate) async fn build_remote_status_response_with_filter_matcher(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    actor: &RemoteActorRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
+) -> Result<MastodonStatusResponse> {
+    build_remote_status_response_inner(db, config, viewer, status, actor, filter_matcher, true)
+        .await
 }
 
 async fn build_remote_status_response_inner(
@@ -442,6 +482,7 @@ async fn build_remote_status_response_inner(
     viewer: Option<&LocalAccount>,
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -452,6 +493,7 @@ async fn build_remote_status_response_inner(
             status,
             actor,
             boost_of_uri,
+            filter_matcher,
             include_quote,
         )
         .await;
@@ -489,8 +531,9 @@ async fn build_remote_status_response_inner(
     }
     response.filtered = match viewer {
         Some(viewer) => {
-            load_status_filtered(
+            filtered_status_for_viewer(
                 db,
+                filter_matcher,
                 &viewer.id,
                 &status.id,
                 &text_content,
@@ -509,6 +552,7 @@ async fn build_remote_status_response_inner(
             status.quote_of_uri.as_deref(),
             Some(effective_remote_status_quote_state(status)),
             false,
+            filter_matcher,
         )
         .await?;
     }
@@ -522,6 +566,7 @@ async fn build_quoted_status_value(
     quote_of_uri: Option<&str>,
     local_quote_state: Option<&str>,
     pending_remote_quote: bool,
+    filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<Option<serde_json::Value>> {
     let Some(quote_of_uri) = quote_of_uri else {
         return Ok(None);
@@ -547,7 +592,8 @@ async fn build_quoted_status_value(
         );
         response.card = build_status_card_value(&local_status._text_content);
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
-        response.filtered = local_status_filtered_for_viewer(db, viewer, &local_status).await?;
+        response.filtered =
+            local_status_filtered_for_viewer(db, viewer, &local_status, filter_matcher).await?;
         response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
         let (favourites_count, reblogs_count) =
             load_local_status_counts(db, &local_status.id).await?;
@@ -595,8 +641,14 @@ async fn build_quoted_status_value(
             find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
         response.card = build_remote_status_card_value(&text_content, &remote_attachments);
         response.media_attachments = remote_media_attachment_values(&remote_attachments);
-        response.filtered =
-            remote_status_filtered_for_viewer(db, viewer, &remote_status, &text_content).await?;
+        response.filtered = remote_status_filtered_for_viewer(
+            db,
+            viewer,
+            &remote_status,
+            &text_content,
+            filter_matcher,
+        )
+        .await?;
         response.mentions = build_status_mentions(db, config, &text_content).await?;
         let (favourites_count, reblogs_count) =
             load_remote_status_counts(db, &remote_status.id).await?;
@@ -637,12 +689,14 @@ async fn local_status_filtered_for_viewer(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
     status: &StatusRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<Vec<serde_json::Value>> {
     let Some(viewer) = viewer else {
         return Ok(Vec::new());
     };
-    load_status_filtered(
+    filtered_status_for_viewer(
         db,
+        filter_matcher,
         &viewer.id,
         &status.id,
         &status._text_content,
@@ -656,18 +710,35 @@ async fn remote_status_filtered_for_viewer(
     viewer: Option<&LocalAccount>,
     status: &RemoteStatusRow,
     text_content: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<Vec<serde_json::Value>> {
     let Some(viewer) = viewer else {
         return Ok(Vec::new());
     };
-    load_status_filtered(
+    filtered_status_for_viewer(
         db,
+        filter_matcher,
         &viewer.id,
         &status.id,
         text_content,
         &status.spoiler_text,
     )
     .await
+}
+
+async fn filtered_status_for_viewer(
+    db: &D1Database,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    account_id: &str,
+    status_id: &str,
+    text: &str,
+    spoiler_text: &str,
+) -> Result<Vec<serde_json::Value>> {
+    if let Some(filter_matcher) = filter_matcher {
+        return Ok(filter_matcher.filtered_status(status_id, text, spoiler_text));
+    }
+
+    load_status_filtered(db, account_id, status_id, text, spoiler_text).await
 }
 
 async fn build_remote_reblog_wrapper_response(
@@ -677,6 +748,7 @@ async fn build_remote_reblog_wrapper_response(
     wrapper_status: &RemoteStatusRow,
     wrapper_actor: &RemoteActorRow,
     boost_of_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = if let Some(local_status) =
@@ -694,6 +766,7 @@ async fn build_remote_reblog_wrapper_response(
                         &local_account,
                         load_in_reply_to_account_id(db, &local_status).await?,
                         media,
+                        filter_matcher,
                         include_quote,
                     ))
                     .await?,
@@ -719,6 +792,7 @@ async fn build_remote_reblog_wrapper_response(
                     viewer,
                     &remote_status,
                     &actor,
+                    filter_matcher,
                     include_quote,
                 ))
                 .await?,
@@ -817,6 +891,7 @@ async fn build_local_reblog_wrapper_response(
     wrapper_account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     boost_of_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = if let Some(local_status) =
@@ -834,6 +909,7 @@ async fn build_local_reblog_wrapper_response(
                         &local_account,
                         load_in_reply_to_account_id(db, &local_status).await?,
                         media,
+                        filter_matcher,
                         include_quote,
                     ))
                     .await?,
@@ -859,6 +935,7 @@ async fn build_local_reblog_wrapper_response(
                     viewer,
                     &remote_status,
                     &actor,
+                    filter_matcher,
                     include_quote,
                 )
                 .await?,

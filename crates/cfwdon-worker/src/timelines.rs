@@ -13,18 +13,19 @@ use crate::oauth_apps::{
 use crate::runtime_config::load_config;
 use crate::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
-    TimelinePaginationQuery, build_local_status_response, build_remote_status_response,
-    build_status_card_value, build_timeline_link_header, canonicalize_link_timeline_url,
-    derive_link_timeline_match_urls, enrich_card_with_remote_preview, include_local_source,
-    include_remote_source, list_followed_tag_names, list_local_direct_timeline_statuses,
+    TimelinePaginationQuery, build_local_status_response_with_filter_matcher,
+    build_remote_status_response_with_filter_matcher, build_status_card_value,
+    build_timeline_link_header, canonicalize_link_timeline_url, derive_link_timeline_match_urls,
+    enrich_card_with_remote_preview, include_local_source, include_remote_source,
+    list_followed_tag_names, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_link,
     list_local_public_statuses_by_tag, list_local_public_statuses_by_tags,
     list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
     list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
     list_remote_public_statuses_by_tags, list_remote_public_timeline_statuses,
-    load_in_reply_to_account_id, matches_tag_timeline_filters, normalize_hashtag,
-    require_authenticated_local_account, resolve_timeline_cursor, strip_html_tags,
-    timeline_fetch_limit, timeline_limit,
+    load_account_filter_matcher, load_in_reply_to_account_id, matches_tag_timeline_filters,
+    normalize_hashtag, require_authenticated_local_account, resolve_timeline_cursor,
+    strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
@@ -258,6 +259,7 @@ pub(crate) async fn home_timeline_response(
     if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
         return empty_timeline_response();
     }
+    let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
     let mut entries = Vec::new();
     let mut seen_status_ids = HashSet::new();
 
@@ -283,7 +285,7 @@ pub(crate) async fn home_timeline_response(
             status.created_at.clone(),
             status.id.clone(),
             serde_json::to_value(
-                build_local_status_response(
+                build_local_status_response_with_filter_matcher(
                     &db,
                     &config,
                     Some(&viewer),
@@ -291,6 +293,7 @@ pub(crate) async fn home_timeline_response(
                     account,
                     load_in_reply_to_account_id(&db, &status).await?,
                     media,
+                    Some(&filter_matcher),
                 )
                 .await?,
             )
@@ -311,7 +314,15 @@ pub(crate) async fn home_timeline_response(
             status.published_at.clone(),
             status.id.clone(),
             serde_json::to_value(
-                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?,
+                build_remote_status_response_with_filter_matcher(
+                    &db,
+                    &config,
+                    Some(&viewer),
+                    &status,
+                    &actor,
+                    Some(&filter_matcher),
+                )
+                .await?,
             )
             .unwrap_or(serde_json::Value::Null),
         ));
@@ -341,7 +352,7 @@ pub(crate) async fn home_timeline_response(
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response(
+                    build_local_status_response_with_filter_matcher(
                         &db,
                         &config,
                         Some(&viewer),
@@ -349,6 +360,7 @@ pub(crate) async fn home_timeline_response(
                         account,
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
+                        Some(&filter_matcher),
                     )
                     .await?,
                 )
@@ -369,8 +381,15 @@ pub(crate) async fn home_timeline_response(
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response(&db, &config, Some(&viewer), &status, &actor)
-                        .await?,
+                    build_remote_status_response_with_filter_matcher(
+                        &db,
+                        &config,
+                        Some(&viewer),
+                        &status,
+                        &actor,
+                        Some(&filter_matcher),
+                    )
+                    .await?,
                 )
                 .unwrap_or(serde_json::Value::Null),
             ));
@@ -406,6 +425,10 @@ pub(crate) async fn public_timeline_response(
     if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
         return empty_timeline_response();
     }
+    let filter_matcher = match viewer {
+        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        None => None,
+    };
     let mut entries = Vec::new();
 
     if include_local {
@@ -429,8 +452,15 @@ pub(crate) async fn public_timeline_response(
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response(
-                        &db, &config, viewer, &status, account, None, media,
+                    build_local_status_response_with_filter_matcher(
+                        &db,
+                        &config,
+                        viewer,
+                        &status,
+                        account,
+                        None,
+                        media,
+                        filter_matcher.as_ref(),
                     )
                     .await?,
                 )
@@ -456,7 +486,15 @@ pub(crate) async fn public_timeline_response(
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+                    build_remote_status_response_with_filter_matcher(
+                        &db,
+                        &config,
+                        viewer,
+                        &status,
+                        &actor,
+                        filter_matcher.as_ref(),
+                    )
+                    .await?,
                 )
                 .unwrap_or(serde_json::Value::Null),
             ));
@@ -494,6 +532,10 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
         return empty_timeline_response();
     }
+    let filter_matcher = match viewer {
+        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        None => None,
+    };
     let mut entries = Vec::new();
 
     if include_local {
@@ -522,7 +564,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response(
+                    build_local_status_response_with_filter_matcher(
                         &db,
                         &config,
                         viewer,
@@ -530,6 +572,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                         account,
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
+                        filter_matcher.as_ref(),
                     )
                     .await?,
                 )
@@ -559,7 +602,15 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+                    build_remote_status_response_with_filter_matcher(
+                        &db,
+                        &config,
+                        viewer,
+                        &status,
+                        &actor,
+                        filter_matcher.as_ref(),
+                    )
+                    .await?,
                 )
                 .unwrap_or(serde_json::Value::Null),
             ));
@@ -607,6 +658,10 @@ pub(crate) async fn link_timeline_response(
     if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
         return empty_timeline_response();
     }
+    let filter_matcher = match viewer {
+        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        None => None,
+    };
     let mut entries = Vec::new();
 
     let local_link_statuses =
@@ -627,7 +682,7 @@ pub(crate) async fn link_timeline_response(
         }
         let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         let mut value = serde_json::to_value(
-            build_local_status_response(
+            build_local_status_response_with_filter_matcher(
                 &db,
                 &config,
                 viewer,
@@ -635,6 +690,7 @@ pub(crate) async fn link_timeline_response(
                 account,
                 load_in_reply_to_account_id(&db, &status).await?,
                 media,
+                filter_matcher.as_ref(),
             )
             .await?,
         )
@@ -653,7 +709,15 @@ pub(crate) async fn link_timeline_response(
             continue;
         }
         let mut value = serde_json::to_value(
-            build_remote_status_response(&db, &config, viewer, &status, &actor).await?,
+            build_remote_status_response_with_filter_matcher(
+                &db,
+                &config,
+                viewer,
+                &status,
+                &actor,
+                filter_matcher.as_ref(),
+            )
+            .await?,
         )
         .unwrap_or(serde_json::Value::Null);
         if let Some(card) = value.get_mut("card") {
@@ -804,6 +868,7 @@ pub(crate) async fn direct_timeline_response(
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
+    let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
     let mut entries = Vec::new();
 
     for status in list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?
@@ -821,7 +886,7 @@ pub(crate) async fn direct_timeline_response(
         entries.push((
             status.created_at.clone(),
             status.id.clone(),
-            build_local_status_response(
+            build_local_status_response_with_filter_matcher(
                 &db,
                 &config,
                 Some(&viewer),
@@ -829,6 +894,7 @@ pub(crate) async fn direct_timeline_response(
                 &account,
                 load_in_reply_to_account_id(&db, &status).await?,
                 media,
+                Some(&filter_matcher),
             )
             .await?,
         ));
