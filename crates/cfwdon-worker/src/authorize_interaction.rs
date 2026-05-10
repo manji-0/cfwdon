@@ -1,8 +1,8 @@
 use super::{
     AccountReference, FollowAccountRequest, Request, Response, Result, RouteContext,
-    build_relationship_for_target, escape_html, follow_remote_account, load_config,
-    require_authenticated_local_account, resolve_account_reference, resolve_search_account,
-    upsert_local_follow,
+    build_relationship_for_target, cloudflare_access_login_url, escape_html, follow_remote_account,
+    load_config, require_authenticated_local_account, resolve_account_reference,
+    resolve_search_account, upsert_local_follow,
 };
 use worker::ResponseBody;
 
@@ -40,7 +40,7 @@ pub(crate) async fn authorize_interaction_submit_response(
     let db = ctx.d1(&config.database_binding)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return access_login_redirect(&config, &req),
     };
     let account = match resolve_search_account(&db, &config, &uri).await? {
         Some(account) => account,
@@ -115,11 +115,12 @@ pub(crate) fn authorize_interaction_document(
     authorize_interaction_page(
         "Remote follow",
         &format!(
-            r#"<p class="lead">Follow <a href="{url}">{display_name}</a> from this server.</p><p class="acct">{acct}</p><form method="post" action="/authorize_interaction"><input type="hidden" name="uri" value="{uri}"><button type="submit">Follow</button></form>"#,
+            r#"<p class="lead">Follow <a href="{url}">{display_name}</a> from this server.</p><p class="acct">{acct}</p><form method="post" action="/authorize_interaction?uri={encoded_uri}"><input type="hidden" name="uri" value="{uri}"><button type="submit">Follow</button></form>"#,
             url = escape_html(url),
             display_name = escape_html(display_name),
             acct = escape_html(acct),
             uri = escape_html(uri),
+            encoded_uri = urlencoding::encode(uri),
         ),
     )
 }
@@ -167,6 +168,23 @@ fn authorize_interaction_page(title: &str, body: &str) -> String {
 
 fn html_response(html: &str) -> Result<Response> {
     let mut response = Response::from_body(ResponseBody::Body(html.as_bytes().to_vec()))?;
+    response
+        .headers_mut()
+        .set("Content-Type", "text/html; charset=utf-8")?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(response)
+}
+
+fn access_login_redirect(config: &super::AppConfig, req: &Request) -> Result<Response> {
+    let login_url =
+        cloudflare_access_login_url(config, &req.url()?).map_err(worker::Error::RustError)?;
+    let location = login_url.as_str();
+    let escaped = escape_html(location);
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url={escaped}\"><title>Redirecting</title></head><body><main><p>Redirecting to <a href=\"{escaped}\">{escaped}</a>.</p></main></body></html>"
+    );
+    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
+    response.headers_mut().set("Location", location)?;
     response
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;

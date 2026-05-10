@@ -169,7 +169,9 @@ fn authorize_interaction_document_preserves_encoded_target_uri() {
         "https://blog.kosui.me/@kosui",
     );
 
-    assert!(html.contains("action=\"/authorize_interaction\""));
+    assert!(html.contains(
+        "action=\"/authorize_interaction?uri=https%3A%2F%2Fblog.kosui.me%2Fusers%2Fkosui\""
+    ));
     assert!(html.contains("name=\"uri\" value=\"https://blog.kosui.me/users/kosui\""));
     assert!(html.contains("kosui@blog.kosui.me"));
 }
