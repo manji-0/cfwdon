@@ -44,7 +44,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
-    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair, d1::D1Type,
+    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair,
+    console_error, d1::D1Type,
 };
 
 #[derive(Debug, Deserialize)]
@@ -1430,6 +1431,36 @@ struct StreamingBatch {
     last_id: Option<String>,
 }
 
+struct StreamingLoopState {
+    since_id: Option<String>,
+    tracked_status_ids: Vec<String>,
+    tracked_status_id_set: HashSet<String>,
+    deleted_status_ids: HashSet<String>,
+    updated_status_ids: HashSet<String>,
+    emitted_event_ids: HashSet<String>,
+    last_filter_updated_at: Option<String>,
+    last_announcements: HashMap<String, String>,
+    last_announcement_reactions: HashMap<(String, String), (u64, bool)>,
+    initialized: bool,
+}
+
+impl StreamingLoopState {
+    fn new() -> Self {
+        Self {
+            since_id: None,
+            tracked_status_ids: Vec::new(),
+            tracked_status_id_set: HashSet::new(),
+            deleted_status_ids: HashSet::new(),
+            updated_status_ids: HashSet::new(),
+            emitted_event_ids: HashSet::new(),
+            last_filter_updated_at: None,
+            last_announcements: HashMap::new(),
+            last_announcement_reactions: HashMap::new(),
+            initialized: false,
+        }
+    }
+}
+
 fn sse_comment_bytes(value: &str) -> Vec<u8> {
     format!(": {value}\n\n").into_bytes()
 }
@@ -2139,6 +2170,205 @@ async fn streaming_status_delta_events(
     Ok(events)
 }
 
+async fn poll_streaming_events(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    viewer: Option<&crate::LocalAccount>,
+    state: &mut StreamingLoopState,
+) -> Result<Vec<StreamingEvent>> {
+    let is_initial_poll = !state.initialized;
+    let batch = if stream_name == "user" {
+        let viewer = viewer.as_ref().ok_or_else(|| {
+            worker::Error::RustError("missing authenticated viewer for user stream".to_owned())
+        })?;
+        streaming_home_batch(db, config, viewer, state.since_id.as_deref()).await?
+    } else if stream_name == "user:notification" {
+        let viewer = viewer.as_ref().ok_or_else(|| {
+            worker::Error::RustError(
+                "missing authenticated viewer for notification stream".to_owned(),
+            )
+        })?;
+        streaming_notification_batch(db, config, viewer, state.since_id.as_deref()).await?
+    } else if stream_name == "list" {
+        let viewer = viewer.as_ref().ok_or_else(|| {
+            worker::Error::RustError("missing authenticated viewer for list stream".to_owned())
+        })?;
+        let list_id = list
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                worker::Error::RustError("missing list id for list stream".to_owned())
+            })?;
+        streaming_list_batch(db, config, viewer, list_id, state.since_id.as_deref()).await?
+    } else if stream_name == "direct" {
+        let viewer = viewer.as_ref().ok_or_else(|| {
+            worker::Error::RustError("missing authenticated viewer for direct stream".to_owned())
+        })?;
+        streaming_direct_batch(db, config, viewer, state.since_id.as_deref()).await?
+    } else {
+        streaming_public_batch(
+            db,
+            config,
+            viewer,
+            stream_name,
+            tag,
+            state.since_id.as_deref(),
+        )
+        .await?
+    };
+    if let Some(next_since_id) = batch.last_id.clone() {
+        state.since_id = Some(next_since_id);
+    }
+    for status_id in batch.tracked_status_ids {
+        if state.tracked_status_id_set.insert(status_id.clone()) {
+            state.tracked_status_ids.push(status_id);
+        }
+    }
+    while state.tracked_status_ids.len() > 200 {
+        let removed = state.tracked_status_ids.remove(0);
+        state.tracked_status_id_set.remove(&removed);
+    }
+    let mut events = if is_initial_poll {
+        for event in &batch.events {
+            state
+                .emitted_event_ids
+                .insert(format!("{}:{}", event.event, event.id));
+        }
+        Vec::new()
+    } else {
+        batch.events
+    };
+    if !is_initial_poll && stream_name != "user:notification" {
+        let delta_events = streaming_status_delta_events(
+            db,
+            config,
+            viewer,
+            &state.tracked_status_ids,
+            &mut state.deleted_status_ids,
+            &mut state.updated_status_ids,
+        )
+        .await?;
+        events.extend(delta_events);
+    }
+    if stream_name == "user" {
+        let viewer = viewer.as_ref().ok_or_else(|| {
+            worker::Error::RustError("missing authenticated viewer for user stream".to_owned())
+        })?;
+        let current_filter_updated_at = load_latest_filter_updated_at(db, &viewer.id).await?;
+        if let Some(current_filter_updated_at) = current_filter_updated_at {
+            let changed = state
+                .last_filter_updated_at
+                .as_deref()
+                .map(|value| value != current_filter_updated_at.as_str())
+                .unwrap_or(false);
+            if !is_initial_poll && changed {
+                events.push(StreamingEvent {
+                    created_at: current_filter_updated_at.clone(),
+                    id: current_filter_updated_at.clone(),
+                    event: "filters_changed",
+                    data: "undefined".to_owned(),
+                });
+            }
+            state.last_filter_updated_at = Some(current_filter_updated_at);
+        }
+        let read_ids = list_announcement_read_ids(db, &viewer.id).await?;
+        let reaction_state = load_announcement_reaction_state(db, &viewer.id).await?;
+        let announcements = build_announcements_document(config, &read_ids, &reaction_state);
+        let mut current_announcements = HashMap::<String, String>::new();
+        for announcement in announcements {
+            let Some(id) = announcement
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            let payload = serde_json::to_string(&announcement).map_err(|error| {
+                worker::Error::RustError(format!(
+                    "failed to serialize announcement stream payload: {error}"
+                ))
+            })?;
+            let current_reactions = announcement_reaction_entries_for_id(&reaction_state, &id);
+            let previous_reactions =
+                announcement_reaction_entries_for_id(&state.last_announcement_reactions, &id);
+            if !is_initial_poll && current_reactions != previous_reactions {
+                for (name, (count, _me)) in &current_reactions {
+                    let previous = state
+                        .last_announcement_reactions
+                        .get(&(id.clone(), name.clone()))
+                        .copied();
+                    if previous != Some((*count, *_me)) {
+                        events.push(StreamingEvent {
+                            created_at: announcement
+                                .get("published_at")
+                                .and_then(serde_json::Value::as_str)
+                                .or_else(|| {
+                                    announcement
+                                        .get("updated_at")
+                                        .and_then(serde_json::Value::as_str)
+                                })
+                                .unwrap_or_default()
+                                .to_owned(),
+                            id: format!("{id}:{name}"),
+                            event: "announcement.reaction",
+                            data: serde_json::json!({
+                                "name": name,
+                                "count": count,
+                                "announcement_id": id,
+                            })
+                            .to_string(),
+                        });
+                    }
+                }
+            } else if !is_initial_poll && state.last_announcements.get(&id) != Some(&payload) {
+                events.push(StreamingEvent {
+                    created_at: announcement
+                        .get("published_at")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| {
+                            announcement
+                                .get("updated_at")
+                                .and_then(serde_json::Value::as_str)
+                        })
+                        .unwrap_or_default()
+                        .to_owned(),
+                    id: id.clone(),
+                    event: "announcement",
+                    data: payload.clone(),
+                });
+            }
+            current_announcements.insert(id, payload);
+        }
+        for removed_id in state
+            .last_announcements
+            .keys()
+            .filter(|id| !current_announcements.contains_key(*id))
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            if !is_initial_poll {
+                events.push(StreamingEvent {
+                    created_at: now_iso_string()?,
+                    id: removed_id.clone(),
+                    event: "announcement.delete",
+                    data: removed_id,
+                });
+            }
+        }
+        state.last_announcement_reactions = reaction_state;
+        state.last_announcements = current_announcements;
+    }
+    state.initialized = true;
+    events.retain(|event| {
+        state
+            .emitted_event_ids
+            .insert(format!("{}:{}", event.event, event.id))
+    });
+    Ok(events)
+}
+
 fn build_streaming_event_stream(
     db: D1Database,
     config: cfwdon_core::AppConfig,
@@ -2153,187 +2383,32 @@ fn build_streaming_event_stream(
 > + 'static {
     try_stream! {
         yield sse_comment_bytes(&format!("stream={stream_name}"));
-        let mut since_id = None::<String>;
-        let mut tracked_status_ids = Vec::<String>::new();
-        let mut tracked_status_id_set = HashSet::<String>::new();
-        let mut deleted_status_ids = HashSet::<String>::new();
-        let mut updated_status_ids = HashSet::<String>::new();
-        let mut emitted_event_ids = HashSet::<String>::new();
-        let mut last_filter_updated_at = None::<String>;
-        let mut last_announcements = HashMap::<String, String>::new();
-        let mut last_announcement_reactions = HashMap::<(String, String), (u64, bool)>::new();
-        let mut initialized = false;
+        let mut state = StreamingLoopState::new();
         loop {
-            let is_initial_poll = !initialized;
-            let batch = if stream_name == "user" {
-                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
-                    "missing authenticated viewer for user stream".to_owned()
-                ))?;
-                streaming_home_batch(&db, &config, viewer, since_id.as_deref()).await?
-            } else if stream_name == "user:notification" {
-                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
-                    "missing authenticated viewer for notification stream".to_owned()
-                ))?;
-                streaming_notification_batch(&db, &config, viewer, since_id.as_deref()).await?
-            } else if stream_name == "list" {
-                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
-                    "missing authenticated viewer for list stream".to_owned()
-                ))?;
-                let list_id = list
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| worker::Error::RustError(
-                        "missing list id for list stream".to_owned()
-                    ))?;
-                streaming_list_batch(&db, &config, viewer, list_id, since_id.as_deref()).await?
-            } else if stream_name == "direct" {
-                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
-                    "missing authenticated viewer for direct stream".to_owned()
-                ))?;
-                streaming_direct_batch(&db, &config, viewer, since_id.as_deref()).await?
-            } else {
-                streaming_public_batch(
+            let events = match poll_streaming_events(
                     &db,
                     &config,
-                    viewer.as_ref(),
                     &stream_name,
                     tag.as_deref(),
-                    since_id.as_deref(),
-                )
-                .await?
-            };
-            if let Some(next_since_id) = batch.last_id.clone() {
-                since_id = Some(next_since_id);
-            }
-            for status_id in batch.tracked_status_ids {
-                if tracked_status_id_set.insert(status_id.clone()) {
-                    tracked_status_ids.push(status_id);
-                }
-            }
-            while tracked_status_ids.len() > 200 {
-                let removed = tracked_status_ids.remove(0);
-                tracked_status_id_set.remove(&removed);
-            }
-            let mut events = if is_initial_poll {
-                for event in &batch.events {
-                    emitted_event_ids.insert(format!("{}:{}", event.event, event.id));
-                }
-                Vec::new()
-            } else {
-                batch.events
-            };
-            if !is_initial_poll && stream_name != "user:notification" {
-                let delta_events = streaming_status_delta_events(
-                    &db,
-                    &config,
+                    list.as_deref(),
                     viewer.as_ref(),
-                    &tracked_status_ids,
-                    &mut deleted_status_ids,
-                    &mut updated_status_ids,
+                    &mut state,
                 )
-                .await?;
-                events.extend(delta_events);
-            }
-            if stream_name == "user" {
-                let viewer = viewer.as_ref().ok_or_else(|| worker::Error::RustError(
-                    "missing authenticated viewer for user stream".to_owned()
-                ))?;
-                let current_filter_updated_at =
-                    load_latest_filter_updated_at(&db, &viewer.id).await?;
-                if let Some(current_filter_updated_at) = current_filter_updated_at {
-                    let changed = last_filter_updated_at
-                        .as_deref()
-                        .map(|value| value != current_filter_updated_at.as_str())
-                        .unwrap_or(false);
-                    if !is_initial_poll && changed {
-                        events.push(StreamingEvent {
-                            created_at: current_filter_updated_at.clone(),
-                            id: current_filter_updated_at.clone(),
-                            event: "filters_changed",
-                            data: "undefined".to_owned(),
-                        });
-                    }
-                    last_filter_updated_at = Some(current_filter_updated_at);
-                }
-                let read_ids = list_announcement_read_ids(&db, &viewer.id).await?;
-                let reaction_state = load_announcement_reaction_state(&db, &viewer.id).await?;
-                let announcements =
-                    build_announcements_document(&config, &read_ids, &reaction_state);
-                let mut current_announcements = HashMap::<String, String>::new();
-                for announcement in announcements {
-                    let Some(id) = announcement
-                        .get("id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToOwned::to_owned)
-                    else {
+                .await {
+                    Ok(events) => events,
+                    Err(error) => {
+                        console_error!(
+                            "streaming poll failed stream={} tag={} list={} error={}",
+                            stream_name,
+                            tag.as_deref().unwrap_or(""),
+                            list.as_deref().unwrap_or(""),
+                            error
+                        );
+                        yield sse_comment_bytes("error=streaming_poll_failed");
+                        worker::Delay::from(Duration::from_secs(3)).await;
                         continue;
-                    };
-                    let payload = serde_json::to_string(&announcement).map_err(|error| {
-                        worker::Error::RustError(format!(
-                            "failed to serialize announcement stream payload: {error}"
-                        ))
-                    })?;
-                    let current_reactions = announcement_reaction_entries_for_id(&reaction_state, &id);
-                    let previous_reactions = announcement_reaction_entries_for_id(&last_announcement_reactions, &id);
-                    if !is_initial_poll && current_reactions != previous_reactions {
-                        for (name, (count, _me)) in &current_reactions {
-                            let previous = last_announcement_reactions
-                                .get(&(id.clone(), name.clone()))
-                                .copied();
-                            if previous != Some((*count, *_me)) {
-                                events.push(StreamingEvent {
-                                    created_at: announcement
-                                        .get("published_at")
-                                        .and_then(serde_json::Value::as_str)
-                                        .or_else(|| announcement.get("updated_at").and_then(serde_json::Value::as_str))
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    id: format!("{id}:{name}"),
-                                    event: "announcement.reaction",
-                                    data: serde_json::json!({
-                                        "name": name,
-                                        "count": count,
-                                        "announcement_id": id,
-                                    })
-                                    .to_string(),
-                                });
-                            }
-                        }
-                    } else if !is_initial_poll && last_announcements.get(&id) != Some(&payload) {
-                        events.push(StreamingEvent {
-                            created_at: announcement
-                                .get("published_at")
-                                .and_then(serde_json::Value::as_str)
-                                .or_else(|| announcement.get("updated_at").and_then(serde_json::Value::as_str))
-                                .unwrap_or_default()
-                                .to_owned(),
-                            id: id.clone(),
-                            event: "announcement",
-                            data: payload.clone(),
-                        });
                     }
-                    current_announcements.insert(id, payload);
-                }
-                for removed_id in last_announcements
-                    .keys()
-                    .filter(|id| !current_announcements.contains_key(*id))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                {
-                    if !is_initial_poll {
-                        events.push(StreamingEvent {
-                            created_at: now_iso_string()?,
-                            id: removed_id.clone(),
-                            event: "announcement.delete",
-                            data: removed_id,
-                        });
-                    }
-                }
-                last_announcement_reactions = reaction_state;
-                last_announcements = current_announcements;
-            }
-            initialized = true;
-            events.retain(|event| emitted_event_ids.insert(format!("{}:{}", event.event, event.id)));
+                };
             if events.is_empty() {
                 yield sse_comment_bytes("thump");
             } else {
