@@ -30,9 +30,32 @@ struct WebFingerResponse {
 #[derive(Debug, serde::Serialize)]
 struct WebFingerLink {
     rel: &'static str,
-    #[serde(rename = "type")]
-    link_type: &'static str,
-    href: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    link_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    href: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    template: Option<String>,
+}
+
+impl WebFingerLink {
+    fn self_link(href: String) -> Self {
+        Self {
+            rel: "self",
+            link_type: Some("application/activity+json"),
+            href: Some(href),
+            template: None,
+        }
+    }
+
+    fn subscribe_link(template: String) -> Self {
+        Self {
+            rel: "http://ostatus.org/schema/1.0/subscribe",
+            link_type: None,
+            href: None,
+            template: Some(template),
+        }
+    }
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -59,11 +82,13 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
     let instance_host = instance_host(&config);
     let response = WebFingerResponse {
         subject: format!("acct:{}@{}", account.username, instance_host),
-        links: vec![WebFingerLink {
-            rel: "self",
-            link_type: "application/activity+json",
-            href: actor_url(&config, &account.username),
-        }],
+        links: vec![
+            WebFingerLink::self_link(actor_url(&config, &account.username)),
+            WebFingerLink::subscribe_link(format!(
+                "{}/remote-follow?domain={{uri}}",
+                actor_url(&config, &account.username)
+            )),
+        ],
     };
 
     json_response(
@@ -142,8 +167,38 @@ fn prefers_profile_html(req: &Request) -> Result<bool> {
         && !accept.contains("application/ld+json"))
 }
 
-fn remote_follow_base_url(domain: &str) -> Result<String> {
-    let domain = domain.trim().trim_end_matches('/');
+pub(crate) fn remote_follow_base_url(domain: &str) -> Result<String> {
+    let domain = remote_follow_host(domain)?;
+    let url = Url::parse(&format!("https://{domain}"))
+        .map_err(|error| Error::RustError(format!("invalid remote follow domain: {error}")))?;
+    Ok(url.to_string())
+}
+
+fn remote_follow_host(input: &str) -> Result<String> {
+    let input = input.trim().trim_end_matches('/');
+    let domain = if input
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
+    {
+        let handle = parse_webfinger_resource(input)?;
+        handle.domain.unwrap_or_default()
+    } else if let Some(url) = input
+        .contains("://")
+        .then(|| Url::parse(input))
+        .transpose()
+        .map_err(|error| Error::RustError(format!("invalid remote follow URL: {error}")))?
+    {
+        url.host_str().unwrap_or_default().to_owned()
+    } else if !input.contains('/') {
+        if let Some((_, domain)) = input.trim_start_matches('@').rsplit_once('@') {
+            domain.to_owned()
+        } else {
+            input.to_owned()
+        }
+    } else {
+        input.to_owned()
+    };
+    let domain = domain.trim().trim_end_matches('/').to_ascii_lowercase();
     if domain.is_empty() {
         return Err(Error::RustError(
             "remote follow domain is required".to_owned(),
@@ -154,14 +209,16 @@ fn remote_follow_base_url(domain: &str) -> Result<String> {
             "remote follow domain must be a hostname".to_owned(),
         ));
     }
-    let url = Url::parse(&format!("https://{domain}"))
-        .map_err(|error| Error::RustError(format!("invalid remote follow domain: {error}")))?;
-    if url.host_str().is_none() {
+    if Url::parse(&format!("https://{domain}"))
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_none()
+    {
         return Err(Error::RustError(
             "remote follow domain must include a hostname".to_owned(),
         ));
     }
-    Ok(url.to_string())
+    Ok(domain)
 }
 
 fn redirect_response(location: &str) -> Result<Response> {
@@ -275,7 +332,7 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
 <div class="note">{bio_html}</div>
 {fields_html}
 <div class="stats"><div><span class="num">{statuses}</span><span class="label">Posts</span></div><div><span class="num">{followers}</span><span class="label">Followers</span></div><div><span class="num">{following}</span><span class="label">Following</span></div></div>
-<div class="actions"><a class="button" href="{profile_url}/statuses">Public posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server" aria-label="Your home server domain" required><button class="button primary" type="submit">Remote follow</button></form></div>
+<div class="actions"><a class="button" href="{profile_url}/statuses">Public posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div>
 </section>
 <footer>Joined {created}</footer>
 </main>

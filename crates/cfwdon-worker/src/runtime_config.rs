@@ -24,6 +24,7 @@ const ROOT_ENDPOINTS: &[&str] = &[
     "/",
     "/healthz",
     "/.well-known/oauth-authorization-server",
+    "/authorize_interaction",
     "/api/v1_alpha/async_refreshes/:id",
     "/api/v1/instance",
     "/api/v1/timelines/home",

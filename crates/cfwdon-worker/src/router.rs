@@ -9,7 +9,8 @@ use super::{
     alpha_collection_response, announcement_reaction_mutation_response, announcements_response,
     annual_report_action_response, annual_report_response, annual_report_state_response,
     annual_reports_response, app_verify_credentials_response, async_refresh_response,
-    authorize_follow_request_response, block_account, blocks_response, bookmark_status,
+    authorize_follow_request_response, authorize_interaction_response,
+    authorize_interaction_submit_response, block_account, blocks_response, bookmark_status,
     bookmarks_response, check_email_confirmation_response, conversations_response,
     create_account_placeholder_response, create_alpha_collection_item_response,
     create_alpha_collection_response, create_app_response, create_domain_block_response,
@@ -408,6 +409,12 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         })
         .get_async("/api/oembed", |req, ctx| async move {
             oembed_response(req, ctx).await
+        })
+        .get_async("/authorize_interaction", |req, ctx| async move {
+            authorize_interaction_response(req, ctx).await
+        })
+        .post_async("/authorize_interaction", |req, ctx| async move {
+            authorize_interaction_submit_response(req, ctx).await
         })
         .get_async("/.well-known/nodeinfo", |_req, ctx| async move {
             nodeinfo_links_response(ctx).await
@@ -1043,6 +1050,7 @@ fn fast_router_kind(method: &str, path: &str) -> Option<FastRouterKind> {
             | "/.well-known/nodeinfo"
             | "/nodeinfo/2.0"
             | "/api/oembed"
+            | "/authorize_interaction"
     ) {
         return Some(FastRouterKind::Discovery);
     }
@@ -1261,6 +1269,12 @@ fn discovery_router() -> Router<'static, ()> {
         })
         .get_async("/api/oembed", |req, ctx| async move {
             oembed_response(req, ctx).await
+        })
+        .get_async("/authorize_interaction", |req, ctx| async move {
+            authorize_interaction_response(req, ctx).await
+        })
+        .post_async("/authorize_interaction", |req, ctx| async move {
+            authorize_interaction_submit_response(req, ctx).await
         })
 }
 

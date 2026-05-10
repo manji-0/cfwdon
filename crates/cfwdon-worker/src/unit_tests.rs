@@ -12,18 +12,18 @@ use super::{
     account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
     activitypub_media_attachment_type, activitypub_profile_attachments,
-    apply_activitypub_poll_fields, apply_html_preview_metadata, build_activitypub_actor_document,
-    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
-    build_announcements_document, build_app_verify_credentials_document,
-    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
-    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
-    build_donation_campaign_document, build_email_confirmation_html,
-    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
-    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
-    build_oauth_authorization_server_document, build_oauth_token_document,
-    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    apply_activitypub_poll_fields, apply_html_preview_metadata, authorize_interaction_document,
+    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
+    build_add_featured_activity_with_id, build_announcements_document,
+    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
+    build_deepl_request_body, build_deepl_translation_languages_document,
+    build_delete_quote_authorization_activity, build_donation_campaign_document,
+    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
+    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
+    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
+    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
@@ -56,13 +56,13 @@ use super::{
     parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
     quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
     redirect_uri_matches_registered, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, remote_poll_draft_acknowledges_local_snapshot,
-    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_quote_state_for_local_target, remote_status_has_active_quote,
-    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
-    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
-    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    remote_actor_uri_from_rest_id, remote_follow_base_url,
+    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
+    remote_poll_should_refresh, remote_quote_state_for_local_target,
+    remote_status_has_active_quote, remote_status_targets_local_viewer,
+    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
+    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
+    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -132,6 +132,46 @@ fn parse_webfinger_resource_accepts_case_insensitive_acct_scheme() {
 fn parse_webfinger_resource_rejects_non_acct_scheme() {
     let error = parse_webfinger_resource("https://example.com/users/alice").unwrap_err();
     assert!(error.to_string().contains("acct"));
+}
+
+#[test]
+fn remote_follow_base_url_accepts_domain_handle_acct_and_url() {
+    assert_eq!(
+        remote_follow_base_url("Social.Example").unwrap(),
+        "https://social.example/"
+    );
+    assert_eq!(
+        remote_follow_base_url("@alice@Social.Example").unwrap(),
+        "https://social.example/"
+    );
+    assert_eq!(
+        remote_follow_base_url("acct:alice@Social.Example").unwrap(),
+        "https://social.example/"
+    );
+    assert_eq!(
+        remote_follow_base_url("https://Social.Example/@alice").unwrap(),
+        "https://social.example/"
+    );
+}
+
+#[test]
+fn remote_follow_base_url_rejects_pathy_domains() {
+    let error = remote_follow_base_url("social.example/@alice").unwrap_err();
+    assert!(error.to_string().contains("hostname"));
+}
+
+#[test]
+fn authorize_interaction_document_preserves_encoded_target_uri() {
+    let html = authorize_interaction_document(
+        "https://blog.kosui.me/users/kosui",
+        "kosui",
+        "kosui@blog.kosui.me",
+        "https://blog.kosui.me/@kosui",
+    );
+
+    assert!(html.contains("action=\"/authorize_interaction\""));
+    assert!(html.contains("name=\"uri\" value=\"https://blog.kosui.me/users/kosui\""));
+    assert!(html.contains("kosui@blog.kosui.me"));
 }
 
 #[test]
