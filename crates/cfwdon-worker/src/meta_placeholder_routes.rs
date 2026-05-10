@@ -26,16 +26,16 @@ use crate::{
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
-    load_announcement_reaction_state, load_config, load_in_reply_to_account_id,
-    load_latest_filter_updated_at, load_remote_status_updated_at, load_status_updated_at,
-    local_status_ap_id, local_status_target_uri, matches_tag_timeline_filters, media_object_url,
-    normalize_status_history_entry, now_iso_string, oauth_access_token_has_any_scope,
-    oauth_app_has_any_scope, oauth_app_scopes, parse_optional_bool, parse_relationship_query_ids,
-    queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
-    remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
-    resolve_status_reference, resolve_timeline_cursor, send_push_notification,
-    status_has_active_quote, store_account_password, timeline_fetch_limit, timeline_limit,
-    update_remote_status_quote_state,
+    load_announcement_reaction_state, load_config, load_config_from_env,
+    load_in_reply_to_account_id, load_latest_filter_updated_at, load_remote_status_updated_at,
+    load_status_updated_at, local_status_ap_id, local_status_target_uri,
+    matches_tag_timeline_filters, media_object_url, normalize_status_history_entry, now_iso_string,
+    oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
+    parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity,
+    queue_remote_actor_activity_required, remote_account_rest_id, remote_status_has_active_quote,
+    remote_status_has_media, resolve_account_reference, resolve_status_reference,
+    resolve_timeline_cursor, send_push_notification, status_has_active_quote,
+    store_account_password, timeline_fetch_limit, timeline_limit, update_remote_status_quote_state,
 };
 use async_stream::try_stream;
 use futures_util::{StreamExt, pin_mut};
@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
-    D1Database, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair, d1::D1Type,
+    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair, d1::D1Type,
 };
 
 #[derive(Debug, Deserialize)]
@@ -1096,7 +1096,16 @@ fn email_confirmation_html_response(title: &str, message: &str, status: u16) -> 
 
 pub(crate) async fn oauth_authorization_server_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    Response::from_json(&build_oauth_authorization_server_document(&config))
+    oauth_authorization_server_response_for_config(&config)
+}
+
+pub(crate) fn oauth_authorization_server_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    oauth_authorization_server_response_for_config(&config)
+}
+
+fn oauth_authorization_server_response_for_config(config: &crate::AppConfig) -> Result<Response> {
+    Response::from_json(&build_oauth_authorization_server_document(config))
 }
 
 pub(crate) async fn oauth_userinfo_response(

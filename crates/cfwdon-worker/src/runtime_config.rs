@@ -1,4 +1,4 @@
-use super::{AppConfig, RouteContext, parse_csv_list};
+use super::{AppConfig, Env, RouteContext, parse_csv_list};
 use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
 
 #[derive(Debug, serde::Serialize)]
@@ -205,124 +205,147 @@ fn root_endpoint_list() -> Vec<&'static str> {
 }
 
 pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
+    config_from_vars(|key| optional_var(ctx, key))
+}
+
+pub(crate) fn load_config_from_env(env: &Env) -> AppConfig {
+    config_from_vars(|key| env.var(key).ok().map(|value| value.to_string()))
+}
+
+fn config_from_vars<F>(vars: F) -> AppConfig
+where
+    F: Fn(&str) -> Option<String>,
+{
     let mut config = AppConfig::new(
-        config_string_or_default(ctx, "INSTANCE_DOMAIN", DEFAULT_INSTANCE_DOMAIN),
-        config_string_or_default(ctx, "INSTANCE_NAME", DEFAULT_INSTANCE_NAME),
-        config_string_or_default(ctx, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
+        config_string_or_default(&vars, "INSTANCE_DOMAIN", DEFAULT_INSTANCE_DOMAIN),
+        config_string_or_default(&vars, "INSTANCE_NAME", DEFAULT_INSTANCE_NAME),
+        config_string_or_default(&vars, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
     );
 
     // Keep these grouped by product area so new environment variables land near
     // related defaults and tests.
-    set_instance_metadata_config(ctx, &mut config);
-    set_web_push_config(ctx, &mut config);
-    set_instance_document_config(ctx, &mut config);
+    set_instance_metadata_config(&vars, &mut config);
+    set_web_push_config(&vars, &mut config);
+    set_instance_document_config(&vars, &mut config);
 
-    set_timeline_access_config(ctx, &mut config);
+    set_timeline_access_config(&vars, &mut config);
 
-    set_content_config(ctx, &mut config);
-    set_access_config(ctx, &mut config);
+    set_content_config(&vars, &mut config);
+    set_access_config(&vars, &mut config);
 
     config
 }
 
-fn set_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
-    set_raw_string(ctx, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
-    set_raw_string(ctx, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
-    set_raw_string(ctx, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
-    set_raw_string(ctx, "ACCESS_AUD", &mut config.access_audience);
+fn set_access_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    set_raw_string(vars, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
+    set_raw_string(vars, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
+    set_raw_string(vars, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
+    set_raw_string(vars, "ACCESS_AUD", &mut config.access_audience);
 }
 
-fn set_content_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
-    set_trimmed_optional(ctx, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
+fn set_content_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    set_trimmed_optional(vars, "ANNOUNCEMENTS_JSON", &mut config.announcements_json);
     set_trimmed_optional(
-        ctx,
+        vars,
         "DONATION_CAMPAIGN_JSON",
         &mut config.donation_campaign_json,
     );
     set_trimmed_base_url(
-        ctx,
+        vars,
         "MEDIA_PUBLIC_BASE_URL",
         &mut config.media_public_base_url,
     );
 }
 
-fn set_web_push_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+fn set_web_push_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
     set_trimmed_optional(
-        ctx,
+        vars,
         "WEB_PUSH_VAPID_PUBLIC_KEY",
         &mut config.web_push_vapid_public_key,
     );
     set_trimmed_optional(
-        ctx,
+        vars,
         "WEB_PUSH_VAPID_PRIVATE_KEY",
         &mut config.web_push_vapid_private_key,
     );
     set_trimmed_optional(
-        ctx,
+        vars,
         "WEB_PUSH_VAPID_SUBJECT",
         &mut config.web_push_vapid_subject,
     );
 }
 
-fn set_instance_metadata_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
-    set_trimmed_optional(ctx, "SOURCE_URL", &mut config.source_url);
-    set_non_empty_csv_list(ctx, "INSTANCE_LANGUAGES", &mut config.instance_languages);
-    set_csv_list(ctx, "ADMIN_EMAILS", &mut config.admin_emails);
-    set_trimmed_optional(ctx, "CONTACT_EMAIL", &mut config.contact_email);
+fn set_instance_metadata_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    set_trimmed_optional(vars, "SOURCE_URL", &mut config.source_url);
+    set_non_empty_csv_list(vars, "INSTANCE_LANGUAGES", &mut config.instance_languages);
+    set_csv_list(vars, "ADMIN_EMAILS", &mut config.admin_emails);
+    set_trimmed_optional(vars, "CONTACT_EMAIL", &mut config.contact_email);
     set_trimmed_optional(
-        ctx,
+        vars,
         "INSTANCE_THUMBNAIL_URL",
         &mut config.instance_thumbnail_url,
     );
 }
 
-fn set_instance_document_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+fn set_instance_document_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
     set_trimmed_optional(
-        ctx,
+        vars,
         "INSTANCE_EXTENDED_DESCRIPTION_HTML",
         &mut config.instance_extended_description_html,
     );
     set_trimmed_optional(
-        ctx,
+        vars,
         "INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT",
         &mut config.instance_extended_description_updated_at,
     );
-    set_trimmed_optional(ctx, "PRIVACY_POLICY_HTML", &mut config.privacy_policy_html);
+    set_trimmed_optional(vars, "PRIVACY_POLICY_HTML", &mut config.privacy_policy_html);
     set_trimmed_optional(
-        ctx,
+        vars,
         "PRIVACY_POLICY_UPDATED_AT",
         &mut config.privacy_policy_updated_at,
     );
     set_trimmed_optional(
-        ctx,
+        vars,
         "TERMS_OF_SERVICE_HTML",
         &mut config.terms_of_service_html,
     );
     set_trimmed_optional(
-        ctx,
+        vars,
         "TERMS_OF_SERVICE_EFFECTIVE_DATE",
         &mut config.terms_of_service_effective_date,
     );
 }
 
-fn set_trimmed_optional(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) = trimmed_non_empty(optional_var(ctx, key).as_deref()) {
+fn set_trimmed_optional(
+    vars: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    target: &mut Option<String>,
+) {
+    if let Some(value) = trimmed_non_empty(vars(key).as_deref()) {
         *target = Some(value);
     }
 }
 
-fn config_string_or_default(ctx: &RouteContext<()>, key: &str, default: &str) -> String {
-    optional_var(ctx, key).unwrap_or_else(|| default.to_owned())
+fn config_string_or_default(
+    vars: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    default: &str,
+) -> String {
+    vars(key).unwrap_or_else(|| default.to_owned())
 }
 
-fn set_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<String>) {
-    if let Some(value) = optional_var(ctx, key) {
+fn set_csv_list(vars: &impl Fn(&str) -> Option<String>, key: &str, target: &mut Vec<String>) {
+    if let Some(value) = vars(key) {
         *target = parse_csv_list(&value);
     }
 }
 
-fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<String>) {
-    if let Some(value) = optional_var(ctx, key) {
+fn set_non_empty_csv_list(
+    vars: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    target: &mut Vec<String>,
+) {
+    if let Some(value) = vars(key) {
         let values = parse_csv_list(&value);
         if !values.is_empty() {
             *target = values;
@@ -330,8 +353,12 @@ fn set_non_empty_csv_list(ctx: &RouteContext<()>, key: &str, target: &mut Vec<St
     }
 }
 
-fn set_trimmed_base_url(ctx: &RouteContext<()>, key: &str, target: &mut Option<String>) {
-    if let Some(value) = normalized_optional_base_url(optional_var(ctx, key).as_deref()) {
+fn set_trimmed_base_url(
+    vars: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    target: &mut Option<String>,
+) {
+    if let Some(value) = normalized_optional_base_url(vars(key).as_deref()) {
         *target = Some(value);
     }
 }
@@ -353,47 +380,51 @@ fn normalize_optional_base_url(value: &str) -> String {
     value.trim().trim_end_matches('/').to_owned()
 }
 
-fn set_timeline_access_level(ctx: &RouteContext<()>, key: &str, target: &mut TimelineAccessLevel) {
-    if let Some(value) = parse_timeline_access_level(optional_var(ctx, key)) {
+fn set_timeline_access_level(
+    vars: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    target: &mut TimelineAccessLevel,
+) {
+    if let Some(value) = parse_timeline_access_level(vars(key)) {
         *target = value;
     }
 }
 
-fn set_timeline_access_config(ctx: &RouteContext<()>, config: &mut AppConfig) {
+fn set_timeline_access_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_LIVE_FEEDS_LOCAL",
         &mut config.timeline_live_feeds_local,
     );
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_LIVE_FEEDS_REMOTE",
         &mut config.timeline_live_feeds_remote,
     );
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_HASHTAG_FEEDS_LOCAL",
         &mut config.timeline_hashtag_feeds_local,
     );
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE",
         &mut config.timeline_hashtag_feeds_remote,
     );
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL",
         &mut config.timeline_trending_link_feeds_local,
     );
     set_timeline_access_level(
-        ctx,
+        vars,
         "TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE",
         &mut config.timeline_trending_link_feeds_remote,
     );
 }
 
-fn set_raw_string(ctx: &RouteContext<()>, key: &str, target: &mut String) {
-    if let Some(value) = optional_var(ctx, key) {
+fn set_raw_string(vars: &impl Fn(&str) -> Option<String>, key: &str, target: &mut String) {
+    if let Some(value) = vars(key) {
         *target = value;
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     update_local_status_quote_approval_policy,
 };
 use serde::Deserialize;
-use worker::{D1Database, Fetch, Headers, Method, RequestInit, d1::D1Type};
+use worker::{D1Database, Env, Fetch, Headers, Method, RequestInit, d1::D1Type};
 
 #[derive(Debug, Default, Deserialize)]
 struct InteractionPolicyUpdateRequest {
@@ -266,24 +266,33 @@ fn translation_provider_display_name(provider: &str) -> &'static str {
 pub(crate) fn configured_translation_provider(
     ctx: &RouteContext<()>,
 ) -> Option<TranslationProviderConfig> {
-    let provider = ctx
-        .var("TRANSLATION_PROVIDER")
-        .ok()
-        .map(|value| normalize_translation_provider(&value.to_string()))
+    configured_translation_provider_from_vars(|key| {
+        ctx.var(key).ok().map(|value| value.to_string())
+    })
+}
+
+pub(crate) fn configured_translation_provider_from_env(
+    env: &Env,
+) -> Option<TranslationProviderConfig> {
+    configured_translation_provider_from_vars(|key| {
+        env.var(key).ok().map(|value| value.to_string())
+    })
+}
+
+fn configured_translation_provider_from_vars<F>(vars: F) -> Option<TranslationProviderConfig>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let provider = vars("TRANSLATION_PROVIDER")
+        .map(|value| normalize_translation_provider(&value))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "libretranslate".to_owned());
     translation_provider_kind(&provider)?;
 
-    let endpoint_url = ctx
-        .var("TRANSLATION_API_URL")
-        .ok()
-        .map(|value| value.to_string())
+    let endpoint_url = vars("TRANSLATION_API_URL")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())?;
-    let api_key = ctx
-        .var("TRANSLATION_API_KEY")
-        .ok()
-        .map(|value| value.to_string())
+    let api_key = vars("TRANSLATION_API_KEY")
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
     if provider == "deepl" && api_key.is_none() {

@@ -26,7 +26,7 @@ use crate::{
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use worker::D1Database;
 use worker::{Error, Request, Response, Result, RouteContext};
 
@@ -101,6 +101,30 @@ pub(crate) fn timeline_outside_authorized_scopes_response() -> Result<Response> 
 }
 
 type TimelineEntry = (String, String, serde_json::Value);
+
+type LocalTimelinePreload = (
+    HashMap<String, crate::LocalAccount>,
+    HashMap<String, Vec<crate::MediaAttachmentRow>>,
+);
+
+async fn preload_local_timeline_rows(
+    db: &D1Database,
+    statuses: &[crate::StatusRow],
+) -> Result<LocalTimelinePreload> {
+    let account_ids = statuses
+        .iter()
+        .map(|status| status.account_id.clone())
+        .collect::<Vec<_>>();
+    let status_ids = statuses
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+
+    Ok((
+        crate::find_accounts_by_ids(db, &account_ids).await?,
+        crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
+    ))
+}
 
 fn timeline_cursor_requested(pagination: &TimelinePaginationQuery) -> bool {
     let has_max_id = pagination
@@ -219,11 +243,15 @@ pub(crate) async fn home_timeline_response(
     let mut entries = Vec::new();
     let mut seen_status_ids = HashSet::new();
 
-    for status in list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await? {
+    let local_home_statuses =
+        list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
+    let (accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows(&db, &local_home_statuses).await?;
+    for status in local_home_statuses {
         if !seen_status_ids.insert(status.id.clone()) {
             continue;
         }
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+        let Some(account) = accounts_by_id.get(&status.account_id) else {
             continue;
         };
         if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
@@ -232,7 +260,7 @@ pub(crate) async fn home_timeline_response(
         if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
             continue;
         }
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         entries.push((
             status.created_at.clone(),
             status.id.clone(),
@@ -242,7 +270,7 @@ pub(crate) async fn home_timeline_response(
                     &config,
                     Some(&viewer),
                     &status,
-                    &account,
+                    account,
                     load_in_reply_to_account_id(&db, &status).await?,
                     media,
                 )
@@ -272,11 +300,15 @@ pub(crate) async fn home_timeline_response(
     }
 
     for tag in list_followed_tag_names(&db, &viewer.id).await? {
-        for status in list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await? {
+        let local_tag_statuses =
+            list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
+        let (accounts_by_id, mut media_by_status_id) =
+            preload_local_timeline_rows(&db, &local_tag_statuses).await?;
+        for status in local_tag_statuses {
             if !seen_status_ids.insert(status.id.clone()) {
                 continue;
             }
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+            let Some(account) = accounts_by_id.get(&status.account_id) else {
                 continue;
             };
             if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
@@ -285,7 +317,7 @@ pub(crate) async fn home_timeline_response(
             if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
                 continue;
             }
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            let media = media_by_status_id.remove(&status.id).unwrap_or_default();
             entries.push((
                 status.created_at.clone(),
                 status.id.clone(),
@@ -295,7 +327,7 @@ pub(crate) async fn home_timeline_response(
                         &config,
                         Some(&viewer),
                         &status,
-                        &account,
+                        account,
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
                     )
@@ -358,8 +390,11 @@ pub(crate) async fn public_timeline_response(
     let mut entries = Vec::new();
 
     if include_local {
-        for status in list_local_public_timeline_statuses(&db, &cursor, query_limit).await? {
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+        let local_statuses = list_local_public_timeline_statuses(&db, &cursor, query_limit).await?;
+        let (accounts_by_id, mut media_by_status_id) =
+            preload_local_timeline_rows(&db, &local_statuses).await?;
+        for status in local_statuses {
+            let Some(account) = accounts_by_id.get(&status.account_id) else {
                 continue;
             };
             if let Some(viewer) = viewer
@@ -367,7 +402,7 @@ pub(crate) async fn public_timeline_response(
             {
                 continue;
             }
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            let media = media_by_status_id.remove(&status.id).unwrap_or_default();
             if query.only_media.unwrap_or(false) && media.is_empty() {
                 continue;
             }
@@ -376,7 +411,7 @@ pub(crate) async fn public_timeline_response(
                 status.id.clone(),
                 serde_json::to_value(
                     build_local_status_response(
-                        &db, &config, viewer, &status, &account, None, media,
+                        &db, &config, viewer, &status, account, None, media,
                     )
                     .await?,
                 )
@@ -439,12 +474,16 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let mut entries = Vec::new();
 
     if include_local {
-        for status in list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await? {
+        let local_statuses =
+            list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
+        let (accounts_by_id, mut media_by_status_id) =
+            preload_local_timeline_rows(&db, &local_statuses).await?;
+        for status in local_statuses {
             let status_tags = extract_hashtags_from_text(&status._text_content);
             if !matches_tag_timeline_filters(&status_tags, &tag, &query) {
                 continue;
             }
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+            let Some(account) = accounts_by_id.get(&status.account_id) else {
                 continue;
             };
             if let Some(viewer) = viewer
@@ -452,7 +491,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             {
                 continue;
             }
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+            let media = media_by_status_id.remove(&status.id).unwrap_or_default();
             if query.only_media.unwrap_or(false) && media.is_empty() {
                 continue;
             }
@@ -465,7 +504,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                         &config,
                         viewer,
                         &status,
-                        &account,
+                        account,
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
                     )
@@ -543,13 +582,15 @@ pub(crate) async fn link_timeline_response(
     }
     let mut entries = Vec::new();
 
-    for status in
-        list_local_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?
-    {
+    let local_link_statuses =
+        list_local_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?;
+    let (accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows(&db, &local_link_statuses).await?;
+    for status in local_link_statuses {
         if !status_card_url_matches_targets(&status._text_content, &target_url_set) {
             continue;
         }
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+        let Some(account) = accounts_by_id.get(&status.account_id) else {
             continue;
         };
         if let Some(viewer) = viewer
@@ -557,14 +598,14 @@ pub(crate) async fn link_timeline_response(
         {
             continue;
         }
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         let mut value = serde_json::to_value(
             build_local_status_response(
                 &db,
                 &config,
                 viewer,
                 &status,
-                &account,
+                account,
                 load_in_reply_to_account_id(&db, &status).await?,
                 media,
             )

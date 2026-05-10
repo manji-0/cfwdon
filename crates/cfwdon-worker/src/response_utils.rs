@@ -20,3 +20,14 @@ where
 
     Ok(response)
 }
+
+pub(crate) fn cache_public_response(
+    mut response: Response,
+    max_age_seconds: u32,
+) -> Result<Response> {
+    response.headers_mut().set(
+        "Cache-Control",
+        &format!("public, max-age={max_age_seconds}, stale-while-revalidate={max_age_seconds}"),
+    )?;
+    Ok(response)
+}

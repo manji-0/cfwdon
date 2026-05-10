@@ -3,7 +3,7 @@ use crate::{
     UpdateMediaRequest, parse_media_focus,
 };
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -103,6 +103,45 @@ pub(crate) async fn find_media_attachments_by_status_id(
         .await?;
 
     result.results::<MediaAttachmentRow>()
+}
+
+pub(crate) async fn find_media_attachments_by_status_ids(
+    db: &D1Database,
+    status_ids: &[String],
+) -> Result<HashMap<String, Vec<MediaAttachmentRow>>> {
+    let mut seen = HashSet::new();
+    let ids = status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, created_at
+         FROM media_attachments
+         WHERE status_id IN ({placeholders})
+         ORDER BY status_id ASC, created_at ASC, id ASC"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut by_status_id = HashMap::new();
+    for row in result.results::<MediaAttachmentRow>()? {
+        by_status_id
+            .entry(row.status_id.clone().unwrap_or_default())
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+
+    Ok(by_status_id)
 }
 
 pub(crate) async fn find_remote_status_attachments_by_status_id(

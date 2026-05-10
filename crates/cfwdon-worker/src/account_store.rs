@@ -4,6 +4,7 @@ use super::{
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -186,6 +187,44 @@ pub(crate) async fn load_account_stats(db: &D1Database, account_id: &str) -> Res
         statuses_count: status_summary.statuses_count,
         last_status_at: status_summary.last_status_at,
     })
+}
+
+pub(crate) async fn find_accounts_by_ids(
+    db: &D1Database,
+    account_ids: &[String],
+) -> Result<HashMap<String, LocalAccount>> {
+    let mut seen = HashSet::new();
+    let ids = account_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+         FROM accounts
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<AccountRow>()?
+        .into_iter()
+        .map(|row| {
+            let id = row.id.clone();
+            (id, LocalAccount::from(row))
+        })
+        .collect())
 }
 
 impl From<AccountRow> for LocalAccount {

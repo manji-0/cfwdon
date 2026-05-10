@@ -1,23 +1,25 @@
 use super::set_instance_translation_enabled;
 use super::status_placeholder_routes::{
-    configured_translation_provider, load_translation_provider_languages,
+    configured_translation_provider, configured_translation_provider_from_env,
+    load_translation_provider_languages,
 };
 use super::{
     Request, ResolvedTimelineCursor, Response, Result, RouteContext,
     build_default_privacy_policy_document, build_instance_activity_document,
     build_instance_v1_document, build_instance_v2_document, build_local_status_response,
     build_nodeinfo_document, build_nodeinfo_links_document, build_remote_status_response,
-    build_status_card_value, build_tag_response, canonicalize_link_timeline_url,
-    configured_html_document, configured_instance_languages, count_accounts_created_between,
-    count_local_statuses_between, extract_hashtags_from_html, extract_hashtags_from_text,
-    find_account_by_id, find_media_attachments_by_status_id, list_local_public_timeline_statuses,
-    list_remote_public_timeline_statuses, load_active_month_users, load_config,
-    load_in_reply_to_account_id, load_instance_summary, load_known_peer_domains,
-    load_total_local_accounts, load_total_local_statuses, require_authenticated_local_account,
-    strip_html_tags,
+    build_status_card_value, build_tag_response, cache_public_response,
+    canonicalize_link_timeline_url, configured_html_document, configured_instance_languages,
+    count_accounts_created_between, count_local_statuses_between, extract_hashtags_from_html,
+    extract_hashtags_from_text, find_account_by_id, find_media_attachments_by_status_id,
+    list_local_public_timeline_statuses, list_remote_public_timeline_statuses,
+    load_active_month_users, load_config, load_config_from_env, load_in_reply_to_account_id,
+    load_instance_summary, load_known_peer_domains, load_total_local_accounts,
+    load_total_local_statuses, require_authenticated_local_account, strip_html_tags,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
+use worker::Env;
 use worker::d1::D1Type;
 
 #[derive(Debug, serde::Deserialize)]
@@ -273,41 +275,77 @@ async fn delete_announcement_reaction(
 pub(crate) async fn instance_summary_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
+    instance_summary_response_for_config(&db, config).await
+}
+
+pub(crate) async fn instance_summary_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    instance_summary_response_for_config(&db, config).await
+}
+
+async fn instance_summary_response_for_config(
+    db: &worker::D1Database,
+    config: super::AppConfig,
+) -> Result<Response> {
     let summary = load_instance_summary(&db, config.clone()).await?;
     let active_month = load_active_month_users(&db).await?;
     let user_count = load_total_local_accounts(&db).await?;
     let status_count = load_total_local_statuses(&db).await?;
     let domain_count = load_known_peer_domains(&db, &config).await?.len() as u64;
 
-    Response::from_json(&build_instance_v1_document(
-        &summary,
-        &config,
-        active_month,
-        user_count,
-        status_count,
-        domain_count,
-    ))
+    cache_public_response(
+        Response::from_json(&build_instance_v1_document(
+            &summary,
+            &config,
+            active_month,
+            user_count,
+            status_count,
+            domain_count,
+        ))?,
+        60,
+    )
 }
 
 pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
+    instance_v2_response_for_config(&db, config, configured_translation_provider(&ctx).is_some())
+        .await
+}
+
+pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    instance_v2_response_for_config(
+        &db,
+        config,
+        configured_translation_provider_from_env(env).is_some(),
+    )
+    .await
+}
+
+async fn instance_v2_response_for_config(
+    db: &worker::D1Database,
+    config: super::AppConfig,
+    translation_enabled: bool,
+) -> Result<Response> {
     let summary = load_instance_summary(&db, config.clone()).await?;
     let active_month = load_active_month_users(&db).await?;
     let mut document = build_instance_v2_document(&summary, &config, active_month);
-    set_instance_translation_enabled(
-        &mut document,
-        configured_translation_provider(&ctx).is_some(),
-    );
+    set_instance_translation_enabled(&mut document, translation_enabled);
 
-    Response::from_json(&document)
+    cache_public_response(Response::from_json(&document)?, 60)
 }
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
 
-    Response::from_json(&load_known_peer_domains(&db, &config).await?)
+    cache_public_response(
+        Response::from_json(&load_known_peer_domains(&db, &config).await?)?,
+        300,
+    )
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -361,14 +399,21 @@ pub(crate) async fn instance_activity_response(ctx: RouteContext<()>) -> Result<
         ));
     }
 
-    Response::from_json(&build_instance_activity_document(
-        week_floor,
-        &weekly_totals,
-    ))
+    cache_public_response(
+        Response::from_json(&build_instance_activity_document(
+            week_floor,
+            &weekly_totals,
+        ))?,
+        300,
+    )
 }
 
 pub(crate) async fn instance_rules_response(_ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_json(&serde_json::json!([]))
+    instance_rules_response_direct()
+}
+
+pub(crate) fn instance_rules_response_direct() -> Result<Response> {
+    cache_public_response(Response::from_json(&serde_json::json!([]))?, 300)
 }
 
 pub(crate) async fn instance_extended_description_response(
@@ -384,7 +429,7 @@ pub(crate) async fn instance_extended_description_response(
         return Response::error("Record not found", 404);
     };
 
-    Response::from_json(&content)
+    cache_public_response(Response::from_json(&content)?, 300)
 }
 
 pub(crate) async fn instance_privacy_policy_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -397,7 +442,7 @@ pub(crate) async fn instance_privacy_policy_response(ctx: RouteContext<()>) -> R
     )
     .unwrap_or_else(|| build_default_privacy_policy_document(&config.instance_description));
 
-    Response::from_json(&content)
+    cache_public_response(Response::from_json(&content)?, 300)
 }
 
 pub(crate) async fn instance_terms_of_service_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -411,7 +456,7 @@ pub(crate) async fn instance_terms_of_service_response(ctx: RouteContext<()>) ->
         return Response::error("Record not found", 404);
     };
 
-    Response::from_json(&content)
+    cache_public_response(Response::from_json(&content)?, 300)
 }
 
 pub(crate) async fn instance_terms_of_service_version_response(
@@ -421,12 +466,28 @@ pub(crate) async fn instance_terms_of_service_version_response(
 }
 
 pub(crate) async fn instance_domain_blocks_response(_ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_json(&Vec::<serde_json::Value>::new())
+    instance_domain_blocks_response_direct()
+}
+
+pub(crate) fn instance_domain_blocks_response_direct() -> Result<Response> {
+    cache_public_response(Response::from_json(&Vec::<serde_json::Value>::new())?, 300)
 }
 
 pub(crate) async fn instance_languages_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    Response::from_json(&configured_instance_languages(&config))
+    instance_languages_response_for_config(&config)
+}
+
+pub(crate) fn instance_languages_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    instance_languages_response_for_config(&config)
+}
+
+fn instance_languages_response_for_config(config: &super::AppConfig) -> Result<Response> {
+    cache_public_response(
+        Response::from_json(&configured_instance_languages(&config))?,
+        300,
+    )
 }
 
 pub(crate) async fn instance_translation_languages_response(
@@ -643,7 +704,11 @@ pub(crate) async fn trending_tags_response(
 }
 
 pub(crate) async fn custom_emojis_response(_ctx: RouteContext<()>) -> Result<Response> {
-    Response::from_json(&serde_json::json!([]))
+    custom_emojis_response_direct()
+}
+
+pub(crate) fn custom_emojis_response_direct() -> Result<Response> {
+    cache_public_response(Response::from_json(&serde_json::json!([]))?, 300)
 }
 
 pub(crate) async fn trending_link_target_is_known(
@@ -902,22 +967,50 @@ mod tests {
 
 pub(crate) async fn nodeinfo_links_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    Response::from_json(&build_nodeinfo_links_document(&config))
+    nodeinfo_links_response_for_config(&config)
+}
+
+pub(crate) fn nodeinfo_links_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    nodeinfo_links_response_for_config(&config)
+}
+
+fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Response> {
+    cache_public_response(
+        Response::from_json(&build_nodeinfo_links_document(&config))?,
+        300,
+    )
 }
 
 pub(crate) async fn nodeinfo_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
+    nodeinfo_response_for_config(&db, config).await
+}
+
+pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    nodeinfo_response_for_config(&db, config).await
+}
+
+async fn nodeinfo_response_for_config(
+    db: &worker::D1Database,
+    config: super::AppConfig,
+) -> Result<Response> {
     let summary = load_instance_summary(&db, config.clone()).await?;
     let active_month = load_active_month_users(&db).await?;
     let user_count = load_total_local_accounts(&db).await?;
     let status_count = load_total_local_statuses(&db).await?;
 
-    Response::from_json(&build_nodeinfo_document(
-        &summary,
-        &config,
-        user_count,
-        active_month,
-        status_count,
-    ))
+    cache_public_response(
+        Response::from_json(&build_nodeinfo_document(
+            &summary,
+            &config,
+            user_count,
+            active_month,
+            status_count,
+        ))?,
+        300,
+    )
 }
