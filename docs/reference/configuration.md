@@ -105,6 +105,7 @@ If provider config is incomplete, translation integration is disabled.
 Keep JSON values compact enough for Worker vars. Prefer a future storage-backed content path for large or frequently edited content.
 
 ## Secret Handling
+<!-- constrained-by ../../wrangler.toml.example -->
 
 Use Cloudflare secrets for values that should not be committed.
 
@@ -113,6 +114,8 @@ wrangler secret put RESEND_API_KEY
 wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
 wrangler secret put TRANSLATION_API_KEY
 ```
+
+Keep machine-specific deployment copies in an ignored local file such as `wrangler.local.toml`, or in a private deployment environment. Do not commit real Access audience values, D1 database IDs, KV namespace IDs, API keys, or private key material into templates or docs.
 
 Run a dry-run before deployment.
 

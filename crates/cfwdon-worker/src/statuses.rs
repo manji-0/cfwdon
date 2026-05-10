@@ -10,7 +10,7 @@ use super::{
     find_oauth_access_token_by_bearer_token, find_oauth_app_by_bearer_token,
     find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
     find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot,
-    invalidate_account_public_cache, invalidate_status_api_cache, is_blocking_actor,
+    invalidate_account_dynamic_public_cache, invalidate_status_api_cache, is_blocking_actor,
     is_local_follower_authorized, list_status_poll_options, load_config,
     load_in_reply_to_account_id, load_mastodon_poll_response, normalize_status_history_entry,
     normalize_status_poll, now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
@@ -351,7 +351,8 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         attached_media,
     )
     .await?;
-    invalidate_account_public_cache(&ctx, &access.account.id, &access.account.username).await;
+    invalidate_account_dynamic_public_cache(&ctx, &access.account.id, &access.account.username)
+        .await;
 
     Response::from_json(&response)
 }
@@ -390,7 +391,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
     enqueue_outbox_delete(&db, &config, &requester, &status).await?;
     delete_status_by_id(&db, &status.id).await?;
     invalidate_status_api_cache(&ctx, &status.id).await;
-    invalidate_account_public_cache(&ctx, &requester.id, &requester.username).await;
+    invalidate_account_dynamic_public_cache(&ctx, &requester.id, &requester.username).await;
     if query.delete_media.unwrap_or(false) {
         let bucket = ctx.bucket(&config.media_binding)?;
         delete_media_attachments(&db, &bucket, &media).await?;

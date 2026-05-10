@@ -1,7 +1,7 @@
 use super::{
     StatusRow, actor_url, add_seconds_to_iso_string, generate_entity_id,
     initial_local_quote_approval_policy, initial_local_quote_state, now_iso_string,
-    render_status_html, require_status_by_id,
+    render_status_html, replace_local_status_hashtags, require_status_by_id,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, PollDraft, StatusDraft};
@@ -110,6 +110,8 @@ pub(crate) async fn insert_status(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    replace_local_status_hashtags(db, &status_id, &account.id, &created_at, &draft.text).await?;
 
     if let Some(poll) = draft.poll.as_ref() {
         insert_status_poll(db, &status_id, poll, &created_at).await?;
@@ -409,6 +411,9 @@ pub(crate) async fn update_local_status(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    replace_local_status_hashtags(db, &status.id, &status.account_id, &status.created_at, text)
+        .await?;
 
     require_status_by_id(db, &status.id).await
 }

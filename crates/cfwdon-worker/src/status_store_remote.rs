@@ -1,6 +1,7 @@
 use crate::{
     D1Database, RemoteActorRow, RemoteStatusRow, ResolvedTimelineCursor, Result, normalize_hashtag,
 };
+use std::collections::HashSet;
 use worker::d1::D1Type;
 
 pub(crate) async fn list_remote_public_timeline_statuses(
@@ -145,9 +146,35 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
-    let pattern = format!("%#{}%", normalize_hashtag(tag));
-    query_remote_statuses_with_actor(
-        db,
+    list_remote_public_statuses_by_tags(db, &[normalize_hashtag(tag)], cursor, limit).await
+}
+
+pub(crate) async fn list_remote_public_statuses_by_tags(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let mut seen = HashSet::new();
+    let tags = tags
+        .iter()
+        .map(|tag| normalize_hashtag(tag))
+        .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
+        .collect::<Vec<_>>();
+    if tags.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let tag_placeholders = (1..=tags.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let max_timestamp_index = tags.len() + 1;
+    let max_id_index = tags.len() + 2;
+    let min_timestamp_index = tags.len() + 3;
+    let min_id_index = tags.len() + 4;
+    let limit_index = tags.len() + 5;
+    let sql = format!(
         "SELECT
             rs.id,
             rs.actor_uri,
@@ -177,35 +204,149 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'
-           AND lower(rs.content_html) LIKE ?1
-           AND (
-                ?2 IS NULL
-                OR rs.published_at < ?2
-                OR (rs.published_at = ?2 AND rs.id < ?3)
+           AND rs.id IN (
+               SELECT h.status_id
+               FROM remote_status_hashtags h
+               WHERE h.tag IN ({tag_placeholders})
            )
            AND (
-                ?4 IS NULL
-                OR rs.published_at > ?4
-                OR (rs.published_at = ?4 AND rs.id > ?5)
+                ?{max_timestamp_index} IS NULL
+                OR rs.published_at < ?{max_timestamp_index}
+                OR (rs.published_at = ?{max_timestamp_index} AND rs.id < ?{max_id_index})
+           )
+           AND (
+                ?{min_timestamp_index} IS NULL
+                OR rs.published_at > ?{min_timestamp_index}
+                OR (rs.published_at = ?{min_timestamp_index} AND rs.id > ?{min_id_index})
            )
          ORDER BY rs.published_at DESC, rs.id DESC
-         LIMIT ?6",
-        &[
-            D1Type::Text(pattern.as_str()),
-            cursor
-                .max_timestamp
-                .as_deref()
-                .map_or(D1Type::Null, D1Type::Text),
-            cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-            cursor
-                .min_timestamp
-                .as_deref()
-                .map_or(D1Type::Null, D1Type::Text),
-            cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-            D1Type::Integer(limit as i32),
-        ],
-    )
-    .await
+         LIMIT ?{limit_index}"
+    );
+    let mut bindings = tags
+        .iter()
+        .map(|tag| D1Type::Text(tag.as_str()))
+        .collect::<Vec<_>>();
+    bindings.extend([
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]);
+
+    let rows = query_remote_statuses_with_actor(db, &sql, &bindings).await?;
+    let mut rows = rows;
+    let mut seen_ids = rows
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<HashSet<_>>();
+    for (status, actor) in
+        list_remote_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await?
+    {
+        if seen_ids.insert(status.id.clone()) {
+            rows.push((status, actor));
+        }
+    }
+    rows.sort_by(|(left_status, _), (right_status, _)| {
+        right_status
+            .published_at
+            .cmp(&left_status.published_at)
+            .then_with(|| right_status.id.cmp(&left_status.id))
+    });
+    rows.truncate(limit as usize);
+    Ok(rows)
+}
+
+async fn list_remote_public_statuses_by_tags_legacy(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let patterns = tags
+        .iter()
+        .map(|tag| format!("%#{}%", normalize_hashtag(tag)))
+        .collect::<Vec<_>>();
+    let match_clause = patterns
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("lower(rs.content_html) LIKE ?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let max_timestamp_index = patterns.len() + 1;
+    let max_id_index = patterns.len() + 2;
+    let min_timestamp_index = patterns.len() + 3;
+    let min_id_index = patterns.len() + 4;
+    let limit_index = patterns.len() + 5;
+    let sql = format!(
+        "SELECT
+            rs.id,
+            rs.actor_uri,
+            rs.object_uri,
+            rs.url,
+            rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
+            rs.content_html,
+            rs.spoiler_text,
+            rs.visibility,
+            rs.sensitive,
+            rs.language,
+            rs.quote_state,
+            rs.published_at,
+            ra.username,
+            ra.domain,
+            ra.display_name,
+            ra.summary_html,
+            ra.profile_url,
+            ra.avatar_url,
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
+         FROM remote_statuses rs
+         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         WHERE rs.visibility = 'public'
+           AND ({match_clause})
+           AND (
+                ?{max_timestamp_index} IS NULL
+                OR rs.published_at < ?{max_timestamp_index}
+                OR (rs.published_at = ?{max_timestamp_index} AND rs.id < ?{max_id_index})
+           )
+           AND (
+                ?{min_timestamp_index} IS NULL
+                OR rs.published_at > ?{min_timestamp_index}
+                OR (rs.published_at = ?{min_timestamp_index} AND rs.id > ?{min_id_index})
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?{limit_index}"
+    );
+    let mut bindings = patterns
+        .iter()
+        .map(|pattern| D1Type::Text(pattern.as_str()))
+        .collect::<Vec<_>>();
+    bindings.extend([
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]);
+
+    query_remote_statuses_with_actor(db, &sql, &bindings).await
 }
 
 pub(crate) async fn list_remote_public_statuses_by_link(

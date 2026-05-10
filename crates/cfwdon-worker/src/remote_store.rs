@@ -4,9 +4,9 @@ use crate::{
     find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
     generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
     now_iso_string, quote_target_uri_from_object, remote_quote_state_for_local_target,
-    render_status_html, replace_remote_status_attachments, send_remote_status_quote_notification,
-    send_remote_status_update_notifications, upsert_remote_status_poll,
-    visibility_from_activitypub_object,
+    render_status_html, replace_remote_status_attachments, replace_remote_status_hashtags,
+    send_remote_status_quote_notification, send_remote_status_update_notifications,
+    upsert_remote_status_poll, visibility_from_activitypub_object,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -365,6 +365,14 @@ pub(crate) async fn upsert_remote_status(
     let status = find_remote_status_by_object_uri(db, &object_uri)
         .await?
         .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))?;
+    replace_remote_status_hashtags(
+        db,
+        &status.id,
+        &status.actor_uri,
+        &status.published_at,
+        &status.content_html,
+    )
+    .await?;
     replace_remote_status_attachments(
         db,
         &status.id,

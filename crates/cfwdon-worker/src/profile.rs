@@ -48,7 +48,10 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
-    if let Some(response) = cached_account_api_response(&ctx, &account_id).await? {
+    let cacheable_account_id = account_api_cache_candidate(&account_id);
+    if cacheable_account_id
+        && let Some(response) = cached_account_api_response(&ctx, &account_id).await?
+    {
         return Ok(response);
     }
     match resolve_account_reference(&db, &account_id).await? {
@@ -64,16 +67,21 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
                         settings.show_media_replies,
                         settings.show_featured,
                     );
-            cache_account_api_response(&ctx, &account_id, &response).await?;
+            if cacheable_account_id {
+                cache_account_api_response(&ctx, &account_id, &response).await?;
+            }
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
             let response = MastodonAccountResponse::from_remote_actor(&actor);
-            cache_account_api_response(&ctx, &account_id, &response).await?;
             Response::from_json(&response)
         }
         None => Response::error("account not found", 404),
     }
+}
+
+fn account_api_cache_candidate(account_id: &str) -> bool {
+    account_id.len() == 32 && account_id.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
