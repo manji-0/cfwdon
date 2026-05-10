@@ -1,4 +1,4 @@
-use super::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, UsernameRow, count_rows};
+use super::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, UsernameRow};
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -88,41 +88,6 @@ pub(crate) async fn list_following_actor_uris(
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())
         .collect())
-}
-
-pub(crate) async fn count_accepted_following(db: &D1Database, account_id: &str) -> Result<u64> {
-    count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM follows
-         WHERE follower_account_id = ?1
-           AND state = 'accepted'",
-        account_id,
-    )
-    .await
-}
-
-pub(crate) async fn count_local_followers(db: &D1Database, account_id: &str) -> Result<u64> {
-    count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM follows
-         WHERE target_account_id = ?1
-           AND state = 'accepted'",
-        account_id,
-    )
-    .await
-}
-
-pub(crate) async fn count_remote_followers(db: &D1Database, account_id: &str) -> Result<u64> {
-    count_rows(
-        db,
-        "SELECT COUNT(*) AS count
-         FROM followers
-         WHERE account_id = ?1",
-        account_id,
-    )
-    .await
 }
 
 pub(crate) async fn has_any_local_followers_for_remote_actor(

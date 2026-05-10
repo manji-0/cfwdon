@@ -1,8 +1,9 @@
 use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
     Result, RouteContext, UpdateCredentialsField, UpdateCredentialsRequest,
-    apply_account_credentials_update, count_pending_follow_requests,
-    enqueue_profile_update_activities, find_authenticated_local_account, load_account_stats,
+    apply_account_credentials_update, cache_account_api_response, cached_account_api_response,
+    count_pending_follow_requests, enqueue_profile_update_activities,
+    find_authenticated_local_account, invalidate_account_public_cache, load_account_stats,
     load_config, media_object_url, normalize_hashtag, parse_update_credentials_request,
     render_profile_field_value_html, resolve_account_reference, resolve_lookup_account,
 };
@@ -47,23 +48,29 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
+    if let Some(response) = cached_account_api_response(&ctx, &account_id).await? {
+        return Ok(response);
+    }
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
             let stats = load_account_stats(&db, &account.id).await?;
             let settings = load_account_profile_settings(&db, &account.id).await?;
-            Response::from_json(
-                &MastodonAccountResponse::from_account_with_stats(&account, &config, &stats)
+            let response =
+                MastodonAccountResponse::from_account_with_stats(&account, &config, &stats)
                     .with_profile_settings(
                         settings.indexable,
                         settings.hide_collections,
                         settings.show_media,
                         settings.show_media_replies,
                         settings.show_featured,
-                    ),
-            )
+                    );
+            cache_account_api_response(&ctx, &account_id, &response).await?;
+            Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            Response::from_json(&MastodonAccountResponse::from_remote_actor(&actor))
+            let response = MastodonAccountResponse::from_remote_actor(&actor);
+            cache_account_api_response(&ctx, &account_id, &response).await?;
+            Response::from_json(&response)
         }
         None => Response::error("account not found", 404),
     }
@@ -193,6 +200,7 @@ pub(crate) async fn update_profile_response(
 
     let (account, settings, _stats, featured_tags) =
         update_profile_internal(req, &ctx, &config, &account).await?;
+    invalidate_account_public_cache(&ctx, &account.id, &account.username).await;
     Response::from_json(&build_profile_document(
         &account,
         &config,
@@ -258,6 +266,7 @@ async fn delete_profile_media_response(
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
     enqueue_profile_update_activities(&db, &config, &account).await?;
+    invalidate_account_public_cache(&ctx, &account.id, &account.username).await;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;

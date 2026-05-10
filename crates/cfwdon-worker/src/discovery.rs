@@ -1,10 +1,11 @@
 use super::{
     AccountStats, AppConfig, Error, LocalAccount, Request, Response, Result, RouteContext,
     actor_url, build_activitypub_actor_document, build_outbox_activities, build_tag_response,
-    ensure_account_keys, escape_html, find_account_by_username, instance_host, json_response,
-    list_follower_actor_uris, list_following_actor_uris, list_local_follower_usernames,
-    list_public_outbox_statuses, load_account_stats, load_config, media_object_url,
-    normalize_hashtag, parse_webfinger_resource, render_profile_field_value_html,
+    cache_actor_json_response, cache_actor_profile_html_response, cached_actor_json_response,
+    cached_actor_profile_html_response, ensure_account_keys, escape_html, find_account_by_username,
+    instance_host, json_response, list_follower_actor_uris, list_following_actor_uris,
+    list_local_follower_usernames, list_public_outbox_statuses, load_account_stats, load_config,
+    media_object_url, normalize_hashtag, parse_webfinger_resource, render_profile_field_value_html,
 };
 use std::collections::HashSet;
 use url::Url;
@@ -80,18 +81,30 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
+    let wants_html = prefers_profile_html(&req)?;
+    if wants_html {
+        if let Some(response) = cached_actor_profile_html_response(&ctx, &username).await? {
+            return Ok(response);
+        }
+    } else if let Some(response) = cached_actor_json_response(&ctx, &username).await? {
+        return Ok(response);
+    }
+
     let db = ctx.d1(&config.database_binding)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
     let account = ensure_account_keys(&db, account).await?;
 
-    if prefers_profile_html(&req)? {
+    if wants_html {
         let stats = load_account_stats(&db, &account.id).await?;
-        return profile_html_response(&config, &account, &stats);
+        let html = profile_html_document(&config, &account, &stats);
+        cache_actor_profile_html_response(&ctx, &username, html.clone()).await?;
+        return profile_html_response(html);
     }
 
     let response = build_activitypub_actor_document(&config, &account);
+    cache_actor_json_response(&ctx, &username, &response).await?;
 
     json_response(&response, "application/activity+json", &[])
 }
@@ -165,11 +178,11 @@ fn redirect_response(location: &str) -> Result<Response> {
     Ok(response)
 }
 
-fn profile_html_response(
+fn profile_html_document(
     config: &AppConfig,
     account: &LocalAccount,
     stats: &AccountStats,
-) -> Result<Response> {
+) -> String {
     let profile_url = actor_url(config, &account.username);
     let display_name_source = if account.display_name.trim().is_empty() {
         format!("@{}", account.username)
@@ -239,7 +252,7 @@ fn profile_html_response(
         .then_some("<span class=\"badge\">Bot</span>")
         .unwrap_or("");
     let created = escape_html(&account.created_at);
-    let html = format!(
+    format!(
         r#"<!doctype html>
 <html lang="ja">
 <head>
@@ -272,7 +285,10 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
         following = stats.following_count,
         instance = escape_html(&config.instance_name),
         statuses = stats.statuses_count,
-    );
+    )
+}
+
+fn profile_html_response(html: String) -> Result<Response> {
     let mut response = Response::from_body(ResponseBody::Body(html.into_bytes()))?;
     response
         .headers_mut()

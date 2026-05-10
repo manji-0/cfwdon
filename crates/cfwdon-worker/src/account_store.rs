@@ -1,7 +1,4 @@
-use super::{
-    count_accepted_following, count_local_followers, count_remote_followers,
-    parse_profile_fields_json,
-};
+use super::parse_profile_fields_json;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -158,34 +155,36 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
 }
 
 #[derive(Debug, Deserialize)]
-struct AccountStatusSummaryRow {
+struct AccountStatsRow {
+    followers_count: u64,
+    following_count: u64,
     statuses_count: u64,
     last_status_at: Option<String>,
 }
 
 pub(crate) async fn load_account_stats(db: &D1Database, account_id: &str) -> Result<AccountStats> {
     let account_id_binding = D1Type::Text(account_id);
-    let status_summary = db
+    let stats = db
         .prepare(
-            "SELECT COUNT(*) AS statuses_count,
-                    MAX(substr(created_at, 1, 10)) AS last_status_at
-             FROM statuses
+            "SELECT followers_count, following_count, statuses_count, last_status_at
+             FROM account_stats
              WHERE account_id = ?1",
         )
         .bind_refs(&account_id_binding)?
-        .first::<AccountStatusSummaryRow>(None)
+        .first::<AccountStatsRow>(None)
         .await?
-        .unwrap_or(AccountStatusSummaryRow {
+        .unwrap_or(AccountStatsRow {
+            followers_count: 0,
+            following_count: 0,
             statuses_count: 0,
             last_status_at: None,
         });
 
     Ok(AccountStats {
-        followers_count: count_remote_followers(db, account_id).await?
-            + count_local_followers(db, account_id).await?,
-        following_count: count_accepted_following(db, account_id).await?,
-        statuses_count: status_summary.statuses_count,
-        last_status_at: status_summary.last_status_at,
+        followers_count: stats.followers_count,
+        following_count: stats.following_count,
+        statuses_count: stats.statuses_count,
+        last_status_at: stats.last_status_at,
     })
 }
 
