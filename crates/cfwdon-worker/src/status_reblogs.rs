@@ -3,10 +3,11 @@ use super::{
     build_local_status_response, build_remote_status_response, build_undo_announce_activity,
     can_view_local_status, delete_reblog_by_target_uri, delete_reblog_wrapper_status_by_target_uri,
     find_authenticated_local_account, find_media_attachments_by_status_id,
-    find_reblog_activity_by_target_uri, is_public_activitypub_visibility, load_config,
-    load_in_reply_to_account_id, local_status_target_uri, queue_remote_actor_activity,
-    resolve_action_status, status_id_from_context, upsert_reblog_local_status,
-    upsert_reblog_remote_status, upsert_reblog_wrapper_status,
+    find_reblog_activity_by_target_uri, invalidate_status_api_cache,
+    is_public_activitypub_visibility, load_config, load_in_reply_to_account_id,
+    local_status_target_uri, queue_remote_actor_activity, resolve_action_status,
+    status_id_from_context, upsert_reblog_local_status, upsert_reblog_remote_status,
+    upsert_reblog_wrapper_status,
 };
 use serde::Deserialize;
 
@@ -46,6 +47,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 return Response::error("cannot reblog your own status", 422);
             }
             upsert_reblog_local_status(&db, &config, &viewer.id, &status, &visibility).await?;
+            invalidate_status_api_cache(&ctx, &path_status_id).await;
             let wrapper = upsert_reblog_wrapper_status(
                 &db,
                 &config,
@@ -89,6 +91,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 outbound_activity_id.as_deref(),
             )
             .await?;
+            invalidate_status_api_cache(&ctx, &path_status_id).await;
             let wrapper = upsert_reblog_wrapper_status(
                 &db,
                 &config,
@@ -138,6 +141,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                 return Response::error("status not found", 404);
             }
             delete_reblog_by_target_uri(&db, &viewer.id, &local_status_target_uri(&status)).await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             delete_reblog_wrapper_status_by_target_uri(
                 &db,
                 &viewer.id,
@@ -178,6 +182,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                         .await?;
             }
             delete_reblog_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             delete_reblog_wrapper_status_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
             let response =
                 build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;

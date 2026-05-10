@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, D1Database, RemoteStatusRow, StatusRow, count_rows, local_status_target_uri,
+    AppConfig, D1Database, RemoteStatusRow, StatusRow, local_status_target_uri,
     send_push_notification,
 };
 use serde::Deserialize;
@@ -169,33 +169,6 @@ pub(crate) async fn find_reblog_activity_by_target_uri(
     )
     .bind_refs(bindings.iter())?
     .first::<ReblogActivityRow>(None)
-    .await
-}
-
-pub(crate) async fn count_local_status_reblogs(db: &D1Database, status_id: &str) -> Result<u64> {
-    Ok(count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM reblogs WHERE status_id = ?1",
-        status_id,
-    )
-    .await?
-        + count_rows(
-            db,
-            "SELECT COUNT(*) AS count FROM remote_reblogs WHERE status_id = ?1",
-            status_id,
-        )
-        .await?)
-}
-
-pub(crate) async fn count_remote_status_reblogs(
-    db: &D1Database,
-    remote_status_id: &str,
-) -> Result<u64> {
-    count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM reblogs WHERE remote_status_id = ?1",
-        remote_status_id,
-    )
     .await
 }
 

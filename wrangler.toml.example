@@ -40,6 +40,10 @@ database_id = "replace-with-d1-database-id"
 binding = "MEDIA"
 bucket_name = "cfwdon-media"
 
+[[kv_namespaces]]
+binding = "RESPONSE_CACHE"
+id = "replace-with-kv-namespace-id"
+
 # Configure the bucket behind a public custom domain and keep that domain
 # outside Cloudflare Access. Entity payloads will use MEDIA_PUBLIC_BASE_URL
 # directly; /media/:id remains as a fallback/redirect route.

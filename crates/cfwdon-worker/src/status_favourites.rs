@@ -4,8 +4,8 @@ use super::{
     delete_favourite_by_target_uri, find_account_by_id, find_authenticated_local_account,
     find_favourite_activity_by_target_uri, find_media_attachments_by_status_id,
     find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
-    is_public_activitypub_visibility, list_favourites_for_account, load_config,
-    load_in_reply_to_account_id, local_status_target_uri, queue_remote_actor_activity,
+    invalidate_status_api_cache, is_public_activitypub_visibility, list_favourites_for_account,
+    load_config, load_in_reply_to_account_id, local_status_target_uri, queue_remote_actor_activity,
     resolve_action_status, status_id_from_context, upsert_favourite_local_status,
     upsert_favourite_remote_status,
 };
@@ -46,6 +46,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
                 return Response::error("status not found", 404);
             }
             upsert_favourite_local_status(&db, &config, &viewer.id, &status).await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             let media = find_media_attachments_by_status_id(&db, &status.id).await?;
             let response = build_local_status_response(
                 &db,
@@ -80,6 +81,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
                 outbound_activity_id.as_deref(),
             )
             .await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             let response =
                 build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
             Response::from_json(&response)
@@ -113,6 +115,7 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
             }
             delete_favourite_by_target_uri(&db, &viewer.id, &local_status_target_uri(&status))
                 .await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             let media = find_media_attachments_by_status_id(&db, &status.id).await?;
             let response = build_local_status_response(
                 &db,
@@ -146,6 +149,7 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
                         .await?;
             }
             delete_favourite_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
+            invalidate_status_api_cache(&ctx, &status_id).await;
             let response =
                 build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
             Response::from_json(&response)

@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, D1Database, RemoteStatusRow, StatusRow, count_rows, local_status_target_uri,
+    AppConfig, D1Database, RemoteStatusRow, StatusRow, local_status_target_uri,
     send_push_notification,
 };
 use serde::Deserialize;
@@ -147,33 +147,6 @@ pub(crate) async fn delete_favourite_by_target_uri(
     .await?;
 
     Ok(())
-}
-
-pub(crate) async fn count_local_status_favourites(db: &D1Database, status_id: &str) -> Result<u64> {
-    Ok(count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM favourites WHERE status_id = ?1",
-        status_id,
-    )
-    .await?
-        + count_rows(
-            db,
-            "SELECT COUNT(*) AS count FROM remote_favourites WHERE status_id = ?1",
-            status_id,
-        )
-        .await?)
-}
-
-pub(crate) async fn count_remote_status_favourites(
-    db: &D1Database,
-    remote_status_id: &str,
-) -> Result<u64> {
-    count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM favourites WHERE remote_status_id = ?1",
-        remote_status_id,
-    )
-    .await
 }
 
 pub(crate) async fn is_local_status_favourited_by(

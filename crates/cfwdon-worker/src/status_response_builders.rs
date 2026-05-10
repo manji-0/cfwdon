@@ -1,18 +1,17 @@
 use crate::{
     AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
     RemoteStatusRow, StatusRow, actor_url, build_remote_status_card_value, build_status_card_value,
-    can_view_local_status, count_local_status_favourites, count_local_status_reblogs,
-    count_remote_status_favourites, count_remote_status_reblogs, count_rows,
-    effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
-    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
-    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
-    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
-    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
-    is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
-    is_remote_status_reblogged_by, load_in_reply_to_account_id, load_mastodon_poll_response,
-    load_remote_mastodon_poll_response, load_remote_status_updated_at, load_status_filtered,
-    load_status_updated_at, strip_html_tags,
+    can_view_local_status, count_rows, effective_remote_status_quote_state,
+    effective_status_quote_state, find_account_by_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_app_by_id, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
+    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
+    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
+    load_in_reply_to_account_id, load_local_status_counts, load_mastodon_poll_response,
+    load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
+    load_status_filtered, load_status_updated_at, strip_html_tags,
 };
 use worker::{D1Database, Result, d1::D1Type};
 
@@ -367,12 +366,13 @@ async fn build_local_status_response_inner(
     response.card = build_status_card_value(&status._text_content);
     response.poll = load_mastodon_poll_response(db, &status.id, viewer).await?;
     response.mentions = build_status_mentions(db, config, &status._text_content).await?;
-    response.favourites_count = count_local_status_favourites(db, &status.id).await?;
+    let (favourites_count, reblogs_count) = load_local_status_counts(db, &status.id).await?;
+    response.favourites_count = favourites_count;
     response.favourited = match viewer {
         Some(viewer) => is_local_status_favourited_by(db, &viewer.id, status).await?,
         None => false,
     };
-    response.reblogs_count = count_local_status_reblogs(db, &status.id).await?;
+    response.reblogs_count = reblogs_count;
     response.quotes_count = count_status_quotes_by_uri(db, &response.uri).await?;
     response.reblogged = match viewer {
         Some(viewer) => is_local_status_reblogged_by(db, &viewer.id, status).await?,
@@ -459,12 +459,13 @@ async fn build_remote_status_response_inner(
     response.card = build_remote_status_card_value(&text_content, &remote_attachments);
     response.media_attachments = remote_media_attachment_values(&remote_attachments);
     response.mentions = build_status_mentions(db, config, &text_content).await?;
-    response.favourites_count = count_remote_status_favourites(db, &status.id).await?;
+    let (favourites_count, reblogs_count) = load_remote_status_counts(db, &status.id).await?;
+    response.favourites_count = favourites_count;
     response.favourited = match viewer {
         Some(viewer) => is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
         None => false,
     };
-    response.reblogs_count = count_remote_status_reblogs(db, &status.id).await?;
+    response.reblogs_count = reblogs_count;
     response.quotes_count = count_status_quotes_by_uri(db, &response.uri).await?;
     response.reblogged = match viewer {
         Some(viewer) => is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
@@ -544,12 +545,14 @@ async fn build_quoted_status_value(
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
         response.filtered = local_status_filtered_for_viewer(db, viewer, &local_status).await?;
         response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
-        response.favourites_count = count_local_status_favourites(db, &local_status.id).await?;
+        let (favourites_count, reblogs_count) =
+            load_local_status_counts(db, &local_status.id).await?;
+        response.favourites_count = favourites_count;
         response.favourited = match viewer {
             Some(viewer) => is_local_status_favourited_by(db, &viewer.id, &local_status).await?,
             None => false,
         };
-        response.reblogs_count = count_local_status_reblogs(db, &local_status.id).await?;
+        response.reblogs_count = reblogs_count;
         response.reblogged = match viewer {
             Some(viewer) => is_local_status_reblogged_by(db, &viewer.id, &local_status).await?,
             None => false,
@@ -591,14 +594,16 @@ async fn build_quoted_status_value(
         response.filtered =
             remote_status_filtered_for_viewer(db, viewer, &remote_status, &text_content).await?;
         response.mentions = build_status_mentions(db, config, &text_content).await?;
-        response.favourites_count = count_remote_status_favourites(db, &remote_status.id).await?;
+        let (favourites_count, reblogs_count) =
+            load_remote_status_counts(db, &remote_status.id).await?;
+        response.favourites_count = favourites_count;
         response.favourited = match viewer {
             Some(viewer) => {
                 is_remote_status_favourited_by(db, &viewer.id, &remote_status.id).await?
             }
             None => false,
         };
-        response.reblogs_count = count_remote_status_reblogs(db, &remote_status.id).await?;
+        response.reblogs_count = reblogs_count;
         response.reblogged = match viewer {
             Some(viewer) => {
                 is_remote_status_reblogged_by(db, &viewer.id, &remote_status.id).await?

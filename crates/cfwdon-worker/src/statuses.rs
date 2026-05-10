@@ -9,10 +9,11 @@ use super::{
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
     find_oauth_access_token_by_bearer_token, find_oauth_app_by_bearer_token,
     find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
-    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot, is_blocking_actor,
-    is_local_follower_authorized, list_status_poll_options, load_config,
-    load_in_reply_to_account_id, load_mastodon_poll_response, normalize_status_history_entry,
-    normalize_status_poll, now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
+    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot,
+    invalidate_status_api_cache, is_blocking_actor, is_local_follower_authorized,
+    list_status_poll_options, load_config, load_in_reply_to_account_id,
+    load_mastodon_poll_response, normalize_status_history_entry, normalize_status_poll,
+    now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
     parse_update_status_request, replace_status_media, replace_status_poll,
     resolve_attachable_media, resolve_editable_media, resolve_local_account,
     send_push_notification, send_status_quote_notification, send_status_update_notifications,
@@ -387,6 +388,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
 
     enqueue_outbox_delete(&db, &config, &requester, &status).await?;
     delete_status_by_id(&db, &status.id).await?;
+    invalidate_status_api_cache(&ctx, &status.id).await;
     if query.delete_media.unwrap_or(false) {
         let bucket = ctx.bucket(&config.media_binding)?;
         delete_media_attachments(&db, &bucket, &media).await?;
@@ -562,6 +564,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
     }
     enqueue_status_update_activity(&db, &config, &account, &status).await?;
     let _ = send_status_update_notifications(&db, &config, &status).await;
+    invalidate_status_api_cache(&ctx, &status.id).await;
 
     let media = find_media_attachments_by_status_id(&db, &status.id).await?;
     let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;

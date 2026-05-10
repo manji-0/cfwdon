@@ -2,8 +2,9 @@ use super::{
     Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
     build_activitypub_note, build_finished_context_async_refresh_header,
     build_local_status_context, build_local_status_response, build_remote_status_context,
-    build_remote_status_response, can_view_local_status, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
+    build_remote_status_response, cache_status_api_response, cached_status_api_response,
+    can_view_local_status, find_account_by_id, find_account_by_username,
+    find_authenticated_local_account, find_local_status_by_object_uri,
     find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     find_remote_status_attachments_by_status_id, find_remote_status_by_id,
     find_remote_status_by_url_or_object_uri, find_status_by_id, is_public_activitypub_visibility,
@@ -807,6 +808,11 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
 
     let db = ctx.d1(&config.database_binding)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
+    if viewer.is_none()
+        && let Some(response) = cached_status_api_response(&ctx, &status_id).await?
+    {
+        return Ok(response);
+    }
     let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
         return Response::error("status not found", 404);
     };
@@ -822,18 +828,20 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
 
             let media = find_media_attachments_by_status_id(&db, &status.id).await?;
             let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-            Response::from_json(
-                &build_local_status_response(
-                    &db,
-                    &config,
-                    viewer.as_ref(),
-                    &status,
-                    &account,
-                    in_reply_to_account_id,
-                    media,
-                )
-                .await?,
+            let response = build_local_status_response(
+                &db,
+                &config,
+                viewer.as_ref(),
+                &status,
+                &account,
+                in_reply_to_account_id,
+                media,
             )
+            .await?;
+            if viewer.is_none() {
+                cache_status_api_response(&ctx, &status_id, &response).await?;
+            }
+            Response::from_json(&response)
         }
         ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(&status.visibility) {
@@ -842,16 +850,13 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
             let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
                 return Response::error("status not found", 404);
             };
-            Response::from_json(
-                &crate::build_remote_status_response(
-                    &db,
-                    &config,
-                    viewer.as_ref(),
-                    &status,
-                    &actor,
-                )
-                .await?,
-            )
+            let response =
+                crate::build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
+                    .await?;
+            if viewer.is_none() {
+                cache_status_api_response(&ctx, &status_id, &response).await?;
+            }
+            Response::from_json(&response)
         }
     }
 }
