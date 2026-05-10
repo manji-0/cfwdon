@@ -96,7 +96,7 @@ pub(crate) async fn find_media_attachments_by_status_id(
             "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, created_at
              FROM media_attachments
              WHERE status_id = ?1
-             ORDER BY created_at ASC",
+             ORDER BY created_at ASC, id ASC",
         )
         .bind_refs(&status_id)?
         .all()

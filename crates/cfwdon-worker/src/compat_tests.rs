@@ -87,6 +87,7 @@ fn fixture_status() -> StatusRow {
         quote_state: "accepted".to_owned(),
         application_id: None,
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
+        updated_at: None,
     }
 }
 

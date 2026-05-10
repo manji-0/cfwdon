@@ -175,6 +175,7 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
         quote_state: update.quote_state.clone(),
         application_id: None,
         created_at: update.created_at.clone(),
+        updated_at: None,
     }
 }
 

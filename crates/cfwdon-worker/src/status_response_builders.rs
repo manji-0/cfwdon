@@ -390,7 +390,11 @@ async fn build_local_status_response_inner(
         Some(viewer) => is_local_status_thread_muted_by(db, &viewer.id, status).await?,
         None => false,
     };
-    response.edited_at = match load_status_updated_at(db, &status.id).await? {
+    let updated_at = match status.updated_at.as_deref() {
+        Some(updated_at) => Some(updated_at.to_owned()),
+        None => load_status_updated_at(db, &status.id).await?,
+    };
+    response.edited_at = match updated_at {
         Some(updated_at) if updated_at != status.created_at => Some(updated_at),
         _ => None,
     };

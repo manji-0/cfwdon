@@ -3790,6 +3790,7 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         quote_state: "accepted".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     let activity = build_activitypub_delete_with_published_at(
@@ -3843,6 +3844,7 @@ fn effective_local_quote_approval_defaults_to_public() {
         quote_state: "accepted".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     assert_eq!(effective_local_quote_approval_policy(&status), "public");
@@ -3867,6 +3869,7 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
         quote_state: "accepted".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     assert_eq!(effective_local_quote_approval_policy(&status), "nobody");
@@ -3994,6 +3997,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         quote_state: "accepted".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     assert_eq!(
@@ -4048,6 +4052,7 @@ fn effective_status_quote_state_defaults_to_accepted_without_quote() {
         quote_state: "revoked".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     assert_eq!(effective_status_quote_state(&status), "accepted");
@@ -4073,6 +4078,7 @@ fn status_has_active_quote_depends_on_quote_state() {
         quote_state: "pending".to_owned(),
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
     };
 
     assert_eq!(effective_status_quote_state(&status), "pending");

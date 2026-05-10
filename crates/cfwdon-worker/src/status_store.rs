@@ -28,6 +28,8 @@ pub(crate) struct StatusRow {
     #[serde(default)]
     pub(crate) application_id: Option<i64>,
     pub(crate) created_at: String,
+    #[serde(default)]
+    pub(crate) updated_at: Option<String>,
 }
 
 pub(crate) fn default_quote_state() -> String {

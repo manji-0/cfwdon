@@ -24,30 +24,43 @@ pub(crate) async fn list_local_home_timeline_statuses(
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
-             FROM statuses s
-             LEFT JOIN follows f
-               ON f.target_account_id = s.account_id
-              AND f.follower_account_id = ?1
-              AND f.state = 'accepted'
-             WHERE (
-                    s.account_id = ?2
-                    OR (
-                    f.follower_account_id IS NOT NULL
-                    AND s.visibility IN ('public', 'unlisted', 'private')
-                    )
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
+             FROM (
+                SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
+                FROM statuses s
+                WHERE s.account_id = ?1
+                  AND (
+                       ?3 IS NULL
+                       OR s.created_at < ?3
+                       OR (s.created_at = ?3 AND s.id < ?4)
+                  )
+                  AND (
+                       ?5 IS NULL
+                       OR s.created_at > ?5
+                       OR (s.created_at = ?5 AND s.id > ?6)
+                  )
+
+                UNION
+
+                SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
+                FROM follows f
+                JOIN statuses s
+                  ON s.account_id = f.target_account_id
+                WHERE f.follower_account_id = ?2
+                  AND f.state = 'accepted'
+                  AND s.visibility IN ('public', 'unlisted', 'private')
+                  AND (
+                       ?3 IS NULL
+                       OR s.created_at < ?3
+                       OR (s.created_at = ?3 AND s.id < ?4)
+                  )
+                  AND (
+                       ?5 IS NULL
+                       OR s.created_at > ?5
+                       OR (s.created_at = ?5 AND s.id > ?6)
+                  )
                )
-               AND (
-                    ?3 IS NULL
-                    OR s.created_at < ?3
-                    OR (s.created_at = ?3 AND s.id < ?4)
-               )
-               AND (
-                    ?5 IS NULL
-                    OR s.created_at > ?5
-                    OR (s.created_at = ?5 AND s.id > ?6)
-               )
-             ORDER BY s.created_at DESC, s.id DESC
+             ORDER BY created_at DESC, id DESC
              LIMIT ?7",
         )
         .bind_refs(bindings.iter())?
@@ -77,7 +90,7 @@ pub(crate) async fn list_local_public_timeline_statuses(
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
              FROM statuses
              WHERE visibility = 'public'
                AND (
@@ -123,7 +136,7 @@ pub(crate) async fn list_local_public_statuses_by_tag(
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
              FROM statuses
              WHERE visibility = 'public'
                AND lower(text_content) LIKE ?1
@@ -172,7 +185,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
         .join(" OR ");
     let cursor_offset = patterns.len();
     let sql = format!(
-        "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
+        "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
          FROM statuses s
          JOIN accounts a ON a.id = s.account_id
          WHERE s.visibility = 'public'
@@ -242,7 +255,7 @@ pub(crate) async fn list_local_direct_timeline_statuses(
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
+            "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
              FROM statuses s
              JOIN conversation_statuses cs
                ON cs.status_id = s.id

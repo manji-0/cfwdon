@@ -32,6 +32,7 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
         quote_state: mention.quote_state.clone(),
         application_id: None,
         created_at: mention.created_at.clone(),
+        updated_at: None,
     }
 }
 
