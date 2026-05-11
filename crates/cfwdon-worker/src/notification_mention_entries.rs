@@ -67,8 +67,14 @@ pub(crate) async fn collect_mention_notification_entries(
         return Ok(());
     }
 
-    for mention in
-        list_local_mention_notifications_for_account(db, viewer, config, per_type_limit).await?
+    for mention in list_local_mention_notifications_for_account(
+        db,
+        viewer,
+        config,
+        per_type_limit,
+        query.min_created_at.as_deref(),
+    )
+    .await?
     {
         let Some(actor) = find_account_by_id(db, &mention.account_id).await? else {
             continue;
@@ -106,8 +112,14 @@ pub(crate) async fn collect_mention_notification_entries(
         );
     }
 
-    for mention in
-        list_remote_mention_notifications_for_account(db, viewer, config, per_type_limit).await?
+    for mention in list_remote_mention_notifications_for_account(
+        db,
+        viewer,
+        config,
+        per_type_limit,
+        query.min_created_at.as_deref(),
+    )
+    .await?
     {
         if !is_public_activitypub_visibility(&mention.visibility) {
             continue;

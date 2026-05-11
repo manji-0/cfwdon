@@ -160,10 +160,32 @@ pub(crate) async fn list_favourite_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    min_created_at: Option<&str>,
 ) -> Result<Vec<FavouriteNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-    let result = db
-        .prepare(
+    let result = if let Some(min_created_at) = min_created_at {
+        let bindings = [
+            D1Type::Text(account_id),
+            D1Type::Text(min_created_at),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
+            "SELECT f.account_id, f.status_id, f.created_at
+             FROM favourites f
+             JOIN statuses s
+               ON s.id = f.status_id
+             WHERE s.account_id = ?1
+               AND f.account_id != ?1
+               AND f.status_id IS NOT NULL
+               AND f.created_at >= ?2
+             ORDER BY f.created_at DESC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+    } else {
+        let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+        db.prepare(
             "SELECT f.account_id, f.status_id, f.created_at
              FROM favourites f
              JOIN statuses s
@@ -176,7 +198,8 @@ pub(crate) async fn list_favourite_notifications_for_account(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?;
+        .await?
+    };
 
     result.results::<FavouriteNotificationRow>()
 }
@@ -185,10 +208,30 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    min_created_at: Option<&str>,
 ) -> Result<Vec<RemoteStatusInteractionRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-    let result = db
-        .prepare(
+    let result = if let Some(min_created_at) = min_created_at {
+        let bindings = [
+            D1Type::Text(account_id),
+            D1Type::Text(min_created_at),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
+            "SELECT rf.remote_actor_uri, rf.status_id, rf.created_at
+             FROM remote_favourites rf
+             JOIN statuses s
+               ON s.id = rf.status_id
+             WHERE s.account_id = ?1
+               AND rf.created_at >= ?2
+             ORDER BY rf.created_at DESC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+    } else {
+        let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+        db.prepare(
             "SELECT rf.remote_actor_uri, rf.status_id, rf.created_at
              FROM remote_favourites rf
              JOIN statuses s
@@ -199,7 +242,8 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?;
+        .await?
+    };
 
     result.results::<RemoteStatusInteractionRow>()
 }

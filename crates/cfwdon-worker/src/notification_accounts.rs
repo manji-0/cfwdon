@@ -171,8 +171,13 @@ pub(crate) async fn collect_favourite_notification_entries(
         return Ok(());
     }
 
-    for favourite in
-        list_favourite_notifications_for_account(db, &viewer.id, per_type_limit).await?
+    for favourite in list_favourite_notifications_for_account(
+        db,
+        &viewer.id,
+        per_type_limit,
+        query.min_created_at.as_deref(),
+    )
+    .await?
     {
         let Some(actor) = find_account_by_id(db, &favourite.account_id).await? else {
             continue;
@@ -211,8 +216,13 @@ pub(crate) async fn collect_favourite_notification_entries(
         );
     }
 
-    for favourite in
-        list_remote_favourite_notifications_for_account(db, &viewer.id, per_type_limit).await?
+    for favourite in list_remote_favourite_notifications_for_account(
+        db,
+        &viewer.id,
+        per_type_limit,
+        query.min_created_at.as_deref(),
+    )
+    .await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &favourite.remote_actor_uri).await?
         else {

@@ -49,15 +49,35 @@ pub(crate) async fn list_local_mention_notifications_for_account(
     viewer: &LocalAccount,
     config: &AppConfig,
     limit: u32,
+    min_created_at: Option<&str>,
 ) -> Result<Vec<MentionNotificationRow>> {
     let pattern = format!("%@{}%", viewer.username.to_ascii_lowercase());
-    let bindings = [
-        D1Type::Text(viewer.id.as_str()),
-        D1Type::Text(pattern.as_str()),
-        D1Type::Integer(limit as i32),
-    ];
-    let result = db
-        .prepare(
+    let result = if let Some(min_created_at) = min_created_at {
+        let bindings = [
+            D1Type::Text(viewer.id.as_str()),
+            D1Type::Text(pattern.as_str()),
+            D1Type::Text(min_created_at),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
+            "SELECT id, account_id, ap_id, in_reply_to_id, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+             FROM statuses
+             WHERE account_id != ?1
+               AND lower(text_content) LIKE ?2
+               AND created_at >= ?3
+             ORDER BY created_at DESC
+             LIMIT ?4",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+    } else {
+        let bindings = [
+            D1Type::Text(viewer.id.as_str()),
+            D1Type::Text(pattern.as_str()),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses
              WHERE account_id != ?1
@@ -67,7 +87,8 @@ pub(crate) async fn list_local_mention_notifications_for_account(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?;
+        .await?
+    };
 
     let mut rows = Vec::new();
     for row in result.results::<MentionNotificationRow>()? {
@@ -94,18 +115,37 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
     viewer: &LocalAccount,
     config: &AppConfig,
     limit: u32,
+    min_published_at: Option<&str>,
 ) -> Result<Vec<RemoteMentionNotificationRow>> {
     let pattern = format!(
         "%@{}@{}%",
         viewer.username.to_ascii_lowercase(),
         instance_host(config)
     );
-    let bindings = [
-        D1Type::Text(pattern.as_str()),
-        D1Type::Integer(limit as i32),
-    ];
-    let result = db
-        .prepare(
+    let result = if let Some(min_published_at) = min_published_at {
+        let bindings = [
+            D1Type::Text(pattern.as_str()),
+            D1Type::Text(min_published_at),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+             FROM remote_statuses
+             WHERE (lower(content_html) LIKE ?1
+                OR lower(spoiler_text) LIKE ?1)
+               AND published_at >= ?2
+             ORDER BY published_at DESC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+    } else {
+        let bindings = [
+            D1Type::Text(pattern.as_str()),
+            D1Type::Integer(limit as i32),
+        ];
+        db.prepare(
             "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE lower(content_html) LIKE ?1
@@ -115,7 +155,8 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?;
+        .await?
+    };
 
     // The SQL LIKE is only a cheap prefilter; HTML parsing keeps mention matching exact.
     let mut rows = Vec::new();

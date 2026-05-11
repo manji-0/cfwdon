@@ -8,6 +8,19 @@ pub(crate) async fn list_local_home_timeline_statuses(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
+    if cursor.max_timestamp.is_none()
+        && let Some(min_timestamp) = cursor.min_timestamp.as_deref()
+    {
+        return list_local_home_timeline_statuses_since(
+            db,
+            viewer_account_id,
+            min_timestamp,
+            cursor.min_id.as_deref(),
+            limit,
+        )
+        .await;
+    }
+
     let bindings = [
         D1Type::Text(viewer_account_id),
         D1Type::Text(viewer_account_id),
@@ -63,6 +76,56 @@ pub(crate) async fn list_local_home_timeline_statuses(
                )
              ORDER BY created_at DESC, id DESC
              LIMIT ?7",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<StatusRow>()
+}
+
+async fn list_local_home_timeline_statuses_since(
+    db: &D1Database,
+    viewer_account_id: &str,
+    min_timestamp: &str,
+    min_id: Option<&str>,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let bindings = [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(min_timestamp),
+        min_id.map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
+             FROM (
+                SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
+                FROM statuses s
+                WHERE s.account_id = ?1
+                  AND (
+                       s.created_at > ?3
+                       OR (s.created_at = ?3 AND (?4 IS NULL OR s.id > ?4))
+                  )
+
+                UNION
+
+                SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
+                FROM follows f
+                JOIN statuses s
+                  ON s.account_id = f.target_account_id
+                WHERE f.follower_account_id = ?2
+                  AND f.state = 'accepted'
+                  AND s.visibility IN ('public', 'unlisted', 'private')
+                  AND (
+                       s.created_at > ?3
+                       OR (s.created_at = ?3 AND (?4 IS NULL OR s.id > ?4))
+                  )
+               )
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?5",
         )
         .bind_refs(bindings.iter())?
         .all()

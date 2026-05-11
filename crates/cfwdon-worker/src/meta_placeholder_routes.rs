@@ -1438,10 +1438,12 @@ struct StreamingBatch {
     events: Vec<StreamingEvent>,
     tracked_status_ids: Vec<String>,
     last_id: Option<String>,
+    last_created_at: Option<String>,
 }
 
 struct StreamingLoopState {
     since_id: Option<String>,
+    notification_min_created_at: Option<String>,
     tracked_status_ids: Vec<String>,
     tracked_status_id_set: HashSet<String>,
     deleted_status_ids: HashSet<String>,
@@ -1457,6 +1459,7 @@ impl StreamingLoopState {
     fn new() -> Self {
         Self {
             since_id: None,
+            notification_min_created_at: None,
             tracked_status_ids: Vec::new(),
             tracked_status_id_set: HashSet::new(),
             deleted_status_ids: HashSet::new(),
@@ -1574,15 +1577,18 @@ async fn streaming_notification_batch(
     config: &cfwdon_core::AppConfig,
     viewer: &crate::LocalAccount,
     since_id: Option<&str>,
+    min_created_at: Option<&str>,
 ) -> Result<StreamingBatch> {
     let query = NotificationsQuery {
         since_id: since_id.map(str::to_owned),
+        min_created_at: min_created_at.map(str::to_owned),
         limit: Some(40),
         ..NotificationsQuery::default()
     };
     let entries = collect_visible_notifications(db, config, viewer, &query, 160).await?;
     let filtered = filter_notification_entries_by_query(entries, &query);
     let last_id = filtered.first().map(|entry| entry.id.clone());
+    let last_created_at = filtered.first().map(|entry| entry.created_at.clone());
     let mut events = Vec::with_capacity(filtered.len());
 
     for entry in filtered.into_iter().rev() {
@@ -1602,6 +1608,7 @@ async fn streaming_notification_batch(
         events,
         tracked_status_ids: Vec::new(),
         last_id,
+        last_created_at,
     })
 }
 
@@ -1646,6 +1653,7 @@ async fn streaming_public_batch(
                 events: Vec::new(),
                 tracked_status_ids: Vec::new(),
                 last_id: None,
+                last_created_at: None,
             });
         };
         if include_local {
@@ -1793,6 +1801,7 @@ async fn streaming_public_batch(
 
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
     let events = entries
         .into_iter()
         .map(|(created_at, id, data)| StreamingEvent {
@@ -1807,6 +1816,7 @@ async fn streaming_public_batch(
         events,
         tracked_status_ids,
         last_id,
+        last_created_at,
     })
 }
 
@@ -1959,6 +1969,7 @@ async fn streaming_home_batch(
 
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
     let events = entries
         .into_iter()
         .map(|(created_at, id, data)| StreamingEvent {
@@ -1973,6 +1984,7 @@ async fn streaming_home_batch(
         events,
         tracked_status_ids,
         last_id,
+        last_created_at,
     })
 }
 
@@ -2025,6 +2037,7 @@ async fn streaming_direct_batch(
 
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
     let events = entries
         .into_iter()
         .map(|(created_at, id, data)| StreamingEvent {
@@ -2039,6 +2052,7 @@ async fn streaming_direct_batch(
         events,
         tracked_status_ids: tracked_conversation_ids,
         last_id,
+        last_created_at,
     })
 }
 
@@ -2064,6 +2078,7 @@ async fn streaming_list_batch(
             events: Vec::new(),
             tracked_status_ids: Vec::new(),
             last_id: None,
+            last_created_at: None,
         });
     };
     let membership_refs = list_membership_refs(db, list_id)
@@ -2145,6 +2160,7 @@ async fn streaming_list_batch(
 
     entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let last_id = entries.last().map(|(_, id, _)| id.clone());
+    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
     let events = entries
         .into_iter()
         .map(|(created_at, id, data)| StreamingEvent {
@@ -2159,6 +2175,7 @@ async fn streaming_list_batch(
         events,
         tracked_status_ids,
         last_id,
+        last_created_at,
     })
 }
 
@@ -2280,7 +2297,14 @@ async fn poll_streaming_events(
                 "missing authenticated viewer for notification stream".to_owned(),
             )
         })?;
-        streaming_notification_batch(db, config, viewer, state.since_id.as_deref()).await?
+        streaming_notification_batch(
+            db,
+            config,
+            viewer,
+            state.since_id.as_deref(),
+            state.notification_min_created_at.as_deref(),
+        )
+        .await?
     } else if stream_name == "list" {
         let viewer = viewer.as_ref().ok_or_else(|| {
             worker::Error::RustError("missing authenticated viewer for list stream".to_owned())
@@ -2309,6 +2333,11 @@ async fn poll_streaming_events(
     };
     if let Some(next_since_id) = batch.last_id.clone() {
         state.since_id = Some(next_since_id);
+    }
+    if stream_name == "user:notification"
+        && let Some(next_min_created_at) = batch.last_created_at.clone()
+    {
+        state.notification_min_created_at = Some(next_min_created_at);
     }
     for status_id in batch.tracked_status_ids {
         if state.tracked_status_id_set.insert(status_id.clone()) {

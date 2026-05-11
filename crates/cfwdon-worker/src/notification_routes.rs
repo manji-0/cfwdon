@@ -19,6 +19,8 @@ pub(crate) struct NotificationsQuery {
     pub(crate) since_id: Option<String>,
     #[serde(rename = "min_id")]
     pub(crate) min_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) min_created_at: Option<String>,
 }
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
