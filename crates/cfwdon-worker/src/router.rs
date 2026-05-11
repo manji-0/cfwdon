@@ -1,6 +1,6 @@
 use super::{
-    FetchEventContext, accept_notification_request_response, accept_notification_requests_response,
-    account_directory, account_email_subscriptions_response, account_endorsements_response,
+    accept_notification_request_response, accept_notification_requests_response, account_directory,
+    account_email_subscriptions_response, account_endorsements_response,
     account_featured_tags_response, account_followers_response, account_following_response,
     account_lists_response, account_lookup, account_relationships, account_response,
     account_search, account_statuses_by_username_response, account_statuses_response,
@@ -79,9 +79,9 @@ use super::{
     verify_credentials, vote_in_poll, webfinger_response,
 };
 use crate::{log_json_event, observability_duration_ms, observability_started_at_ms};
-use worker::{Context, Env, Request, Response, Result, Router};
+use worker::{Env, Request, Response, Result, Router};
 
-pub(crate) async fn handle_fetch(req: Request, env: Env, event_ctx: Context) -> Result<Response> {
+pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let request_started_at_ms = observability_started_at_ms();
     let request_url = req.url()?;
     let request_path = request_url.path().to_owned();
@@ -126,24 +126,6 @@ pub(crate) async fn handle_fetch(req: Request, env: Env, event_ctx: Context) -> 
             observability_duration_ms(request_started_at_ms),
         );
         return Ok(response);
-    }
-
-    if request_method == "POST" && request_path == "/api/v1/statuses" {
-        let response = Router::with_data(FetchEventContext::new(event_ctx))
-            .post_async("/api/v1/statuses", |req, ctx| async move {
-                create_status(req, ctx).await
-            })
-            .run(req, env)
-            .await?;
-        return finish_response(
-            response,
-            &request_method,
-            &request_path,
-            request_origin.as_deref(),
-            &request_user_agent,
-            log_api_requests,
-            request_started_at_ms,
-        );
     }
 
     if let Some(response) =

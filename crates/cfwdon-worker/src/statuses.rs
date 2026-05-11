@@ -1,7 +1,7 @@
 use super::{
-    BackgroundTaskContext, DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result,
-    RouteContext, StatusRow, UpdateMediaRequest, UpdateStatusRequest, actor_url,
-    app_bearer_token_from_request, attach_media_to_status, build_local_status_response,
+    DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result, RouteContext, StatusRow,
+    UpdateMediaRequest, UpdateStatusRequest, actor_url, app_bearer_token_from_request,
+    attach_media_to_status, build_local_status_response,
     build_local_status_response_with_quote_count_preloads, can_view_local_status,
     delete_media_attachments, delete_status_by_id, effective_local_quote_approval_policy,
     enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
@@ -220,10 +220,7 @@ async fn resolve_create_status_access(
     }))
 }
 
-pub(crate) async fn create_status<D>(mut req: Request, ctx: RouteContext<D>) -> Result<Response>
-where
-    D: BackgroundTaskContext,
-{
+pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let parsed = match parse_status_draft(&mut req).await {
         Ok(draft) => draft,
