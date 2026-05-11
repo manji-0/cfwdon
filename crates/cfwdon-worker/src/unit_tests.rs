@@ -2,12 +2,13 @@ use base64::Engine;
 
 use super::router::is_cors_enabled_path;
 use super::{
-    AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest,
-    MastodonAccountResponse, MastodonMediaAttachmentResponse, MastodonReportResponse,
-    NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest, RemoteActorRow, RemotePollDraft,
-    RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
-    RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow,
-    StatusPollRow, StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
+    AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest, HomeTimelineQuery,
+    LinkTimelineQuery, MastodonAccountResponse, MastodonMediaAttachmentResponse,
+    MastodonReportResponse, NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest,
+    PublicTimelineQuery, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
+    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
+    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
+    StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
     TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
     account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
@@ -4363,6 +4364,57 @@ fn timeline_limit_clamps_requested_page_size() {
         }),
         40
     );
+}
+
+#[test]
+fn timeline_query_strings_populate_pagination_fields() {
+    let public: PublicTimelineQuery =
+        serde_urlencoded::from_str("limit=3&max_id=older&since_id=newer&local=true").unwrap();
+    assert_eq!(
+        public.pagination(),
+        TimelinePaginationQuery {
+            limit: Some(3),
+            max_id: Some("older".to_owned()),
+            since_id: Some("newer".to_owned()),
+            min_id: None,
+        }
+    );
+    assert_eq!(public.local, Some(true));
+
+    let home: HomeTimelineQuery = serde_urlencoded::from_str("limit=20&max_id=older-home").unwrap();
+    assert_eq!(
+        home.pagination(),
+        TimelinePaginationQuery {
+            limit: Some(20),
+            max_id: Some("older-home".to_owned()),
+            since_id: None,
+            min_id: None,
+        }
+    );
+
+    let tag: TagTimelineQuery = serde_urlencoded::from_str("limit=5&min_id=fresh").unwrap();
+    assert_eq!(
+        tag.pagination(),
+        TimelinePaginationQuery {
+            limit: Some(5),
+            max_id: None,
+            since_id: None,
+            min_id: Some("fresh".to_owned()),
+        }
+    );
+
+    let link: LinkTimelineQuery =
+        serde_urlencoded::from_str("url=https%3A%2F%2Fexample.com&since_id=fresh-link").unwrap();
+    assert_eq!(
+        link.pagination(),
+        TimelinePaginationQuery {
+            limit: None,
+            max_id: None,
+            since_id: Some("fresh-link".to_owned()),
+            min_id: None,
+        }
+    );
+    assert_eq!(link.url.as_deref(), Some("https://example.com"));
 }
 
 #[test]

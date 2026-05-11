@@ -39,8 +39,24 @@ struct ListAccountsRequest {
 
 #[derive(Debug, Default, Deserialize)]
 struct ListTimelineQuery {
-    #[serde(flatten)]
-    pagination: TimelinePaginationQuery,
+    limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    min_id: Option<String>,
+}
+
+impl ListTimelineQuery {
+    fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery {
+            limit: self.limit,
+            max_id: self.max_id.clone(),
+            since_id: self.since_id.clone(),
+            min_id: self.min_id.clone(),
+        }
+    }
 }
 
 fn normalize_replies_policy(value: Option<&str>) -> std::result::Result<String, String> {
@@ -459,7 +475,8 @@ pub(crate) async fn list_timeline_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: ListTimelineQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let list_id = list_id_from_context(&ctx)?;
     let db = ctx.d1(&config.database_binding)?;
@@ -470,7 +487,7 @@ pub(crate) async fn list_timeline_response(
     let Some(list) = list_row_by_id(&db, &account.id, &list_id).await? else {
         return Response::error("list not found", 404);
     };
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     let membership_refs = list_membership_refs(&db, &list_id)
         .await?
         .into_iter()

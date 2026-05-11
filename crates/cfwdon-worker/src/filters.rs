@@ -778,8 +778,10 @@ pub(crate) async fn load_account_filter_matcher(
         return Ok(AccountFilterMatcher::default());
     }
 
-    let keywords_by_filter_id = list_filter_keywords_for_filters(db, &filters).await?;
-    let statuses_by_filter_id = list_filter_statuses_for_filters(db, &filters).await?;
+    let (keywords_by_filter_id, statuses_by_filter_id) = futures_util::try_join!(
+        list_filter_keywords_for_filters(db, &filters),
+        list_filter_statuses_for_filters(db, &filters),
+    )?;
 
     Ok(AccountFilterMatcher {
         filters,

@@ -14,7 +14,7 @@ use crate::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
     TimelinePaginationQuery, account_has_thread_mutes,
     build_local_status_response_with_quote_count_preloads,
-    build_remote_status_response_with_preloaded_attachments, build_status_card_value,
+    build_remote_status_response_with_timeline_preloads, build_status_card_value,
     build_timeline_link_header, canonicalize_link_timeline_url, derive_link_timeline_match_urls,
     enrich_card_with_remote_preview, find_remote_status_attachments_by_status_ids,
     include_local_source, include_remote_source, list_active_muted_actor_uris,
@@ -26,9 +26,9 @@ use crate::{
     list_remote_public_statuses_by_tags_without_legacy_fallback,
     list_remote_public_timeline_statuses, load_account_filter_matcher,
     matches_tag_timeline_filters, normalize_hashtag, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
-    require_authenticated_local_account, resolve_timeline_cursor, strip_html_tags,
-    timeline_fetch_limit, timeline_limit,
+    preload_mastodon_poll_responses, preload_remote_status_viewer_state, preload_status_counts,
+    preload_status_quote_counts, require_authenticated_local_account, resolve_timeline_cursor,
+    strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -168,7 +168,7 @@ async fn preload_public_timeline_remote_attachments(
     find_remote_status_attachments_by_status_ids(db, &remote_ids).await
 }
 
-async fn preload_public_timeline_local_quote_counts(
+async fn preload_public_timeline_quote_counts(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     candidates: &[PublicTimelineCandidateEntry],
@@ -177,7 +177,7 @@ async fn preload_public_timeline_local_quote_counts(
     let status_uris = candidates
         .iter()
         .filter_map(|entry| match &entry.candidate {
-            PublicTimelineCandidate::Remote { .. } => None,
+            PublicTimelineCandidate::Remote { status, .. } => Some(status.object_uri.clone()),
             PublicTimelineCandidate::Local { status, .. } => accounts_by_id
                 .get(&status.account_id)
                 .map(|account| local_status_quote_count_uri(config, status, account)),
@@ -185,6 +185,25 @@ async fn preload_public_timeline_local_quote_counts(
         .collect::<Vec<_>>();
 
     preload_status_quote_counts(db, &status_uris).await
+}
+
+async fn preload_public_timeline_remote_viewer_state(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+    viewer: Option<&crate::LocalAccount>,
+) -> Result<crate::RemoteStatusViewerStatePreload> {
+    let Some(viewer) = viewer else {
+        return Ok(crate::RemoteStatusViewerStatePreload::default());
+    };
+    let statuses = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { .. } => None,
+            PublicTimelineCandidate::Remote { status, actor } => Some((status, actor)),
+        })
+        .collect::<Vec<_>>();
+
+    preload_remote_status_viewer_state(db, &viewer.id, &statuses).await
 }
 
 async fn preload_public_timeline_local_polls(
@@ -299,10 +318,10 @@ async fn preload_local_timeline_rows(
         .map(|status| status.id.clone())
         .collect::<Vec<_>>();
 
-    Ok((
-        crate::find_accounts_by_ids(db, &account_ids).await?,
-        crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
-    ))
+    futures_util::try_join!(
+        crate::find_accounts_by_ids(db, &account_ids),
+        crate::find_media_attachments_by_status_ids(db, &status_ids),
+    )
 }
 
 async fn preload_local_timeline_rows_from_status_refs(
@@ -318,10 +337,10 @@ async fn preload_local_timeline_rows_from_status_refs(
         .map(|status| status.id.clone())
         .collect::<Vec<_>>();
 
-    Ok((
-        crate::find_accounts_by_ids(db, &account_ids).await?,
-        crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
-    ))
+    futures_util::try_join!(
+        crate::find_accounts_by_ids(db, &account_ids),
+        crate::find_media_attachments_by_status_ids(db, &status_ids),
+    )
 }
 
 fn local_status_actor_uri(
@@ -364,17 +383,23 @@ async fn timeline_entries_from_candidates(
     candidates: Vec<PublicTimelineCandidateEntry>,
     enrich_cards: bool,
 ) -> Result<Vec<TimelineEntry>> {
-    let counts_preload = preload_public_timeline_candidate_counts(db, &candidates).await?;
-    let local_quote_counts_preload =
-        preload_public_timeline_local_quote_counts(db, config, &candidates, local_accounts_by_id)
-            .await?;
-    let local_poll_preload = preload_public_timeline_local_polls(db, &candidates, viewer).await?;
-    let local_viewer_state_preload =
-        preload_public_timeline_local_viewer_state(db, &candidates, viewer).await?;
-    let in_reply_to_account_ids =
-        preload_timeline_candidate_reply_account_ids(db, &candidates).await?;
-    let mut remote_attachments_by_status_id =
-        preload_public_timeline_remote_attachments(db, &candidates).await?;
+    let (
+        counts_preload,
+        quote_counts_preload,
+        local_poll_preload,
+        local_viewer_state_preload,
+        remote_viewer_state_preload,
+        in_reply_to_account_ids,
+        mut remote_attachments_by_status_id,
+    ) = futures_util::try_join!(
+        preload_public_timeline_candidate_counts(db, &candidates),
+        preload_public_timeline_quote_counts(db, config, &candidates, local_accounts_by_id),
+        preload_public_timeline_local_polls(db, &candidates, viewer),
+        preload_public_timeline_local_viewer_state(db, &candidates, viewer),
+        preload_public_timeline_remote_viewer_state(db, &candidates, viewer),
+        preload_timeline_candidate_reply_account_ids(db, &candidates),
+        preload_public_timeline_remote_attachments(db, &candidates),
+    )?;
     let mut entries = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
@@ -394,7 +419,7 @@ async fn timeline_entries_from_candidates(
                         media,
                         filter_matcher,
                         Some(&counts_preload),
-                        Some(&local_quote_counts_preload),
+                        Some(&quote_counts_preload),
                         Some(&local_poll_preload),
                         Some(&local_viewer_state_preload),
                     )
@@ -411,7 +436,7 @@ async fn timeline_entries_from_candidates(
                     .remove(&status.id)
                     .unwrap_or_default();
                 let mut value = serde_json::to_value(
-                    build_remote_status_response_with_preloaded_attachments(
+                    build_remote_status_response_with_timeline_preloads(
                         db,
                         config,
                         viewer,
@@ -419,6 +444,8 @@ async fn timeline_entries_from_candidates(
                         &actor,
                         filter_matcher,
                         Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&remote_viewer_state_preload),
                         remote_attachments,
                     )
                     .await?,
@@ -573,40 +600,36 @@ pub(crate) async fn home_timeline_response(
         | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
     };
     let query: HomeTimelineQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
-    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
-    let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
-
-    let local_home_statuses =
-        list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
-    let remote_home_statuses =
-        list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
-    let followed_tags = list_followed_tag_names(&db, &viewer.id).await?;
-    let local_tag_statuses = if followed_tags.is_empty() {
-        Vec::new()
+    let (filter_matcher, local_home_statuses, remote_home_statuses, followed_tags) = futures_util::try_join!(
+        load_account_filter_matcher(&db, &viewer.id),
+        list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
+        list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
+        list_followed_tag_names(&db, &viewer.id),
+    )?;
+    let (local_tag_statuses, remote_tag_statuses) = if followed_tags.is_empty() {
+        (Vec::new(), Vec::new())
     } else {
-        list_local_public_statuses_by_tags_without_legacy_fallback(
-            &db,
-            &followed_tags,
-            &cursor,
-            query_limit,
-        )
-        .await?
-    };
-    let remote_tag_statuses = if followed_tags.is_empty() {
-        Vec::new()
-    } else {
-        list_remote_public_statuses_by_tags_without_legacy_fallback(
-            &db,
-            &followed_tags,
-            &cursor,
-            query_limit,
-        )
-        .await?
+        futures_util::try_join!(
+            list_local_public_statuses_by_tags_without_legacy_fallback(
+                &db,
+                &followed_tags,
+                &cursor,
+                query_limit,
+            ),
+            list_remote_public_statuses_by_tags_without_legacy_fallback(
+                &db,
+                &followed_tags,
+                &cursor,
+                query_limit,
+            ),
+        )?
     };
     let local_status_refs = local_home_statuses
         .iter()
@@ -728,7 +751,8 @@ pub(crate) async fn public_timeline_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: PublicTimelineQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
@@ -744,8 +768,8 @@ pub(crate) async fn public_timeline_response(
         return timeline_invalid_access_token_response();
     }
     let viewer = access.viewer();
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
-    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
@@ -834,7 +858,8 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing hashtag route parameter".to_owned()))?;
     let query: TagTimelineQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
@@ -850,8 +875,8 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         return timeline_invalid_access_token_response();
     }
     let viewer = access.viewer();
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
-    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
@@ -954,7 +979,8 @@ pub(crate) async fn link_timeline_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing url query parameter".to_owned()))?;
     let target_urls = derive_link_timeline_match_urls(target_url);
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let db = ctx.d1(&config.database_binding)?;
     let access = resolve_timeline_request_access(&req, &db, &config).await?;
@@ -975,8 +1001,8 @@ pub(crate) async fn link_timeline_response(
         .filter_map(|url| canonicalize_link_timeline_url(&url))
         .collect::<HashSet<_>>();
     let viewer = access.viewer();
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
-    if timeline_cursor_is_unresolved(&query.pagination, &cursor) {
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
@@ -1030,7 +1056,7 @@ pub(crate) async fn link_timeline_response(
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    if candidates.is_empty() && !timeline_cursor_requested(&query.pagination) {
+    if candidates.is_empty() && !timeline_cursor_requested(&pagination) {
         return Response::error("Record not found", 404);
     }
     let entries = timeline_entries_from_candidates(

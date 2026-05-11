@@ -152,8 +152,10 @@ pub(crate) async fn preload_status_counts(
     local_status_ids: &[String],
     remote_status_ids: &[String],
 ) -> Result<StatusCountsPreload> {
-    Ok(StatusCountsPreload {
-        local: load_local_status_counts_map(db, local_status_ids).await?,
-        remote: load_remote_status_counts_map(db, remote_status_ids).await?,
-    })
+    let (local, remote) = futures_util::try_join!(
+        load_local_status_counts_map(db, local_status_ids),
+        load_remote_status_counts_map(db, remote_status_ids),
+    )?;
+
+    Ok(StatusCountsPreload { local, remote })
 }

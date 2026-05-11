@@ -116,6 +116,11 @@ struct StatusIdRow {
     status_id: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct RemoteStatusIdRow {
+    remote_status_id: String,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct StatusQuoteCountsPreload {
     counts: HashMap<String, u64>,
@@ -161,6 +166,32 @@ impl LocalStatusViewerStatePreload {
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct RemoteStatusViewerStatePreload {
+    favourited_status_ids: HashSet<String>,
+    reblogged_status_ids: HashSet<String>,
+    bookmarked_status_ids: HashSet<String>,
+    muted_actor_uris: HashSet<String>,
+}
+
+impl RemoteStatusViewerStatePreload {
+    fn favourited(&self, status_id: &str) -> bool {
+        self.favourited_status_ids.contains(status_id)
+    }
+
+    fn reblogged(&self, status_id: &str) -> bool {
+        self.reblogged_status_ids.contains(status_id)
+    }
+
+    fn bookmarked(&self, status_id: &str) -> bool {
+        self.bookmarked_status_ids.contains(status_id)
+    }
+
+    fn muted(&self, actor_uri: &str) -> bool {
+        self.muted_actor_uris.contains(actor_uri)
+    }
+}
+
 async fn load_viewer_target_uri_set(
     db: &D1Database,
     table: &str,
@@ -190,6 +221,38 @@ async fn load_viewer_target_uri_set(
         .results::<TargetUriRow>()?
         .into_iter()
         .map(|row| row.target_uri)
+        .collect())
+}
+
+async fn load_viewer_remote_status_id_set(
+    db: &D1Database,
+    table: &str,
+    account_id: &str,
+    status_ids: &[String],
+) -> Result<HashSet<String>> {
+    if status_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = (2..=(status_ids.len() + 1))
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT remote_status_id
+         FROM {table}
+         WHERE account_id = ?1
+           AND remote_status_id IN ({placeholders})"
+    );
+    let mut bindings = Vec::with_capacity(status_ids.len() + 1);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(status_ids.iter().map(|id| D1Type::Text(id.as_str())));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<RemoteStatusIdRow>()?
+        .into_iter()
+        .map(|row| row.remote_status_id)
         .collect())
 }
 
@@ -242,25 +305,59 @@ pub(crate) async fn preload_local_status_viewer_state(
         .filter(|id| seen_status_ids.insert(id.clone()))
         .collect::<Vec<_>>();
 
+    let (
+        favourited_target_uris,
+        reblogged_target_uris,
+        bookmarked_target_uris,
+        pinned_status_ids,
+        has_thread_mutes,
+    ) = futures_util::try_join!(
+        load_viewer_target_uri_set(db, "favourites", account_id, &target_uris,),
+        load_viewer_target_uri_set(db, "reblogs", account_id, &target_uris),
+        load_viewer_target_uri_set(db, "bookmarks", account_id, &target_uris,),
+        load_viewer_pinned_status_ids(db, account_id, &status_ids),
+        account_has_thread_mutes(db, account_id),
+    )?;
+
     Ok(LocalStatusViewerStatePreload {
-        favourited_target_uris: load_viewer_target_uri_set(
-            db,
-            "favourites",
-            account_id,
-            &target_uris,
-        )
-        .await?,
-        reblogged_target_uris: load_viewer_target_uri_set(db, "reblogs", account_id, &target_uris)
-            .await?,
-        bookmarked_target_uris: load_viewer_target_uri_set(
-            db,
-            "bookmarks",
-            account_id,
-            &target_uris,
-        )
-        .await?,
-        pinned_status_ids: load_viewer_pinned_status_ids(db, account_id, &status_ids).await?,
-        has_thread_mutes: account_has_thread_mutes(db, account_id).await?,
+        favourited_target_uris,
+        reblogged_target_uris,
+        bookmarked_target_uris,
+        pinned_status_ids,
+        has_thread_mutes,
+    })
+}
+
+pub(crate) async fn preload_remote_status_viewer_state(
+    db: &D1Database,
+    account_id: &str,
+    statuses: &[(&RemoteStatusRow, &RemoteActorRow)],
+) -> Result<RemoteStatusViewerStatePreload> {
+    let mut seen_status_ids = HashSet::new();
+    let status_ids = statuses
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .filter(|id| seen_status_ids.insert(id.clone()))
+        .collect::<Vec<_>>();
+    let mut seen_actor_uris = HashSet::new();
+    let actor_uris = statuses
+        .iter()
+        .map(|(_, actor)| actor.actor_uri.clone())
+        .filter(|uri| seen_actor_uris.insert(uri.clone()))
+        .collect::<Vec<_>>();
+
+    let (favourited_status_ids, reblogged_status_ids, bookmarked_status_ids, muted_actor_uris) = futures_util::try_join!(
+        load_viewer_remote_status_id_set(db, "favourites", account_id, &status_ids),
+        load_viewer_remote_status_id_set(db, "reblogs", account_id, &status_ids),
+        load_viewer_remote_status_id_set(db, "bookmarks", account_id, &status_ids),
+        crate::list_active_muted_actor_uris(db, account_id, &actor_uris),
+    )?;
+
+    Ok(RemoteStatusViewerStatePreload {
+        favourited_status_ids,
+        reblogged_status_ids,
+        bookmarked_status_ids,
+        muted_actor_uris,
     })
 }
 
@@ -818,12 +915,14 @@ pub(crate) async fn build_remote_status_response_with_preloads(
         filter_matcher,
         counts_preload,
         None,
+        None,
+        None,
         true,
     )
     .await
 }
 
-pub(crate) async fn build_remote_status_response_with_preloaded_attachments(
+pub(crate) async fn build_remote_status_response_with_timeline_preloads(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
@@ -831,6 +930,8 @@ pub(crate) async fn build_remote_status_response_with_preloaded_attachments(
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
     remote_attachments: Vec<RemoteStatusAttachmentRow>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_inner(
@@ -841,6 +942,8 @@ pub(crate) async fn build_remote_status_response_with_preloaded_attachments(
         actor,
         filter_matcher,
         counts_preload,
+        quote_counts_preload,
+        viewer_state_preload,
         Some(remote_attachments),
         true,
     )
@@ -855,6 +958,8 @@ async fn build_remote_status_response_inner(
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
@@ -885,23 +990,27 @@ async fn build_remote_status_response_inner(
     let (favourites_count, reblogs_count) =
         remote_status_counts(db, counts_preload, &status.id).await?;
     response.favourites_count = favourites_count;
-    response.favourited = match viewer {
-        Some(viewer) => is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
-        None => false,
+    response.favourited = match (viewer, viewer_state_preload) {
+        (Some(_), Some(preload)) => preload.favourited(&status.id),
+        (Some(viewer), None) => is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
+        (None, _) => false,
     };
     response.reblogs_count = reblogs_count;
-    response.quotes_count = count_status_quotes_by_uri(db, &response.uri).await?;
-    response.reblogged = match viewer {
-        Some(viewer) => is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
-        None => false,
+    response.quotes_count = status_quotes_count(db, quote_counts_preload, &response.uri).await?;
+    response.reblogged = match (viewer, viewer_state_preload) {
+        (Some(_), Some(preload)) => preload.reblogged(&status.id),
+        (Some(viewer), None) => is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
+        (None, _) => false,
     };
-    response.bookmarked = match viewer {
-        Some(viewer) => is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await?,
-        None => false,
+    response.bookmarked = match (viewer, viewer_state_preload) {
+        (Some(_), Some(preload)) => preload.bookmarked(&status.id),
+        (Some(viewer), None) => is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await?,
+        (None, _) => false,
     };
-    response.muted = match viewer {
-        Some(viewer) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
-        None => false,
+    response.muted = match (viewer, viewer_state_preload) {
+        (Some(_), Some(preload)) => preload.muted(&actor.actor_uri),
+        (Some(viewer), None) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
+        (None, _) => false,
     };
     response.poll = load_remote_mastodon_poll_response(db, status, viewer).await?;
     if has_remote_status_edit_snapshots(db, &status.id).await? {
@@ -1204,6 +1313,8 @@ async fn build_remote_reblog_wrapper_response(
                     filter_matcher,
                     counts_preload,
                     None,
+                    None,
+                    None,
                     include_quote,
                 ))
                 .await?,
@@ -1356,6 +1467,8 @@ async fn build_local_reblog_wrapper_response(
                     &actor,
                     filter_matcher,
                     counts_preload,
+                    None,
+                    None,
                     None,
                     include_quote,
                 )

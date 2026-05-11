@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use url::Url;
 use worker::{D1Database, Request, Result};
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub(crate) struct TimelinePaginationQuery {
     pub(crate) limit: Option<u32>,
     #[serde(rename = "max_id")]
@@ -15,19 +15,56 @@ pub(crate) struct TimelinePaginationQuery {
     pub(crate) min_id: Option<String>,
 }
 
+impl TimelinePaginationQuery {
+    fn from_parts(
+        limit: Option<u32>,
+        max_id: Option<String>,
+        since_id: Option<String>,
+        min_id: Option<String>,
+    ) -> Self {
+        Self {
+            limit,
+            max_id,
+            since_id,
+            min_id,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct PublicTimelineQuery {
-    #[serde(flatten)]
-    pub(crate) pagination: TimelinePaginationQuery,
+    pub(crate) limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    pub(crate) max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    pub(crate) since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    pub(crate) min_id: Option<String>,
     pub(crate) local: Option<bool>,
     pub(crate) remote: Option<bool>,
     pub(crate) only_media: Option<bool>,
 }
 
+impl PublicTimelineQuery {
+    pub(crate) fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery::from_parts(
+            self.limit,
+            self.max_id.clone(),
+            self.since_id.clone(),
+            self.min_id.clone(),
+        )
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct TagTimelineQuery {
-    #[serde(flatten)]
-    pub(crate) pagination: TimelinePaginationQuery,
+    pub(crate) limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    pub(crate) max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    pub(crate) since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    pub(crate) min_id: Option<String>,
     pub(crate) only_media: Option<bool>,
     pub(crate) local: Option<bool>,
     pub(crate) remote: Option<bool>,
@@ -39,17 +76,60 @@ pub(crate) struct TagTimelineQuery {
     pub(crate) none: Option<Vec<String>>,
 }
 
+impl TagTimelineQuery {
+    pub(crate) fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery::from_parts(
+            self.limit,
+            self.max_id.clone(),
+            self.since_id.clone(),
+            self.min_id.clone(),
+        )
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct HomeTimelineQuery {
-    #[serde(flatten)]
-    pub(crate) pagination: TimelinePaginationQuery,
+    pub(crate) limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    pub(crate) max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    pub(crate) since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    pub(crate) min_id: Option<String>,
+}
+
+impl HomeTimelineQuery {
+    pub(crate) fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery::from_parts(
+            self.limit,
+            self.max_id.clone(),
+            self.since_id.clone(),
+            self.min_id.clone(),
+        )
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct LinkTimelineQuery {
-    #[serde(flatten)]
-    pub(crate) pagination: TimelinePaginationQuery,
+    pub(crate) limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    pub(crate) max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    pub(crate) since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    pub(crate) min_id: Option<String>,
     pub(crate) url: Option<String>,
+}
+
+impl LinkTimelineQuery {
+    pub(crate) fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery::from_parts(
+            self.limit,
+            self.max_id.clone(),
+            self.since_id.clone(),
+            self.min_id.clone(),
+        )
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -127,9 +207,14 @@ pub(crate) async fn resolve_timeline_cursor(
             .or(pagination.since_id.as_deref()),
     );
 
+    let (max_timestamp, min_timestamp) = futures_util::try_join!(
+        resolve_timeline_cursor_timestamp(db, max_id.as_deref()),
+        resolve_timeline_cursor_timestamp(db, min_id.as_deref()),
+    )?;
+
     Ok(ResolvedTimelineCursor {
-        max_timestamp: resolve_timeline_cursor_timestamp(db, max_id.as_deref()).await?,
-        min_timestamp: resolve_timeline_cursor_timestamp(db, min_id.as_deref()).await?,
+        max_timestamp,
+        min_timestamp,
         max_id,
         min_id,
     })

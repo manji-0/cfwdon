@@ -61,8 +61,24 @@ struct OembedQuery {
 
 #[derive(Debug, Default, Deserialize)]
 struct QuotesQuery {
-    #[serde(flatten)]
-    pagination: TimelinePaginationQuery,
+    limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    min_id: Option<String>,
+}
+
+impl QuotesQuery {
+    fn pagination(&self) -> TimelinePaginationQuery {
+        TimelinePaginationQuery {
+            limit: self.limit,
+            max_id: self.max_id.clone(),
+            since_id: self.since_id.clone(),
+            min_id: self.min_id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3041,11 +3057,12 @@ pub(crate) async fn status_quotes_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: QuotesQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query.pagination);
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let db = ctx.d1(&config.database_binding)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    let cursor = resolve_timeline_cursor(&db, &query.pagination).await?;
+    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
 
     let Some(status_id) = ctx
         .param("id")
