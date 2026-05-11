@@ -7,6 +7,23 @@ use std::collections::HashMap;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::d1::D1Type;
 
+const LOAD_LATEST_FILTER_UPDATED_AT_SQL: &str = "SELECT MAX(updated_at) AS updated_at
+             FROM (
+                 SELECT f.updated_at AS updated_at
+                 FROM filters f
+                 WHERE f.account_id = ?1
+                 UNION ALL
+                 SELECT k.updated_at AS updated_at
+                 FROM filter_keywords k
+                 JOIN filters f ON f.id = k.filter_id
+                 WHERE f.account_id = ?1
+                 UNION ALL
+                 SELECT s.created_at AS updated_at
+                 FROM filter_statuses s
+                 JOIN filters f ON f.id = s.filter_id
+                 WHERE f.account_id = ?1
+             )";
+
 #[derive(Debug, Deserialize)]
 struct FilterRow {
     id: String,
@@ -140,24 +157,7 @@ pub(crate) async fn load_latest_filter_updated_at(
 ) -> Result<Option<String>> {
     let account_id = D1Type::Text(account_id);
     let row = db
-        .prepare(
-            "SELECT MAX(updated_at) AS updated_at
-             FROM (
-                 SELECT f.updated_at AS updated_at
-                 FROM filters f
-                 WHERE f.account_id = ?1
-                 UNION ALL
-                 SELECT k.updated_at AS updated_at
-                 FROM filter_keywords k
-                 JOIN filters f ON f.id = k.filter_id
-                 WHERE f.account_id = ?1
-                 UNION ALL
-                 SELECT s.updated_at AS updated_at
-                 FROM filter_statuses s
-                 JOIN filters f ON f.id = s.filter_id
-                 WHERE f.account_id = ?1
-             )",
-        )
+        .prepare(LOAD_LATEST_FILTER_UPDATED_AT_SQL)
         .bind_refs(&account_id)?
         .first::<serde_json::Value>(None)
         .await?;
@@ -1603,6 +1603,12 @@ mod tests {
         assert_eq!(normalize_filter_action(Some("warn")).unwrap(), "warn");
         assert_eq!(normalize_filter_action(Some("hide")).unwrap(), "hide");
         assert_eq!(normalize_filter_action(Some("blur")).unwrap(), "blur");
+    }
+
+    #[test]
+    fn latest_filter_updated_at_uses_filter_status_created_at() {
+        assert!(LOAD_LATEST_FILTER_UPDATED_AT_SQL.contains("s.created_at AS updated_at"));
+        assert!(!LOAD_LATEST_FILTER_UPDATED_AT_SQL.contains("s.updated_at"));
     }
 
     #[test]
