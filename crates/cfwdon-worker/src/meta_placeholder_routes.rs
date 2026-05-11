@@ -38,14 +38,14 @@ use crate::{
     store_account_password, timeline_fetch_limit, timeline_limit, update_remote_status_quote_state,
 };
 use async_stream::try_stream;
-use futures_util::{StreamExt, pin_mut};
+use futures_util::{FutureExt, StreamExt, pin_mut, select};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
-    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocketPair,
-    console_error, d1::D1Type,
+    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocket, WebSocketPair,
+    console_error, d1::D1Type, ws_events::WebsocketEvent,
 };
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +67,15 @@ struct StreamingQuery {
     tag: Option<String>,
     list: Option<String>,
     access_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamingWebSocketClientMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    stream: Option<String>,
+    tag: Option<String>,
+    list: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1461,12 +1470,92 @@ impl StreamingLoopState {
     }
 }
 
+struct StreamingWebSocketSubscription {
+    stream_name: String,
+    tag: Option<String>,
+    list: Option<String>,
+    state: StreamingLoopState,
+}
+
+impl StreamingWebSocketSubscription {
+    fn new(stream_name: String, tag: Option<String>, list: Option<String>) -> Self {
+        Self {
+            stream_name,
+            tag,
+            list,
+            state: StreamingLoopState::new(),
+        }
+    }
+}
+
 fn sse_comment_bytes(value: &str) -> Vec<u8> {
     format!(": {value}\n\n").into_bytes()
 }
 
 fn sse_event_bytes(event: &StreamingEvent) -> Vec<u8> {
     format!("event: {}\ndata: {}\n\n", event.event, event.data).into_bytes()
+}
+
+fn streaming_websocket_subscription_key(
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        stream_name,
+        tag.unwrap_or_default(),
+        list.unwrap_or_default()
+    )
+}
+
+fn streaming_websocket_stream_labels(
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+) -> Vec<String> {
+    let mut labels = vec![stream_name.to_owned()];
+    if stream_name.starts_with("hashtag")
+        && let Some(tag) = tag
+    {
+        labels.push(tag.to_owned());
+    }
+    if stream_name == "list"
+        && let Some(list) = list
+    {
+        labels.push(list.to_owned());
+    }
+    labels
+}
+
+fn streaming_websocket_event_message(
+    subscription: &StreamingWebSocketSubscription,
+    event: &StreamingEvent,
+) -> Result<String> {
+    let mut payload = serde_json::json!({
+        "stream": streaming_websocket_stream_labels(
+            &subscription.stream_name,
+            subscription.tag.as_deref(),
+            subscription.list.as_deref(),
+        ),
+        "event": event.event,
+    });
+    if event.event != "filters_changed" {
+        payload["payload"] = serde_json::Value::String(event.data.clone());
+    }
+    serde_json::to_string(&payload).map_err(|error| {
+        worker::Error::RustError(format!(
+            "failed to serialize websocket stream event: {error}"
+        ))
+    })
+}
+
+fn streaming_websocket_error_message(message: &str, status: u16) -> String {
+    serde_json::json!({
+        "error": message,
+        "status": status,
+    })
+    .to_string()
 }
 
 fn announcement_reaction_entries_for_id(
@@ -2421,6 +2510,227 @@ fn build_streaming_event_stream(
     }
 }
 
+fn add_streaming_websocket_subscription(
+    subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
+    stream_name: String,
+    tag: Option<String>,
+    list: Option<String>,
+) {
+    let key = streaming_websocket_subscription_key(&stream_name, tag.as_deref(), list.as_deref());
+    subscriptions
+        .entry(key)
+        .or_insert_with(|| StreamingWebSocketSubscription::new(stream_name, tag, list));
+}
+
+fn remove_streaming_websocket_subscription(
+    subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+) {
+    let key = streaming_websocket_subscription_key(stream_name, tag, list);
+    subscriptions.remove(&key);
+}
+
+fn handle_streaming_websocket_client_message(
+    websocket: &WebSocket,
+    subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
+    text: &str,
+    viewer: Option<&crate::LocalAccount>,
+) -> bool {
+    let message = match serde_json::from_str::<StreamingWebSocketClientMessage>(text) {
+        Ok(message) => message,
+        Err(error) => {
+            let _ = websocket.send_with_str(streaming_websocket_error_message(
+                &format!("Malformed streaming message: {error}"),
+                400,
+            ));
+            return true;
+        }
+    };
+    if !matches!(message.message_type.as_str(), "subscribe" | "unsubscribe") {
+        let _ = websocket.send_with_str(streaming_websocket_error_message(
+            "Unknown streaming message type",
+            400,
+        ));
+        return true;
+    }
+    let stream_name = match validate_streaming_channel_request(
+        message.stream.as_deref(),
+        message.tag.as_deref(),
+        message.list.as_deref(),
+        None,
+    ) {
+        Ok(stream_name) => stream_name,
+        Err(StreamingChannelValidationError::UnknownChannelRequested) => {
+            let _ = websocket.send_with_str(streaming_websocket_error_message(
+                "Unknown stream type",
+                400,
+            ));
+            return true;
+        }
+        Err(StreamingChannelValidationError::MissingTag) => {
+            let _ = websocket.send_with_str(streaming_websocket_error_message(
+                "Missing tag parameter",
+                400,
+            ));
+            return true;
+        }
+        Err(StreamingChannelValidationError::MissingList) => {
+            let _ = websocket.send_with_str(streaming_websocket_error_message(
+                "Missing list parameter",
+                400,
+            ));
+            return true;
+        }
+    };
+    if streaming_channel_requires_auth(&stream_name) && viewer.is_none() {
+        let _ = websocket.send_with_str(streaming_websocket_error_message(
+            "The access token is invalid",
+            401,
+        ));
+        return true;
+    }
+    if message.message_type == "subscribe" {
+        add_streaming_websocket_subscription(subscriptions, stream_name, message.tag, message.list);
+    } else {
+        remove_streaming_websocket_subscription(
+            subscriptions,
+            &stream_name,
+            message.tag.as_deref(),
+            message.list.as_deref(),
+        );
+    }
+    true
+}
+
+async fn poll_streaming_websocket_subscriptions(
+    websocket: &WebSocket,
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
+) -> bool {
+    for subscription in subscriptions.values_mut() {
+        let events = match poll_streaming_events(
+            db,
+            config,
+            &subscription.stream_name,
+            subscription.tag.as_deref(),
+            subscription.list.as_deref(),
+            viewer,
+            &mut subscription.state,
+        )
+        .await
+        {
+            Ok(events) => events,
+            Err(error) => {
+                console_error!(
+                    "websocket streaming poll failed stream={} tag={} list={} error={}",
+                    subscription.stream_name,
+                    subscription.tag.as_deref().unwrap_or(""),
+                    subscription.list.as_deref().unwrap_or(""),
+                    error
+                );
+                continue;
+            }
+        };
+        for event in events {
+            let message = match streaming_websocket_event_message(subscription, &event) {
+                Ok(message) => message,
+                Err(error) => {
+                    console_error!(
+                        "websocket streaming event serialization failed stream={} error={}",
+                        subscription.stream_name,
+                        error
+                    );
+                    continue;
+                }
+            };
+            if websocket.send_with_str(message).is_err() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+async fn run_streaming_websocket(
+    websocket: WebSocket,
+    db: D1Database,
+    config: cfwdon_core::AppConfig,
+    initial_stream: Option<String>,
+    initial_tag: Option<String>,
+    initial_list: Option<String>,
+    viewer: Option<crate::LocalAccount>,
+) {
+    let mut subscriptions = HashMap::<String, StreamingWebSocketSubscription>::new();
+    if let Some(stream_name) = initial_stream {
+        add_streaming_websocket_subscription(
+            &mut subscriptions,
+            stream_name,
+            initial_tag,
+            initial_list,
+        );
+    }
+    {
+        let mut websocket_events = match websocket.events() {
+            Ok(events) => events,
+            Err(error) => {
+                console_error!("failed to attach websocket event stream: {}", error);
+                let _ = websocket.close(Some(1011), Some("stream failed"));
+                return;
+            }
+        };
+        loop {
+            let tick = worker::Delay::from(Duration::from_secs(3)).fuse();
+            pin_mut!(tick);
+            select! {
+                event = websocket_events.next().fuse() => {
+                    match event {
+                        Some(Ok(WebsocketEvent::Message(message))) => {
+                            let Some(text) = message.text() else {
+                                let _ = websocket.send_with_str(streaming_websocket_error_message(
+                                    "Only text websocket messages are supported",
+                                    400,
+                                ));
+                                continue;
+                            };
+                            if !handle_streaming_websocket_client_message(
+                                &websocket,
+                                &mut subscriptions,
+                                &text,
+                                viewer.as_ref(),
+                            ) {
+                                break;
+                            }
+                        }
+                        Some(Ok(WebsocketEvent::Close(_))) | None => break,
+                        Some(Err(error)) => {
+                            console_error!("websocket stream failed: {}", error);
+                            break;
+                        }
+                    }
+                }
+                _ = tick => {
+                    if !poll_streaming_websocket_subscriptions(
+                        &websocket,
+                        &db,
+                        &config,
+                        viewer.as_ref(),
+                        &mut subscriptions,
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let _ = websocket.close(Some(1000), Some("stream closed"));
+}
+
 pub(crate) async fn streaming_placeholder_response(
     req: Request,
     ctx: RouteContext<()>,
@@ -2432,23 +2742,27 @@ pub(crate) async fn streaming_placeholder_response(
         .ok()
         .flatten()
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
-    let stream_query = if wants_websocket && query.stream.is_none() {
-        Some("user")
+    let websocket_protocol_token = if wants_websocket {
+        websocket_protocol_access_token(&req)?
     } else {
-        query.stream.as_deref()
+        None
     };
     let extra_path = ctx
         .param("any")
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
-    let stream = match validate_streaming_channel_request(
-        stream_query,
-        query.tag.as_deref(),
-        query.list.as_deref(),
-        extra_path,
-    ) {
-        Ok(stream) => stream,
-        Err(error) => return streaming_bad_request_response(error),
+    let initial_stream = if wants_websocket && query.stream.is_none() && extra_path.is_none() {
+        None
+    } else {
+        match validate_streaming_channel_request(
+            query.stream.as_deref(),
+            query.tag.as_deref(),
+            query.list.as_deref(),
+            extra_path,
+        ) {
+            Ok(stream) => Some(stream),
+            Err(error) => return streaming_bad_request_response(error),
+        }
     };
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
@@ -2465,7 +2779,7 @@ pub(crate) async fn streaming_placeholder_response(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
-                .or(websocket_protocol_access_token(&req)?);
+                .or(websocket_protocol_token.clone());
             match token {
                 Some(token) => {
                     let Some(access_token) =
@@ -2486,7 +2800,11 @@ pub(crate) async fn streaming_placeholder_response(
         }
     };
 
-    if streaming_channel_requires_auth(&stream) && authenticated.is_none() {
+    if initial_stream
+        .as_deref()
+        .is_some_and(streaming_channel_requires_auth)
+        && authenticated.is_none()
+    {
         return invalid_access_token_response();
     }
 
@@ -2496,31 +2814,36 @@ pub(crate) async fn streaming_placeholder_response(
         let websocket = pair.server.clone();
         let db_for_ws = db;
         let config_for_ws = config.clone();
-        let stream_name = stream.clone();
+        let stream_name = initial_stream.clone();
         let tag_for_ws = query.tag.clone();
         let list_for_ws = query.list.clone();
         let viewer_for_ws = authenticated.clone();
         spawn_local(async move {
-            let event_stream = build_streaming_event_stream(
+            run_streaming_websocket(
+                websocket,
                 db_for_ws,
                 config_for_ws,
                 stream_name,
                 tag_for_ws,
                 list_for_ws,
                 viewer_for_ws,
-            );
-            pin_mut!(event_stream);
-            while let Some(Ok(bytes)) = event_stream.next().await {
-                if let Ok(text) = std::str::from_utf8(&bytes)
-                    && websocket.send_with_str(text).is_err()
-                {
-                    break;
-                }
-            }
-            let _ = websocket.close(Some(1000), Some("stream closed"));
+            )
+            .await;
         });
-        return Response::from_websocket(pair.client);
+        let mut response = Response::from_websocket(pair.client)?;
+        if let Some(protocol) = websocket_protocol_token.as_deref() {
+            response
+                .headers_mut()
+                .set("Sec-WebSocket-Protocol", protocol)?;
+        }
+        return Ok(response);
     }
+
+    let Some(stream) = initial_stream else {
+        return streaming_bad_request_response(
+            StreamingChannelValidationError::UnknownChannelRequested,
+        );
+    };
 
     if matches!(
         stream.as_str(),
@@ -3264,6 +3587,55 @@ mod tests {
         assert_eq!(
             sse_event_bytes(&event),
             b"event: update\ndata: {\"id\":\"status-1\"}\n\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn streaming_websocket_event_message_matches_mastodon_shape() {
+        let subscription =
+            StreamingWebSocketSubscription::new("user:notification".to_owned(), None, None);
+        let event = StreamingEvent {
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+            id: "notification-1".to_owned(),
+            event: "notification",
+            data: "{\"id\":\"notification-1\"}".to_owned(),
+        };
+
+        let message = streaming_websocket_event_message(&subscription, &event).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&message).unwrap();
+
+        assert_eq!(value["stream"], serde_json::json!(["user:notification"]));
+        assert_eq!(value["event"], "notification");
+        assert_eq!(value["payload"], "{\"id\":\"notification-1\"}");
+    }
+
+    #[test]
+    fn streaming_websocket_filter_change_omits_payload() {
+        let subscription = StreamingWebSocketSubscription::new("user".to_owned(), None, None);
+        let event = StreamingEvent {
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+            id: "filter-change".to_owned(),
+            event: "filters_changed",
+            data: "undefined".to_owned(),
+        };
+
+        let message = streaming_websocket_event_message(&subscription, &event).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&message).unwrap();
+
+        assert_eq!(value["stream"], serde_json::json!(["user"]));
+        assert_eq!(value["event"], "filters_changed");
+        assert!(value.get("payload").is_none());
+    }
+
+    #[test]
+    fn streaming_websocket_stream_labels_include_subscription_params() {
+        assert_eq!(
+            streaming_websocket_stream_labels("hashtag", Some("rust"), None),
+            vec!["hashtag".to_owned(), "rust".to_owned()]
+        );
+        assert_eq!(
+            streaming_websocket_stream_labels("list", None, Some("list-1")),
+            vec!["list".to_owned(), "list-1".to_owned()]
         );
     }
 }
