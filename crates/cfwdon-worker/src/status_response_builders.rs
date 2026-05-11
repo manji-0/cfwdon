@@ -1,7 +1,7 @@
 use crate::{
     AccountFilterMatcher, AppConfig, LocalAccount, MastodonStatusResponse, MediaAttachmentRow,
-    RemoteActorRow, RemoteStatusRow, StatusRow, actor_url, build_remote_status_card_value,
-    build_status_card_value, can_view_local_status, count_rows,
+    RemoteActorRow, RemoteStatusRow, StatusCountsPreload, StatusRow, actor_url,
+    build_remote_status_card_value, build_status_card_value, can_view_local_status, count_rows,
     effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
@@ -341,6 +341,31 @@ pub(crate) async fn build_local_status_response_with_filter_matcher(
     media_attachments: Vec<MediaAttachmentRow>,
     filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<MastodonStatusResponse> {
+    build_local_status_response_with_preloads(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        in_reply_to_account_id,
+        media_attachments,
+        filter_matcher,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn build_local_status_response_with_preloads(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    media_attachments: Vec<MediaAttachmentRow>,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+) -> Result<MastodonStatusResponse> {
     build_local_status_response_inner(
         db,
         config,
@@ -350,6 +375,7 @@ pub(crate) async fn build_local_status_response_with_filter_matcher(
         in_reply_to_account_id,
         media_attachments,
         filter_matcher,
+        counts_preload,
         true,
     )
     .await
@@ -364,6 +390,7 @@ async fn build_local_status_response_inner(
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
     filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -376,6 +403,7 @@ async fn build_local_status_response_inner(
             in_reply_to_account_id,
             boost_of_uri,
             filter_matcher,
+            counts_preload,
             include_quote,
         )
         .await;
@@ -392,7 +420,8 @@ async fn build_local_status_response_inner(
     response.card = build_status_card_value(&status._text_content);
     response.poll = load_mastodon_poll_response(db, &status.id, viewer).await?;
     response.mentions = build_status_mentions(db, config, &status._text_content).await?;
-    let (favourites_count, reblogs_count) = load_local_status_counts(db, &status.id).await?;
+    let (favourites_count, reblogs_count) =
+        local_status_counts(db, counts_preload, &status.id).await?;
     response.favourites_count = favourites_count;
     response.favourited = match viewer {
         Some(viewer) => is_local_status_favourited_by(db, &viewer.id, status).await?,
@@ -448,6 +477,7 @@ async fn build_local_status_response_inner(
             Some(effective_status_quote_state(status)),
             true,
             filter_matcher,
+            counts_preload,
         )
         .await?;
     }
@@ -472,8 +502,38 @@ pub(crate) async fn build_remote_status_response_with_filter_matcher(
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<MastodonStatusResponse> {
-    build_remote_status_response_inner(db, config, viewer, status, actor, filter_matcher, true)
-        .await
+    build_remote_status_response_with_preloads(
+        db,
+        config,
+        viewer,
+        status,
+        actor,
+        filter_matcher,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn build_remote_status_response_with_preloads(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    actor: &RemoteActorRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+) -> Result<MastodonStatusResponse> {
+    build_remote_status_response_inner(
+        db,
+        config,
+        viewer,
+        status,
+        actor,
+        filter_matcher,
+        counts_preload,
+        true,
+    )
+    .await
 }
 
 async fn build_remote_status_response_inner(
@@ -483,6 +543,7 @@ async fn build_remote_status_response_inner(
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -494,6 +555,7 @@ async fn build_remote_status_response_inner(
             actor,
             boost_of_uri,
             filter_matcher,
+            counts_preload,
             include_quote,
         )
         .await;
@@ -505,7 +567,8 @@ async fn build_remote_status_response_inner(
     response.card = build_remote_status_card_value(&text_content, &remote_attachments);
     response.media_attachments = remote_media_attachment_values(&remote_attachments);
     response.mentions = build_status_mentions(db, config, &text_content).await?;
-    let (favourites_count, reblogs_count) = load_remote_status_counts(db, &status.id).await?;
+    let (favourites_count, reblogs_count) =
+        remote_status_counts(db, counts_preload, &status.id).await?;
     response.favourites_count = favourites_count;
     response.favourited = match viewer {
         Some(viewer) => is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
@@ -553,6 +616,7 @@ async fn build_remote_status_response_inner(
             Some(effective_remote_status_quote_state(status)),
             false,
             filter_matcher,
+            counts_preload,
         )
         .await?;
     }
@@ -567,6 +631,7 @@ async fn build_quoted_status_value(
     local_quote_state: Option<&str>,
     pending_remote_quote: bool,
     filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
 ) -> Result<Option<serde_json::Value>> {
     let Some(quote_of_uri) = quote_of_uri else {
         return Ok(None);
@@ -596,7 +661,7 @@ async fn build_quoted_status_value(
             local_status_filtered_for_viewer(db, viewer, &local_status, filter_matcher).await?;
         response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
         let (favourites_count, reblogs_count) =
-            load_local_status_counts(db, &local_status.id).await?;
+            local_status_counts(db, counts_preload, &local_status.id).await?;
         response.favourites_count = favourites_count;
         response.favourited = match viewer {
             Some(viewer) => is_local_status_favourited_by(db, &viewer.id, &local_status).await?,
@@ -651,7 +716,7 @@ async fn build_quoted_status_value(
         .await?;
         response.mentions = build_status_mentions(db, config, &text_content).await?;
         let (favourites_count, reblogs_count) =
-            load_remote_status_counts(db, &remote_status.id).await?;
+            remote_status_counts(db, counts_preload, &remote_status.id).await?;
         response.favourites_count = favourites_count;
         response.favourited = match viewer {
             Some(viewer) => {
@@ -741,6 +806,30 @@ async fn filtered_status_for_viewer(
     load_status_filtered(db, account_id, status_id, text, spoiler_text).await
 }
 
+async fn local_status_counts(
+    db: &D1Database,
+    counts_preload: Option<&StatusCountsPreload>,
+    status_id: &str,
+) -> Result<(u64, u64)> {
+    if let Some(counts) = counts_preload.and_then(|counts| counts.local_counts(status_id)) {
+        return Ok(counts);
+    }
+
+    load_local_status_counts(db, status_id).await
+}
+
+async fn remote_status_counts(
+    db: &D1Database,
+    counts_preload: Option<&StatusCountsPreload>,
+    status_id: &str,
+) -> Result<(u64, u64)> {
+    if let Some(counts) = counts_preload.and_then(|counts| counts.remote_counts(status_id)) {
+        return Ok(counts);
+    }
+
+    load_remote_status_counts(db, status_id).await
+}
+
 async fn build_remote_reblog_wrapper_response(
     db: &D1Database,
     config: &AppConfig,
@@ -749,6 +838,7 @@ async fn build_remote_reblog_wrapper_response(
     wrapper_actor: &RemoteActorRow,
     boost_of_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = if let Some(local_status) =
@@ -767,6 +857,7 @@ async fn build_remote_reblog_wrapper_response(
                         load_in_reply_to_account_id(db, &local_status).await?,
                         media,
                         filter_matcher,
+                        counts_preload,
                         include_quote,
                     ))
                     .await?,
@@ -793,6 +884,7 @@ async fn build_remote_reblog_wrapper_response(
                     &remote_status,
                     &actor,
                     filter_matcher,
+                    counts_preload,
                     include_quote,
                 ))
                 .await?,
@@ -892,6 +984,7 @@ async fn build_local_reblog_wrapper_response(
     in_reply_to_account_id: Option<String>,
     boost_of_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = if let Some(local_status) =
@@ -910,6 +1003,7 @@ async fn build_local_reblog_wrapper_response(
                         load_in_reply_to_account_id(db, &local_status).await?,
                         media,
                         filter_matcher,
+                        counts_preload,
                         include_quote,
                     ))
                     .await?,
@@ -936,6 +1030,7 @@ async fn build_local_reblog_wrapper_response(
                     &remote_status,
                     &actor,
                     filter_matcher,
+                    counts_preload,
                     include_quote,
                 )
                 .await?,

@@ -1,13 +1,12 @@
 use super::{
     AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, RemoteActorRow,
     RemoteStatusRow, Request, Response, Result, RouteContext, StatusRow, actor_url,
-    build_local_status_response_with_filter_matcher,
-    build_remote_status_response_with_filter_matcher, can_view_local_status, escape_html,
-    find_account_by_username, find_authenticated_local_account,
+    build_local_status_response_with_preloads, build_remote_status_response_with_preloads,
+    can_view_local_status, escape_html, find_account_by_username, find_authenticated_local_account,
     find_media_attachments_by_status_id, is_public_activitypub_visibility, list_account_statuses,
     list_pinned_statuses_for_account, list_remote_statuses_by_actor_uri,
     load_account_filter_matcher, load_config, load_in_reply_to_account_id, local_status_ap_id,
-    remote_status_has_media, resolve_account_reference, status_contains_tag,
+    preload_status_counts, remote_status_has_media, resolve_account_reference, status_contains_tag,
     status_is_reply_to_other_account, strip_html_tags,
 };
 use worker::ResponseBody;
@@ -67,6 +66,11 @@ async fn account_statuses_response_for_account_id(
             } else {
                 list_account_statuses(&db, &account.id, limit).await?
             };
+            let status_ids = statuses
+                .iter()
+                .map(|status| status.id.clone())
+                .collect::<Vec<_>>();
+            let counts_preload = preload_status_counts(&db, &status_ids, &[]).await?;
             let mut response = Vec::new();
             let mut html_statuses = Vec::new();
 
@@ -99,7 +103,7 @@ async fn account_statuses_response_for_account_id(
                     html_statuses.push(local_status_html_item(&config, &account, &status));
                 }
                 response.push(
-                    build_local_status_response_with_filter_matcher(
+                    build_local_status_response_with_preloads(
                         &db,
                         &config,
                         viewer.as_ref(),
@@ -108,6 +112,7 @@ async fn account_statuses_response_for_account_id(
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 );
@@ -128,7 +133,13 @@ async fn account_statuses_response_for_account_id(
         Some(AccountReference::Remote(actor)) => {
             let mut response = Vec::new();
             let mut html_statuses = Vec::new();
-            for status in list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await? {
+            let statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
+            let status_ids = statuses
+                .iter()
+                .map(|status| status.id.clone())
+                .collect::<Vec<_>>();
+            let counts_preload = preload_status_counts(&db, &[], &status_ids).await?;
+            for status in statuses {
                 if !is_public_activitypub_visibility(&status.visibility) {
                     continue;
                 }
@@ -159,13 +170,14 @@ async fn account_statuses_response_for_account_id(
                     html_statuses.push(remote_status_html_item(&actor, &status));
                 }
                 response.push(
-                    build_remote_status_response_with_filter_matcher(
+                    build_remote_status_response_with_preloads(
                         &db,
                         &config,
                         viewer.as_ref(),
                         &status,
                         &actor,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 );

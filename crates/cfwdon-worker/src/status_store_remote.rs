@@ -242,6 +242,9 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
 
     let rows = query_remote_statuses_with_actor(db, &sql, &bindings).await?;
     let mut rows = rows;
+    if rows.len() >= limit as usize {
+        return Ok(rows);
+    }
     let mut seen_ids = rows
         .iter()
         .map(|(status, _)| status.id.clone())

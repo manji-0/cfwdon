@@ -5,6 +5,8 @@ use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
 
+const OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE: usize = 40;
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct OutboxDeliveryRow {
     pub(crate) id: String,
@@ -115,22 +117,30 @@ pub(crate) async fn expand_outbox_delivery_targets(
     targets: &[String],
 ) -> Result<usize> {
     let mut seen = HashSet::new();
-    let mut inserted = 0usize;
+    let unique_targets = targets
+        .iter()
+        .filter(|target| seen.insert((*target).clone()))
+        .collect::<Vec<_>>();
 
-    for target in targets {
-        if !seen.insert(target.clone()) {
-            continue;
-        }
-
-        let bindings = [
-            D1Type::Text(delivery.account_id.as_str()),
-            D1Type::Text(delivery.status_id.as_str()),
-            D1Type::Text(delivery.activity_id.as_str()),
-            D1Type::Text(delivery.activity_type.as_str()),
-            D1Type::Text(target.as_str()),
-            D1Type::Text(delivery.payload_json.as_str()),
-        ];
-        db.prepare(
+    for chunk in unique_targets.chunks(OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE) {
+        let values = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let offset = index * 6;
+                format!(
+                    "(lower(hex(randomblob(16))), ?{}, ?{}, ?{}, ?{}, ?{}, ?{}, 'queued', 0, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    offset + 1,
+                    offset + 2,
+                    offset + 3,
+                    offset + 4,
+                    offset + 5,
+                    offset + 6
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
             "INSERT OR IGNORE INTO outbox_deliveries (
                 id,
                 account_id,
@@ -145,27 +155,21 @@ pub(crate) async fn expand_outbox_delivery_targets(
                 next_attempt_at,
                 created_at,
                 updated_at
-            ) VALUES (
-                lower(hex(randomblob(16))),
-                ?1,
-                ?2,
-                ?3,
-                ?4,
-                ?5,
-                ?6,
-                'queued',
-                0,
-                NULL,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
-            )",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
-        inserted += 1;
+            ) VALUES {values}"
+        );
+        let mut bindings = Vec::with_capacity(chunk.len() * 6);
+        for target in chunk {
+            bindings.extend([
+                D1Type::Text(delivery.account_id.as_str()),
+                D1Type::Text(delivery.status_id.as_str()),
+                D1Type::Text(delivery.activity_id.as_str()),
+                D1Type::Text(delivery.activity_type.as_str()),
+                D1Type::Text(target.as_str()),
+                D1Type::Text(delivery.payload_json.as_str()),
+            ]);
+        }
+        db.prepare(&sql).bind_refs(bindings.iter())?.run().await?;
     }
 
-    Ok(inserted)
+    Ok(unique_targets.len())
 }

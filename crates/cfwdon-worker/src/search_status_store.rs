@@ -74,6 +74,10 @@ fn search_like_clauses(columns: &[&str], start_index: usize, pattern_count: usiz
         .join(" OR ")
 }
 
+fn search_patterns_match_everything(patterns: &[String]) -> bool {
+    matches!(patterns, [pattern] if pattern == "%")
+}
+
 fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
     match value {
         Some(value) => D1Type::Text(value),
@@ -211,11 +215,21 @@ pub(crate) async fn search_local_status_rows(
     min_timestamp: Option<&str>,
 ) -> Result<Vec<StatusRow>> {
     let patterns = normalized_search_patterns(queries);
-    let search_clauses = search_like_clauses(LOCAL_STATUS_SEARCH_COLUMNS, 2, patterns.len());
+    let pattern_count = if search_patterns_match_everything(&patterns) {
+        0
+    } else {
+        patterns.len()
+    };
+    let search_clauses = search_like_clauses(LOCAL_STATUS_SEARCH_COLUMNS, 2, pattern_count);
+    let search_filter = if pattern_count == 0 {
+        "1 = 1".to_owned()
+    } else {
+        format!("({search_clauses})")
+    };
     let result = if let Some(account_id) = account_id {
-        let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
+        let mut bindings = Vec::with_capacity(2 + pattern_count + 5);
         bindings.push(D1Type::Text(account_id));
-        push_search_pattern_bindings(&mut bindings, &patterns);
+        push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -224,25 +238,24 @@ pub(crate) async fn search_local_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(patterns.len(), 1);
+        let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE account_id = ?1
-               AND ({})
+               AND {search_filter}
                {cursor_clause}
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
-            search_clauses,
             limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
         .await?
     } else {
-        let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        push_search_pattern_bindings(&mut bindings, &patterns);
+        let mut bindings = Vec::with_capacity(pattern_count + 5);
+        push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -251,16 +264,15 @@ pub(crate) async fn search_local_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(patterns.len(), 0);
+        let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(&format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
-             WHERE ({})
+             WHERE {search_filter}
                {cursor_clause}
              ORDER BY created_at DESC, id DESC
              LIMIT ?{limit}",
-            search_clauses,
             limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
@@ -282,11 +294,21 @@ pub(crate) async fn search_remote_status_rows(
     min_timestamp: Option<&str>,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     let patterns = normalized_search_patterns(queries);
-    let search_clauses = search_like_clauses(REMOTE_STATUS_SEARCH_COLUMNS, 2, patterns.len());
+    let pattern_count = if search_patterns_match_everything(&patterns) {
+        0
+    } else {
+        patterns.len()
+    };
+    let search_clauses = search_like_clauses(REMOTE_STATUS_SEARCH_COLUMNS, 2, pattern_count);
+    let search_filter = if pattern_count == 0 {
+        "1 = 1".to_owned()
+    } else {
+        format!("({search_clauses})")
+    };
     let result = if let Some(actor_uri) = actor_uri {
-        let mut bindings = Vec::with_capacity(2 + patterns.len() + 5);
+        let mut bindings = Vec::with_capacity(2 + pattern_count + 5);
         bindings.push(D1Type::Text(actor_uri));
-        push_search_pattern_bindings(&mut bindings, &patterns);
+        push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -295,25 +317,24 @@ pub(crate) async fn search_remote_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(patterns.len(), 1);
+        let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE rs.actor_uri = ?1
-               AND ({})
+               AND {search_filter}
                {cursor_clause}
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
-            search_clauses,
             limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
         .all()
         .await?
     } else {
-        let mut bindings = Vec::with_capacity(patterns.len() + 5);
-        push_search_pattern_bindings(&mut bindings, &patterns);
+        let mut bindings = Vec::with_capacity(pattern_count + 5);
+        push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
         push_cursor_bindings(
             &mut bindings,
             max_timestamp,
@@ -322,16 +343,15 @@ pub(crate) async fn search_remote_status_rows(
             min_id,
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(patterns.len(), 0);
+        let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(&format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
-             WHERE ({})
+             WHERE {search_filter}
                {cursor_clause}
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?{limit}",
-            search_clauses,
             limit = limit_binding_index(pattern_max_index),
         ))
         .bind_refs(bindings.iter())?
@@ -367,6 +387,7 @@ mod tests {
             normalized_search_patterns(&[" ".to_owned(), "\t".to_owned()]),
             vec!["%".to_owned()]
         );
+        assert!(search_patterns_match_everything(&["%".to_owned()]));
     }
 
     #[test]

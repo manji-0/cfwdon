@@ -13,8 +13,8 @@ use crate::oauth_apps::{
 use crate::runtime_config::load_config;
 use crate::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
-    TimelinePaginationQuery, build_local_status_response_with_filter_matcher,
-    build_remote_status_response_with_filter_matcher, build_status_card_value,
+    TimelinePaginationQuery, build_local_status_response_with_preloads,
+    build_remote_status_response_with_preloads, build_status_card_value,
     build_timeline_link_header, canonicalize_link_timeline_url, derive_link_timeline_match_urls,
     enrich_card_with_remote_preview, include_local_source, include_remote_source,
     list_followed_tag_names, list_local_direct_timeline_statuses,
@@ -24,8 +24,8 @@ use crate::{
     list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
     list_remote_public_statuses_by_tags, list_remote_public_timeline_statuses,
     load_account_filter_matcher, load_in_reply_to_account_id, matches_tag_timeline_filters,
-    normalize_hashtag, require_authenticated_local_account, resolve_timeline_cursor,
-    strip_html_tags, timeline_fetch_limit, timeline_limit,
+    normalize_hashtag, preload_status_counts, require_authenticated_local_account,
+    resolve_timeline_cursor, strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
 use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
@@ -109,6 +109,22 @@ type LocalTimelinePreload = (
     HashMap<String, crate::LocalAccount>,
     HashMap<String, Vec<crate::MediaAttachmentRow>>,
 );
+
+async fn preload_timeline_status_counts(
+    db: &D1Database,
+    local_statuses: &[crate::StatusRow],
+    remote_statuses: &[(crate::RemoteStatusRow, crate::RemoteActorRow)],
+) -> Result<crate::StatusCountsPreload> {
+    let local_ids = local_statuses
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+    let remote_ids = remote_statuses
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<Vec<_>>();
+    preload_status_counts(db, &local_ids, &remote_ids).await
+}
 
 async fn preload_local_timeline_rows(
     db: &D1Database,
@@ -265,6 +281,10 @@ pub(crate) async fn home_timeline_response(
 
     let local_home_statuses =
         list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
+    let remote_home_statuses =
+        list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
+    let counts_preload =
+        preload_timeline_status_counts(&db, &local_home_statuses, &remote_home_statuses).await?;
     let (accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows(&db, &local_home_statuses).await?;
     for status in local_home_statuses {
@@ -285,7 +305,7 @@ pub(crate) async fn home_timeline_response(
             status.created_at.clone(),
             status.id.clone(),
             serde_json::to_value(
-                build_local_status_response_with_filter_matcher(
+                build_local_status_response_with_preloads(
                     &db,
                     &config,
                     Some(&viewer),
@@ -294,6 +314,7 @@ pub(crate) async fn home_timeline_response(
                     load_in_reply_to_account_id(&db, &status).await?,
                     media,
                     Some(&filter_matcher),
+                    Some(&counts_preload),
                 )
                 .await?,
             )
@@ -301,9 +322,7 @@ pub(crate) async fn home_timeline_response(
         ));
     }
 
-    for (status, actor) in
-        list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?
-    {
+    for (status, actor) in remote_home_statuses {
         if !seen_status_ids.insert(status.id.clone()) {
             continue;
         }
@@ -314,13 +333,14 @@ pub(crate) async fn home_timeline_response(
             status.published_at.clone(),
             status.id.clone(),
             serde_json::to_value(
-                build_remote_status_response_with_filter_matcher(
+                build_remote_status_response_with_preloads(
                     &db,
                     &config,
                     Some(&viewer),
                     &status,
                     &actor,
                     Some(&filter_matcher),
+                    Some(&counts_preload),
                 )
                 .await?,
             )
@@ -332,6 +352,10 @@ pub(crate) async fn home_timeline_response(
     if !followed_tags.is_empty() {
         let local_tag_statuses =
             list_local_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?;
+        let remote_tag_statuses =
+            list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?;
+        let counts_preload =
+            preload_timeline_status_counts(&db, &local_tag_statuses, &remote_tag_statuses).await?;
         let (accounts_by_id, mut media_by_status_id) =
             preload_local_timeline_rows(&db, &local_tag_statuses).await?;
         for status in local_tag_statuses {
@@ -352,7 +376,7 @@ pub(crate) async fn home_timeline_response(
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response_with_filter_matcher(
+                    build_local_status_response_with_preloads(
                         &db,
                         &config,
                         Some(&viewer),
@@ -361,6 +385,7 @@ pub(crate) async fn home_timeline_response(
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
                         Some(&filter_matcher),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -368,9 +393,7 @@ pub(crate) async fn home_timeline_response(
             ));
         }
 
-        for (status, actor) in
-            list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
-        {
+        for (status, actor) in remote_tag_statuses {
             if !seen_status_ids.insert(status.id.clone()) {
                 continue;
             }
@@ -381,13 +404,14 @@ pub(crate) async fn home_timeline_response(
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response_with_filter_matcher(
+                    build_remote_status_response_with_preloads(
                         &db,
                         &config,
                         Some(&viewer),
                         &status,
                         &actor,
                         Some(&filter_matcher),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -430,9 +454,20 @@ pub(crate) async fn public_timeline_response(
         None => None,
     };
     let mut entries = Vec::new();
+    let local_statuses = if include_local {
+        list_local_public_timeline_statuses(&db, &cursor, query_limit).await?
+    } else {
+        Vec::new()
+    };
+    let remote_statuses = if include_remote {
+        list_remote_public_timeline_statuses(&db, &cursor, query_limit).await?
+    } else {
+        Vec::new()
+    };
+    let counts_preload =
+        preload_timeline_status_counts(&db, &local_statuses, &remote_statuses).await?;
 
     if include_local {
-        let local_statuses = list_local_public_timeline_statuses(&db, &cursor, query_limit).await?;
         let (accounts_by_id, mut media_by_status_id) =
             preload_local_timeline_rows(&db, &local_statuses).await?;
         for status in local_statuses {
@@ -452,7 +487,7 @@ pub(crate) async fn public_timeline_response(
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response_with_filter_matcher(
+                    build_local_status_response_with_preloads(
                         &db,
                         &config,
                         viewer,
@@ -461,6 +496,7 @@ pub(crate) async fn public_timeline_response(
                         None,
                         media,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -470,8 +506,6 @@ pub(crate) async fn public_timeline_response(
     }
 
     if include_remote {
-        let remote_statuses =
-            list_remote_public_timeline_statuses(&db, &cursor, query_limit).await?;
         let remote_media_status_ids = remote_media_status_ids_for_filter(
             &db,
             query.only_media.unwrap_or(false),
@@ -486,13 +520,14 @@ pub(crate) async fn public_timeline_response(
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response_with_filter_matcher(
+                    build_remote_status_response_with_preloads(
                         &db,
                         &config,
                         viewer,
                         &status,
                         &actor,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -537,10 +572,20 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         None => None,
     };
     let mut entries = Vec::new();
+    let local_statuses = if include_local {
+        list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
+    } else {
+        Vec::new()
+    };
+    let remote_statuses = if include_remote {
+        list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
+    } else {
+        Vec::new()
+    };
+    let counts_preload =
+        preload_timeline_status_counts(&db, &local_statuses, &remote_statuses).await?;
 
     if include_local {
-        let local_statuses =
-            list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
         let (accounts_by_id, mut media_by_status_id) =
             preload_local_timeline_rows(&db, &local_statuses).await?;
         for status in local_statuses {
@@ -564,7 +609,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                 status.created_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_local_status_response_with_filter_matcher(
+                    build_local_status_response_with_preloads(
                         &db,
                         &config,
                         viewer,
@@ -573,6 +618,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                         load_in_reply_to_account_id(&db, &status).await?,
                         media,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -582,8 +628,6 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     }
 
     if include_remote {
-        let remote_statuses =
-            list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?;
         let remote_media_status_ids = remote_media_status_ids_for_filter(
             &db,
             query.only_media.unwrap_or(false),
@@ -602,13 +646,14 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
                 status.published_at.clone(),
                 status.id.clone(),
                 serde_json::to_value(
-                    build_remote_status_response_with_filter_matcher(
+                    build_remote_status_response_with_preloads(
                         &db,
                         &config,
                         viewer,
                         &status,
                         &actor,
                         filter_matcher.as_ref(),
+                        Some(&counts_preload),
                     )
                     .await?,
                 )
@@ -666,6 +711,10 @@ pub(crate) async fn link_timeline_response(
 
     let local_link_statuses =
         list_local_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?;
+    let remote_link_statuses =
+        list_remote_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?;
+    let counts_preload =
+        preload_timeline_status_counts(&db, &local_link_statuses, &remote_link_statuses).await?;
     let (accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows(&db, &local_link_statuses).await?;
     for status in local_link_statuses {
@@ -682,7 +731,7 @@ pub(crate) async fn link_timeline_response(
         }
         let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         let mut value = serde_json::to_value(
-            build_local_status_response_with_filter_matcher(
+            build_local_status_response_with_preloads(
                 &db,
                 &config,
                 viewer,
@@ -691,6 +740,7 @@ pub(crate) async fn link_timeline_response(
                 load_in_reply_to_account_id(&db, &status).await?,
                 media,
                 filter_matcher.as_ref(),
+                Some(&counts_preload),
             )
             .await?,
         )
@@ -701,21 +751,20 @@ pub(crate) async fn link_timeline_response(
         entries.push((status.created_at.clone(), status.id.clone(), value));
     }
 
-    for (status, actor) in
-        list_remote_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?
-    {
+    for (status, actor) in remote_link_statuses {
         if !status_card_url_matches_targets(&strip_html_tags(&status.content_html), &target_url_set)
         {
             continue;
         }
         let mut value = serde_json::to_value(
-            build_remote_status_response_with_filter_matcher(
+            build_remote_status_response_with_preloads(
                 &db,
                 &config,
                 viewer,
                 &status,
                 &actor,
                 filter_matcher.as_ref(),
+                Some(&counts_preload),
             )
             .await?,
         )
@@ -870,9 +919,11 @@ pub(crate) async fn direct_timeline_response(
     let cursor = resolve_timeline_cursor(&db, &query).await?;
     let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
     let mut entries = Vec::new();
+    let direct_statuses =
+        list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
+    let direct_counts_preload = preload_timeline_status_counts(&db, &direct_statuses, &[]).await?;
 
-    for status in list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?
-    {
+    for status in direct_statuses {
         let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
             continue;
         };
@@ -886,7 +937,7 @@ pub(crate) async fn direct_timeline_response(
         entries.push((
             status.created_at.clone(),
             status.id.clone(),
-            build_local_status_response_with_filter_matcher(
+            build_local_status_response_with_preloads(
                 &db,
                 &config,
                 Some(&viewer),
@@ -895,6 +946,7 @@ pub(crate) async fn direct_timeline_response(
                 load_in_reply_to_account_id(&db, &status).await?,
                 media,
                 Some(&filter_matcher),
+                Some(&direct_counts_preload),
             )
             .await?,
         ));

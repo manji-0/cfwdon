@@ -190,6 +190,9 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     let mut rows = result.results::<StatusRow>()?;
+    if rows.len() >= limit as usize {
+        return Ok(rows);
+    }
     let mut seen_ids = rows
         .iter()
         .map(|status| status.id.clone())
