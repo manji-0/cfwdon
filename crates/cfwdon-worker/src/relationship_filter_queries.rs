@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -20,6 +21,11 @@ pub(crate) struct BlockEntryRow {
     pub(crate) cursor_id: i64,
     pub(crate) target_account_id: Option<String>,
     pub(crate) target_actor_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MutedActorUriRow {
+    target_actor_uri: String,
 }
 
 pub(crate) async fn is_blocking_actor(
@@ -83,6 +89,63 @@ pub(crate) async fn is_muted_actor(
     Ok(find_active_mute(db, account_id, target_actor_uri)
         .await?
         .is_some())
+}
+
+pub(crate) async fn list_active_muted_actor_uris(
+    db: &D1Database,
+    account_id: &str,
+    target_actor_uris: &[String],
+) -> Result<HashSet<String>> {
+    let mut seen = HashSet::new();
+    let target_actor_uris = target_actor_uris
+        .iter()
+        .filter(|uri| seen.insert(uri.as_str()))
+        .collect::<Vec<_>>();
+    if target_actor_uris.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = (2..=(target_actor_uris.len() + 1))
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut bindings = Vec::with_capacity(target_actor_uris.len() + 1);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(
+        target_actor_uris
+            .iter()
+            .map(|uri| D1Type::Text(uri.as_str())),
+    );
+
+    let delete_sql = format!(
+        "DELETE FROM mutes
+         WHERE account_id = ?1
+           AND target_actor_uri IN ({placeholders})
+           AND expires_at IS NOT NULL
+           AND expires_at <= CURRENT_TIMESTAMP"
+    );
+    db.prepare(&delete_sql)
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    let select_sql = format!(
+        "SELECT target_actor_uri
+         FROM mutes
+         WHERE account_id = ?1
+           AND target_actor_uri IN ({placeholders})"
+    );
+    let result = db
+        .prepare(&select_sql)
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<MutedActorUriRow>()?
+        .into_iter()
+        .map(|row| row.target_actor_uri)
+        .collect())
 }
 
 pub(crate) async fn muted_notifications_for_actor(

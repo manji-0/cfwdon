@@ -1,11 +1,10 @@
 use crate::auth::{
-    LocalApiAuthentication, authenticate_local_api_request, find_account_by_id,
-    find_authenticated_local_account,
+    LocalApiAuthentication, authenticate_local_api_request, find_authenticated_local_account,
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
-use crate::find_media_attachments_by_status_id;
 use crate::find_remote_status_ids_with_media;
 use crate::instance_identity::actor_url;
+use crate::is_local_status_thread_muted_by;
 use crate::oauth_apps::{
     app_bearer_token_from_request, find_oauth_app_by_bearer_token,
     oauth_access_token_has_any_scope, oauth_app_has_any_scope,
@@ -13,28 +12,28 @@ use crate::oauth_apps::{
 use crate::runtime_config::load_config;
 use crate::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
-    TimelinePaginationQuery, account_has_thread_mutes, build_local_status_response_with_preloads,
+    TimelinePaginationQuery, account_has_thread_mutes,
     build_local_status_response_with_quote_count_preloads,
-    build_remote_status_response_with_preloaded_attachments,
-    build_remote_status_response_with_preloads, build_status_card_value,
+    build_remote_status_response_with_preloaded_attachments, build_status_card_value,
     build_timeline_link_header, canonicalize_link_timeline_url, derive_link_timeline_match_urls,
     enrich_card_with_remote_preview, find_remote_status_attachments_by_status_ids,
-    include_local_source, include_remote_source, list_followed_tag_names,
-    list_local_direct_timeline_statuses, list_local_home_timeline_statuses,
-    list_local_public_statuses_by_link, list_local_public_statuses_by_tag,
-    list_local_public_statuses_by_tags, list_local_public_timeline_statuses,
-    list_remote_home_timeline_statuses, list_remote_public_statuses_by_link,
-    list_remote_public_statuses_by_tag, list_remote_public_statuses_by_tags,
-    list_remote_public_timeline_statuses, load_account_filter_matcher, load_in_reply_to_account_id,
-    matches_tag_timeline_filters, normalize_hashtag, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
-    require_authenticated_local_account, resolve_timeline_cursor, strip_html_tags,
-    timeline_fetch_limit, timeline_limit,
+    include_local_source, include_remote_source, list_active_muted_actor_uris,
+    list_followed_tag_names, list_local_direct_timeline_statuses,
+    list_local_home_timeline_statuses, list_local_public_statuses_by_link,
+    list_local_public_statuses_by_tag, list_local_public_statuses_by_tags,
+    list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
+    list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
+    list_remote_public_statuses_by_tags, list_remote_public_timeline_statuses,
+    load_account_filter_matcher, matches_tag_timeline_filters, normalize_hashtag,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses, preload_status_counts,
+    preload_status_quote_counts, require_authenticated_local_account, resolve_timeline_cursor,
+    strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
-use crate::{is_local_status_thread_muted_by, is_muted_actor};
 use cfwdon_core::TimelineAccessLevel;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::D1Database;
+use worker::d1::D1Type;
 use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) enum TimelineRequestAccess {
@@ -131,20 +130,10 @@ type LocalTimelinePreload = (
     HashMap<String, Vec<crate::MediaAttachmentRow>>,
 );
 
-async fn preload_timeline_status_counts(
-    db: &D1Database,
-    local_statuses: &[crate::StatusRow],
-    remote_statuses: &[(crate::RemoteStatusRow, crate::RemoteActorRow)],
-) -> Result<crate::StatusCountsPreload> {
-    let local_ids = local_statuses
-        .iter()
-        .map(|status| status.id.clone())
-        .collect::<Vec<_>>();
-    let remote_ids = remote_statuses
-        .iter()
-        .map(|(status, _)| status.id.clone())
-        .collect::<Vec<_>>();
-    preload_status_counts(db, &local_ids, &remote_ids).await
+#[derive(Debug, Deserialize)]
+struct ReplyAccountIdRow {
+    id: String,
+    account_id: String,
 }
 
 async fn preload_public_timeline_candidate_counts(
@@ -232,6 +221,56 @@ async fn preload_public_timeline_local_viewer_state(
     preload_local_status_viewer_state(db, &viewer.id, &statuses).await
 }
 
+async fn preload_timeline_candidate_reply_account_ids(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+) -> Result<HashMap<String, String>> {
+    let mut seen = HashSet::new();
+    let reply_ids = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Remote { .. } => None,
+            PublicTimelineCandidate::Local { status, .. } => status.in_reply_to_id.as_ref(),
+        })
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if reply_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=reply_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, account_id
+         FROM statuses
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = reply_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let reply_accounts_by_status_id = result
+        .results::<ReplyAccountIdRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.account_id))
+        .collect::<HashMap<_, _>>();
+
+    Ok(candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Remote { .. } => None,
+            PublicTimelineCandidate::Local { status, .. } => status
+                .in_reply_to_id
+                .as_ref()
+                .and_then(|reply_id| reply_accounts_by_status_id.get(reply_id))
+                .map(|account_id| (status.id.clone(), account_id.clone())),
+        })
+        .collect())
+}
+
 fn local_status_quote_count_uri(
     config: &cfwdon_core::AppConfig,
     status: &crate::StatusRow,
@@ -263,6 +302,136 @@ async fn preload_local_timeline_rows(
         crate::find_accounts_by_ids(db, &account_ids).await?,
         crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
     ))
+}
+
+async fn preload_local_timeline_rows_from_status_refs(
+    db: &D1Database,
+    statuses: &[&crate::StatusRow],
+) -> Result<LocalTimelinePreload> {
+    let account_ids = statuses
+        .iter()
+        .map(|status| status.account_id.clone())
+        .collect::<Vec<_>>();
+    let status_ids = statuses
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+
+    Ok((
+        crate::find_accounts_by_ids(db, &account_ids).await?,
+        crate::find_media_attachments_by_status_ids(db, &status_ids).await?,
+    ))
+}
+
+fn local_status_actor_uri(
+    config: &cfwdon_core::AppConfig,
+    accounts_by_id: &HashMap<String, crate::LocalAccount>,
+    status: &crate::StatusRow,
+) -> Option<String> {
+    accounts_by_id
+        .get(&status.account_id)
+        .map(|account| actor_url(config, &account.username))
+}
+
+async fn preload_muted_timeline_actor_uris(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    local_statuses: &[&crate::StatusRow],
+    remote_statuses: &[&(crate::RemoteStatusRow, crate::RemoteActorRow)],
+    accounts_by_id: &HashMap<String, crate::LocalAccount>,
+) -> Result<HashSet<String>> {
+    let mut actor_uris = local_statuses
+        .iter()
+        .filter_map(|status| local_status_actor_uri(config, accounts_by_id, status))
+        .collect::<Vec<_>>();
+    actor_uris.extend(
+        remote_statuses
+            .iter()
+            .map(|(_, actor)| actor.actor_uri.clone()),
+    );
+
+    list_active_muted_actor_uris(db, &viewer.id, &actor_uris).await
+}
+
+async fn timeline_entries_from_candidates(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    filter_matcher: Option<&crate::AccountFilterMatcher>,
+    local_accounts_by_id: &HashMap<String, crate::LocalAccount>,
+    candidates: Vec<PublicTimelineCandidateEntry>,
+    enrich_cards: bool,
+) -> Result<Vec<TimelineEntry>> {
+    let counts_preload = preload_public_timeline_candidate_counts(db, &candidates).await?;
+    let local_quote_counts_preload =
+        preload_public_timeline_local_quote_counts(db, config, &candidates, local_accounts_by_id)
+            .await?;
+    let local_poll_preload = preload_public_timeline_local_polls(db, &candidates, viewer).await?;
+    let local_viewer_state_preload =
+        preload_public_timeline_local_viewer_state(db, &candidates, viewer).await?;
+    let in_reply_to_account_ids =
+        preload_timeline_candidate_reply_account_ids(db, &candidates).await?;
+    let mut remote_attachments_by_status_id =
+        preload_public_timeline_remote_attachments(db, &candidates).await?;
+    let mut entries = Vec::with_capacity(candidates.len());
+
+    for candidate in candidates {
+        match candidate.candidate {
+            PublicTimelineCandidate::Local { status, media } => {
+                let Some(account) = local_accounts_by_id.get(&status.account_id) else {
+                    continue;
+                };
+                let mut value = serde_json::to_value(
+                    build_local_status_response_with_quote_count_preloads(
+                        db,
+                        config,
+                        viewer,
+                        &status,
+                        account,
+                        in_reply_to_account_ids.get(&status.id).cloned(),
+                        media,
+                        filter_matcher,
+                        Some(&counts_preload),
+                        Some(&local_quote_counts_preload),
+                        Some(&local_poll_preload),
+                        Some(&local_viewer_state_preload),
+                    )
+                    .await?,
+                )
+                .unwrap_or(serde_json::Value::Null);
+                if enrich_cards && let Some(card) = value.get_mut("card") {
+                    let _ = enrich_card_with_remote_preview(card).await;
+                }
+                entries.push((candidate.timestamp, candidate.id, value));
+            }
+            PublicTimelineCandidate::Remote { status, actor } => {
+                let remote_attachments = remote_attachments_by_status_id
+                    .remove(&status.id)
+                    .unwrap_or_default();
+                let mut value = serde_json::to_value(
+                    build_remote_status_response_with_preloaded_attachments(
+                        db,
+                        config,
+                        viewer,
+                        &status,
+                        &actor,
+                        filter_matcher,
+                        Some(&counts_preload),
+                        remote_attachments,
+                    )
+                    .await?,
+                )
+                .unwrap_or(serde_json::Value::Null);
+                if enrich_cards && let Some(card) = value.get_mut("card") {
+                    let _ = enrich_card_with_remote_preview(card).await;
+                }
+                entries.push((candidate.timestamp, candidate.id, value));
+            }
+        }
+    }
+
+    Ok(entries)
 }
 
 async fn remote_media_status_ids_for_filter(
@@ -410,149 +579,132 @@ pub(crate) async fn home_timeline_response(
         return empty_timeline_response();
     }
     let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
-    let mut entries = Vec::new();
-    let mut seen_status_ids = HashSet::new();
 
     let local_home_statuses =
         list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
     let remote_home_statuses =
         list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
-    let counts_preload =
-        preload_timeline_status_counts(&db, &local_home_statuses, &remote_home_statuses).await?;
-    let (accounts_by_id, mut media_by_status_id) =
-        preload_local_timeline_rows(&db, &local_home_statuses).await?;
+    let followed_tags = list_followed_tag_names(&db, &viewer.id).await?;
+    let local_tag_statuses = if followed_tags.is_empty() {
+        Vec::new()
+    } else {
+        list_local_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
+    };
+    let remote_tag_statuses = if followed_tags.is_empty() {
+        Vec::new()
+    } else {
+        list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
+    };
+    let local_status_refs = local_home_statuses
+        .iter()
+        .chain(local_tag_statuses.iter())
+        .collect::<Vec<_>>();
+    let remote_status_refs = remote_home_statuses
+        .iter()
+        .chain(remote_tag_statuses.iter())
+        .collect::<Vec<_>>();
+    let (local_accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows_from_status_refs(&db, &local_status_refs).await?;
+    let muted_actor_uris = preload_muted_timeline_actor_uris(
+        &db,
+        &config,
+        &viewer,
+        &local_status_refs,
+        &remote_status_refs,
+        &local_accounts_by_id,
+    )
+    .await?;
+    let viewer_has_thread_mutes = account_has_thread_mutes(&db, &viewer.id).await?;
+    let mut candidates = Vec::new();
+    let mut seen_status_ids = HashSet::new();
+
     for status in local_home_statuses {
         if !seen_status_ids.insert(status.id.clone()) {
             continue;
         }
-        let Some(account) = accounts_by_id.get(&status.account_id) else {
+        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
+        else {
             continue;
         };
-        if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
+        if muted_actor_uris.contains(&actor_uri) {
             continue;
         }
-        if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
+        if viewer_has_thread_mutes
+            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+        {
             continue;
         }
         let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(
-                build_local_status_response_with_preloads(
-                    &db,
-                    &config,
-                    Some(&viewer),
-                    &status,
-                    account,
-                    load_in_reply_to_account_id(&db, &status).await?,
-                    media,
-                    Some(&filter_matcher),
-                    Some(&counts_preload),
-                )
-                .await?,
-            )
-            .unwrap_or(serde_json::Value::Null),
-        ));
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
     }
 
     for (status, actor) in remote_home_statuses {
         if !seen_status_ids.insert(status.id.clone()) {
             continue;
         }
-        if is_muted_actor(&db, &viewer.id, &actor.actor_uri).await? {
+        if muted_actor_uris.contains(&actor.actor_uri) {
             continue;
         }
-        entries.push((
-            status.published_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(
-                build_remote_status_response_with_preloads(
-                    &db,
-                    &config,
-                    Some(&viewer),
-                    &status,
-                    &actor,
-                    Some(&filter_matcher),
-                    Some(&counts_preload),
-                )
-                .await?,
-            )
-            .unwrap_or(serde_json::Value::Null),
-        ));
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.published_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Remote { status, actor },
+        });
     }
 
-    let followed_tags = list_followed_tag_names(&db, &viewer.id).await?;
-    if !followed_tags.is_empty() {
-        let local_tag_statuses =
-            list_local_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?;
-        let remote_tag_statuses =
-            list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?;
-        let counts_preload =
-            preload_timeline_status_counts(&db, &local_tag_statuses, &remote_tag_statuses).await?;
-        let (accounts_by_id, mut media_by_status_id) =
-            preload_local_timeline_rows(&db, &local_tag_statuses).await?;
-        for status in local_tag_statuses {
-            if !seen_status_ids.insert(status.id.clone()) {
-                continue;
-            }
-            let Some(account) = accounts_by_id.get(&status.account_id) else {
-                continue;
-            };
-            if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
-                continue;
-            }
-            if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
-                continue;
-            }
-            let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-            entries.push((
-                status.created_at.clone(),
-                status.id.clone(),
-                serde_json::to_value(
-                    build_local_status_response_with_preloads(
-                        &db,
-                        &config,
-                        Some(&viewer),
-                        &status,
-                        account,
-                        load_in_reply_to_account_id(&db, &status).await?,
-                        media,
-                        Some(&filter_matcher),
-                        Some(&counts_preload),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-            ));
+    for status in local_tag_statuses {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
         }
-
-        for (status, actor) in remote_tag_statuses {
-            if !seen_status_ids.insert(status.id.clone()) {
-                continue;
-            }
-            if is_muted_actor(&db, &viewer.id, &actor.actor_uri).await? {
-                continue;
-            }
-            entries.push((
-                status.published_at.clone(),
-                status.id.clone(),
-                serde_json::to_value(
-                    build_remote_status_response_with_preloads(
-                        &db,
-                        &config,
-                        Some(&viewer),
-                        &status,
-                        &actor,
-                        Some(&filter_matcher),
-                        Some(&counts_preload),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-            ));
+        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
+        else {
+            continue;
+        };
+        if muted_actor_uris.contains(&actor_uri) {
+            continue;
         }
+        if viewer_has_thread_mutes
+            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+        {
+            continue;
+        }
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
     }
+
+    for (status, actor) in remote_tag_statuses {
+        if !seen_status_ids.insert(status.id.clone()) {
+            continue;
+        }
+        if muted_actor_uris.contains(&actor.actor_uri) {
+            continue;
+        }
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.published_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Remote { status, actor },
+        });
+    }
+
+    let candidates = select_public_timeline_candidates(candidates, limit);
+    let entries = timeline_entries_from_candidates(
+        &db,
+        &config,
+        Some(&viewer),
+        Some(&filter_matcher),
+        &local_accounts_by_id,
+        candidates,
+        false,
+    )
+    .await?;
 
     timeline_response_from_entries(&req, limit, entries)
 }
@@ -647,75 +799,16 @@ pub(crate) async fn public_timeline_response(
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    let counts_preload = preload_public_timeline_candidate_counts(&db, &candidates).await?;
-    let local_quote_counts_preload = preload_public_timeline_local_quote_counts(
+    let entries = timeline_entries_from_candidates(
         &db,
         &config,
-        &candidates,
+        viewer,
+        filter_matcher.as_ref(),
         &local_accounts_by_id,
+        candidates,
+        false,
     )
     .await?;
-    let local_poll_preload = preload_public_timeline_local_polls(&db, &candidates, viewer).await?;
-    let local_viewer_state_preload =
-        preload_public_timeline_local_viewer_state(&db, &candidates, viewer).await?;
-    let mut remote_attachments_by_status_id =
-        preload_public_timeline_remote_attachments(&db, &candidates).await?;
-    let mut entries = Vec::with_capacity(candidates.len());
-
-    for candidate in candidates {
-        match candidate.candidate {
-            PublicTimelineCandidate::Local { status, media } => {
-                let Some(account) = local_accounts_by_id.get(&status.account_id) else {
-                    continue;
-                };
-                entries.push((
-                    candidate.timestamp,
-                    candidate.id,
-                    serde_json::to_value(
-                        build_local_status_response_with_quote_count_preloads(
-                            &db,
-                            &config,
-                            viewer,
-                            &status,
-                            account,
-                            None,
-                            media,
-                            filter_matcher.as_ref(),
-                            Some(&counts_preload),
-                            Some(&local_quote_counts_preload),
-                            Some(&local_poll_preload),
-                            Some(&local_viewer_state_preload),
-                        )
-                        .await?,
-                    )
-                    .unwrap_or(serde_json::Value::Null),
-                ));
-            }
-            PublicTimelineCandidate::Remote { status, actor } => {
-                let remote_attachments = remote_attachments_by_status_id
-                    .remove(&status.id)
-                    .unwrap_or_default();
-                entries.push((
-                    candidate.timestamp,
-                    candidate.id,
-                    serde_json::to_value(
-                        build_remote_status_response_with_preloaded_attachments(
-                            &db,
-                            &config,
-                            viewer,
-                            &status,
-                            &actor,
-                            filter_matcher.as_ref(),
-                            Some(&counts_preload),
-                            remote_attachments,
-                        )
-                        .await?,
-                    )
-                    .unwrap_or(serde_json::Value::Null),
-                ));
-            }
-        }
-    }
 
     timeline_response_from_entries(&req, limit, entries)
 }
@@ -752,7 +845,6 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
         None => None,
     };
-    let mut entries = Vec::new();
     let local_statuses = if include_local {
         list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await?
     } else {
@@ -763,21 +855,25 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     } else {
         Vec::new()
     };
-    let counts_preload =
-        preload_timeline_status_counts(&db, &local_statuses, &remote_statuses).await?;
+    let (local_accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows(&db, &local_statuses).await?;
+    let viewer_has_thread_mutes = match viewer {
+        Some(viewer) => account_has_thread_mutes(&db, &viewer.id).await?,
+        None => false,
+    };
+    let mut candidates = Vec::new();
 
     if include_local {
-        let (accounts_by_id, mut media_by_status_id) =
-            preload_local_timeline_rows(&db, &local_statuses).await?;
         for status in local_statuses {
             let status_tags = extract_hashtags_from_text(&status._text_content);
             if !matches_tag_timeline_filters(&status_tags, &tag, &query) {
                 continue;
             }
-            let Some(account) = accounts_by_id.get(&status.account_id) else {
+            if !local_accounts_by_id.contains_key(&status.account_id) {
                 continue;
             };
-            if let Some(viewer) = viewer
+            if viewer_has_thread_mutes
+                && let Some(viewer) = viewer
                 && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
             {
                 continue;
@@ -786,25 +882,11 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             if query.only_media.unwrap_or(false) && media.is_empty() {
                 continue;
             }
-            entries.push((
-                status.created_at.clone(),
-                status.id.clone(),
-                serde_json::to_value(
-                    build_local_status_response_with_preloads(
-                        &db,
-                        &config,
-                        viewer,
-                        &status,
-                        account,
-                        load_in_reply_to_account_id(&db, &status).await?,
-                        media,
-                        filter_matcher.as_ref(),
-                        Some(&counts_preload),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-            ));
+            candidates.push(PublicTimelineCandidateEntry {
+                timestamp: status.created_at.clone(),
+                id: status.id.clone(),
+                candidate: PublicTimelineCandidate::Local { status, media },
+            });
         }
     }
 
@@ -823,25 +905,25 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             if query.only_media.unwrap_or(false) && !remote_media_status_ids.contains(&status.id) {
                 continue;
             }
-            entries.push((
-                status.published_at.clone(),
-                status.id.clone(),
-                serde_json::to_value(
-                    build_remote_status_response_with_preloads(
-                        &db,
-                        &config,
-                        viewer,
-                        &status,
-                        &actor,
-                        filter_matcher.as_ref(),
-                        Some(&counts_preload),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-            ));
+            candidates.push(PublicTimelineCandidateEntry {
+                timestamp: status.published_at.clone(),
+                id: status.id.clone(),
+                candidate: PublicTimelineCandidate::Remote { status, actor },
+            });
         }
     }
+
+    let candidates = select_public_timeline_candidates(candidates, limit);
+    let entries = timeline_entries_from_candidates(
+        &db,
+        &config,
+        viewer,
+        filter_matcher.as_ref(),
+        &local_accounts_by_id,
+        candidates,
+        false,
+    )
+    .await?;
 
     timeline_response_from_entries(&req, limit, entries)
 }
@@ -888,48 +970,38 @@ pub(crate) async fn link_timeline_response(
         Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
         None => None,
     };
-    let mut entries = Vec::new();
 
     let local_link_statuses =
         list_local_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?;
     let remote_link_statuses =
         list_remote_public_statuses_by_link(&db, &target_urls, &cursor, query_limit).await?;
-    let counts_preload =
-        preload_timeline_status_counts(&db, &local_link_statuses, &remote_link_statuses).await?;
-    let (accounts_by_id, mut media_by_status_id) =
+    let (local_accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows(&db, &local_link_statuses).await?;
+    let viewer_has_thread_mutes = match viewer {
+        Some(viewer) => account_has_thread_mutes(&db, &viewer.id).await?,
+        None => false,
+    };
+    let mut candidates = Vec::new();
+
     for status in local_link_statuses {
         if !status_card_url_matches_targets(&status._text_content, &target_url_set) {
             continue;
         }
-        let Some(account) = accounts_by_id.get(&status.account_id) else {
+        if !local_accounts_by_id.contains_key(&status.account_id) {
             continue;
         };
-        if let Some(viewer) = viewer
+        if viewer_has_thread_mutes
+            && let Some(viewer) = viewer
             && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
         {
             continue;
         }
         let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        let mut value = serde_json::to_value(
-            build_local_status_response_with_preloads(
-                &db,
-                &config,
-                viewer,
-                &status,
-                account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
-                filter_matcher.as_ref(),
-                Some(&counts_preload),
-            )
-            .await?,
-        )
-        .unwrap_or(serde_json::Value::Null);
-        if let Some(card) = value.get_mut("card") {
-            let _ = enrich_card_with_remote_preview(card).await;
-        }
-        entries.push((status.created_at.clone(), status.id.clone(), value));
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
     }
 
     for (status, actor) in remote_link_statuses {
@@ -937,28 +1009,28 @@ pub(crate) async fn link_timeline_response(
         {
             continue;
         }
-        let mut value = serde_json::to_value(
-            build_remote_status_response_with_preloads(
-                &db,
-                &config,
-                viewer,
-                &status,
-                &actor,
-                filter_matcher.as_ref(),
-                Some(&counts_preload),
-            )
-            .await?,
-        )
-        .unwrap_or(serde_json::Value::Null);
-        if let Some(card) = value.get_mut("card") {
-            let _ = enrich_card_with_remote_preview(card).await;
-        }
-        entries.push((status.published_at.clone(), status.id.clone(), value));
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.published_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Remote { status, actor },
+        });
     }
 
-    if entries.is_empty() && !timeline_cursor_requested(&query.pagination) {
+    let candidates = select_public_timeline_candidates(candidates, limit);
+    if candidates.is_empty() && !timeline_cursor_requested(&query.pagination) {
         return Response::error("Record not found", 404);
     }
+    let entries = timeline_entries_from_candidates(
+        &db,
+        &config,
+        viewer,
+        filter_matcher.as_ref(),
+        &local_accounts_by_id,
+        candidates,
+        true,
+    )
+    .await?;
+
     timeline_response_from_entries(&req, limit, entries)
 }
 
@@ -1152,57 +1224,55 @@ pub(crate) async fn direct_timeline_response(
     };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
     let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
-    let mut entries = Vec::new();
     let direct_statuses =
         list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
-    let direct_counts_preload = preload_timeline_status_counts(&db, &direct_statuses, &[]).await?;
+    let direct_status_refs = direct_statuses.iter().collect::<Vec<_>>();
+    let (local_accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows_from_status_refs(&db, &direct_status_refs).await?;
+    let muted_actor_uris = preload_muted_timeline_actor_uris(
+        &db,
+        &config,
+        &viewer,
+        &direct_status_refs,
+        &[],
+        &local_accounts_by_id,
+    )
+    .await?;
+    let viewer_has_thread_mutes = account_has_thread_mutes(&db, &viewer.id).await?;
+    let mut candidates = Vec::new();
 
     for status in direct_statuses {
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
+        else {
             continue;
         };
-        if is_muted_actor(&db, &viewer.id, &actor_url(&config, &account.username)).await? {
+        if muted_actor_uris.contains(&actor_uri) {
             continue;
         }
-        if is_local_status_thread_muted_by(&db, &viewer.id, &status).await? {
+        if viewer_has_thread_mutes
+            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+        {
             continue;
         }
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            build_local_status_response_with_preloads(
-                &db,
-                &config,
-                Some(&viewer),
-                &status,
-                &account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
-                Some(&filter_matcher),
-                Some(&direct_counts_preload),
-            )
-            .await?,
-        ));
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
     }
 
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let first_id = entries
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = entries
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let response = entries
-        .into_iter()
-        .map(|(_, _, value)| value)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&response)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
+    let candidates = select_public_timeline_candidates(candidates, limit);
+    let entries = timeline_entries_from_candidates(
+        &db,
+        &config,
+        Some(&viewer),
+        Some(&filter_matcher),
+        &local_accounts_by_id,
+        candidates,
+        false,
+    )
+    .await?;
+
+    timeline_response_from_entries(&req, limit, entries)
 }
