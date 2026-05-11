@@ -632,7 +632,15 @@ pub(crate) async fn home_timeline_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match authenticate_local_api_request(&req, &db, &config).await? {
+    let query: HomeTimelineQuery = req.query().unwrap_or_default();
+    let pagination = query.pagination();
+    let limit = timeline_limit(&pagination);
+    let query_limit = timeline_fetch_limit(limit);
+    let (auth, cursor) = futures_util::try_join!(
+        authenticate_local_api_request(&req, &db, &config),
+        resolve_timeline_cursor(&db, &pagination),
+    )?;
+    let viewer = match auth {
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["read:statuses", "read"]) {
                 return timeline_outside_authorized_scopes_response();
@@ -644,19 +652,21 @@ pub(crate) async fn home_timeline_response(
         | LocalApiAuthentication::InvalidBearer
         | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
     };
-    let query: HomeTimelineQuery = req.query().unwrap_or_default();
-    let pagination = query.pagination();
-    let limit = timeline_limit(&pagination);
-    let query_limit = timeline_fetch_limit(limit);
-    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
-    let (filter_matcher, local_home_statuses, remote_home_statuses, followed_tags) = futures_util::try_join!(
+    let (
+        filter_matcher,
+        local_home_statuses,
+        remote_home_statuses,
+        followed_tags,
+        viewer_has_thread_mutes,
+    ) = futures_util::try_join!(
         load_account_filter_matcher(&db, &viewer.id),
         list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
         list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
         list_followed_tag_names(&db, &viewer.id),
+        account_has_thread_mutes(&db, &viewer.id),
     )?;
     let (local_tag_statuses, remote_tag_statuses) = if followed_tags.is_empty() {
         (Vec::new(), Vec::new())
@@ -695,7 +705,6 @@ pub(crate) async fn home_timeline_response(
         &local_accounts_by_id,
     )
     .await?;
-    let viewer_has_thread_mutes = account_has_thread_mutes(&db, &viewer.id).await?;
     let mut candidates = Vec::new();
     let mut seen_status_ids = HashSet::new();
 

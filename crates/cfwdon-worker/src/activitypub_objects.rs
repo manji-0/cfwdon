@@ -80,14 +80,18 @@ pub(crate) async fn build_activitypub_note(
     let actor = actor_url(config, &account.username);
     let note_id = local_status_ap_id(config, account, status);
     let audiences = activitypub_audiences(config, &account.username, &status.visibility);
-    let poll = find_status_poll_by_status_id(db, &status.id).await?;
-    let reply_uri = match status.in_reply_to_id.as_deref() {
-        Some(reply_id) => find_status_by_id(db, reply_id)
-            .await?
-            .and_then(|reply| reply.ap_id),
-        None => None,
-    };
-    let attachments = find_media_attachments_by_status_id(db, &status.id).await?;
+    let (poll, reply_uri, attachments) = futures_util::try_join!(
+        find_status_poll_by_status_id(db, &status.id),
+        async {
+            match status.in_reply_to_id.as_deref() {
+                Some(reply_id) => Ok(find_status_by_id(db, reply_id)
+                    .await?
+                    .and_then(|reply| reply.ap_id)),
+                None => Ok(None),
+            }
+        },
+        find_media_attachments_by_status_id(db, &status.id),
+    )?;
     let has_quote = status_has_active_quote(status);
 
     let mut note = serde_json::json!({
@@ -142,8 +146,10 @@ pub(crate) async fn build_activitypub_note(
         note["_misskey_quote"] = serde_json::json!(quote_uri);
     }
     if let Some(poll) = poll {
-        let options = list_status_poll_options(db, &poll.id).await?;
-        let voters_count = count_poll_voters(db, &poll.id).await?;
+        let (options, voters_count) = futures_util::try_join!(
+            list_status_poll_options(db, &poll.id),
+            count_poll_voters(db, &poll.id),
+        )?;
         let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
         apply_activitypub_poll_fields(&mut note, &poll, &options, voters_count, expired);
         if include_context {
