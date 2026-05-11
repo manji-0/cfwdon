@@ -155,6 +155,48 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let (mut rows, tags) =
+        list_remote_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
+    if rows.len() >= limit as usize {
+        return Ok(rows);
+    }
+    let mut seen_ids = rows
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<HashSet<_>>();
+    for (status, actor) in
+        list_remote_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await?
+    {
+        if seen_ids.insert(status.id.clone()) {
+            rows.push((status, actor));
+        }
+    }
+    rows.sort_by(|(left_status, _), (right_status, _)| {
+        right_status
+            .published_at
+            .cmp(&left_status.published_at)
+            .then_with(|| right_status.id.cmp(&left_status.id))
+    });
+    rows.truncate(limit as usize);
+    Ok(rows)
+}
+
+pub(crate) async fn list_remote_public_statuses_by_tags_without_legacy_fallback(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let (rows, _) = list_remote_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
+    Ok(rows)
+}
+
+async fn list_remote_public_statuses_by_tags_indexed(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<(Vec<(RemoteStatusRow, RemoteActorRow)>, Vec<String>)> {
     let mut seen = HashSet::new();
     let tags = tags
         .iter()
@@ -162,7 +204,7 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
         .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
         .collect::<Vec<_>>();
     if tags.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), tags));
     }
 
     let tag_placeholders = (1..=tags.len())
@@ -240,30 +282,10 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
         D1Type::Integer(limit as i32),
     ]);
 
-    let rows = query_remote_statuses_with_actor(db, &sql, &bindings).await?;
-    let mut rows = rows;
-    if rows.len() >= limit as usize {
-        return Ok(rows);
-    }
-    let mut seen_ids = rows
-        .iter()
-        .map(|(status, _)| status.id.clone())
-        .collect::<HashSet<_>>();
-    for (status, actor) in
-        list_remote_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await?
-    {
-        if seen_ids.insert(status.id.clone()) {
-            rows.push((status, actor));
-        }
-    }
-    rows.sort_by(|(left_status, _), (right_status, _)| {
-        right_status
-            .published_at
-            .cmp(&left_status.published_at)
-            .then_with(|| right_status.id.cmp(&left_status.id))
-    });
-    rows.truncate(limit as usize);
-    Ok(rows)
+    Ok((
+        query_remote_statuses_with_actor(db, &sql, &bindings).await?,
+        tags,
+    ))
 }
 
 async fn list_remote_public_statuses_by_tags_legacy(

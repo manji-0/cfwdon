@@ -20,14 +20,15 @@ use crate::{
     include_local_source, include_remote_source, list_active_muted_actor_uris,
     list_followed_tag_names, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_link,
-    list_local_public_statuses_by_tag, list_local_public_statuses_by_tags,
+    list_local_public_statuses_by_tag, list_local_public_statuses_by_tags_without_legacy_fallback,
     list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
     list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
-    list_remote_public_statuses_by_tags, list_remote_public_timeline_statuses,
-    load_account_filter_matcher, matches_tag_timeline_filters, normalize_hashtag,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses, preload_status_counts,
-    preload_status_quote_counts, require_authenticated_local_account, resolve_timeline_cursor,
-    strip_html_tags, timeline_fetch_limit, timeline_limit,
+    list_remote_public_statuses_by_tags_without_legacy_fallback,
+    list_remote_public_timeline_statuses, load_account_filter_matcher,
+    matches_tag_timeline_filters, normalize_hashtag, preload_local_status_viewer_state,
+    preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
+    require_authenticated_local_account, resolve_timeline_cursor, strip_html_tags,
+    timeline_fetch_limit, timeline_limit,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -588,12 +589,24 @@ pub(crate) async fn home_timeline_response(
     let local_tag_statuses = if followed_tags.is_empty() {
         Vec::new()
     } else {
-        list_local_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
+        list_local_public_statuses_by_tags_without_legacy_fallback(
+            &db,
+            &followed_tags,
+            &cursor,
+            query_limit,
+        )
+        .await?
     };
     let remote_tag_statuses = if followed_tags.is_empty() {
         Vec::new()
     } else {
-        list_remote_public_statuses_by_tags(&db, &followed_tags, &cursor, query_limit).await?
+        list_remote_public_statuses_by_tags_without_legacy_fallback(
+            &db,
+            &followed_tags,
+            &cursor,
+            query_limit,
+        )
+        .await?
     };
     let local_status_refs = local_home_statuses
         .iter()

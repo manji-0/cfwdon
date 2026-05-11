@@ -192,6 +192,46 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
+    let (mut rows, tags) =
+        list_local_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
+    if rows.len() >= limit as usize {
+        return Ok(rows);
+    }
+    let mut seen_ids = rows
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<HashSet<_>>();
+    for status in list_local_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await? {
+        if seen_ids.insert(status.id.clone()) {
+            rows.push(status);
+        }
+    }
+    rows.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    rows.truncate(limit as usize);
+    Ok(rows)
+}
+
+pub(crate) async fn list_local_public_statuses_by_tags_without_legacy_fallback(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let (rows, _) = list_local_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
+    Ok(rows)
+}
+
+async fn list_local_public_statuses_by_tags_indexed(
+    db: &D1Database,
+    tags: &[String],
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<(Vec<StatusRow>, Vec<String>)> {
     let mut seen = HashSet::new();
     let tags = tags
         .iter()
@@ -199,7 +239,7 @@ pub(crate) async fn list_local_public_statuses_by_tags(
         .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
         .collect::<Vec<_>>();
     if tags.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), tags));
     }
 
     let tag_placeholders = (1..=tags.len())
@@ -252,27 +292,7 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     ]);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    let mut rows = result.results::<StatusRow>()?;
-    if rows.len() >= limit as usize {
-        return Ok(rows);
-    }
-    let mut seen_ids = rows
-        .iter()
-        .map(|status| status.id.clone())
-        .collect::<HashSet<_>>();
-    for status in list_local_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await? {
-        if seen_ids.insert(status.id.clone()) {
-            rows.push(status);
-        }
-    }
-    rows.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| right.id.cmp(&left.id))
-    });
-    rows.truncate(limit as usize);
-    Ok(rows)
+    Ok((result.results::<StatusRow>()?, tags))
 }
 
 async fn list_local_public_statuses_by_tags_legacy(
