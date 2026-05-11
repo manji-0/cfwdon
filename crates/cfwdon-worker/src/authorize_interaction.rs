@@ -40,7 +40,7 @@ pub(crate) async fn authorize_interaction_submit_response(
     let db = ctx.d1(&config.database_binding)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return access_login_redirect(&config, &req),
+        None => return access_login_redirect(&config, &req, &uri),
     };
     let account = match resolve_search_account(&db, &config, &uri).await? {
         Some(account) => account,
@@ -175,9 +175,24 @@ fn html_response(html: &str) -> Result<Response> {
     Ok(response)
 }
 
-fn access_login_redirect(config: &super::AppConfig, req: &Request) -> Result<Response> {
+pub(crate) fn authorize_interaction_url_for_uri(req: &Request, uri: &str) -> Result<url::Url> {
+    Ok(authorize_interaction_url_from_base(req.url()?, uri))
+}
+
+pub(crate) fn authorize_interaction_url_from_base(
+    mut authorize_url: url::Url,
+    uri: &str,
+) -> url::Url {
+    authorize_url.set_path("/authorize_interaction");
+    authorize_url.set_query(None);
+    authorize_url.query_pairs_mut().append_pair("uri", uri);
+    authorize_url
+}
+
+fn access_login_redirect(config: &super::AppConfig, req: &Request, uri: &str) -> Result<Response> {
+    let authorize_url = authorize_interaction_url_for_uri(req, uri)?;
     let login_url =
-        cloudflare_access_login_url(config, &req.url()?).map_err(worker::Error::RustError)?;
+        cloudflare_access_login_url(config, &authorize_url).map_err(worker::Error::RustError)?;
     let location = login_url.as_str();
     let escaped = escape_html(location);
     let body = format!(

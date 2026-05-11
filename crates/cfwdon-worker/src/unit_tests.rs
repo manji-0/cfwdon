@@ -13,17 +13,18 @@ use super::{
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
     activitypub_media_attachment_type, activitypub_profile_attachments,
     apply_activitypub_poll_fields, apply_html_preview_metadata, authorize_interaction_document,
-    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
-    build_add_featured_activity_with_id, build_announcements_document,
-    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
-    build_deepl_request_body, build_deepl_translation_languages_document,
-    build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
-    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    authorize_interaction_url_from_base, build_activitypub_actor_document,
+    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
+    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
+    build_donation_campaign_document, build_email_confirmation_html,
+    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
+    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
@@ -174,6 +175,22 @@ fn authorize_interaction_document_preserves_encoded_target_uri() {
     ));
     assert!(html.contains("name=\"uri\" value=\"https://blog.kosui.me/users/kosui\""));
     assert!(html.contains("kosui@blog.kosui.me"));
+}
+
+#[test]
+fn authorize_interaction_login_return_url_preserves_target_uri() {
+    let base_url = Url::parse("https://fedi.manji.app/authorize_interaction").unwrap();
+    let authorize_url =
+        authorize_interaction_url_from_base(base_url, "https://blog.kosui.me/users/kosui");
+
+    assert_eq!(authorize_url.path(), "/authorize_interaction");
+    assert_eq!(
+        authorize_url.query_pairs().find(|(name, _)| name == "uri"),
+        Some((
+            std::borrow::Cow::Borrowed("uri"),
+            std::borrow::Cow::Borrowed("https://blog.kosui.me/users/kosui"),
+        ))
+    );
 }
 
 #[test]

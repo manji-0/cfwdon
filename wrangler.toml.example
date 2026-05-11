@@ -2,6 +2,9 @@ name = "cfwdon"
 main = "crates/cfwdon-worker/build/index.js"
 compatibility_date = "2026-04-13"
 
+[observability]
+enabled = true
+
 [build]
 command = "WASM_BINDGEN_BIN=\"$HOME/.cargo/bin/wasm-bindgen\" worker-build --release crates/cfwdon-worker"
 
