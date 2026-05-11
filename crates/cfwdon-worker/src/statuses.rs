@@ -2,20 +2,22 @@ use super::{
     BackgroundTaskContext, DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result,
     RouteContext, StatusRow, UpdateMediaRequest, UpdateStatusRequest, actor_url,
     app_bearer_token_from_request, attach_media_to_status, build_local_status_response,
-    can_view_local_status, delete_media_attachments, delete_status_by_id,
-    effective_local_quote_approval_policy, enqueue_outbox_activity, enqueue_outbox_delete,
-    enqueue_status_update_activity, ensure_direct_conversation_for_status,
-    extract_authenticated_user, extract_mentions_from_text, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_access_token_by_bearer_token,
-    find_oauth_app_by_bearer_token, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, find_status_poll_by_status_id,
-    insert_status, insert_status_edit_snapshot, invalidate_account_dynamic_public_cache,
-    invalidate_status_api_cache, is_blocking_actor, is_local_follower_authorized,
-    list_status_poll_options, load_config, load_in_reply_to_account_id,
-    load_mastodon_poll_response, normalize_status_history_entry, normalize_status_poll,
-    now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
-    parse_update_status_request, replace_status_media, replace_status_poll,
+    build_local_status_response_with_quote_count_preloads, can_view_local_status,
+    delete_media_attachments, delete_status_by_id, effective_local_quote_approval_policy,
+    enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
+    ensure_direct_conversation_for_status, extract_authenticated_user, extract_mentions_from_text,
+    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_oauth_access_token_by_bearer_token, find_oauth_app_by_bearer_token,
+    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
+    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot,
+    invalidate_account_dynamic_public_cache, invalidate_status_api_cache, is_blocking_actor,
+    is_local_follower_authorized, list_status_poll_options, load_account_filter_matcher,
+    load_config, load_in_reply_to_account_id, load_mastodon_poll_response, local_status_ap_id,
+    normalize_status_history_entry, normalize_status_poll, now_iso_string,
+    oauth_access_token_has_any_scope, parse_status_draft, parse_update_status_request,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses, preload_status_counts,
+    preload_status_quote_counts, replace_status_media, replace_status_poll,
     resolve_attachable_media, resolve_editable_media, resolve_local_account,
     send_push_notification, send_status_quote_notification, send_status_update_notifications,
     status_id_from_context, update_local_status, validate_scheduled_at_minimum_offset,
@@ -345,7 +347,18 @@ where
             .await;
         }
     }
-    let response = build_local_status_response(
+    let status_ids = vec![status.id.clone()];
+    let quote_count_uris = vec![local_status_ap_id(&config, &access.account, &status)];
+    let status_refs = vec![&status];
+    let (counts_preload, quote_counts_preload, poll_preload, viewer_state_preload, filter_matcher) =
+        futures_util::try_join!(
+            preload_status_counts(&db, &status_ids, &[]),
+            preload_status_quote_counts(&db, &quote_count_uris),
+            preload_mastodon_poll_responses(&db, &status_ids, Some(&access.account)),
+            preload_local_status_viewer_state(&db, &access.account.id, &status_refs, None),
+            load_account_filter_matcher(&db, &access.account.id),
+        )?;
+    let response = build_local_status_response_with_quote_count_preloads(
         &db,
         &config,
         Some(&access.account),
@@ -353,6 +366,11 @@ where
         &access.account,
         in_reply_to_account_id,
         attached_media,
+        Some(&filter_matcher),
+        Some(&counts_preload),
+        Some(&quote_counts_preload),
+        Some(&poll_preload),
+        Some(&viewer_state_preload),
     )
     .await?;
     invalidate_account_dynamic_public_cache(&ctx, &access.account.id, &access.account.username)
