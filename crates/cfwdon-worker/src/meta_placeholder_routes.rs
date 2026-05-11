@@ -45,8 +45,12 @@ use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
     D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocket, WebSocketPair,
-    console_error, d1::D1Type, ws_events::WebsocketEvent,
+    console_error, console_log, d1::D1Type, ws_events::WebsocketEvent,
 };
+
+const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
+const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
+const STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION: u32 = 200;
 
 #[derive(Debug, Deserialize)]
 struct OembedQuery {
@@ -1561,6 +1565,17 @@ fn streaming_websocket_error_message(message: &str, status: u16) -> String {
     .to_string()
 }
 
+fn streaming_poll_budget_exhausted(poll_rounds: u32, subscription_polls: u32) -> bool {
+    poll_rounds >= STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION
+        || subscription_polls >= STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION
+}
+
+fn streaming_error_is_subrequest_limit(error: &worker::Error) -> bool {
+    error
+        .to_string()
+        .contains("Too many API requests by single Worker invocation")
+}
+
 fn announcement_reaction_entries_for_id(
     state: &HashMap<(String, String), (u64, bool)>,
     announcement_id: &str,
@@ -2502,7 +2517,9 @@ fn build_streaming_event_stream(
     try_stream! {
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut state = StreamingLoopState::new();
+        let mut poll_rounds = 0_u32;
         loop {
+            poll_rounds = poll_rounds.saturating_add(1);
             let events = match poll_streaming_events(
                     &db,
                     &config,
@@ -2523,7 +2540,13 @@ fn build_streaming_event_stream(
                             error
                         );
                         yield sse_comment_bytes("error=streaming_poll_failed");
-                        worker::Delay::from(Duration::from_secs(3)).await;
+                        if streaming_error_is_subrequest_limit(&error)
+                            || streaming_poll_budget_exhausted(poll_rounds, poll_rounds)
+                        {
+                            yield sse_comment_bytes("stream=recycle");
+                            break;
+                        }
+                        worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
                         continue;
                     }
                 };
@@ -2534,7 +2557,11 @@ fn build_streaming_event_stream(
                     yield sse_event_bytes(&event);
                 }
             }
-            worker::Delay::from(Duration::from_secs(3)).await;
+            if streaming_poll_budget_exhausted(poll_rounds, poll_rounds) {
+                yield sse_comment_bytes("stream=recycle");
+                break;
+            }
+            worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
         }
     }
 }
@@ -2661,6 +2688,9 @@ async fn poll_streaming_websocket_subscriptions(
                     subscription.list.as_deref().unwrap_or(""),
                     error
                 );
+                if streaming_error_is_subrequest_limit(&error) {
+                    return false;
+                }
                 continue;
             }
         };
@@ -2711,8 +2741,11 @@ async fn run_streaming_websocket(
                 return;
             }
         };
+        let mut poll_rounds = 0_u32;
+        let mut subscription_polls = 0_u32;
         loop {
-            let tick = worker::Delay::from(Duration::from_secs(3)).fuse();
+            let tick =
+                worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).fuse();
             pin_mut!(tick);
             select! {
                 event = websocket_events.next().fuse() => {
@@ -2742,6 +2775,12 @@ async fn run_streaming_websocket(
                     }
                 }
                 _ = tick => {
+                    if subscriptions.is_empty() {
+                        continue;
+                    }
+                    poll_rounds = poll_rounds.saturating_add(1);
+                    subscription_polls =
+                        subscription_polls.saturating_add(subscriptions.len() as u32);
                     if !poll_streaming_websocket_subscriptions(
                         &websocket,
                         &db,
@@ -2751,6 +2790,14 @@ async fn run_streaming_websocket(
                     )
                     .await
                     {
+                        break;
+                    }
+                    if streaming_poll_budget_exhausted(poll_rounds, subscription_polls) {
+                        console_log!(
+                            "websocket streaming recycled before subrequest limit rounds={} subscription_polls={}",
+                            poll_rounds,
+                            subscription_polls
+                        );
                         break;
                     }
                 }
@@ -3666,5 +3713,30 @@ mod tests {
             streaming_websocket_stream_labels("list", None, Some("list-1")),
             vec!["list".to_owned(), "list-1".to_owned()]
         );
+    }
+
+    #[test]
+    fn streaming_poll_budget_exhausts_before_cloudflare_subrequest_limit() {
+        assert!(!streaming_poll_budget_exhausted(
+            STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION - 1,
+            STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION - 1
+        ));
+        assert!(streaming_poll_budget_exhausted(
+            STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION,
+            1
+        ));
+        assert!(streaming_poll_budget_exhausted(
+            1,
+            STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION
+        ));
+    }
+
+    #[test]
+    fn streaming_error_detects_cloudflare_subrequest_limit() {
+        let error = worker::Error::RustError(
+            "Error: Too many API requests by single Worker invocation".to_owned(),
+        );
+
+        assert!(streaming_error_is_subrequest_limit(&error));
     }
 }
