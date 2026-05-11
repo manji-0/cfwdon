@@ -51,11 +51,14 @@ struct PreloadedPollVotersCountRow {
 #[derive(Debug, Default)]
 pub(crate) struct MastodonPollResponsePreload {
     by_status_id: HashMap<String, serde_json::Value>,
+    preloaded_status_ids: HashSet<String>,
 }
 
 impl MastodonPollResponsePreload {
-    pub(crate) fn poll_response(&self, status_id: &str) -> Option<serde_json::Value> {
-        self.by_status_id.get(status_id).cloned()
+    pub(crate) fn poll_response(&self, status_id: &str) -> Option<Option<serde_json::Value>> {
+        self.preloaded_status_ids
+            .contains(status_id)
+            .then(|| self.by_status_id.get(status_id).cloned())
     }
 }
 
@@ -108,6 +111,7 @@ pub(crate) async fn preload_mastodon_poll_responses(
     if ids.is_empty() {
         return Ok(MastodonPollResponsePreload::default());
     }
+    let preloaded_status_ids = ids.iter().map(|id| (*id).clone()).collect::<HashSet<_>>();
 
     let status_placeholders = (1..=ids.len())
         .map(|index| format!("?{index}"))
@@ -129,7 +133,10 @@ pub(crate) async fn preload_mastodon_poll_responses(
         .await?;
     let polls = poll_result.results::<StatusPollRow>()?;
     if polls.is_empty() {
-        return Ok(MastodonPollResponsePreload::default());
+        return Ok(MastodonPollResponsePreload {
+            by_status_id: HashMap::new(),
+            preloaded_status_ids,
+        });
     }
 
     let poll_ids = polls.iter().map(|poll| poll.id.clone()).collect::<Vec<_>>();
@@ -256,7 +263,10 @@ pub(crate) async fn preload_mastodon_poll_responses(
         );
     }
 
-    Ok(MastodonPollResponsePreload { by_status_id })
+    Ok(MastodonPollResponsePreload {
+        by_status_id,
+        preloaded_status_ids,
+    })
 }
 
 pub(crate) async fn load_mastodon_poll_response(
@@ -361,5 +371,21 @@ pub(crate) fn apply_activitypub_poll_fields(
         object["anyOf"] = serde_json::Value::Array(rendered_options);
     } else {
         object["oneOf"] = serde_json::Value::Array(rendered_options);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preloaded_poll_response_distinguishes_known_absent_from_unknown() {
+        let preload = MastodonPollResponsePreload {
+            by_status_id: HashMap::new(),
+            preloaded_status_ids: HashSet::from(["known".to_owned()]),
+        };
+
+        assert_eq!(preload.poll_response("known"), Some(None));
+        assert_eq!(preload.poll_response("unknown"), None);
     }
 }

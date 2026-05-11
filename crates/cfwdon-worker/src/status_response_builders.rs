@@ -125,11 +125,14 @@ struct RemoteStatusIdRow {
 #[derive(Debug, Default)]
 pub(crate) struct StatusQuoteCountsPreload {
     counts: HashMap<String, u64>,
+    preloaded_uris: HashSet<String>,
 }
 
 impl StatusQuoteCountsPreload {
     fn count(&self, status_uri: &str) -> Option<u64> {
-        self.counts.get(status_uri).copied()
+        self.preloaded_uris
+            .contains(status_uri)
+            .then(|| self.counts.get(status_uri).copied().unwrap_or(0))
     }
 }
 
@@ -374,6 +377,10 @@ pub(crate) async fn preload_status_quote_counts(
     if uris.is_empty() {
         return Ok(StatusQuoteCountsPreload::default());
     }
+    let preloaded_uris = uris
+        .iter()
+        .map(|uri| (*uri).clone())
+        .collect::<HashSet<_>>();
 
     let placeholders = (1..=uris.len())
         .map(|index| format!("?{index}"))
@@ -407,7 +414,10 @@ pub(crate) async fn preload_status_quote_counts(
         .map(|row| (row.quote_of_uri, row.count))
         .collect::<HashMap<_, _>>();
 
-    Ok(StatusQuoteCountsPreload { counts })
+    Ok(StatusQuoteCountsPreload {
+        counts,
+        preloaded_uris,
+    })
 }
 
 async fn count_status_quotes_by_uri(db: &D1Database, status_uri: &str) -> Result<u64> {
@@ -421,7 +431,7 @@ async fn local_status_poll_response(
     viewer: Option<&LocalAccount>,
 ) -> Result<Option<serde_json::Value>> {
     if let Some(poll) = poll_preload.and_then(|preload| preload.poll_response(status_id)) {
-        return Ok(Some(poll));
+        return Ok(poll);
     }
 
     load_mastodon_poll_response(db, status_id, viewer).await
@@ -1423,6 +1433,17 @@ mod tests {
 
         assert_eq!(document["state"], serde_json::json!("unauthorized"));
         assert_eq!(document["quoted_status"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn preloaded_quote_count_returns_zero_for_known_absent_uri() {
+        let preload = StatusQuoteCountsPreload {
+            counts: HashMap::new(),
+            preloaded_uris: HashSet::from(["https://example.test/statuses/1".to_owned()]),
+        };
+
+        assert_eq!(preload.count("https://example.test/statuses/1"), Some(0));
+        assert_eq!(preload.count("https://example.test/statuses/2"), None);
     }
 }
 
