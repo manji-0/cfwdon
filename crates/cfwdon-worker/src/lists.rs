@@ -814,6 +814,7 @@ mod tests {
             actor_uri: "https://remote.example/users/alice".to_owned(),
             username: "alice".to_owned(),
             domain: "remote.example".to_owned(),
+            created_at: "2026-01-02 03:04:05".to_owned(),
             locked: false,
             bot: false,
             discoverable: true,

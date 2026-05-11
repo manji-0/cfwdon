@@ -176,6 +176,11 @@ impl MastodonAccountResponse {
             .unwrap_or_else(|| actor.actor_uri.clone());
         let avatar_url = actor.avatar_url.clone().unwrap_or_default();
         let header_url = actor.header_url.clone().unwrap_or_default();
+        let created_at = if actor.created_at.trim().is_empty() {
+            "1970-01-01T00:00:00.000Z".to_owned()
+        } else {
+            timestamp_to_mastodon_iso8601(&actor.created_at)
+        };
 
         Self {
             id: remote_account_rest_id(&actor.actor_uri),
@@ -194,7 +199,7 @@ impl MastodonAccountResponse {
             show_media_replies: None,
             show_featured: None,
             last_status_at: None,
-            created_at: String::new(),
+            created_at,
             note: actor.summary_html.clone(),
             url: profile_url,
             avatar: avatar_url.clone(),

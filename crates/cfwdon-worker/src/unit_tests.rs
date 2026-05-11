@@ -4562,6 +4562,7 @@ fn remote_account_response_uses_cached_profile_media() {
         actor_uri: "https://remote.example/users/alice".to_owned(),
         username: "alice".to_owned(),
         domain: "remote.example".to_owned(),
+        created_at: "2026-01-02 03:04:05".to_owned(),
         locked: true,
         bot: true,
         discoverable: false,
@@ -4577,10 +4578,33 @@ fn remote_account_response_uses_cached_profile_media() {
     assert_eq!(response.avatar, "https://cdn.remote.example/avatar.png");
     assert_eq!(response.header, "https://cdn.remote.example/header.png");
     assert_eq!(response.url, "https://remote.example/@alice");
+    assert_eq!(response.created_at, "2026-01-02T03:04:05.000Z");
     assert!(response.locked);
     assert!(response.bot);
     assert!(!response.discoverable);
     assert!(!response.indexable);
+}
+
+#[test]
+fn remote_account_response_uses_valid_created_at_fallback() {
+    let actor = RemoteActorRow {
+        actor_uri: "https://remote.example/users/bob".to_owned(),
+        username: "bob".to_owned(),
+        domain: "remote.example".to_owned(),
+        created_at: String::new(),
+        locked: false,
+        bot: false,
+        discoverable: true,
+        indexable: true,
+        display_name: "Bob".to_owned(),
+        summary_html: String::new(),
+        profile_url: None,
+        avatar_url: None,
+        header_url: None,
+    };
+
+    let response = MastodonAccountResponse::from_remote_actor(&actor);
+    assert_eq!(response.created_at, "1970-01-01T00:00:00.000Z");
 }
 
 #[test]

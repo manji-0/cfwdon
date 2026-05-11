@@ -228,7 +228,7 @@ pub(crate) async fn list_familiar_remote_actors_for_local_target(
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT ra.actor_uri, ra.username, ra.domain, ra.locked, ra.bot, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+            "SELECT DISTINCT ra.actor_uri, ra.username, ra.domain, ra.created_at, ra.locked, ra.bot, ra.discoverable, ra.indexable, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
              FROM follows viewer_follows
              JOIN followers remote_followers
                ON remote_followers.actor_uri = viewer_follows.target_actor_uri

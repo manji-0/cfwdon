@@ -25,13 +25,15 @@ pub(crate) struct RemoteActorRow {
     pub(crate) actor_uri: String,
     pub(crate) username: String,
     pub(crate) domain: String,
-    #[serde(deserialize_with = "deserialize_json_boolish")]
+    #[serde(default)]
+    pub(crate) created_at: String,
+    #[serde(default, deserialize_with = "deserialize_json_boolish")]
     pub(crate) locked: bool,
-    #[serde(deserialize_with = "deserialize_json_boolish")]
+    #[serde(default, deserialize_with = "deserialize_json_boolish")]
     pub(crate) bot: bool,
-    #[serde(deserialize_with = "deserialize_json_boolish")]
+    #[serde(default, deserialize_with = "deserialize_json_boolish")]
     pub(crate) discoverable: bool,
-    #[serde(deserialize_with = "deserialize_json_boolish")]
+    #[serde(default, deserialize_with = "deserialize_json_boolish")]
     pub(crate) indexable: bool,
     pub(crate) display_name: String,
     pub(crate) summary_html: String,
@@ -55,6 +57,11 @@ impl RemoteActorRow {
                 .to_owned(),
             domain: value
                 .get("domain")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            created_at: value
+                .get("created_at")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
@@ -94,7 +101,7 @@ pub(crate) async fn find_remote_actor_by_actor_uri(
 ) -> Result<Option<RemoteActorRow>> {
     let actor_uri = D1Type::Text(actor_uri);
     db.prepare(
-        "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
          WHERE actor_uri = ?1
          LIMIT 1",
@@ -110,7 +117,7 @@ pub(crate) async fn find_remote_actor_by_profile_url_or_actor_uri(
 ) -> Result<Option<RemoteActorRow>> {
     let value = D1Type::Text(value);
     db.prepare(
-        "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
          WHERE actor_uri = ?1
             OR profile_url = ?1
@@ -157,7 +164,7 @@ pub(crate) async fn find_remote_actor_by_username_domain(
     let domain = domain.to_ascii_lowercase();
     let bindings = [D1Type::Text(&username), D1Type::Text(&domain)];
     db.prepare(
-        "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
          WHERE lower(username) = ?1
            AND lower(domain) = ?2

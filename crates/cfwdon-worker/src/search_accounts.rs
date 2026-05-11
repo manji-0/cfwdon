@@ -386,7 +386,7 @@ pub(crate) async fn search_remote_accounts(
     };
     let sql = if following_only {
         format!(
-            "SELECT ra.actor_uri, ra.username, ra.domain, ra.locked, ra.bot, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+            "SELECT ra.actor_uri, ra.username, ra.domain, ra.created_at, ra.locked, ra.bot, ra.discoverable, ra.indexable, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
          FROM remote_actors ra
          JOIN follows f
            ON f.target_actor_uri = ra.actor_uri
@@ -401,7 +401,7 @@ pub(crate) async fn search_remote_accounts(
         )
     } else {
         format!(
-            "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+            "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
          FROM remote_actors
          WHERE ({search_clause_list})
          ORDER BY username ASC, domain ASC
