@@ -1,5 +1,26 @@
 use crate::{D1Database, Result, generate_entity_id};
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
+
+#[derive(Debug, Deserialize)]
+struct RemoteStatusUpdatedAtRow {
+    id: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RemoteStatusEditUpdatedAtPreload {
+    updated_at_by_status_id: HashMap<String, String>,
+}
+
+impl RemoteStatusEditUpdatedAtPreload {
+    pub(crate) fn updated_at(&self, status_id: &str) -> Option<&str> {
+        self.updated_at_by_status_id
+            .get(status_id)
+            .map(String::as_str)
+    }
+}
 
 pub(crate) async fn insert_remote_status_edit_snapshot(
     db: &D1Database,
@@ -102,4 +123,48 @@ pub(crate) async fn load_remote_status_updated_at(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     }))
+}
+
+pub(crate) async fn preload_remote_status_edit_updated_at(
+    db: &D1Database,
+    status_ids: &[String],
+) -> Result<RemoteStatusEditUpdatedAtPreload> {
+    let mut seen = HashSet::new();
+    let ids = status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(RemoteStatusEditUpdatedAtPreload::default());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT rs.id, rs.updated_at
+         FROM remote_statuses rs
+         WHERE rs.id IN ({placeholders})
+           AND EXISTS (
+               SELECT 1
+               FROM remote_status_edits rse
+               WHERE rse.status_id = rs.id
+               LIMIT 1
+           )"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let updated_at_by_status_id = result
+        .results::<RemoteStatusUpdatedAtRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.updated_at))
+        .collect::<HashMap<_, _>>();
+
+    Ok(RemoteStatusEditUpdatedAtPreload {
+        updated_at_by_status_id,
+    })
 }

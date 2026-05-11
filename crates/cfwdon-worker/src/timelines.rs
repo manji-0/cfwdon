@@ -26,9 +26,10 @@ use crate::{
     list_remote_public_statuses_by_tags_without_legacy_fallback,
     list_remote_public_timeline_statuses, load_account_filter_matcher,
     matches_tag_timeline_filters, normalize_hashtag, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_remote_status_viewer_state, preload_status_counts,
-    preload_status_quote_counts, require_authenticated_local_account, resolve_timeline_cursor,
-    strip_html_tags, timeline_fetch_limit, timeline_limit,
+    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
+    preload_status_counts, preload_status_quote_counts, require_authenticated_local_account,
+    resolve_timeline_cursor, strip_html_tags, timeline_fetch_limit, timeline_limit,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -204,6 +205,37 @@ async fn preload_public_timeline_remote_viewer_state(
         .collect::<Vec<_>>();
 
     preload_remote_status_viewer_state(db, &viewer.id, &statuses).await
+}
+
+async fn preload_public_timeline_remote_polls(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+    viewer: Option<&crate::LocalAccount>,
+) -> Result<crate::RemoteMastodonPollResponsePreload> {
+    let status_ids = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { .. } => None,
+            PublicTimelineCandidate::Remote { status, .. } => Some(status.id.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    preload_remote_mastodon_poll_responses(db, &status_ids, viewer).await
+}
+
+async fn preload_public_timeline_remote_edits(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+) -> Result<crate::RemoteStatusEditUpdatedAtPreload> {
+    let status_ids = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { .. } => None,
+            PublicTimelineCandidate::Remote { status, .. } => Some(status.id.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    preload_remote_status_edit_updated_at(db, &status_ids).await
 }
 
 async fn preload_public_timeline_local_polls(
@@ -389,6 +421,8 @@ async fn timeline_entries_from_candidates(
         local_poll_preload,
         local_viewer_state_preload,
         remote_viewer_state_preload,
+        remote_poll_preload,
+        remote_edit_updated_at_preload,
         in_reply_to_account_ids,
         mut remote_attachments_by_status_id,
     ) = futures_util::try_join!(
@@ -397,6 +431,8 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_local_polls(db, &candidates, viewer),
         preload_public_timeline_local_viewer_state(db, &candidates, viewer),
         preload_public_timeline_remote_viewer_state(db, &candidates, viewer),
+        preload_public_timeline_remote_polls(db, &candidates, viewer),
+        preload_public_timeline_remote_edits(db, &candidates),
         preload_timeline_candidate_reply_account_ids(db, &candidates),
         preload_public_timeline_remote_attachments(db, &candidates),
     )?;
@@ -446,6 +482,8 @@ async fn timeline_entries_from_candidates(
                         Some(&counts_preload),
                         Some(&quote_counts_preload),
                         Some(&remote_viewer_state_preload),
+                        Some(&remote_poll_preload),
+                        Some(&remote_edit_updated_at_preload),
                         remote_attachments,
                     )
                     .await?,

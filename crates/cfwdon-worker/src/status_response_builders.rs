@@ -1,7 +1,8 @@
 use crate::{
     AccountFilterMatcher, AppConfig, LocalAccount, MastodonPollResponsePreload,
-    MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusAttachmentRow,
-    RemoteStatusRow, StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
+    MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow, RemoteMastodonPollResponsePreload,
+    RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusRow,
+    StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
     build_remote_status_card_value, build_status_card_value, can_view_local_status, count_rows,
     effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
@@ -917,6 +918,8 @@ pub(crate) async fn build_remote_status_response_with_preloads(
         None,
         None,
         None,
+        None,
+        None,
         true,
     )
     .await
@@ -932,6 +935,8 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
     counts_preload: Option<&StatusCountsPreload>,
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
+    poll_preload: Option<&RemoteMastodonPollResponsePreload>,
+    edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
     remote_attachments: Vec<RemoteStatusAttachmentRow>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_inner(
@@ -944,6 +949,8 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
         counts_preload,
         quote_counts_preload,
         viewer_state_preload,
+        poll_preload,
+        edit_updated_at_preload,
         Some(remote_attachments),
         true,
     )
@@ -960,6 +967,8 @@ async fn build_remote_status_response_inner(
     counts_preload: Option<&StatusCountsPreload>,
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
+    poll_preload: Option<&RemoteMastodonPollResponsePreload>,
+    edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
@@ -1012,10 +1021,20 @@ async fn build_remote_status_response_inner(
         (Some(viewer), None) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
         (None, _) => false,
     };
-    response.poll = load_remote_mastodon_poll_response(db, status, viewer).await?;
-    if has_remote_status_edit_snapshots(db, &status.id).await? {
-        response.edited_at = load_remote_status_updated_at(db, &status.id).await?;
-    }
+    response.poll = match poll_preload {
+        Some(preload) => preload.poll_response(&status.id),
+        None => load_remote_mastodon_poll_response(db, status, viewer).await?,
+    };
+    response.edited_at = match edit_updated_at_preload {
+        Some(preload) => preload.updated_at(&status.id).map(ToOwned::to_owned),
+        None => {
+            if has_remote_status_edit_snapshots(db, &status.id).await? {
+                load_remote_status_updated_at(db, &status.id).await?
+            } else {
+                None
+            }
+        }
+    };
     response.filtered = match viewer {
         Some(viewer) => {
             filtered_status_for_viewer(
@@ -1315,6 +1334,8 @@ async fn build_remote_reblog_wrapper_response(
                     None,
                     None,
                     None,
+                    None,
+                    None,
                     include_quote,
                 ))
                 .await?,
@@ -1467,6 +1488,8 @@ async fn build_local_reblog_wrapper_response(
                     &actor,
                     filter_matcher,
                     counts_preload,
+                    None,
+                    None,
                     None,
                     None,
                     None,

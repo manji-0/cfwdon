@@ -4,7 +4,7 @@ use super::queue_remote_actor_activity_required;
 use super::time_html::is_iso_timestamp_in_past;
 use super::{
     RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusRow, build_poll_vote_activity, extract_remote_note_object,
+    RemoteStatusPollVoteRow, RemoteStatusRow, build_poll_vote_activity, extract_remote_note_object,
     extract_remote_poll_draft, fetch_remote_activitypub_document, fetch_remote_actor_profile,
     find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
     has_remote_poll_votes_created_after, is_local_account_following_remote_actor,
@@ -14,9 +14,35 @@ use super::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
+
+#[derive(Debug, Deserialize)]
+struct RemoteStatusPollOptionPreloadRow {
+    poll_id: String,
+    title: String,
+    votes_count: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteStatusPollVotePreloadRow {
+    poll_id: String,
+    option_position: i64,
+    option_title: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RemoteMastodonPollResponsePreload {
+    polls_by_status_id: HashMap<String, serde_json::Value>,
+}
+
+impl RemoteMastodonPollResponsePreload {
+    pub(crate) fn poll_response(&self, status_id: &str) -> Option<serde_json::Value> {
+        self.polls_by_status_id.get(status_id).cloned()
+    }
+}
 
 pub(crate) async fn load_remote_mastodon_poll_response(
     db: &D1Database,
@@ -49,7 +75,145 @@ pub(crate) async fn build_remote_mastodon_poll_response(
         None => Vec::new(),
     };
 
-    Ok(Some(MastodonPollResponse {
+    Ok(remote_mastodon_poll_response_from_parts(
+        poll, options, own_votes,
+    ))
+}
+
+pub(crate) async fn preload_remote_mastodon_poll_responses(
+    db: &D1Database,
+    status_ids: &[String],
+    viewer: Option<&LocalAccount>,
+) -> Result<RemoteMastodonPollResponsePreload> {
+    let mut seen = HashSet::new();
+    let ids = status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(RemoteMastodonPollResponsePreload::default());
+    }
+
+    let status_placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let poll_sql = format!(
+        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
+         FROM remote_status_polls
+         WHERE status_id IN ({status_placeholders})"
+    );
+    let status_bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let polls = db
+        .prepare(&poll_sql)
+        .bind_refs(status_bindings.iter())?
+        .all()
+        .await?
+        .results::<RemoteStatusPollRow>()?;
+    if polls.is_empty() {
+        return Ok(RemoteMastodonPollResponsePreload::default());
+    }
+
+    let poll_ids = polls.iter().map(|poll| poll.id.clone()).collect::<Vec<_>>();
+    let poll_placeholders = (1..=poll_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let options_sql = format!(
+        "SELECT poll_id, title, votes_count
+         FROM remote_status_poll_options
+         WHERE poll_id IN ({poll_placeholders})
+         ORDER BY poll_id ASC, position ASC"
+    );
+    let poll_bindings = poll_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let option_rows = db
+        .prepare(&options_sql)
+        .bind_refs(poll_bindings.iter())?
+        .all()
+        .await?
+        .results::<RemoteStatusPollOptionPreloadRow>()?;
+    let mut options_by_poll_id: HashMap<String, Vec<RemoteStatusPollOptionRow>> = HashMap::new();
+    for row in option_rows {
+        options_by_poll_id
+            .entry(row.poll_id)
+            .or_default()
+            .push(RemoteStatusPollOptionRow {
+                title: row.title,
+                votes_count: row.votes_count,
+            });
+    }
+
+    let votes_by_poll_id = if let Some(viewer) = viewer {
+        let vote_sql = format!(
+            "SELECT poll_id, option_position, option_title
+             FROM remote_status_poll_votes
+             WHERE account_id = ?1
+               AND poll_id IN ({})
+             ORDER BY poll_id ASC, option_position ASC",
+            (2..=(poll_ids.len() + 1))
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
+        vote_bindings.push(D1Type::Text(viewer.id.as_str()));
+        vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
+        let vote_rows = db
+            .prepare(&vote_sql)
+            .bind_refs(vote_bindings.iter())?
+            .all()
+            .await?
+            .results::<RemoteStatusPollVotePreloadRow>()?;
+        let mut rows_by_poll_id: HashMap<String, Vec<RemoteStatusPollVoteRow>> = HashMap::new();
+        for row in vote_rows {
+            rows_by_poll_id
+                .entry(row.poll_id)
+                .or_default()
+                .push(RemoteStatusPollVoteRow {
+                    option_position: row.option_position,
+                    option_title: row.option_title,
+                });
+        }
+        rows_by_poll_id
+    } else {
+        HashMap::new()
+    };
+
+    let mut polls_by_status_id = HashMap::new();
+    for poll in polls {
+        let options = options_by_poll_id.remove(&poll.id).unwrap_or_default();
+        let own_votes = votes_by_poll_id
+            .get(&poll.id)
+            .map(|votes| remap_remote_poll_vote_positions(&options, votes))
+            .unwrap_or_default();
+        if let Some(response) = remote_mastodon_poll_response_from_parts(&poll, options, own_votes)
+        {
+            polls_by_status_id.insert(
+                poll.status_id.clone(),
+                serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+
+    Ok(RemoteMastodonPollResponsePreload { polls_by_status_id })
+}
+
+fn remote_mastodon_poll_response_from_parts(
+    poll: &RemoteStatusPollRow,
+    options: Vec<RemoteStatusPollOptionRow>,
+    own_votes: Vec<u32>,
+) -> Option<MastodonPollResponse> {
+    if options.is_empty() {
+        return None;
+    }
+
+    Some(MastodonPollResponse {
         id: poll.id.clone(),
         expires_at: poll.expires_at.clone().unwrap_or_default(),
         expired: poll.expired != 0
@@ -75,7 +239,7 @@ pub(crate) async fn build_remote_mastodon_poll_response(
             })
             .collect(),
         emojis: Vec::new(),
-    }))
+    })
 }
 
 pub(crate) fn remote_poll_should_refresh(
