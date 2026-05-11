@@ -2,6 +2,7 @@ use super::{
     ProfileMediaUpload, UpdateCredentialsRequest, enqueue_profile_update_activities,
     find_account_by_id, generate_entity_id, profile_field_from_update, render_status_html,
 };
+use crate::{delete_r2_object, log_r2_operation, observability_started_at_ms};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::d1::D1Type;
@@ -119,12 +120,12 @@ pub(crate) async fn apply_account_credentials_update(
     if let Some(previous) = account.avatar_object_key.as_deref()
         && profile_media_was_replaced(Some(previous), avatar_profile.as_ref())
     {
-        bucket.delete(previous).await?;
+        delete_r2_object(bucket, previous, "delete_profile_previous").await?;
     }
     if let Some(previous) = account.header_object_key.as_deref()
         && profile_media_was_replaced(Some(previous), header_profile.as_ref())
     {
-        bucket.delete(previous).await?;
+        delete_r2_object(bucket, previous, "delete_profile_previous").await?;
     }
 
     let bindings = [
@@ -206,7 +207,8 @@ async fn store_profile_media(
         "profiles/{}/{}/{}",
         account.id, upload.object_kind, media_id
     );
-    bucket
+    let started_at_ms = observability_started_at_ms();
+    let result = bucket
         .put(&object_key, upload.bytes.clone())
         .http_metadata(HttpMetadata {
             content_type: Some(upload.content_type.clone()),
@@ -214,7 +216,16 @@ async fn store_profile_media(
             ..Default::default()
         })
         .execute()
-        .await?;
+        .await;
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    log_r2_operation(
+        "put_profile",
+        outcome,
+        started_at_ms,
+        &object_key,
+        Some(upload.bytes.len()),
+    );
+    result?;
     Ok((object_key, upload.content_type.clone()))
 }
 

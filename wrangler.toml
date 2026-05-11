@@ -5,6 +5,14 @@ compatibility_date = "2026-04-13"
 [observability]
 enabled = true
 
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
 [build]
 command = "WASM_BINDGEN_BIN=\"$HOME/.cargo/bin/wasm-bindgen\" worker-build --release crates/cfwdon-worker"
 

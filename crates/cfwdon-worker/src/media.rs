@@ -1,9 +1,9 @@
 use super::{
     Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext,
     apply_media_update, delete_media_attachment_row, delete_orphan_media, delete_queued_media,
-    find_media_attachment_by_id, list_orphan_media, load_config, media_object_url,
-    parse_media_update_request, parse_media_upload, require_authenticated_local_account,
-    store_media_attachment,
+    find_media_attachment_by_id, list_orphan_media, load_config, log_r2_operation,
+    media_object_url, observability_started_at_ms, parse_media_update_request, parse_media_upload,
+    require_authenticated_local_account, store_media_attachment,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -104,8 +104,21 @@ pub(crate) async fn media_content_response(ctx: RouteContext<()>) -> Result<Resp
     }
 
     let bucket = ctx.bucket(&config.media_binding)?;
-    let Some(object) = bucket.get(&media.object_key).execute().await? else {
-        return Response::error("media object not found", 404);
+    let r2_started_at_ms = observability_started_at_ms();
+    let object_result = bucket.get(&media.object_key).execute().await;
+    let object = match object_result {
+        Ok(Some(object)) => {
+            log_r2_operation("get", "hit", r2_started_at_ms, &media.object_key, None);
+            object
+        }
+        Ok(None) => {
+            log_r2_operation("get", "miss", r2_started_at_ms, &media.object_key, None);
+            return Response::error("media object not found", 404);
+        }
+        Err(error) => {
+            log_r2_operation("get", "error", r2_started_at_ms, &media.object_key, None);
+            return Err(error);
+        }
     };
     let Some(body) = object.body() else {
         return Response::error("media object body missing", 500);
@@ -199,7 +212,7 @@ pub(crate) async fn delete_media_attachment(
     }
 
     let bucket = ctx.bucket(&config.media_binding)?;
-    bucket.delete(&media.object_key).await?;
+    crate::delete_r2_object(&bucket, &media.object_key, "delete").await?;
     delete_media_attachment_row(&db, &media.id).await?;
     Response::from_json(&serde_json::json!({}))
 }

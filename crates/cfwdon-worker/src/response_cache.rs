@@ -1,3 +1,4 @@
+use crate::{log_observed_operation, observability_started_at_ms};
 use worker::{Response, Result, RouteContext};
 
 const RESPONSE_CACHE_BINDING: &str = "RESPONSE_CACHE";
@@ -163,8 +164,21 @@ async fn cached_text_response(
     let Ok(kv) = ctx.kv(RESPONSE_CACHE_BINDING) else {
         return Ok(None);
     };
-    let Some(body) = kv.get(key).cache_ttl(60).text().await? else {
-        return Ok(None);
+    let started_at_ms = observability_started_at_ms();
+    let cached_body = kv.get(key).cache_ttl(60).text().await;
+    let body = match cached_body {
+        Ok(Some(body)) => {
+            log_cache_operation("get", "hit", started_at_ms, key, Some(body.len()));
+            body
+        }
+        Ok(None) => {
+            log_cache_operation("get", "miss", started_at_ms, key, None);
+            return Ok(None);
+        }
+        Err(error) => {
+            log_cache_operation("get", "error", started_at_ms, key, None);
+            return Err(worker::Error::KvError(error));
+        }
     };
     let mut response = Response::ok(body)?;
     response.headers_mut().set("Content-Type", content_type)?;
@@ -198,10 +212,16 @@ async fn cache_text(
     let Ok(kv) = ctx.kv(RESPONSE_CACHE_BINDING) else {
         return Ok(());
     };
-    kv.put(key, body)?
+    let bytes = body.len();
+    let started_at_ms = observability_started_at_ms();
+    let result = kv
+        .put(key, body)?
         .expiration_ttl(ttl_seconds)
         .execute()
-        .await?;
+        .await;
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    log_cache_operation("put", outcome, started_at_ms, key, Some(bytes));
+    result?;
     Ok(())
 }
 
@@ -209,7 +229,42 @@ async fn delete_cache_key(ctx: &RouteContext<()>, key: &str) {
     let Ok(kv) = ctx.kv(RESPONSE_CACHE_BINDING) else {
         return;
     };
-    let _ = kv.delete(key).await;
+    let started_at_ms = observability_started_at_ms();
+    match kv.delete(key).await {
+        Ok(()) => log_cache_operation("delete", "ok", started_at_ms, key, None),
+        Err(_) => log_cache_operation("delete", "error", started_at_ms, key, None),
+    }
+}
+
+fn log_cache_operation(
+    operation: &str,
+    outcome: &str,
+    started_at_ms: f64,
+    key: &str,
+    bytes: Option<usize>,
+) {
+    let mut details = serde_json::json!({
+        "binding": RESPONSE_CACHE_BINDING,
+        "cache_family": cache_key_family(key),
+    });
+    if let (Some(details), Some(bytes)) = (details.as_object_mut(), bytes) {
+        details.insert("bytes".to_owned(), serde_json::json!(bytes));
+    }
+    log_observed_operation("kv", operation, outcome, started_at_ms, details);
+}
+
+fn cache_key_family(key: &str) -> &'static str {
+    if key.starts_with(ACCOUNT_API_PREFIX) {
+        "account_api"
+    } else if key.starts_with(ACTOR_JSON_PREFIX) {
+        "actor_json"
+    } else if key.starts_with(ACTOR_PROFILE_HTML_PREFIX) {
+        "actor_profile_html"
+    } else if key.starts_with(STATUS_API_PREFIX) {
+        "status_api"
+    } else {
+        "unknown"
+    }
 }
 
 fn account_api_cache_key(account_id: &str) -> String {

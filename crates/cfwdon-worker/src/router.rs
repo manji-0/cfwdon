@@ -78,9 +78,11 @@ use super::{
     update_push_subscription_response, update_scheduled_status_response, update_status,
     verify_credentials, vote_in_poll, webfinger_response,
 };
-use worker::{Env, Request, Response, Result, Router, console_log};
+use crate::{log_json_event, observability_duration_ms, observability_started_at_ms};
+use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
+    let request_started_at_ms = observability_started_at_ms();
     let request_url = req.url()?;
     let request_path = request_url.path().to_owned();
     let request_method = req.method().to_string();
@@ -95,6 +97,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             &request_path,
             response.status_code(),
             &request_user_agent,
+            observability_duration_ms(request_started_at_ms),
         );
         return Ok(response);
     }
@@ -107,6 +110,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             &request_path,
             response.status_code(),
             &request_user_agent,
+            observability_duration_ms(request_started_at_ms),
         );
         return Ok(response);
     }
@@ -119,6 +123,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             &request_path,
             response.status_code(),
             &request_user_agent,
+            observability_duration_ms(request_started_at_ms),
         );
         return Ok(response);
     }
@@ -133,6 +138,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             request_origin.as_deref(),
             &request_user_agent,
             log_api_requests,
+            request_started_at_ms,
         );
     }
 
@@ -145,6 +151,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             request_origin.as_deref(),
             &request_user_agent,
             log_api_requests,
+            request_started_at_ms,
         );
     }
 
@@ -943,6 +950,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         request_origin.as_deref(),
         &request_user_agent,
         log_api_requests,
+        request_started_at_ms,
     )
 }
 
@@ -953,6 +961,7 @@ fn finish_response(
     origin: Option<&str>,
     user_agent: &str,
     log_api_requests: bool,
+    request_started_at_ms: f64,
 ) -> Result<Response> {
     if is_cors_enabled_path(path) {
         apply_cors_headers(&mut response, origin)?;
@@ -963,6 +972,7 @@ fn finish_response(
         path,
         response.status_code(),
         user_agent,
+        observability_duration_ms(request_started_at_ms),
     );
     Ok(response)
 }
@@ -1517,17 +1527,27 @@ fn api_request_logging_enabled(env: &Env) -> bool {
         .unwrap_or(true)
 }
 
-fn log_api_request(enabled: bool, method: &str, path: &str, status: u16, user_agent: &str) {
+fn log_api_request(
+    enabled: bool,
+    method: &str,
+    path: &str,
+    status: u16,
+    user_agent: &str,
+    duration_ms: u64,
+) {
     if !enabled || !is_logged_api_path(path) {
         return;
     }
-    console_log!(
-        "api_request method={} path={} status={} user_agent={}",
-        method,
-        path,
-        status,
-        sanitize_log_value(user_agent)
-    );
+    let payload = serde_json::json!({
+        "event": "api_request",
+        "method": method,
+        "path": path,
+        "status": status,
+        "duration_ms": duration_ms,
+        "user_agent": sanitize_log_value(user_agent),
+    });
+
+    log_json_event(payload);
 }
 
 fn is_logged_api_path(path: &str) -> bool {

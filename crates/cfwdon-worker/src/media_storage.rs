@@ -1,6 +1,7 @@
 use crate::{
     D1Database, LocalAccount, MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow,
-    Result, delete_media_attachment_row, generate_entity_id, require_media_attachment_by_id,
+    Result, delete_media_attachment_row, generate_entity_id, log_observed_operation,
+    observability_started_at_ms, require_media_attachment_by_id,
 };
 use serde::Deserialize;
 use worker::{Bucket, HttpMetadata, d1::D1Type};
@@ -24,7 +25,8 @@ pub(crate) async fn store_media_attachment(
         media_id
     );
 
-    bucket
+    let put_started_at_ms = observability_started_at_ms();
+    let put_result = bucket
         .put(&object_key, draft.bytes.clone())
         .http_metadata(HttpMetadata {
             content_type: Some(draft.content_type.clone()),
@@ -32,7 +34,16 @@ pub(crate) async fn store_media_attachment(
             ..Default::default()
         })
         .execute()
-        .await?;
+        .await;
+    let put_outcome = if put_result.is_ok() { "ok" } else { "error" };
+    log_r2_operation(
+        "put",
+        put_outcome,
+        put_started_at_ms,
+        &object_key,
+        Some(draft.bytes.len()),
+    );
+    put_result?;
 
     let bindings = [
         D1Type::Text(media_id.as_str()),
@@ -67,7 +78,7 @@ pub(crate) async fn store_media_attachment(
         .await;
 
     if let Err(error) = insert_result {
-        let _ = bucket.delete(&object_key).await;
+        let _ = delete_r2_object(bucket, &object_key, "rollback_delete").await;
         return Err(error);
     }
 
@@ -80,7 +91,7 @@ pub(crate) async fn delete_media_attachments(
 ) -> Result<()> {
     for attachment in attachments {
         delete_media_attachment_row(db, &attachment.id).await?;
-        if let Err(error) = bucket.delete(&attachment.object_key).await {
+        if let Err(error) = delete_r2_object(bucket, &attachment.object_key, "delete").await {
             queue_media_deletion(db, &attachment.object_key, &error.to_string()).await?;
         }
     }
@@ -97,7 +108,7 @@ pub(crate) async fn delete_orphan_media(
 
     for orphan in orphans {
         delete_media_attachment_row(db, &orphan.id).await?;
-        match bucket.delete(&orphan.object_key).await {
+        match delete_r2_object(bucket, &orphan.object_key, "delete_orphan").await {
             Ok(()) => {
                 deleted += 1;
             }
@@ -119,7 +130,7 @@ pub(crate) async fn delete_queued_media(
     let mut deleted = 0;
 
     for row in queued {
-        match bucket.delete(&row.object_key).await {
+        match delete_r2_object(bucket, &row.object_key, "delete_queued").await {
             Ok(()) => {
                 delete_queued_media_deletion(db, &row.object_key).await?;
                 deleted += 1;
@@ -180,6 +191,44 @@ async fn delete_queued_media_deletion(db: &D1Database, object_key: &str) -> Resu
     .await?;
 
     Ok(())
+}
+
+pub(crate) async fn delete_r2_object(
+    bucket: &Bucket,
+    object_key: &str,
+    operation: &str,
+) -> Result<()> {
+    let started_at_ms = observability_started_at_ms();
+    let result = bucket.delete(object_key).await;
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    log_r2_operation(operation, outcome, started_at_ms, object_key, None);
+    result
+}
+
+pub(crate) fn log_r2_operation(
+    operation: &str,
+    outcome: &str,
+    started_at_ms: f64,
+    object_key: &str,
+    bytes: Option<usize>,
+) {
+    let mut details = serde_json::json!({
+        "object_family": r2_object_family(object_key),
+    });
+    if let (Some(details), Some(bytes)) = (details.as_object_mut(), bytes) {
+        details.insert("bytes".to_owned(), serde_json::json!(bytes));
+    }
+    log_observed_operation("r2", operation, outcome, started_at_ms, details);
+}
+
+fn r2_object_family(object_key: &str) -> &'static str {
+    if object_key.starts_with("media/") {
+        "media"
+    } else if object_key.starts_with("profiles/") {
+        "profile"
+    } else {
+        "unknown"
+    }
 }
 pub(crate) fn classify_media_kind(content_type: &str) -> Option<MediaKind> {
     if content_type.starts_with("image/") {
