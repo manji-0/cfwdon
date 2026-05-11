@@ -458,6 +458,8 @@ fn account_password_hash_verifies_only_matching_password() {
 fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
     assert!(is_cors_enabled_path("/api/v1/apps"));
     assert!(is_cors_enabled_path("/oauth/token"));
+    assert!(is_cors_enabled_path("/media/attachment-1"));
+    assert!(is_cors_enabled_path("/profiles/account-1/avatar/avatar-1"));
     assert!(is_cors_enabled_path(
         "/.well-known/oauth-authorization-server"
     ));

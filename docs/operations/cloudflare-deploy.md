@@ -13,6 +13,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
 
 ## Provisioning Steps
+<!-- constrained-by ../reference/configuration.md#public-instance-vars -->
 
 1. Create the D1 database.
 
@@ -26,13 +27,37 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler r2 bucket create cfwdon-media
    ```
 
-3. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
+3. Configure R2 CORS for the public instance origin.
 
-4. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
+   ```json
+   {
+     "rules": [
+       {
+         "allowed": {
+           "origins": ["https://example.com"],
+           "methods": ["GET"]
+         }
+       }
+     ]
+   }
+   ```
+
+   Save the policy as `r2-cors.json`, replace `https://example.com` with the `https://` origin for `INSTANCE_DOMAIN`, then apply it:
+
+   ```sh
+   npx wrangler r2 bucket cors set cfwdon-media --file r2-cors.json
+   npx wrangler r2 bucket cors list cfwdon-media
+   ```
+
+   If the bucket custom domain is already serving cached objects, purge the media hostname after changing the CORS policy so cached assets pick up the new headers.
+
+4. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
+
+5. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
 
    At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `ACCESS_TEAM_DOMAIN`, and `ACCESS_AUD`.
 
-5. Configure secrets that should not be committed.
+6. Configure secrets that should not be committed.
 
    ```sh
    wrangler secret put RESEND_API_KEY
@@ -42,19 +67,19 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
    Only set optional secrets for features you enable.
 
-6. Apply migrations to the remote D1 database.
+7. Apply migrations to the remote D1 database.
 
    ```sh
    wrangler d1 migrations apply DB --remote
    ```
 
-7. Run the full local gate.
+8. Run the full local gate.
 
    ```sh
    devbox run ci
    ```
 
-8. Deploy the Worker.
+9. Deploy the Worker.
 
    ```sh
    wrangler deploy

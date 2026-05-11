@@ -1586,6 +1586,8 @@ fn sanitize_log_value(value: &str) -> String {
 pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
     path.starts_with("/api/")
         || path.starts_with("/oauth/")
+        || path.starts_with("/media/")
+        || path.starts_with("/profiles/")
         || path == "/.well-known/oauth-authorization-server"
 }
 
