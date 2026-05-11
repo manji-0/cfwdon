@@ -163,6 +163,45 @@ pub(crate) async fn find_remote_status_attachments_by_status_id(
     result.results::<RemoteStatusAttachmentRow>()
 }
 
+pub(crate) async fn find_remote_status_attachments_by_status_ids(
+    db: &D1Database,
+    status_ids: &[String],
+) -> Result<HashMap<String, Vec<RemoteStatusAttachmentRow>>> {
+    let mut seen = HashSet::new();
+    let ids = status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, status_id, remote_url, preview_url, content_type, description, blurhash, width, height, created_at
+         FROM remote_status_attachments
+         WHERE status_id IN ({placeholders})
+         ORDER BY status_id ASC, created_at ASC, id ASC"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut by_status_id = HashMap::new();
+    for row in result.results::<RemoteStatusAttachmentRow>()? {
+        by_status_id
+            .entry(row.status_id.clone())
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+
+    Ok(by_status_id)
+}
+
 pub(crate) async fn replace_remote_status_attachments(
     db: &D1Database,
     status_id: &str,

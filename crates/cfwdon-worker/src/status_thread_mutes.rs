@@ -56,6 +56,24 @@ pub(crate) async fn is_local_status_thread_muted_by(
         .is_some())
 }
 
+pub(crate) async fn account_has_thread_mutes(
+    db: &worker::D1Database,
+    account_id: &str,
+) -> Result<bool> {
+    let account_id = D1Type::Text(account_id);
+    Ok(db
+        .prepare(
+            "SELECT thread_root_status_id
+             FROM thread_mutes
+             WHERE account_id = ?1
+             LIMIT 1",
+        )
+        .bind_refs(&account_id)?
+        .first::<serde_json::Value>(None)
+        .await?
+        .is_some())
+}
+
 async fn mute_thread_for_status(
     db: &worker::D1Database,
     account_id: &str,
