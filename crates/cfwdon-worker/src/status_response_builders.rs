@@ -295,6 +295,7 @@ pub(crate) async fn preload_local_status_viewer_state(
     db: &D1Database,
     account_id: &str,
     statuses: &[&StatusRow],
+    known_has_thread_mutes: Option<bool>,
 ) -> Result<LocalStatusViewerStatePreload> {
     let mut seen_targets = HashSet::new();
     let target_uris = statuses
@@ -320,7 +321,12 @@ pub(crate) async fn preload_local_status_viewer_state(
         load_viewer_target_uri_set(db, "reblogs", account_id, &target_uris),
         load_viewer_target_uri_set(db, "bookmarks", account_id, &target_uris,),
         load_viewer_pinned_status_ids(db, account_id, &status_ids),
-        account_has_thread_mutes(db, account_id),
+        async {
+            match known_has_thread_mutes {
+                Some(value) => Ok(value),
+                None => account_has_thread_mutes(db, account_id).await,
+            }
+        },
     )?;
 
     Ok(LocalStatusViewerStatePreload {

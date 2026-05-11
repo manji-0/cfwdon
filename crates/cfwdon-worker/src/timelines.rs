@@ -258,6 +258,7 @@ async fn preload_public_timeline_local_viewer_state(
     db: &D1Database,
     candidates: &[PublicTimelineCandidateEntry],
     viewer: Option<&crate::LocalAccount>,
+    known_has_thread_mutes: Option<bool>,
 ) -> Result<crate::LocalStatusViewerStatePreload> {
     let Some(viewer) = viewer else {
         return Ok(crate::LocalStatusViewerStatePreload::default());
@@ -270,7 +271,7 @@ async fn preload_public_timeline_local_viewer_state(
         })
         .collect::<Vec<_>>();
 
-    preload_local_status_viewer_state(db, &viewer.id, &statuses).await
+    preload_local_status_viewer_state(db, &viewer.id, &statuses, known_has_thread_mutes).await
 }
 
 async fn preload_timeline_candidate_reply_account_ids(
@@ -414,6 +415,7 @@ async fn timeline_entries_from_candidates(
     local_accounts_by_id: &HashMap<String, crate::LocalAccount>,
     candidates: Vec<PublicTimelineCandidateEntry>,
     enrich_cards: bool,
+    known_viewer_has_thread_mutes: Option<bool>,
 ) -> Result<Vec<TimelineEntry>> {
     let (
         counts_preload,
@@ -429,7 +431,12 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_candidate_counts(db, &candidates),
         preload_public_timeline_quote_counts(db, config, &candidates, local_accounts_by_id),
         preload_public_timeline_local_polls(db, &candidates, viewer),
-        preload_public_timeline_local_viewer_state(db, &candidates, viewer),
+        preload_public_timeline_local_viewer_state(
+            db,
+            &candidates,
+            viewer,
+            known_viewer_has_thread_mutes,
+        ),
         preload_public_timeline_remote_viewer_state(db, &candidates, viewer),
         preload_public_timeline_remote_polls(db, &candidates, viewer),
         preload_public_timeline_remote_edits(db, &candidates),
@@ -777,6 +784,7 @@ pub(crate) async fn home_timeline_response(
         &local_accounts_by_id,
         candidates,
         false,
+        Some(viewer_has_thread_mutes),
     )
     .await?;
 
@@ -882,6 +890,7 @@ pub(crate) async fn public_timeline_response(
         &local_accounts_by_id,
         candidates,
         false,
+        Some(viewer_has_thread_mutes),
     )
     .await?;
 
@@ -998,6 +1007,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         &local_accounts_by_id,
         candidates,
         false,
+        Some(viewer_has_thread_mutes),
     )
     .await?;
 
@@ -1105,6 +1115,7 @@ pub(crate) async fn link_timeline_response(
         &local_accounts_by_id,
         candidates,
         true,
+        Some(viewer_has_thread_mutes),
     )
     .await?;
 
@@ -1348,6 +1359,7 @@ pub(crate) async fn direct_timeline_response(
         &local_accounts_by_id,
         candidates,
         false,
+        Some(viewer_has_thread_mutes),
     )
     .await?;
 
