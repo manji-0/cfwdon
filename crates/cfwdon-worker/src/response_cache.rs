@@ -1,5 +1,6 @@
 use crate::{log_observed_operation, observability_started_at_ms};
-use worker::{Response, Result, RouteContext};
+use std::future::Future;
+use worker::{Context, Env, Response, Result, RouteContext};
 
 const RESPONSE_CACHE_BINDING: &str = "RESPONSE_CACHE";
 const ACCOUNT_API_PREFIX: &str = "account_api:v1:";
@@ -9,6 +10,41 @@ const STATUS_API_PREFIX: &str = "status_api:v1:";
 const ACCOUNT_CACHE_TTL_SECONDS: u64 = 300;
 const STATUS_API_CACHE_TTL_SECONDS: u64 = 60;
 const ACCEPT_VARY_HEADER: &str = "Accept";
+
+pub(crate) trait BackgroundTaskContext {
+    fn schedule_background_task<F>(&self, future: F) -> bool
+    where
+        F: Future<Output = ()> + 'static;
+}
+
+impl BackgroundTaskContext for () {
+    fn schedule_background_task<F>(&self, _future: F) -> bool
+    where
+        F: Future<Output = ()> + 'static,
+    {
+        false
+    }
+}
+
+pub(crate) struct FetchEventContext {
+    event_context: Context,
+}
+
+impl FetchEventContext {
+    pub(crate) fn new(event_context: Context) -> Self {
+        Self { event_context }
+    }
+}
+
+impl BackgroundTaskContext for FetchEventContext {
+    fn schedule_background_task<F>(&self, future: F) -> bool
+    where
+        F: Future<Output = ()> + 'static,
+    {
+        self.event_context.wait_until(future);
+        true
+    }
+}
 
 pub(crate) async fn cached_account_api_response(
     ctx: &RouteContext<()>,
@@ -125,21 +161,33 @@ pub(crate) async fn cache_status_api_response(
     .await
 }
 
-pub(crate) async fn invalidate_status_api_cache(ctx: &RouteContext<()>, status_id: &str) {
-    delete_cache_key(ctx, &status_api_cache_key(status_id)).await;
+pub(crate) async fn invalidate_status_api_cache<D>(ctx: &RouteContext<D>, status_id: &str)
+where
+    D: BackgroundTaskContext,
+{
+    delete_cache_keys_from_env(ctx.env.clone(), vec![status_api_cache_key(status_id)]).await;
 }
 
 pub(crate) async fn invalidate_account_dynamic_public_cache(
-    ctx: &RouteContext<()>,
+    ctx: &RouteContext<impl BackgroundTaskContext>,
     account_id: &str,
     username: &str,
 ) {
-    delete_cache_key(ctx, &account_api_cache_key(account_id)).await;
-    delete_cache_key(ctx, &actor_profile_html_cache_key(username)).await;
+    let keys = vec![
+        account_api_cache_key(account_id),
+        actor_profile_html_cache_key(username),
+    ];
+    if ctx
+        .data
+        .schedule_background_task(delete_cache_keys_from_env(ctx.env.clone(), keys.clone()))
+    {
+        return;
+    }
+    delete_cache_keys_from_env(ctx.env.clone(), keys).await;
 }
 
 pub(crate) async fn invalidate_account_public_cache(
-    ctx: &RouteContext<()>,
+    ctx: &RouteContext<impl BackgroundTaskContext>,
     account_id: &str,
     username: &str,
 ) {
@@ -148,10 +196,10 @@ pub(crate) async fn invalidate_account_public_cache(
 }
 
 pub(crate) async fn invalidate_account_actor_document_cache(
-    ctx: &RouteContext<()>,
+    ctx: &RouteContext<impl BackgroundTaskContext>,
     username: &str,
 ) {
-    delete_cache_key(ctx, &actor_json_cache_key(username)).await;
+    delete_cache_keys_from_env(ctx.env.clone(), vec![actor_json_cache_key(username)]).await;
 }
 
 async fn cached_text_response(
@@ -225,15 +273,21 @@ async fn cache_text(
     Ok(())
 }
 
-async fn delete_cache_key(ctx: &RouteContext<()>, key: &str) {
-    let Ok(kv) = ctx.kv(RESPONSE_CACHE_BINDING) else {
+async fn delete_cache_keys_from_env(env: Env, keys: Vec<String>) {
+    let Ok(kv) = env.kv(RESPONSE_CACHE_BINDING) else {
         return;
     };
-    let started_at_ms = observability_started_at_ms();
-    match kv.delete(key).await {
-        Ok(()) => log_cache_operation("delete", "ok", started_at_ms, key, None),
-        Err(_) => log_cache_operation("delete", "error", started_at_ms, key, None),
-    }
+    let deletes = keys.into_iter().map(|key| {
+        let kv = kv.clone();
+        async move {
+            let started_at_ms = observability_started_at_ms();
+            match kv.delete(&key).await {
+                Ok(()) => log_cache_operation("delete", "ok", started_at_ms, &key, None),
+                Err(_) => log_cache_operation("delete", "error", started_at_ms, &key, None),
+            }
+        }
+    });
+    futures_util::future::join_all(deletes).await;
 }
 
 fn log_cache_operation(

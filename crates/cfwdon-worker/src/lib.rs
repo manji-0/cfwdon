@@ -338,8 +338,8 @@ pub(crate) use timeline_search::*;
 pub(crate) use timelines::*;
 
 #[event(fetch, respond_with_errors)]
-async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    router::handle_fetch(req, env).await
+async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    router::handle_fetch(req, env, ctx).await
 }
 
 fn optional_env_var(env: &Env, key: &str) -> Option<String> {

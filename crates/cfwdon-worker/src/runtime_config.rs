@@ -205,7 +205,7 @@ fn root_endpoint_list() -> Vec<&'static str> {
     ROOT_ENDPOINTS.to_vec()
 }
 
-pub(crate) fn load_config(ctx: &RouteContext<()>) -> AppConfig {
+pub(crate) fn load_config<D>(ctx: &RouteContext<D>) -> AppConfig {
     config_from_vars(|key| optional_var(ctx, key))
 }
 
@@ -438,7 +438,7 @@ pub(crate) const fn build_metadata() -> BuildMetadata {
     )
 }
 
-fn optional_var(ctx: &RouteContext<()>, key: &str) -> Option<String> {
+fn optional_var<D>(ctx: &RouteContext<D>, key: &str) -> Option<String> {
     ctx.var(key).ok().map(|value| value.to_string())
 }
 

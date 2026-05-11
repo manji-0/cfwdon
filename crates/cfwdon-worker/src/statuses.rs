@@ -1,19 +1,20 @@
 use super::{
-    DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result, RouteContext, StatusRow,
-    UpdateMediaRequest, UpdateStatusRequest, actor_url, app_bearer_token_from_request,
-    attach_media_to_status, build_local_status_response, can_view_local_status,
-    delete_media_attachments, delete_status_by_id, effective_local_quote_approval_policy,
-    enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
-    ensure_direct_conversation_for_status, extract_authenticated_user, extract_mentions_from_text,
-    find_account_by_id, find_account_by_username, find_authenticated_local_account,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_access_token_by_bearer_token, find_oauth_app_by_bearer_token,
-    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
-    find_status_poll_by_status_id, insert_status, insert_status_edit_snapshot,
-    invalidate_account_dynamic_public_cache, invalidate_status_api_cache, is_blocking_actor,
-    is_local_follower_authorized, list_status_poll_options, load_config,
-    load_in_reply_to_account_id, load_mastodon_poll_response, normalize_status_history_entry,
-    normalize_status_poll, now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
+    BackgroundTaskContext, DeleteStatusQuery, MastodonStatusResponse, Request, Response, Result,
+    RouteContext, StatusRow, UpdateMediaRequest, UpdateStatusRequest, actor_url,
+    app_bearer_token_from_request, attach_media_to_status, build_local_status_response,
+    can_view_local_status, delete_media_attachments, delete_status_by_id,
+    effective_local_quote_approval_policy, enqueue_outbox_activity, enqueue_outbox_delete,
+    enqueue_status_update_activity, ensure_direct_conversation_for_status,
+    extract_authenticated_user, extract_mentions_from_text, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_access_token_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_remote_status_by_id,
+    find_remote_status_by_url_or_object_uri, find_status_by_id, find_status_poll_by_status_id,
+    insert_status, insert_status_edit_snapshot, invalidate_account_dynamic_public_cache,
+    invalidate_status_api_cache, is_blocking_actor, is_local_follower_authorized,
+    list_status_poll_options, load_config, load_in_reply_to_account_id,
+    load_mastodon_poll_response, normalize_status_history_entry, normalize_status_poll,
+    now_iso_string, oauth_access_token_has_any_scope, parse_status_draft,
     parse_update_status_request, replace_status_media, replace_status_poll,
     resolve_attachable_media, resolve_editable_media, resolve_local_account,
     send_push_notification, send_status_quote_notification, send_status_update_notifications,
@@ -217,7 +218,10 @@ async fn resolve_create_status_access(
     }))
 }
 
-pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn create_status<D>(mut req: Request, ctx: RouteContext<D>) -> Result<Response>
+where
+    D: BackgroundTaskContext,
+{
     let config = load_config(&ctx);
     let parsed = match parse_status_draft(&mut req).await {
         Ok(draft) => draft,
