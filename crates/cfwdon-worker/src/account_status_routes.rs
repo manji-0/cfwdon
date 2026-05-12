@@ -1,12 +1,12 @@
 use super::{
-    AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MediaAttachmentRow,
-    MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow, Request, Response,
-    Result, RouteContext, StatusRow, actor_url, apply_remote_actor_social_counts,
-    build_local_status_response_with_quote_count_preloads,
+    AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MastodonStatusResponse,
+    MediaAttachmentRow, MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow,
+    Request, Response, Result, RouteContext, StatusRow, actor_url,
+    apply_remote_actor_social_counts, build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
     extract_remote_note_object, fetch_remote_activitypub_document,
     fetch_remote_actor_profile_with_document, find_account_by_username,
-    find_authenticated_local_account, find_media_attachments_by_status_ids,
+    find_authenticated_local_account, find_follow_by_target, find_media_attachments_by_status_ids,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
     find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
     list_pinned_statuses_for_account, list_public_account_statuses,
@@ -16,8 +16,8 @@ use super::{
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
-    resolve_account_reference, status_contains_tag, strip_html_tags, upsert_remote_actor,
-    upsert_remote_status,
+    remote_account_rest_id, resolve_account_reference, status_contains_tag, strip_html_tags,
+    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::{D1Database, ResponseBody};
 
@@ -259,9 +259,23 @@ async fn account_statuses_response_for_reference(
         Some(AccountReference::Remote(actor)) => {
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
-            let (actor, actor_social_counts) =
-                refresh_remote_status_actor(&db, &config, actor, !wants_html, limit).await?;
-            let mut statuses = if wants_html {
+            let is_following_remote_actor = match viewer.as_ref() {
+                Some(viewer) => find_follow_by_target(&db, &viewer.id, &actor.actor_uri)
+                    .await?
+                    .is_some_and(|follow| follow.state == "accepted"),
+                None => false,
+            };
+            let (actor, actor_social_counts) = refresh_remote_status_actor(
+                &db,
+                &config,
+                actor,
+                !wants_html,
+                is_following_remote_actor.then_some(limit),
+            )
+            .await?;
+            let mut statuses = if !is_following_remote_actor && !wants_html {
+                Vec::new()
+            } else if wants_html {
                 list_public_remote_statuses_by_actor_uri(
                     &db,
                     &actor.actor_uri,
@@ -272,6 +286,11 @@ async fn account_statuses_response_for_reference(
                 .await?
             } else {
                 list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?
+            };
+            let transient_statuses = if !is_following_remote_actor && !wants_html {
+                load_transient_remote_actor_statuses(&config, &actor, &query, limit).await?
+            } else {
+                Vec::new()
             };
             let older_page_url = if wants_html && !is_pinned_page && statuses.len() > limit as usize
             {
@@ -425,6 +444,12 @@ async fn account_statuses_response_for_reference(
                 }
                 response.push(status_response);
             }
+            for mut status_response in transient_statuses {
+                if let Some(counts) = actor_social_counts {
+                    apply_remote_actor_social_counts(&mut status_response.account, counts);
+                }
+                response.push(status_response);
+            }
             Response::from_json(&response)
         }
         None => Response::error("account not found", 404),
@@ -436,7 +461,7 @@ async fn refresh_remote_status_actor(
     config: &AppConfig,
     actor: RemoteActorRow,
     include_social_counts: bool,
-    status_fetch_limit: u32,
+    status_fetch_limit: Option<u32>,
 ) -> Result<(RemoteActorRow, Option<crate::RemoteActorSocialCounts>)> {
     let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
         Ok(fetched) => fetched,
@@ -444,14 +469,16 @@ async fn refresh_remote_status_actor(
     };
     let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
-    let _ = hydrate_remote_actor_statuses_from_outbox(
-        db,
-        config,
-        &profile,
-        &fetched.document,
-        status_fetch_limit,
-    )
-    .await;
+    if let Some(status_fetch_limit) = status_fetch_limit {
+        let _ = hydrate_remote_actor_statuses_from_outbox(
+            db,
+            config,
+            &profile,
+            &fetched.document,
+            status_fetch_limit,
+        )
+        .await;
+    }
     let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?
         .unwrap_or(actor);
@@ -489,6 +516,58 @@ async fn hydrate_remote_actor_statuses_from_outbox(
         upsert_remote_status(db, config, actor, object).await?;
     }
     Ok(())
+}
+
+async fn load_transient_remote_actor_statuses(
+    config: &AppConfig,
+    actor: &RemoteActorRow,
+    query: &AccountStatusesQuery,
+    limit: u32,
+) -> Result<Vec<MastodonStatusResponse>> {
+    let actor_document = fetch_remote_activitypub_document(&actor.actor_uri).await?;
+    let Some(outbox) = remote_actor_outbox_page(&actor_document).await? else {
+        return Ok(Vec::new());
+    };
+    let mut response = Vec::new();
+    for item in activitypub_collection_items(&outbox) {
+        if response.len() >= limit as usize {
+            break;
+        }
+        let Some(object) = extract_remote_note_object(item) else {
+            continue;
+        };
+        if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
+            continue;
+        }
+        let status = remote_status_row_from_activitypub_object(actor, object);
+        if !is_public_activitypub_visibility(&status.visibility) {
+            continue;
+        }
+        if query.pinned.unwrap_or(false) {
+            continue;
+        }
+        if let Some(tag) = query.tagged.as_deref()
+            && !status
+                .content_html
+                .to_ascii_lowercase()
+                .contains(&tag.to_ascii_lowercase())
+        {
+            continue;
+        }
+        if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+            continue;
+        }
+        if query.exclude_replies.unwrap_or(false) && status.in_reply_to_uri.is_some() {
+            continue;
+        }
+        if query.only_media.unwrap_or(false) {
+            continue;
+        }
+        response.push(MastodonStatusResponse::from_remote_row(
+            &status, actor, config,
+        ));
+    }
+    Ok(response)
 }
 
 async fn remote_actor_outbox_page(
@@ -545,6 +624,70 @@ fn remote_status_actor_uri(
         .and_then(serde_json::Value::as_str)
         .or_else(|| activity.get("actor").and_then(serde_json::Value::as_str))
         .map(ToOwned::to_owned)
+}
+
+fn remote_status_row_from_activitypub_object(
+    actor: &RemoteActorRow,
+    object: &serde_json::Value,
+) -> RemoteStatusRow {
+    let object_uri = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    RemoteStatusRow {
+        id: remote_account_rest_id(&object_uri),
+        actor_uri: actor.actor_uri.clone(),
+        object_uri,
+        url: object
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        in_reply_to_uri: object
+            .get("inReplyTo")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        boost_of_uri: None,
+        quote_of_uri: None,
+        content_html: remote_status_content_html(object),
+        spoiler_text: object
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        visibility: visibility_from_activitypub_object(object),
+        sensitive: i32::from(
+            object
+                .get("sensitive")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        ),
+        language: object
+            .get("contentMap")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|map| map.keys().next().cloned()),
+        quote_state: "accepted".to_owned(),
+        published_at: object
+            .get("published")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| object.get("updated").and_then(serde_json::Value::as_str))
+            .unwrap_or_default()
+            .to_owned(),
+    }
+}
+
+fn remote_status_content_html(object: &serde_json::Value) -> String {
+    object
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            object
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(escape_html)
+        })
+        .unwrap_or_default()
 }
 
 fn prefers_statuses_html(req: &Request) -> Result<bool> {
