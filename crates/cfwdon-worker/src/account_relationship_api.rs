@@ -1,5 +1,5 @@
 use super::{
-    MastodonAccountResponse, Request, Response, Result, RouteContext,
+    MastodonAccountResponse, RemoteActorProfile, Request, Response, Result, RouteContext,
     build_internal_cursor_link_header, fetch_remote_activitypub_document,
     fetch_remote_actor_profile, find_account_by_id, find_account_by_username,
     find_authenticated_local_account, find_remote_actor_by_actor_uri,
@@ -11,13 +11,15 @@ use super::{
     list_remote_followers_for_account, list_remote_following_for_account, load_account_stats,
     load_config, local_username_from_actor_uri, parse_internal_pagination_id, parse_lookup_handle,
     parse_remote_actor_profile_document, remote_account_rest_id, resolve_account_reference,
-    upsert_remote_actor, validate_remote_actor_profile_urls,
+    upsert_remote_actor, upsert_remote_actors, validate_remote_actor_profile_urls,
 };
 use crate::{AccountReference, actor_url, build_relationship_for_target};
+use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
 
 const FAMILIAR_FOLLOWERS_LIMIT: usize = 3;
 const REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT: usize = 8;
+const REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct AccountCollectionQuery {
@@ -183,6 +185,12 @@ struct CollectionAccountEntry {
     account: MastodonAccountResponse,
 }
 
+#[derive(Debug)]
+struct ResolvedRemoteFollowAccount {
+    account: MastodonAccountResponse,
+    profile_to_upsert: Option<RemoteActorProfile>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum RemoteFollowCollectionReference {
     Uri(String),
@@ -280,11 +288,11 @@ async fn remote_follow_account_response(
     }
 }
 
-async fn remote_follow_account_response_from_reference(
+async fn resolve_remote_follow_collection_account(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
-) -> Result<Option<MastodonAccountResponse>> {
+) -> Result<Option<ResolvedRemoteFollowAccount>> {
     if let RemoteFollowCollectionReference::EmbeddedActor(actor_document) = reference {
         let fallback_actor_uri = extract_remote_follow_collection_reference(Some(actor_document))
             .ok_or_else(|| {
@@ -302,15 +310,15 @@ async fn remote_follow_account_response_from_reference(
             && let Some(account) = find_account_by_username(db, &username).await?
         {
             let stats = load_account_stats(db, &account.id).await?;
-            return Ok(Some(MastodonAccountResponse::from_account_with_stats(
-                &account, config, &stats,
-            )));
+            return Ok(Some(ResolvedRemoteFollowAccount {
+                account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+                profile_to_upsert: None,
+            }));
         }
-        upsert_remote_actor(db, &profile).await?;
-        return Ok(find_remote_actor_by_actor_uri(db, &profile.actor_uri)
-            .await?
-            .map(|actor| MastodonAccountResponse::from_remote_actor(&actor))
-            .or_else(|| Some(MastodonAccountResponse::from_remote_actor_profile(&profile))));
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_remote_actor_profile(&profile),
+            profile_to_upsert: Some(profile),
+        }));
     }
 
     let RemoteFollowCollectionReference::Uri(actor_uri) = reference else {
@@ -320,12 +328,36 @@ async fn remote_follow_account_response_from_reference(
         && let Some(account) = find_account_by_username(db, &username).await?
     {
         let stats = load_account_stats(db, &account.id).await?;
-        return Ok(Some(MastodonAccountResponse::from_account_with_stats(
-            &account, config, &stats,
-        )));
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            profile_to_upsert: None,
+        }));
     }
 
-    remote_follow_account_response(db, actor_uri).await
+    let profile = match fetch_remote_actor_profile(actor_uri).await {
+        Ok(profile) => profile,
+        Err(_) => {
+            return Ok(find_remote_actor_by_actor_uri(db, actor_uri)
+                .await?
+                .map(|actor| ResolvedRemoteFollowAccount {
+                    account: MastodonAccountResponse::from_remote_actor(&actor),
+                    profile_to_upsert: None,
+                }));
+        }
+    };
+    if let Some(username) = local_username_from_actor_uri(config, &profile.actor_uri)
+        && let Some(account) = find_account_by_username(db, &username).await?
+    {
+        let stats = load_account_stats(db, &account.id).await?;
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            profile_to_upsert: None,
+        }));
+    }
+    Ok(Some(ResolvedRemoteFollowAccount {
+        account: MastodonAccountResponse::from_remote_actor_profile(&profile),
+        profile_to_upsert: Some(profile),
+    }))
 }
 
 async fn remote_follow_collection_entries(
@@ -351,20 +383,35 @@ async fn remote_follow_collection_entries(
         Err(_) => return Ok(None),
     };
 
+    let resolved_entries = stream::iter(page_remote_follow_collection_references(
+        references, limit, max_id, since_id,
+    ))
+    .map(|(cursor_id, reference)| async move {
+        let resolved = resolve_remote_follow_collection_account(db, config, &reference).await?;
+        Ok::<_, worker::Error>(resolved.map(|resolved| (cursor_id, resolved)))
+    })
+    .buffered(REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+
     let mut entries = Vec::new();
-    for (cursor_id, reference) in
-        page_remote_follow_collection_references(references, limit, max_id, since_id)
-    {
-        if let Some(account) =
-            remote_follow_account_response_from_reference(db, config, &reference).await?
-        {
+    let mut profiles_to_upsert = Vec::new();
+    let mut seen_profile_uris = HashSet::new();
+    for entry in resolved_entries {
+        if let Some((cursor_id, resolved)) = entry? {
+            if let Some(profile) = resolved.profile_to_upsert
+                && seen_profile_uris.insert(profile.actor_uri.clone())
+            {
+                profiles_to_upsert.push(profile);
+            }
             entries.push(CollectionAccountEntry {
                 cursor_id,
                 created_at: String::new(),
-                account,
+                account: resolved.account,
             });
         }
     }
+    upsert_remote_actors(db, &profiles_to_upsert).await?;
     Ok(Some(entries))
 }
 

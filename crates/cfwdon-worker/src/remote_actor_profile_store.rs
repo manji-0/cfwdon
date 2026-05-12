@@ -96,8 +96,50 @@ pub(crate) async fn find_cached_remote_actor_profile_by_actor_uri(
     Ok(row.map(|value| remote_actor_profile_from_value(&value)))
 }
 
-pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProfile) -> Result<()> {
-    let bindings = [
+const UPSERT_REMOTE_ACTOR_SQL: &str = "INSERT INTO remote_actors (
+    actor_uri,
+    username,
+    domain,
+    locked,
+    bot,
+    discoverable,
+    indexable,
+    inbox_uri,
+    shared_inbox_uri,
+    public_key_id,
+    public_key_pem,
+    display_name,
+    summary_html,
+    profile_url,
+    avatar_url,
+    header_url,
+    created_at,
+    updated_at
+) VALUES (
+    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)
+ON CONFLICT(actor_uri) DO UPDATE SET
+    username = excluded.username,
+    domain = excluded.domain,
+    locked = excluded.locked,
+    bot = excluded.bot,
+    discoverable = excluded.discoverable,
+    indexable = excluded.indexable,
+    inbox_uri = excluded.inbox_uri,
+    shared_inbox_uri = excluded.shared_inbox_uri,
+    public_key_id = excluded.public_key_id,
+    public_key_pem = excluded.public_key_pem,
+    display_name = excluded.display_name,
+    summary_html = excluded.summary_html,
+    profile_url = excluded.profile_url,
+    avatar_url = excluded.avatar_url,
+    header_url = excluded.header_url,
+    updated_at = CURRENT_TIMESTAMP";
+
+fn remote_actor_bindings(actor: &RemoteActorProfile) -> [D1Type<'_>; 16] {
+    [
         D1Type::Text(actor.actor_uri.as_str()),
         D1Type::Text(actor.username.as_str()),
         D1Type::Text(actor.domain.as_str()),
@@ -126,53 +168,32 @@ pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProf
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
-    ];
-    db.prepare(
-        "INSERT INTO remote_actors (
-            actor_uri,
-            username,
-            domain,
-            locked,
-            bot,
-            discoverable,
-            indexable,
-            inbox_uri,
-            shared_inbox_uri,
-            public_key_id,
-            public_key_pem,
-            display_name,
-            summary_html,
-            profile_url,
-            avatar_url,
-            header_url,
-            created_at,
-            updated_at
-        ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )
-        ON CONFLICT(actor_uri) DO UPDATE SET
-            username = excluded.username,
-            domain = excluded.domain,
-            locked = excluded.locked,
-            bot = excluded.bot,
-            discoverable = excluded.discoverable,
-            indexable = excluded.indexable,
-            inbox_uri = excluded.inbox_uri,
-            shared_inbox_uri = excluded.shared_inbox_uri,
-            public_key_id = excluded.public_key_id,
-            public_key_pem = excluded.public_key_pem,
-            display_name = excluded.display_name,
-            summary_html = excluded.summary_html,
-            profile_url = excluded.profile_url,
-            avatar_url = excluded.avatar_url,
-            header_url = excluded.header_url,
-            updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+    ]
+}
+
+pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProfile) -> Result<()> {
+    let bindings = remote_actor_bindings(actor);
+    db.prepare(UPSERT_REMOTE_ACTOR_SQL)
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn upsert_remote_actors(
+    db: &D1Database,
+    actors: &[RemoteActorProfile],
+) -> Result<()> {
+    if actors.is_empty() {
+        return Ok(());
+    }
+
+    let bindings = actors.iter().map(remote_actor_bindings).collect::<Vec<_>>();
+    let statements = db
+        .prepare(UPSERT_REMOTE_ACTOR_SQL)
+        .batch_bind(bindings.iter().map(|binding| binding.iter()))?;
+    db.batch(statements).await?;
 
     Ok(())
 }
