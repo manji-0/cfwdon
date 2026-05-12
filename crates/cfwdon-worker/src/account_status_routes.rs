@@ -409,7 +409,7 @@ fn account_statuses_html_response(
     Ok(response)
 }
 
-fn local_status_html_item(
+pub(crate) fn local_status_html_item(
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,

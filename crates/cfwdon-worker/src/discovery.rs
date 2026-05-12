@@ -3,9 +3,10 @@ use super::{
     actor_url, build_activitypub_actor_document, build_outbox_activities, build_tag_response,
     cache_actor_json_response, cache_actor_profile_html_response, cached_actor_json_response,
     cached_actor_profile_html_response, ensure_account_keys, escape_html, find_account_by_username,
-    instance_host, json_response, list_follower_actor_uris, list_following_actor_uris,
-    list_local_follower_usernames, list_public_outbox_statuses, load_account_stats, load_config,
-    media_object_url, normalize_hashtag, parse_webfinger_resource, render_profile_field_value_html,
+    find_media_attachments_by_status_ids, instance_host, json_response, list_follower_actor_uris,
+    list_following_actor_uris, list_local_follower_usernames, list_public_outbox_statuses,
+    load_account_stats, load_config, local_status_html_item, media_object_url, normalize_hashtag,
+    parse_webfinger_resource, render_profile_field_value_html,
 };
 use std::collections::HashSet;
 use url::Url;
@@ -123,7 +124,21 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
 
     if wants_html {
         let stats = load_account_stats(&db, &account.id).await?;
-        let html = profile_html_document(&config, &account, &stats);
+        let statuses = list_public_outbox_statuses(&db, &account.id, 20).await?;
+        let status_ids = statuses
+            .iter()
+            .map(|status| status.id.clone())
+            .collect::<Vec<_>>();
+        let mut media_by_status_id = find_media_attachments_by_status_ids(&db, &status_ids).await?;
+        let posts_html = statuses
+            .iter()
+            .map(|status| {
+                let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+                local_status_html_item(&config, &account, status, &media)
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let html = profile_html_document(&config, &account, &stats, &posts_html);
         cache_actor_profile_html_response(&ctx, &username, html.clone()).await?;
         return profile_html_response(html);
     }
@@ -243,6 +258,7 @@ fn profile_html_document(
     config: &AppConfig,
     account: &LocalAccount,
     stats: &AccountStats,
+    posts_html: &str,
 ) -> String {
     let profile_url = actor_url(config, &account.username);
     let display_name_source = if account.display_name.trim().is_empty() {
@@ -313,6 +329,13 @@ fn profile_html_document(
         .then_some("<span class=\"badge\">Bot</span>")
         .unwrap_or("");
     let created = escape_html(&account.created_at);
+    let posts_section = if posts_html.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<section class="posts"><div class="posts-header"><h2>Recent posts</h2><a href="{profile_url}/statuses">All posts</a></div><div class="feed">{posts_html}</div></section>"#
+        )
+    };
     format!(
         r#"<!doctype html>
 <html lang="ja">
@@ -325,7 +348,7 @@ fn profile_html_document(
 <style>
 :root{{color-scheme:dark;--bg:#101114;--panel:#181b20;--line:#30343c;--text:#f4f0e8;--muted:#a9adb7;--accent:#45c08d;--accent-2:#f2b84b;--ink:#0f1411}}
 *{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at 12% 8%,#263d34 0 18rem,transparent 18.5rem),linear-gradient(135deg,#101114 0%,#171a1f 56%,#221f1a 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.5}}
-a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48px}}.shell{{overflow:hidden;border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);box-shadow:0 24px 80px rgba(0,0,0,.32)}}.cover{{height:260px;background:linear-gradient(120deg,#224334,#665126);background-size:cover;background-position:center;{header_style}}}.profile{{display:grid;grid-template-columns:auto 1fr;gap:22px;padding:0 28px 28px}}.avatar{{width:132px;height:132px;margin-top:-66px;border:4px solid var(--panel);border-radius:8px;object-fit:cover;background:#222831}}.avatar-fallback{{display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:var(--ink);font-size:56px;font-weight:800}}.identity{{padding-top:18px}}h1{{margin:0;font-size:clamp(34px,5vw,58px);line-height:1.02;letter-spacing:0}}.handle{{margin:8px 0 0;color:var(--muted);font-size:16px}}.badges{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}.badge{{border:1px solid #49505a;border-radius:999px;padding:4px 10px;color:#d6dae0;font-size:13px}}.note{{padding:0 28px 28px;font-size:18px}}.note p{{margin:0 0 1em}}.muted{{color:var(--muted)}}.fields{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:2px 0 28px;padding:0 28px}}.fields div{{border:1px solid var(--line);border-radius:8px;padding:12px;background:#13161b}}dt{{color:var(--muted);font-size:13px}}dd{{margin:4px 0 0;overflow-wrap:anywhere}}.stats{{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}}.stats div{{padding:20px 28px;border-right:1px solid var(--line)}}.stats div:last-child{{border-right:0}}.num{{display:block;font-size:28px;font-weight:750}}.label{{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.08em}}.actions{{display:flex;gap:12px;flex-wrap:wrap;padding:24px 28px;border-top:1px solid var(--line)}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:8px;border:1px solid var(--line);text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.remote-follow{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}.remote-follow input{{min-height:42px;width:220px;max-width:100%;border:1px solid var(--line);border-radius:8px;background:#101318;color:var(--text);padding:0 12px;font:inherit}}footer{{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:12px}}.cover{{height:190px}}.profile{{grid-template-columns:1fr;padding:0 18px 20px}}.avatar{{width:112px;height:112px;margin-top:-56px}}.identity{{padding-top:0}}.fields,.stats{{grid-template-columns:1fr}}.fields{{padding:0 18px 20px}}.note{{padding:0 18px 20px}}.stats div{{border-right:0;border-bottom:1px solid var(--line)}}.stats div:last-child{{border-bottom:0}}.actions{{padding:20px 18px}}}}
+a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48px}}.shell{{overflow:hidden;border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);box-shadow:0 24px 80px rgba(0,0,0,.32)}}.cover{{height:260px;background:linear-gradient(120deg,#224334,#665126);background-size:cover;background-position:center;{header_style}}}.profile{{display:grid;grid-template-columns:auto 1fr;gap:22px;padding:0 28px 28px}}.avatar{{width:132px;height:132px;margin-top:-66px;border:4px solid var(--panel);border-radius:8px;object-fit:cover;background:#222831}}.avatar-fallback{{display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:var(--ink);font-size:56px;font-weight:800}}.identity{{padding-top:18px}}h1{{margin:0;font-size:clamp(34px,5vw,58px);line-height:1.02;letter-spacing:0}}.handle{{margin:8px 0 0;color:var(--muted);font-size:16px}}.badges{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}.badge{{border:1px solid #49505a;border-radius:999px;padding:4px 10px;color:#d6dae0;font-size:13px}}.note{{padding:0 28px 28px;font-size:18px}}.note p{{margin:0 0 1em}}.muted{{color:var(--muted)}}.fields{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:2px 0 28px;padding:0 28px}}.fields div{{border:1px solid var(--line);border-radius:8px;padding:12px;background:#13161b}}dt{{color:var(--muted);font-size:13px}}dd{{margin:4px 0 0;overflow-wrap:anywhere}}.stats{{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}}.stats div{{padding:20px 28px;border-right:1px solid var(--line)}}.stats div:last-child{{border-right:0}}.num{{display:block;font-size:28px;font-weight:750}}.label{{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.08em}}.actions{{display:flex;gap:12px;flex-wrap:wrap;padding:24px 28px;border-top:1px solid var(--line)}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:8px;border:1px solid var(--line);text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.remote-follow{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}.remote-follow input{{min-height:42px;width:220px;max-width:100%;border:1px solid var(--line);border-radius:8px;background:#101318;color:var(--text);padding:0 12px;font:inherit}}.posts{{margin-top:18px}}.posts-header{{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 12px}}.posts-header h2{{margin:0;font-size:24px;letter-spacing:0}}.posts-header a{{color:var(--muted);font-weight:650;text-decoration:none}}.feed{{display:grid;gap:14px}}article{{border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);box-shadow:0 18px 54px rgba(0,0,0,.22)}}article a{{display:block;padding:20px;text-decoration:none}}.content{{font-size:18px;overflow-wrap:anywhere}}.content p:first-child{{margin-top:0}}.content p:last-child{{margin-bottom:0}}.spoiler{{margin:0 0 12px;color:var(--accent-2);font-weight:700}}.media{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:14px}}.media img{{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:8px}}time{{display:block;margin-top:16px;color:var(--muted);font-size:13px}}footer{{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:12px}}.cover{{height:190px}}.profile{{grid-template-columns:1fr;padding:0 18px 20px}}.avatar{{width:112px;height:112px;margin-top:-56px}}.identity{{padding-top:0}}.fields,.stats{{grid-template-columns:1fr}}.fields{{padding:0 18px 20px}}.note{{padding:0 18px 20px}}.stats div{{border-right:0;border-bottom:1px solid var(--line)}}.stats div:last-child{{border-bottom:0}}.actions{{padding:20px 18px}}article a{{padding:16px}}.posts-header{{align-items:flex-start;flex-direction:column}}}}
 </style>
 </head>
 <body>
@@ -336,8 +359,9 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
 <div class="note">{bio_html}</div>
 {fields_html}
 <div class="stats"><div><span class="num">{statuses}</span><span class="label">Posts</span></div><div><span class="num">{followers}</span><span class="label">Followers</span></div><div><span class="num">{following}</span><span class="label">Following</span></div></div>
-<div class="actions"><a class="button" href="{profile_url}/statuses">Public posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div>
+<div class="actions"><a class="button" href="{profile_url}/statuses">All posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div>
 </section>
+{posts_section}
 <footer>Joined {created}</footer>
 </main>
 </body>
