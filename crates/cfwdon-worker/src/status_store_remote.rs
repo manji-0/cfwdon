@@ -493,6 +493,52 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
     result.results::<RemoteStatusRow>()
 }
 
+pub(crate) async fn list_public_remote_statuses_by_actor_uri(
+    db: &D1Database,
+    actor_uri: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<RemoteStatusRow>> {
+    let bindings = [
+        D1Type::Text(actor_uri),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+             FROM remote_statuses
+             WHERE actor_uri = ?1
+               AND visibility IN ('public', 'unlisted')
+               AND (
+                    ?2 IS NULL
+                    OR published_at < ?2
+                    OR (published_at = ?2 AND id < ?3)
+               )
+               AND (
+                    ?4 IS NULL
+                    OR published_at > ?4
+                    OR (published_at = ?4 AND id > ?5)
+               )
+             ORDER BY published_at DESC, id DESC
+             LIMIT ?6",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    result.results::<RemoteStatusRow>()
+}
+
 pub(crate) async fn list_direct_remote_replies_by_uri(
     db: &D1Database,
     object_uri: &str,

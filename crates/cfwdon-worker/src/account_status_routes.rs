@@ -1,18 +1,19 @@
 use super::{
     AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MediaAttachmentRow,
     MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow, Request, Response,
-    Result, RouteContext, StatusRow, actor_url,
+    Result, RouteContext, StatusRow, TimelinePaginationQuery, actor_url,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
     find_account_by_username, find_authenticated_local_account,
     find_media_attachments_by_status_ids, find_remote_status_attachments_by_status_ids,
     find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
-    list_pinned_statuses_for_account, list_remote_statuses_by_actor_uri,
+    list_pinned_statuses_for_account, list_public_account_statuses,
+    list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
     load_account_filter_matcher, load_config, load_in_reply_to_account_ids, local_status_ap_id,
     media_attachment_url, preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
-    resolve_account_reference, status_contains_tag, strip_html_tags,
+    resolve_account_reference, resolve_timeline_cursor, status_contains_tag, strip_html_tags,
 };
 use worker::ResponseBody;
 
@@ -62,10 +63,26 @@ async fn account_statuses_response_for_account_id(
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let statuses = if query.pinned.unwrap_or(false) {
+            let is_pinned_page = query.pinned.unwrap_or(false);
+            let html_fetch_limit = limit.saturating_add(1);
+            let mut statuses = if is_pinned_page {
                 list_pinned_statuses_for_account(&db, &account.id).await?
+            } else if wants_html {
+                let cursor =
+                    resolve_timeline_cursor(&db, &account_statuses_pagination(&query)).await?;
+                list_public_account_statuses(&db, &account.id, &cursor, html_fetch_limit).await?
             } else {
                 list_account_statuses(&db, &account.id, limit).await?
+            };
+            let older_page_url = if wants_html && !is_pinned_page && statuses.len() > limit as usize
+            {
+                statuses.truncate(limit as usize);
+                statuses
+                    .last()
+                    .map(|status| account_statuses_older_page_url(&req, limit, &status.id))
+                    .transpose()?
+            } else {
+                None
             };
             let status_ids = statuses
                 .iter()
@@ -119,6 +136,7 @@ async fn account_statuses_response_for_account_id(
                     &account.username,
                     &actor_url(&config, &account.username),
                     &html_statuses,
+                    older_page_url.as_deref(),
                 );
             }
 
@@ -207,7 +225,31 @@ async fn account_statuses_response_for_account_id(
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            let statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
+            let is_pinned_page = query.pinned.unwrap_or(false);
+            let html_fetch_limit = limit.saturating_add(1);
+            let mut statuses = if wants_html {
+                let cursor =
+                    resolve_timeline_cursor(&db, &account_statuses_pagination(&query)).await?;
+                list_public_remote_statuses_by_actor_uri(
+                    &db,
+                    &actor.actor_uri,
+                    &cursor,
+                    html_fetch_limit,
+                )
+                .await?
+            } else {
+                list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?
+            };
+            let older_page_url = if wants_html && !is_pinned_page && statuses.len() > limit as usize
+            {
+                statuses.truncate(limit as usize);
+                statuses
+                    .last()
+                    .map(|status| account_statuses_older_page_url(&req, limit, &status.id))
+                    .transpose()?
+            } else {
+                None
+            };
             let status_ids = statuses
                 .iter()
                 .map(|status| status.id.clone())
@@ -259,6 +301,7 @@ async fn account_statuses_response_for_account_id(
                     &format!("{}@{}", actor.username, actor.domain),
                     &profile_url,
                     &html_statuses,
+                    older_page_url.as_deref(),
                 );
             }
 
@@ -359,12 +402,43 @@ fn prefers_statuses_html(req: &Request) -> Result<bool> {
     Ok(accept.contains("text/html") && !accept.contains("application/json"))
 }
 
+fn account_statuses_pagination(query: &AccountStatusesQuery) -> TimelinePaginationQuery {
+    TimelinePaginationQuery {
+        limit: query.limit,
+        max_id: query.max_id.clone(),
+        since_id: query.since_id.clone(),
+        min_id: query.min_id.clone(),
+    }
+}
+
+fn account_statuses_older_page_url(req: &Request, limit: u32, max_id: &str) -> Result<String> {
+    let mut url = req.url()?;
+    let preserved_params = url
+        .query_pairs()
+        .filter(|(key, _)| {
+            key != "max_id" && key != "since_id" && key != "min_id" && key != "limit"
+        })
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    {
+        let mut query = url.query_pairs_mut();
+        query.clear();
+        for (key, value) in preserved_params {
+            query.append_pair(&key, &value);
+        }
+        query.append_pair("limit", &limit.to_string());
+        query.append_pair("max_id", max_id);
+    }
+    Ok(url.to_string())
+}
+
 fn account_statuses_html_response(
     config: &AppConfig,
     display_name: &str,
     handle: &str,
     profile_url: &str,
     statuses: &[String],
+    older_page_url: Option<&str>,
 ) -> Result<Response> {
     let name = if display_name.trim().is_empty() {
         handle.to_owned()
@@ -381,6 +455,17 @@ fn account_statuses_html_response(
     } else {
         statuses.join("")
     };
+    let pagination_html = older_page_url
+        .map(|url| {
+            format!(
+                "<nav class=\"pager\"><a class=\"button\" rel=\"next\" href=\"{}\">Older posts</a></nav>",
+                escape_html(url)
+            )
+        })
+        .unwrap_or_default();
+    let infinite_scroll_script = older_page_url
+        .map(|_| ACCOUNT_STATUSES_INFINITE_SCROLL_SCRIPT)
+        .unwrap_or_default();
     let html = format!(
         r#"<!doctype html>
 <html lang="ja">
@@ -390,15 +475,17 @@ fn account_statuses_html_response(
 <title>{title}</title>
 <style>
 :root{{color-scheme:dark;--bg:#101114;--panel:#181b20;--line:#30343c;--text:#f4f0e8;--muted:#a9adb7;--accent:#45c08d;--accent-2:#f2b84b;--ink:#0f1411}}
-*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:linear-gradient(135deg,#101114 0%,#171a1f 58%,#1f241e 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55}}a{{color:inherit}}main{{width:min(820px,100%);margin:0 auto;padding:32px 20px 56px}}header{{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}}h1{{margin:0;font-size:clamp(34px,6vw,56px);line-height:1.03;letter-spacing:0}}.handle,.meta,.empty,time{{color:var(--muted)}}.nav{{display:flex;gap:10px;flex-wrap:wrap}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.feed{{display:grid;gap:14px}}article{{border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);padding:20px;box-shadow:0 18px 54px rgba(0,0,0,.22)}}article>a{{display:block;text-decoration:none}}.content{{font-size:18px;overflow-wrap:anywhere}}.content p:first-child{{margin-top:0}}.content p:last-child{{margin-bottom:0}}.spoiler{{margin:0 0 12px;color:var(--accent-2);font-weight:700}}.media{{display:grid;gap:10px;margin-top:14px}}.media img{{display:block;width:100%;max-height:520px;object-fit:contain;border-radius:8px;background:#0d0f13}}time{{display:block;margin-top:16px;font-size:13px}}.empty{{border:1px solid var(--line);border-radius:8px;padding:24px;background:rgba(24,27,32,.92)}}footer{{margin-top:20px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:18px 12px 42px}}header{{display:block}}.nav{{margin-top:18px}}article{{padding:16px}}.media img{{max-height:360px}}}}
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:linear-gradient(135deg,#101114 0%,#171a1f 58%,#1f241e 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55}}a{{color:inherit}}main{{width:min(820px,100%);margin:0 auto;padding:32px 20px 56px}}header{{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}}h1{{margin:0;font-size:clamp(34px,6vw,56px);line-height:1.03;letter-spacing:0}}.handle,.meta,.empty,time{{color:var(--muted)}}.nav,.pager{{display:flex;gap:10px;flex-wrap:wrap}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.feed{{display:grid;gap:14px}}article{{border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);padding:20px;box-shadow:0 18px 54px rgba(0,0,0,.22)}}article>a{{display:block;text-decoration:none}}.content{{font-size:18px;overflow-wrap:anywhere}}.content p:first-child{{margin-top:0}}.content p:last-child{{margin-bottom:0}}.spoiler{{margin:0 0 12px;color:var(--accent-2);font-weight:700}}.media{{display:grid;gap:10px;margin-top:14px}}.media img{{display:block;width:100%;max-height:520px;object-fit:contain;border-radius:8px;background:#0d0f13}}time{{display:block;margin-top:16px;font-size:13px}}.pager{{justify-content:center;margin-top:18px}}.pager[aria-busy="true"] .button{{opacity:.72;pointer-events:none}}.empty{{border:1px solid var(--line);border-radius:8px;padding:24px;background:rgba(24,27,32,.92)}}footer{{margin-top:20px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:18px 12px 42px}}header{{display:block}}.nav{{margin-top:18px}}article{{padding:16px}}.media img{{max-height:360px}}}}
 </style>
 </head>
 <body>
 <main>
 <header><div><p class="meta">{instance_name}</p><h1>{name}</h1><p class="handle">{handle}</p></div><nav class="nav"><a class="button primary" href="{profile_url}">Profile</a></nav></header>
 <section class="feed">{statuses_html}</section>
+{pagination_html}
 <footer>Public posts</footer>
 </main>
+{infinite_scroll_script}
 </body>
 </html>"#
     );
@@ -408,6 +495,64 @@ fn account_statuses_html_response(
         .set("Content-Type", "text/html; charset=utf-8")?;
     Ok(response)
 }
+
+const ACCOUNT_STATUSES_INFINITE_SCROLL_SCRIPT: &str = r#"<script>
+(() => {
+  const feed = document.querySelector(".feed");
+  const pager = document.querySelector(".pager");
+  if (!feed || !pager || !("IntersectionObserver" in window) || !window.DOMParser) {
+    return;
+  }
+
+  let loading = false;
+  const nextLink = () => pager.querySelector('a[rel="next"]');
+  const observer = new IntersectionObserver(async (entries) => {
+    if (loading || !entries.some((entry) => entry.isIntersecting)) {
+      return;
+    }
+    const link = nextLink();
+    if (!link) {
+      observer.disconnect();
+      return;
+    }
+
+    loading = true;
+    pager.setAttribute("aria-busy", "true");
+    const originalText = link.textContent;
+    link.textContent = "Loading...";
+    try {
+      const response = await fetch(link.href, {
+        headers: { Accept: "text/html" },
+        credentials: "same-origin"
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load ${response.status}`);
+      }
+      const documentNext = new DOMParser().parseFromString(await response.text(), "text/html");
+      const articles = documentNext.querySelectorAll(".feed article");
+      for (const article of articles) {
+        feed.appendChild(document.importNode(article, true));
+      }
+      const next = documentNext.querySelector('.pager a[rel="next"]');
+      if (next) {
+        link.href = next.href;
+        link.textContent = originalText || "Older posts";
+      } else {
+        observer.disconnect();
+        pager.remove();
+      }
+    } catch (_error) {
+      link.textContent = originalText || "Older posts";
+      observer.disconnect();
+    } finally {
+      loading = false;
+      pager.removeAttribute("aria-busy");
+    }
+  }, { rootMargin: "700px 0px" });
+
+  observer.observe(pager);
+})();
+</script>"#;
 
 pub(crate) fn local_status_html_item(
     config: &AppConfig,

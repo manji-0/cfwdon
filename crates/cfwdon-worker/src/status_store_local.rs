@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, D1Database, Error, Result, StatusRow, find_account_by_id,
+    AppConfig, D1Database, Error, ResolvedTimelineCursor, Result, StatusRow, find_account_by_id,
     local_status_identity_from_uri, sql_placeholders, unique_ordered_refs,
 };
 use std::collections::HashMap;
@@ -142,6 +142,52 @@ pub(crate) async fn list_account_statuses(
              LIMIT ?2",
         )
         .bind_refs(&[account_id, limit])?
+        .all()
+        .await?;
+
+    result.results::<StatusRow>()
+}
+
+pub(crate) async fn list_public_account_statuses(
+    db: &D1Database,
+    account_id: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let bindings = [
+        D1Type::Text(account_id),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+             FROM statuses
+             WHERE account_id = ?1
+               AND visibility IN ('public', 'unlisted')
+               AND (
+                    ?2 IS NULL
+                    OR created_at < ?2
+                    OR (created_at = ?2 AND id < ?3)
+               )
+               AND (
+                    ?4 IS NULL
+                    OR created_at > ?4
+                    OR (created_at = ?4 AND id > ?5)
+               )
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?6",
+        )
+        .bind_refs(bindings.iter())?
         .all()
         .await?;
 

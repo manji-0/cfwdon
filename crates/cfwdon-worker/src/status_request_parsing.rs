@@ -62,6 +62,12 @@ pub(crate) struct StatusMediaAttributeRequest {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct AccountStatusesQuery {
     pub(crate) limit: Option<u32>,
+    #[serde(rename = "max_id")]
+    pub(crate) max_id: Option<String>,
+    #[serde(rename = "since_id")]
+    pub(crate) since_id: Option<String>,
+    #[serde(rename = "min_id")]
+    pub(crate) min_id: Option<String>,
     pub(crate) only_media: Option<bool>,
     pub(crate) exclude_replies: Option<bool>,
     pub(crate) exclude_reblogs: Option<bool>,
