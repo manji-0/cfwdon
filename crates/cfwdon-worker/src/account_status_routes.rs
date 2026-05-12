@@ -1,7 +1,7 @@
 use super::{
     AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MediaAttachmentRow,
     MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow, Request, Response,
-    Result, RouteContext, StatusRow, actor_url,
+    Result, RouteContext, StatusRow, actor_url, apply_remote_actor_social_counts,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
     fetch_remote_actor_profile, find_account_by_username, find_authenticated_local_account,
@@ -10,8 +10,8 @@ use super::{
     is_public_activitypub_visibility, list_account_statuses, list_pinned_statuses_for_account,
     list_public_account_statuses, list_public_remote_statuses_by_actor_uri,
     list_remote_statuses_by_actor_uri, load_account_filter_matcher, load_config,
-    load_in_reply_to_account_ids, local_status_ap_id, media_attachment_url,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    load_in_reply_to_account_ids, load_remote_actor_social_counts, local_status_ap_id,
+    media_attachment_url, preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
     resolve_account_reference, status_contains_tag, strip_html_tags, upsert_remote_actor,
@@ -255,6 +255,7 @@ async fn account_statuses_response_for_reference(
         }
         Some(AccountReference::Remote(actor)) => {
             let actor = refresh_remote_status_actor(&db, actor).await?;
+            let actor_social_counts = load_remote_actor_social_counts(&actor.actor_uri).await.ok();
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
             let mut statuses = if wants_html {
@@ -399,25 +400,27 @@ async fn account_statuses_response_for_reference(
                     continue;
                 }
 
-                response.push(
-                    build_remote_status_response_with_timeline_preloads(
-                        &db,
-                        &config,
-                        viewer.as_ref(),
-                        &status,
-                        &actor,
-                        filter_matcher.as_ref(),
-                        Some(&counts_preload),
-                        Some(&quote_counts_preload),
-                        Some(&viewer_state_preload),
-                        Some(&poll_preload),
-                        Some(&edit_updated_at_preload),
-                        remote_attachments_by_status_id
-                            .remove(&status.id)
-                            .unwrap_or_default(),
-                    )
-                    .await?,
-                );
+                let mut status_response = build_remote_status_response_with_timeline_preloads(
+                    &db,
+                    &config,
+                    viewer.as_ref(),
+                    &status,
+                    &actor,
+                    filter_matcher.as_ref(),
+                    Some(&counts_preload),
+                    Some(&quote_counts_preload),
+                    Some(&viewer_state_preload),
+                    Some(&poll_preload),
+                    Some(&edit_updated_at_preload),
+                    remote_attachments_by_status_id
+                        .remove(&status.id)
+                        .unwrap_or_default(),
+                )
+                .await?;
+                if let Some(counts) = actor_social_counts {
+                    apply_remote_actor_social_counts(&mut status_response.account, counts);
+                }
+                response.push(status_response);
             }
             Response::from_json(&response)
         }

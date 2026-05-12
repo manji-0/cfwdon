@@ -1,9 +1,82 @@
 use crate::{
     AccountStats, AppConfig, LocalAccount, MastodonAccountResponse, MastodonAccountSource,
-    ProfileField, RemoteActorProfile, RemoteActorRow, actor_url, escape_html, media_object_url,
-    remote_account_rest_id,
+    ProfileField, RemoteActorProfile, RemoteActorRow, actor_url, escape_html,
+    fetch_remote_activitypub_document, media_object_url, remote_account_rest_id,
 };
 use url::Url;
+use worker::Result;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RemoteActorSocialCounts {
+    pub(crate) followers_count: u64,
+    pub(crate) following_count: u64,
+}
+
+pub(crate) async fn load_remote_actor_social_counts(
+    actor_uri: &str,
+) -> Result<RemoteActorSocialCounts> {
+    let document = fetch_remote_activitypub_document(actor_uri).await?;
+    let followers_count = remote_actor_collection_count(&document, "followers")
+        .await
+        .unwrap_or(0);
+    let following_count = remote_actor_collection_count(&document, "following")
+        .await
+        .unwrap_or(0);
+    Ok(RemoteActorSocialCounts {
+        followers_count,
+        following_count,
+    })
+}
+
+async fn remote_actor_collection_count(
+    actor_document: &serde_json::Value,
+    field: &str,
+) -> Result<u64> {
+    let Some(value) = actor_document.get(field) else {
+        return Ok(0);
+    };
+    if let Some(count) = activitypub_collection_count(value) {
+        return Ok(count);
+    }
+    let Some(collection_uri) = activitypub_reference_uri(value) else {
+        return Ok(0);
+    };
+    let collection = fetch_remote_activitypub_document(&collection_uri).await?;
+    Ok(activitypub_collection_count(&collection).unwrap_or(0))
+}
+
+fn activitypub_reference_uri(value: &serde_json::Value) -> Option<String> {
+    if let Some(uri) = value.as_str().map(str::trim).filter(|uri| !uri.is_empty()) {
+        return Some(uri.to_owned());
+    }
+    value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn activitypub_collection_count(collection: &serde_json::Value) -> Option<u64> {
+    collection
+        .get("totalItems")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            collection
+                .get("orderedItems")
+                .or_else(|| collection.get("items"))
+                .and_then(serde_json::Value::as_array)
+                .map(|items| items.len() as u64)
+        })
+}
+
+pub(crate) fn apply_remote_actor_social_counts(
+    account: &mut MastodonAccountResponse,
+    counts: RemoteActorSocialCounts,
+) {
+    account.followers_count = counts.followers_count;
+    account.following_count = counts.following_count;
+}
 
 pub(crate) fn mastodon_account_fields(fields: &[ProfileField]) -> Vec<serde_json::Value> {
     fields

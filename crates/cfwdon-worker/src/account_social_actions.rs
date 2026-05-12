@@ -1,6 +1,6 @@
 use crate::{
-    AccountReference, MastodonAccountResponse, Request, Response, Result, RouteContext, actor_url,
-    build_internal_cursor_link_header, build_relationship_for_target,
+    AccountReference, MastodonAccountResponse, RemoteActorRow, Request, Response, Result,
+    RouteContext, actor_url, build_internal_cursor_link_header, build_relationship_for_target,
     fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
     find_account_by_username, find_follow_by_target, find_remote_actor_by_actor_uri,
     find_remote_actor_by_profile_url_or_actor_uri, is_activitypub_actor_type,
@@ -354,9 +354,11 @@ async fn resolve_remote_endorsement_account(
             )));
         }
         upsert_remote_actor(db, &profile).await?;
-        return Ok(find_remote_actor_by_actor_uri(db, &profile.actor_uri)
-            .await?
-            .map(|actor| MastodonAccountResponse::from_remote_actor(&actor)));
+        let response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+            Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+            None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+        };
+        return Ok(Some(response));
     }
 
     let RemoteEndorsementReference::Uri(reference) = reference else {
@@ -372,7 +374,7 @@ async fn resolve_remote_endorsement_account(
     }
 
     if let Some(actor) = find_remote_actor_by_profile_url_or_actor_uri(db, reference).await? {
-        return Ok(Some(MastodonAccountResponse::from_remote_actor(&actor)));
+        return refreshed_remote_endorsement_account_response(db, actor).await;
     }
 
     let profile = match fetch_remote_actor_profile(reference).await {
@@ -380,9 +382,27 @@ async fn resolve_remote_endorsement_account(
         Err(_) => return Ok(None),
     };
     upsert_remote_actor(db, &profile).await?;
-    Ok(find_remote_actor_by_actor_uri(db, &profile.actor_uri)
-        .await?
-        .map(|actor| MastodonAccountResponse::from_remote_actor(&actor)))
+    let response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    Ok(Some(response))
+}
+
+async fn refreshed_remote_endorsement_account_response(
+    db: &worker::D1Database,
+    actor: RemoteActorRow,
+) -> Result<Option<MastodonAccountResponse>> {
+    let profile = match fetch_remote_actor_profile(&actor.actor_uri).await {
+        Ok(profile) => profile,
+        Err(_) => return Ok(Some(MastodonAccountResponse::from_remote_actor(&actor))),
+    };
+    upsert_remote_actor(db, &profile).await?;
+    let response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    Ok(Some(response))
 }
 
 impl RemoteEndorsementReference {
@@ -419,8 +439,10 @@ async fn build_endorsements_response(
             continue;
         }
 
-        if let Some(actor) = find_remote_actor_by_actor_uri(db, &entry.target_actor_uri).await? {
-            response.push(MastodonAccountResponse::from_remote_actor(&actor));
+        if let Some(actor) = find_remote_actor_by_actor_uri(db, &entry.target_actor_uri).await?
+            && let Some(account) = refreshed_remote_endorsement_account_response(db, actor).await?
+        {
+            response.push(account);
         }
     }
 

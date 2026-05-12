@@ -1,12 +1,13 @@
 use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
     Result, RouteContext, UpdateCredentialsField, UpdateCredentialsRequest,
-    apply_account_credentials_update, cache_account_api_response, cached_account_api_response,
-    count_pending_follow_requests, enqueue_profile_update_activities, fetch_remote_actor_profile,
-    find_authenticated_local_account, find_remote_actor_by_actor_uri,
-    invalidate_account_public_cache, load_account_stats, load_config, media_object_url,
-    normalize_hashtag, parse_update_credentials_request, render_profile_field_value_html,
-    resolve_account_reference, resolve_lookup_account, upsert_remote_actor,
+    apply_account_credentials_update, apply_remote_actor_social_counts, cache_account_api_response,
+    cached_account_api_response, count_pending_follow_requests, enqueue_profile_update_activities,
+    fetch_remote_actor_profile, find_authenticated_local_account, find_remote_actor_by_actor_uri,
+    invalidate_account_public_cache, load_account_stats, load_config,
+    load_remote_actor_social_counts, media_object_url, normalize_hashtag,
+    parse_update_credentials_request, render_profile_field_value_html, resolve_account_reference,
+    resolve_lookup_account, upsert_remote_actor,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -90,12 +91,14 @@ async fn remote_account_response(
         Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
     };
     upsert_remote_actor(db, &profile).await?;
-    Ok(
-        match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
-            Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
-            None => MastodonAccountResponse::from_remote_actor_profile(&profile),
-        },
-    )
+    let mut response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    if let Ok(counts) = load_remote_actor_social_counts(&profile.actor_uri).await {
+        apply_remote_actor_social_counts(&mut response, counts);
+    }
+    Ok(response)
 }
 
 fn account_api_cache_candidate(account_id: &str) -> bool {
