@@ -19,6 +19,7 @@ thread_local! {
 pub(crate) struct RemoteActorSocialCounts {
     pub(crate) followers_count: u64,
     pub(crate) following_count: u64,
+    pub(crate) statuses_count: u64,
 }
 
 pub(crate) async fn load_remote_actor_social_counts_from_document(
@@ -30,9 +31,13 @@ pub(crate) async fn load_remote_actor_social_counts_from_document(
     let following_count = remote_actor_collection_count(&document, "following")
         .await
         .unwrap_or(0);
+    let statuses_count = remote_actor_collection_count(&document, "outbox")
+        .await
+        .unwrap_or(0);
     Ok(RemoteActorSocialCounts {
         followers_count,
         following_count,
+        statuses_count,
     })
 }
 
@@ -110,6 +115,7 @@ pub(crate) fn apply_remote_actor_social_counts(
 ) {
     account.followers_count = counts.followers_count;
     account.following_count = counts.following_count;
+    account.statuses_count = counts.statuses_count;
 }
 
 pub(crate) fn mastodon_account_fields(fields: &[ProfileField]) -> Vec<serde_json::Value> {

@@ -538,7 +538,9 @@ pub(crate) async fn search_cached_accounts(
                 Ok(fresh_response) => fresh_response,
                 Err(_) => response,
             };
-            response.statuses_count = stats.statuses_count;
+            if stats.statuses_count > 0 {
+                response.statuses_count = stats.statuses_count;
+            }
             response.last_status_at = stats.last_status_at.clone();
             accounts.push(response);
         }
