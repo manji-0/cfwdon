@@ -333,6 +333,9 @@ async fn remote_follow_collection_entries(
     config: &cfwdon_core::AppConfig,
     actor_uri: &str,
     collection_field: &str,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
 ) -> Result<Option<Vec<CollectionAccountEntry>>> {
     let actor_document = match fetch_remote_activitypub_document(actor_uri).await {
         Ok(document) => document,
@@ -348,20 +351,44 @@ async fn remote_follow_collection_entries(
         Err(_) => return Ok(None),
     };
 
-    let total = references.len() as i64;
     let mut entries = Vec::new();
-    for (index, reference) in references.into_iter().enumerate() {
+    for (cursor_id, reference) in
+        page_remote_follow_collection_references(references, limit, max_id, since_id)
+    {
         if let Some(account) =
             remote_follow_account_response_from_reference(db, config, &reference).await?
         {
             entries.push(CollectionAccountEntry {
-                cursor_id: total - index as i64,
+                cursor_id,
                 created_at: String::new(),
                 account,
             });
         }
     }
     Ok(Some(entries))
+}
+
+fn page_remote_follow_collection_references(
+    references: Vec<RemoteFollowCollectionReference>,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> Vec<(i64, RemoteFollowCollectionReference)> {
+    let total = references.len() as i64;
+    references
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, reference)| {
+            let cursor_id = total - index as i64;
+            if max_id.is_some_and(|value| cursor_id >= value)
+                || since_id.is_some_and(|value| cursor_id <= value)
+            {
+                return None;
+            }
+            Some((cursor_id, reference))
+        })
+        .take(limit as usize)
+        .collect()
 }
 
 async fn fetch_remote_follow_collection_item_references(
@@ -592,6 +619,51 @@ mod tests {
             Some("https://remote.example/users/alice/followers?page=2")
         );
     }
+
+    #[test]
+    fn remote_follow_collection_references_page_before_resolution() {
+        let references = vec![
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/a".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/b".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/c".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/d".to_owned()),
+        ];
+
+        assert_eq!(
+            page_remote_follow_collection_references(references.clone(), 2, None, None),
+            vec![
+                (
+                    4,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/a".to_owned()
+                    )
+                ),
+                (
+                    3,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/b".to_owned()
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            page_remote_follow_collection_references(references, 2, Some(3), None),
+            vec![
+                (
+                    2,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/c".to_owned()
+                    )
+                ),
+                (
+                    1,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/d".to_owned()
+                    )
+                ),
+            ]
+        );
+    }
 }
 
 pub(crate) fn parse_relationship_query_ids(req: &Request) -> Result<Vec<String>> {
@@ -656,8 +728,16 @@ pub(crate) async fn account_followers_response(
             }
         }
         Some(AccountReference::Remote(actor)) => {
-            match remote_follow_collection_entries(&db, &config, &actor.actor_uri, "followers")
-                .await?
+            match remote_follow_collection_entries(
+                &db,
+                &config,
+                &actor.actor_uri,
+                "followers",
+                limit,
+                max_id,
+                since_id,
+            )
+            .await?
             {
                 Some(remote_entries) => entries = remote_entries,
                 None => {
@@ -731,8 +811,16 @@ pub(crate) async fn account_following_response(
             }
         }
         Some(AccountReference::Remote(actor)) => {
-            match remote_follow_collection_entries(&db, &config, &actor.actor_uri, "following")
-                .await?
+            match remote_follow_collection_entries(
+                &db,
+                &config,
+                &actor.actor_uri,
+                "following",
+                limit,
+                max_id,
+                since_id,
+            )
+            .await?
             {
                 Some(remote_entries) => entries = remote_entries,
                 None => {
