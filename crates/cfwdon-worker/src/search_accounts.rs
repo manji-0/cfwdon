@@ -4,10 +4,11 @@ use crate::instance_host;
 use crate::responses::MastodonAccountResponse;
 use crate::search_text_match_rank;
 use crate::{
-    actor_url, find_account_by_username, find_remote_actor_by_username_domain,
-    list_accepted_follow_target_uris, load_remote_actor_status_summaries,
-    normalize_search_match_text, normalize_search_query_input, parse_lookup_handle,
-    strip_html_tags,
+    actor_url, apply_remote_actor_social_counts, fetch_remote_actor_profile_with_document,
+    find_account_by_username, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    list_accepted_follow_target_uris, load_remote_actor_social_counts_from_document,
+    load_remote_actor_status_summaries, normalize_search_match_text, normalize_search_query_input,
+    parse_lookup_handle, strip_html_tags, upsert_remote_actor,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -608,7 +609,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         else {
             return Ok(None);
         };
-        MastodonAccountResponse::from_remote_actor(&actor)
+        fresh_remote_search_account_response(db, &actor).await?
     };
 
     if following_only {
@@ -629,4 +630,24 @@ pub(crate) async fn resolve_cached_exact_search_account(
     }
 
     Ok(Some(account))
+}
+
+async fn fresh_remote_search_account_response(
+    db: &D1Database,
+    actor: &RemoteActorRow,
+) -> Result<MastodonAccountResponse> {
+    let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
+        Ok(fetched) => fetched,
+        Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
+    };
+    let profile = fetched.profile;
+    upsert_remote_actor(db, &profile).await?;
+    let mut response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
+        apply_remote_actor_social_counts(&mut response, counts);
+    }
+    Ok(response)
 }
