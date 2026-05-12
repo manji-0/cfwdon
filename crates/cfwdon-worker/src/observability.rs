@@ -1,4 +1,4 @@
-use worker::console_log;
+use worker::{console_debug, console_log};
 
 pub(crate) fn observability_started_at_ms() -> f64 {
     js_sys::Date::now()
@@ -29,6 +29,17 @@ pub(crate) fn log_json_event(mut payload: serde_json::Value) {
     }
 }
 
+pub(crate) fn log_json_debug_event(mut payload: serde_json::Value) {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("source".to_owned(), serde_json::json!("cfwdon"));
+    }
+
+    match serde_json::to_string(&payload) {
+        Ok(message) => console_debug!("{}", message),
+        Err(error) => console_log!("cfwdon_observability_log_error={}", error),
+    }
+}
+
 pub(crate) fn log_observed_operation(
     component: &str,
     operation: &str,
@@ -53,7 +64,7 @@ pub(crate) fn log_observed_operation(
         }
     }
 
-    log_json_event(payload);
+    log_json_debug_event(payload);
 }
 
 fn observed_operation_message(
