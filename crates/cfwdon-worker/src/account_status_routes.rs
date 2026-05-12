@@ -266,7 +266,7 @@ async fn account_statuses_response_for_reference(
                     .is_some_and(|follow| follow.state == "accepted"),
                 None => false,
             };
-            let actor_social_counts = None;
+            let mut actor_social_counts = None;
             let mut statuses = if !is_following_remote_actor && !wants_html {
                 Vec::new()
             } else if wants_html {
@@ -293,7 +293,10 @@ async fn account_statuses_response_for_reference(
                 statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
             }
             let transient_statuses = if !is_following_remote_actor && !wants_html {
-                load_transient_remote_actor_statuses(&config, &actor, &query, limit).await?
+                let (statuses, counts) =
+                    load_transient_remote_actor_statuses(&config, &actor, &query, limit).await?;
+                actor_social_counts = counts;
+                statuses
             } else {
                 Vec::new()
             };
@@ -557,10 +560,16 @@ async fn load_transient_remote_actor_statuses(
     actor: &RemoteActorRow,
     query: &AccountStatusesQuery,
     limit: u32,
-) -> Result<Vec<MastodonStatusResponse>> {
+) -> Result<(
+    Vec<MastodonStatusResponse>,
+    Option<crate::RemoteActorSocialCounts>,
+)> {
     let actor_document = fetch_remote_activitypub_document(&actor.actor_uri).await?;
+    let social_counts = load_remote_actor_social_counts_from_document(&actor_document)
+        .await
+        .ok();
     let Some(outbox) = remote_actor_outbox_page(&actor_document).await? else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), social_counts));
     };
     let mut response = Vec::new();
     for item in activitypub_collection_items(&outbox) {
@@ -601,7 +610,7 @@ async fn load_transient_remote_actor_statuses(
             &status, actor, config,
         ));
     }
-    Ok(response)
+    Ok((response, social_counts))
 }
 
 async fn remote_actor_outbox_page(
