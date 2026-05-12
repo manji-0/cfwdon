@@ -1,11 +1,12 @@
 use crate::{
     AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteStatusRow,
-    account_search_is_complete_handle, extract_remote_note_object,
-    fetch_remote_account_profile_by_handle, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_account_by_id, find_account_by_username,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
-    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
-    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
+    account_search_is_complete_handle, apply_remote_actor_social_counts,
+    extract_remote_note_object, fetch_remote_account_profile_by_handle_with_document,
+    fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
+    find_account_by_username, find_remote_actor_by_actor_uri,
+    find_remote_actor_by_profile_url_or_actor_uri, find_remote_status_by_object_uri,
+    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
+    load_remote_actor_social_counts_from_document, local_username_from_actor_uri,
     parse_lookup_handle, parse_remote_http_url, remote_actor_uri_from_rest_id, upsert_remote_actor,
     upsert_remote_status, visibility_from_activitypub_object,
 };
@@ -49,12 +50,17 @@ pub(crate) async fn resolve_lookup_account(
         ));
     }
 
-    let profile = fetch_remote_account_profile_by_handle(&handle).await?;
+    let fetched = fetch_remote_account_profile_by_handle_with_document(&handle).await?;
+    let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
     let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?
         .ok_or_else(|| Error::RustError("remote account could not be cached".to_owned()))?;
-    Ok(MastodonAccountResponse::from_remote_actor(&actor))
+    let mut response = MastodonAccountResponse::from_remote_actor(&actor);
+    if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
+        apply_remote_actor_social_counts(&mut response, counts);
+    }
+    Ok(response)
 }
 
 pub(crate) async fn resolve_search_account(

@@ -32,9 +32,9 @@ pub(crate) struct FetchedRemoteActorProfile {
     pub(crate) profile: RemoteActorProfile,
 }
 
-pub(crate) async fn fetch_remote_account_profile_by_handle(
+pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
     handle: &AccountHandle,
-) -> Result<RemoteActorProfile> {
+) -> Result<FetchedRemoteActorProfile> {
     let domain = handle
         .domain
         .as_deref()
@@ -75,7 +75,7 @@ pub(crate) async fn fetch_remote_account_profile_by_handle(
             Error::RustError("webfinger response did not include a self link".to_owned())
         })?;
 
-    fetch_remote_actor_profile(actor_uri).await
+    fetch_remote_actor_profile_with_document(actor_uri).await
 }
 
 pub(crate) async fn fetch_remote_actor_profile(actor_uri: &str) -> Result<RemoteActorProfile> {

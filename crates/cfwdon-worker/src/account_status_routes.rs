@@ -4,6 +4,7 @@ use super::{
     Result, RouteContext, StatusRow, actor_url, apply_remote_actor_social_counts,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
+    extract_remote_note_object, fetch_remote_activitypub_document,
     fetch_remote_actor_profile_with_document, find_account_by_username,
     find_authenticated_local_account, find_media_attachments_by_status_ids,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
@@ -16,6 +17,7 @@ use super::{
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
     resolve_account_reference, status_contains_tag, strip_html_tags, upsert_remote_actor,
+    upsert_remote_status,
 };
 use worker::{D1Database, ResponseBody};
 
@@ -258,7 +260,7 @@ async fn account_statuses_response_for_reference(
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
             let (actor, actor_social_counts) =
-                refresh_remote_status_actor(&db, actor, !wants_html).await?;
+                refresh_remote_status_actor(&db, &config, actor, !wants_html, limit).await?;
             let mut statuses = if wants_html {
                 list_public_remote_statuses_by_actor_uri(
                     &db,
@@ -431,8 +433,10 @@ async fn account_statuses_response_for_reference(
 
 async fn refresh_remote_status_actor(
     db: &D1Database,
+    config: &AppConfig,
     actor: RemoteActorRow,
     include_social_counts: bool,
+    status_fetch_limit: u32,
 ) -> Result<(RemoteActorRow, Option<crate::RemoteActorSocialCounts>)> {
     let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
         Ok(fetched) => fetched,
@@ -440,6 +444,14 @@ async fn refresh_remote_status_actor(
     };
     let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
+    let _ = hydrate_remote_actor_statuses_from_outbox(
+        db,
+        config,
+        &profile,
+        &fetched.document,
+        status_fetch_limit,
+    )
+    .await;
     let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?
         .unwrap_or(actor);
@@ -451,6 +463,88 @@ async fn refresh_remote_status_actor(
         None
     };
     Ok((actor, social_counts))
+}
+
+async fn hydrate_remote_actor_statuses_from_outbox(
+    db: &D1Database,
+    config: &AppConfig,
+    actor: &crate::RemoteActorProfile,
+    actor_document: &serde_json::Value,
+    limit: u32,
+) -> Result<()> {
+    let limit = limit.clamp(1, 20) as usize;
+    let Some(outbox) = remote_actor_outbox_page(actor_document).await? else {
+        return Ok(());
+    };
+    for item in activitypub_collection_items(&outbox)
+        .into_iter()
+        .take(limit)
+    {
+        let Some(object) = extract_remote_note_object(item) else {
+            continue;
+        };
+        if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
+            continue;
+        }
+        upsert_remote_status(db, config, actor, object).await?;
+    }
+    Ok(())
+}
+
+async fn remote_actor_outbox_page(
+    actor_document: &serde_json::Value,
+) -> Result<Option<serde_json::Value>> {
+    let Some(outbox) = actor_document.get("outbox") else {
+        return Ok(None);
+    };
+    let collection = match activitypub_reference_uri(outbox) {
+        Some(uri) => fetch_remote_activitypub_document(&uri).await?,
+        None if outbox.is_object() => outbox.clone(),
+        None => return Ok(None),
+    };
+    if !activitypub_collection_items(&collection).is_empty() {
+        return Ok(Some(collection));
+    }
+    let Some(first) = collection.get("first") else {
+        return Ok(Some(collection));
+    };
+    match activitypub_reference_uri(first) {
+        Some(uri) => fetch_remote_activitypub_document(&uri).await.map(Some),
+        None if first.is_object() => Ok(Some(first.clone())),
+        None => Ok(Some(collection)),
+    }
+}
+
+fn activitypub_collection_items(collection: &serde_json::Value) -> Vec<&serde_json::Value> {
+    collection
+        .get("orderedItems")
+        .or_else(|| collection.get("items"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
+}
+
+fn activitypub_reference_uri(value: &serde_json::Value) -> Option<String> {
+    if let Some(uri) = value.as_str().map(str::trim).filter(|uri| !uri.is_empty()) {
+        return Some(uri.to_owned());
+    }
+    value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn remote_status_actor_uri(
+    object: &serde_json::Value,
+    activity: &serde_json::Value,
+) -> Option<String> {
+    object
+        .get("attributedTo")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| activity.get("actor").and_then(serde_json::Value::as_str))
+        .map(ToOwned::to_owned)
 }
 
 fn prefers_statuses_html(req: &Request) -> Result<bool> {
