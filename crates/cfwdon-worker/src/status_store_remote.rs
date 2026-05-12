@@ -496,41 +496,48 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
 pub(crate) async fn list_public_remote_statuses_by_actor_uri(
     db: &D1Database,
     actor_uri: &str,
-    cursor: &ResolvedTimelineCursor,
+    max_id: Option<&str>,
+    min_id: Option<&str>,
     limit: u32,
 ) -> Result<Vec<RemoteStatusRow>> {
     let bindings = [
         D1Type::Text(actor_uri),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        max_id.map_or(D1Type::Null, D1Type::Text),
+        min_id.map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ];
     let result = db
         .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+            "WITH max_cursor AS (
+                SELECT id, published_at FROM remote_statuses WHERE id = ?2 LIMIT 1
+             ),
+             min_cursor AS (
+                SELECT id, published_at FROM remote_statuses WHERE id = ?3 LIMIT 1
+             )
+             SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE actor_uri = ?1
                AND visibility IN ('public', 'unlisted')
                AND (
                     ?2 IS NULL
-                    OR published_at < ?2
-                    OR (published_at = ?2 AND id < ?3)
+                    OR NOT EXISTS (SELECT 1 FROM max_cursor)
+                    OR EXISTS (
+                        SELECT 1 FROM max_cursor
+                        WHERE remote_statuses.published_at < max_cursor.published_at
+                           OR (remote_statuses.published_at = max_cursor.published_at AND remote_statuses.id < max_cursor.id)
+                    )
                )
                AND (
-                    ?4 IS NULL
-                    OR published_at > ?4
-                    OR (published_at = ?4 AND id > ?5)
+                    ?3 IS NULL
+                    OR NOT EXISTS (SELECT 1 FROM min_cursor)
+                    OR EXISTS (
+                        SELECT 1 FROM min_cursor
+                        WHERE remote_statuses.published_at > min_cursor.published_at
+                           OR (remote_statuses.published_at = min_cursor.published_at AND remote_statuses.id > min_cursor.id)
+                    )
                )
              ORDER BY published_at DESC, id DESC
-             LIMIT ?6",
+             LIMIT ?4",
         )
         .bind_refs(bindings.iter())?
         .all()

@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, D1Database, Error, ResolvedTimelineCursor, Result, StatusRow, find_account_by_id,
+    AppConfig, D1Database, Error, Result, StatusRow, find_account_by_id,
     local_status_identity_from_uri, sql_placeholders, unique_ordered_refs,
 };
 use std::collections::HashMap;
@@ -151,41 +151,48 @@ pub(crate) async fn list_account_statuses(
 pub(crate) async fn list_public_account_statuses(
     db: &D1Database,
     account_id: &str,
-    cursor: &ResolvedTimelineCursor,
+    max_id: Option<&str>,
+    min_id: Option<&str>,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
     let bindings = [
         D1Type::Text(account_id),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        max_id.map_or(D1Type::Null, D1Type::Text),
+        min_id.map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ];
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+            "WITH max_cursor AS (
+                SELECT id, created_at FROM statuses WHERE id = ?2 LIMIT 1
+             ),
+             min_cursor AS (
+                SELECT id, created_at FROM statuses WHERE id = ?3 LIMIT 1
+             )
+             SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
              FROM statuses
              WHERE account_id = ?1
                AND visibility IN ('public', 'unlisted')
                AND (
                     ?2 IS NULL
-                    OR created_at < ?2
-                    OR (created_at = ?2 AND id < ?3)
+                    OR NOT EXISTS (SELECT 1 FROM max_cursor)
+                    OR EXISTS (
+                        SELECT 1 FROM max_cursor
+                        WHERE statuses.created_at < max_cursor.created_at
+                           OR (statuses.created_at = max_cursor.created_at AND statuses.id < max_cursor.id)
+                    )
                )
                AND (
-                    ?4 IS NULL
-                    OR created_at > ?4
-                    OR (created_at = ?4 AND id > ?5)
+                    ?3 IS NULL
+                    OR NOT EXISTS (SELECT 1 FROM min_cursor)
+                    OR EXISTS (
+                        SELECT 1 FROM min_cursor
+                        WHERE statuses.created_at > min_cursor.created_at
+                           OR (statuses.created_at = min_cursor.created_at AND statuses.id > min_cursor.id)
+                    )
                )
              ORDER BY created_at DESC, id DESC
-             LIMIT ?6",
+             LIMIT ?4",
         )
         .bind_refs(bindings.iter())?
         .all()

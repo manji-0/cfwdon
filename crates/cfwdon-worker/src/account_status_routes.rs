@@ -1,7 +1,7 @@
 use super::{
     AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MediaAttachmentRow,
     MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow, Request, Response,
-    Result, RouteContext, StatusRow, TimelinePaginationQuery, actor_url,
+    Result, RouteContext, StatusRow, actor_url,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
     find_account_by_username, find_authenticated_local_account,
@@ -13,9 +13,9 @@ use super::{
     media_attachment_url, preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
-    resolve_account_reference, resolve_timeline_cursor, status_contains_tag, strip_html_tags,
+    resolve_account_reference, status_contains_tag, strip_html_tags,
 };
-use worker::ResponseBody;
+use worker::{D1Database, ResponseBody};
 
 pub(crate) async fn account_statuses_response(
     req: Request,
@@ -40,13 +40,22 @@ pub(crate) async fn account_statuses_by_username_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
-    let Some(account) = find_account_by_username(&db, &username).await? else {
+    let (account, viewer) = futures_util::try_join!(
+        find_account_by_username(&db, &username),
+        find_authenticated_local_account(&req, &db, &config),
+    )?;
+    let Some(account) = account else {
         return Response::error("account not found", 404);
     };
-    let account_id = account.id;
-    drop(db);
 
-    account_statuses_response_for_account_id(req, ctx, account_id).await
+    account_statuses_response_for_reference(
+        req,
+        config,
+        db,
+        viewer,
+        Some(AccountReference::Local(account)),
+    )
+    .await
 }
 
 async fn account_statuses_response_for_account_id(
@@ -55,22 +64,41 @@ async fn account_statuses_response_for_account_id(
     account_id: String,
 ) -> Result<Response> {
     let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let (viewer, account_ref) = futures_util::try_join!(
+        find_authenticated_local_account(&req, &db, &config),
+        resolve_account_reference(&db, &account_id),
+    )?;
+    account_statuses_response_for_reference(req, config, db, viewer, account_ref).await
+}
+
+async fn account_statuses_response_for_reference(
+    req: Request,
+    config: AppConfig,
+    db: D1Database,
+    viewer: Option<LocalAccount>,
+    account_ref: Option<AccountReference>,
+) -> Result<Response> {
     let query: AccountStatusesQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
     let wants_html = prefers_statuses_html(&req)?;
+    let min_id = query.min_id.as_deref().or(query.since_id.as_deref());
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    match resolve_account_reference(&db, &account_id).await? {
+    match account_ref {
         Some(AccountReference::Local(account)) => {
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
             let mut statuses = if is_pinned_page {
                 list_pinned_statuses_for_account(&db, &account.id).await?
             } else if wants_html {
-                let cursor =
-                    resolve_timeline_cursor(&db, &account_statuses_pagination(&query)).await?;
-                list_public_account_statuses(&db, &account.id, &cursor, html_fetch_limit).await?
+                list_public_account_statuses(
+                    &db,
+                    &account.id,
+                    query.max_id.as_deref(),
+                    min_id,
+                    html_fetch_limit,
+                )
+                .await?
             } else {
                 list_account_statuses(&db, &account.id, limit).await?
             };
@@ -228,12 +256,11 @@ async fn account_statuses_response_for_account_id(
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
             let mut statuses = if wants_html {
-                let cursor =
-                    resolve_timeline_cursor(&db, &account_statuses_pagination(&query)).await?;
                 list_public_remote_statuses_by_actor_uri(
                     &db,
                     &actor.actor_uri,
-                    &cursor,
+                    query.max_id.as_deref(),
+                    min_id,
                     html_fetch_limit,
                 )
                 .await?
@@ -400,15 +427,6 @@ fn prefers_statuses_html(req: &Request) -> Result<bool> {
     let accept = req.headers().get("Accept")?.unwrap_or_default();
     let accept = accept.to_ascii_lowercase();
     Ok(accept.contains("text/html") && !accept.contains("application/json"))
-}
-
-fn account_statuses_pagination(query: &AccountStatusesQuery) -> TimelinePaginationQuery {
-    TimelinePaginationQuery {
-        limit: query.limit,
-        max_id: query.max_id.clone(),
-        since_id: query.since_id.clone(),
-        min_id: query.min_id.clone(),
-    }
 }
 
 fn account_statuses_older_page_url(req: &Request, limit: u32, max_id: &str) -> Result<String> {
