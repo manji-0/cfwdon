@@ -1,6 +1,7 @@
 use crate::{
     AccountStats, AppConfig, LocalAccount, MastodonAccountResponse, MastodonAccountSource,
-    ProfileField, RemoteActorRow, actor_url, escape_html, media_object_url, remote_account_rest_id,
+    ProfileField, RemoteActorProfile, RemoteActorRow, actor_url, escape_html, media_object_url,
+    remote_account_rest_id,
 };
 use url::Url;
 
@@ -200,6 +201,48 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at,
+            note: actor.summary_html.clone(),
+            url: profile_url,
+            avatar: avatar_url.clone(),
+            avatar_static: avatar_url,
+            header: header_url.clone(),
+            header_static: header_url,
+            emojis: Vec::new(),
+            fields: Vec::new(),
+            roles: Vec::new(),
+            followers_count: 0,
+            following_count: 0,
+            statuses_count: 0,
+            source: None,
+        }
+    }
+
+    pub(crate) fn from_remote_actor_profile(actor: &RemoteActorProfile) -> Self {
+        let profile_url = actor
+            .profile_url
+            .clone()
+            .unwrap_or_else(|| actor.actor_uri.clone());
+        let avatar_url = actor.avatar_url.clone().unwrap_or_default();
+        let header_url = actor.header_url.clone().unwrap_or_default();
+
+        Self {
+            id: remote_account_rest_id(&actor.actor_uri),
+            username: actor.username.clone(),
+            acct: format!("{}@{}", actor.username, actor.domain),
+            uri: actor.actor_uri.clone(),
+            display_name: actor.display_name.clone(),
+            locked: actor.locked,
+            bot: actor.bot,
+            group: false,
+            discoverable: actor.discoverable,
+            indexable: actor.indexable,
+            noindex: account_noindex(actor.indexable),
+            hide_collections: None,
+            show_media: None,
+            show_media_replies: None,
+            show_featured: None,
+            last_status_at: None,
+            created_at: "1970-01-01T00:00:00.000Z".to_owned(),
             note: actor.summary_html.clone(),
             url: profile_url,
             avatar: avatar_url.clone(),

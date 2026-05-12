@@ -5,10 +5,10 @@ use super::{
     AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, CreateStatusPollRequest, HomeTimelineQuery,
     LinkTimelineQuery, MastodonAccountResponse, MastodonMediaAttachmentResponse,
     MastodonReportResponse, NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest,
-    PublicTimelineQuery, RemoteActorRow, RemotePollDraft, RemotePollOptionDraft,
-    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
-    SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow, StatusPollRow,
-    StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
+    PublicTimelineQuery, RemoteActorProfile, RemoteActorRow, RemotePollDraft,
+    RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow,
+    StatusPollRow, StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
     TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
     account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
@@ -4766,6 +4766,45 @@ fn remote_account_response_uses_valid_created_at_fallback() {
 
     let response = MastodonAccountResponse::from_remote_actor(&actor);
     assert_eq!(response.created_at, "1970-01-01T00:00:00.000Z");
+}
+
+#[test]
+fn remote_account_response_uses_fetched_profile_media() {
+    let actor = RemoteActorProfile {
+        actor_uri: "https://remote.example/users/carol".to_owned(),
+        username: "carol".to_owned(),
+        domain: "remote.example".to_owned(),
+        locked: true,
+        bot: false,
+        discoverable: true,
+        indexable: false,
+        inbox_uri: "https://remote.example/users/carol/inbox".to_owned(),
+        shared_inbox_uri: Some("https://remote.example/inbox".to_owned()),
+        public_key_id: "https://remote.example/users/carol#main-key".to_owned(),
+        public_key_pem: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----".to_owned(),
+        display_name: "Carol Remote".to_owned(),
+        summary_html: "<p>fresh profile</p>".to_owned(),
+        profile_url: Some("https://remote.example/@carol".to_owned()),
+        avatar_url: Some("https://cdn.remote.example/carol-avatar.png".to_owned()),
+        header_url: Some("https://cdn.remote.example/carol-header.png".to_owned()),
+    };
+
+    let response = MastodonAccountResponse::from_remote_actor_profile(&actor);
+    assert_eq!(response.username, "carol");
+    assert_eq!(response.acct, "carol@remote.example");
+    assert_eq!(response.display_name, "Carol Remote");
+    assert_eq!(response.note, "<p>fresh profile</p>");
+    assert_eq!(response.url, "https://remote.example/@carol");
+    assert_eq!(
+        response.avatar,
+        "https://cdn.remote.example/carol-avatar.png"
+    );
+    assert_eq!(
+        response.header,
+        "https://cdn.remote.example/carol-header.png"
+    );
+    assert!(response.locked);
+    assert!(!response.indexable);
 }
 
 #[test]
