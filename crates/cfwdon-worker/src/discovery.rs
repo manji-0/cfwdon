@@ -333,7 +333,7 @@ fn profile_html_document(
         String::new()
     } else {
         format!(
-            r#"<section class="posts"><div class="posts-header"><h2>Recent posts</h2><a href="{profile_url}/statuses">All posts</a></div><div class="feed">{posts_html}</div></section>"#
+            r#"<section class="posts"><div class="posts-header"><h2>Recent posts</h2><a href="{profile_url}/statuses">Public posts</a></div><div class="feed">{posts_html}</div></section>"#
         )
     };
     format!(
@@ -359,7 +359,7 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
 <div class="note">{bio_html}</div>
 {fields_html}
 <div class="stats"><div><span class="num">{statuses}</span><span class="label">Posts</span></div><div><span class="num">{followers}</span><span class="label">Followers</span></div><div><span class="num">{following}</span><span class="label">Following</span></div></div>
-<div class="actions"><a class="button" href="{profile_url}/statuses">All posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div>
+<div class="actions"><a class="button" href="{profile_url}/statuses">Public posts</a><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div>
 </section>
 {posts_section}
 <footer>Joined {created}</footer>
