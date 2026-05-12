@@ -1,14 +1,12 @@
 use super::{
     AppConfig, FollowAccountRequest, LocalAccount, RemoteActorRow, actor_url,
-    build_follow_activity, build_undo_follow_activity, count_followers_by_actor,
-    delete_follow_by_target, find_active_mute, find_follow_by_target,
-    has_pending_follow_request_from_account, has_pending_follow_request_from_actor,
-    is_blocking_actor, load_account_social_metadata, load_follow_activity_id,
-    queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
-    upsert_remote_follow,
+    build_follow_activity, build_undo_follow_activity, delete_follow_by_target,
+    load_follow_activity_id, queue_remote_actor_activity, queue_remote_actor_activity_required,
+    remote_account_rest_id, upsert_remote_follow,
 };
 use js_sys::Date;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
 #[derive(Debug, Serialize)]
@@ -31,6 +29,23 @@ pub(crate) struct RelationshipResponse {
     pub(crate) note: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RelationshipStateRow {
+    follow_state: Option<String>,
+    show_reblogs: Option<i32>,
+    notify: Option<i32>,
+    languages_json: Option<String>,
+    reciprocal_following: i32,
+    followed_by_remote: i32,
+    blocking: i32,
+    blocked_by: i32,
+    mute_notifications: Option<i32>,
+    mute_expires_at: Option<String>,
+    requested_by: i32,
+    endorsed: Option<i32>,
+    note: Option<String>,
+}
+
 pub(crate) async fn build_relationship_for_target(
     db: &D1Database,
     config: &AppConfig,
@@ -39,77 +54,131 @@ pub(crate) async fn build_relationship_for_target(
     target_actor_uri: &str,
 ) -> Result<RelationshipResponse> {
     let viewer_actor_uri = actor_url(config, &viewer.username);
-    let (
-        follow,
-        reciprocal,
-        followed_by_remote,
-        blocking,
-        blocked_by,
-        mute,
-        requested_by,
-        social_metadata,
-    ) = futures_util::try_join!(
-        find_follow_by_target(db, &viewer.id, target_actor_uri),
-        find_follow_by_target(db, target_id, &viewer_actor_uri),
-        async { Ok(count_followers_by_actor(db, &viewer.id, target_actor_uri).await? > 0) },
-        is_blocking_actor(db, &viewer.id, target_actor_uri),
-        async {
-            if target_id.starts_with("r_") {
-                Ok(false)
-            } else {
-                is_blocking_actor(db, target_id, &viewer_actor_uri).await
-            }
-        },
-        find_active_mute(db, &viewer.id, target_actor_uri),
-        async {
-            if target_id.starts_with("r_") {
-                has_pending_follow_request_from_actor(db, &viewer.id, target_actor_uri).await
-            } else {
-                has_pending_follow_request_from_account(db, &viewer.id, target_id).await
-            }
-        },
-        load_account_social_metadata(db, &viewer.id, target_actor_uri),
-    )?;
-    let languages = follow
-        .as_ref()
-        .and_then(|row| row.languages_json.as_deref())
+    let state_row =
+        load_relationship_state(db, viewer, target_id, target_actor_uri, &viewer_actor_uri).await?;
+    let languages = state_row
+        .languages_json
+        .as_deref()
         .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok());
-    let state = follow
-        .as_ref()
-        .map(|row| row.state.as_str())
-        .unwrap_or("none");
+    let state = state_row.follow_state.as_deref().unwrap_or("none");
 
     Ok(RelationshipResponse {
         id: target_id.to_owned(),
         following: state == "accepted",
-        showing_reblogs: follow
-            .as_ref()
-            .map(|row| row.show_reblogs != 0)
+        showing_reblogs: state_row
+            .show_reblogs
+            .map(|value| value != 0)
             .unwrap_or(false),
-        notifying: follow.as_ref().map(|row| row.notify != 0).unwrap_or(false),
+        notifying: state_row.notify.map(|value| value != 0).unwrap_or(false),
         languages,
-        followed_by: reciprocal
-            .as_ref()
-            .map(|row| row.state == "accepted")
-            .unwrap_or(false)
-            || followed_by_remote,
-        blocking,
-        blocked_by,
-        muting: mute.is_some(),
-        muting_notifications: mute
-            .as_ref()
-            .map(|row| row.notifications != 0)
+        followed_by: state_row.reciprocal_following != 0 || state_row.followed_by_remote != 0,
+        blocking: state_row.blocking != 0,
+        blocked_by: state_row.blocked_by != 0,
+        muting: state_row.mute_notifications.is_some(),
+        muting_notifications: state_row
+            .mute_notifications
+            .map(|value| value != 0)
             .unwrap_or(false),
-        muting_expires_at: mute.and_then(|row| row.expires_at),
+        muting_expires_at: state_row.mute_expires_at,
         requested: state == "pending",
-        requested_by,
+        requested_by: state_row.requested_by != 0,
         domain_blocking: false,
-        endorsed: social_metadata
-            .as_ref()
-            .map(|row| row.endorsed != 0)
-            .unwrap_or(false),
-        note: social_metadata.map(|row| row.note).unwrap_or_default(),
+        endorsed: state_row.endorsed.map(|value| value != 0).unwrap_or(false),
+        note: state_row.note.unwrap_or_default(),
     })
+}
+
+async fn load_relationship_state(
+    db: &D1Database,
+    viewer: &LocalAccount,
+    target_id: &str,
+    target_actor_uri: &str,
+    viewer_actor_uri: &str,
+) -> Result<RelationshipStateRow> {
+    let is_remote_target = i32::from(target_id.starts_with("r_"));
+    let bindings = [
+        D1Type::Text(viewer.id.as_str()),
+        D1Type::Text(viewer_actor_uri),
+        D1Type::Text(target_id),
+        D1Type::Text(target_actor_uri),
+        D1Type::Integer(is_remote_target),
+    ];
+
+    db.prepare(
+        "SELECT
+            f.state AS follow_state,
+            f.show_reblogs AS show_reblogs,
+            f.notify AS notify,
+            f.languages_json AS languages_json,
+            EXISTS (
+                SELECT 1
+                FROM follows reciprocal
+                WHERE ?5 = 0
+                  AND reciprocal.follower_account_id = ?3
+                  AND reciprocal.target_actor_uri = ?2
+                  AND reciprocal.state = 'accepted'
+                LIMIT 1
+            ) AS reciprocal_following,
+            EXISTS (
+                SELECT 1
+                FROM followers remote_follower
+                WHERE remote_follower.account_id = ?1
+                  AND remote_follower.actor_uri = ?4
+                LIMIT 1
+            ) AS followed_by_remote,
+            EXISTS (
+                SELECT 1
+                FROM blocks viewer_block
+                WHERE viewer_block.blocker_account_id = ?1
+                  AND viewer_block.target_actor_uri = ?4
+                LIMIT 1
+            ) AS blocking,
+            EXISTS (
+                SELECT 1
+                FROM blocks target_block
+                WHERE ?5 = 0
+                  AND target_block.blocker_account_id = ?3
+                  AND target_block.target_actor_uri = ?2
+                LIMIT 1
+            ) AS blocked_by,
+            mute.notifications AS mute_notifications,
+            mute.expires_at AS mute_expires_at,
+            CASE
+                WHEN ?5 != 0 THEN EXISTS (
+                    SELECT 1
+                    FROM follow_requests remote_request
+                    WHERE remote_request.account_id = ?1
+                      AND remote_request.requester_actor_uri = ?4
+                    LIMIT 1
+                )
+                ELSE EXISTS (
+                    SELECT 1
+                    FROM follows local_request
+                    WHERE local_request.target_account_id = ?1
+                      AND local_request.follower_account_id = ?3
+                      AND local_request.state = 'pending'
+                    LIMIT 1
+                )
+            END AS requested_by,
+            metadata.endorsed AS endorsed,
+            metadata.note AS note
+         FROM (SELECT 1) seed
+         LEFT JOIN follows f
+           ON f.follower_account_id = ?1
+          AND f.target_actor_uri = ?4
+         LEFT JOIN mutes mute
+           ON mute.account_id = ?1
+          AND mute.target_actor_uri = ?4
+          AND (mute.expires_at IS NULL OR mute.expires_at > CURRENT_TIMESTAMP)
+         LEFT JOIN account_social_metadata metadata
+           ON metadata.account_id = ?1
+          AND metadata.target_actor_uri = ?4
+         LIMIT 1",
+    )
+    .bind_refs(bindings.iter())?
+    .first::<RelationshipStateRow>(None)
+    .await?
+    .ok_or_else(|| Error::RustError("failed to load relationship state".to_owned()))
 }
 
 pub(crate) fn expiry_from_duration_seconds(duration: u32) -> Result<String> {

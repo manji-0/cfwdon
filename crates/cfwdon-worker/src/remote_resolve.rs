@@ -20,15 +20,17 @@ pub(crate) async fn resolve_account_reference(
     db: &D1Database,
     account_id: &str,
 ) -> Result<Option<AccountReference>> {
+    if let Some(actor_uri) = remote_actor_uri_from_rest_id(account_id) {
+        return Ok(find_remote_actor_by_actor_uri(db, &actor_uri)
+            .await?
+            .map(AccountReference::Remote));
+    }
+
     if let Some(account) = find_account_by_id(db, account_id).await? {
         return Ok(Some(AccountReference::Local(account)));
     }
-    let Some(actor_uri) = remote_actor_uri_from_rest_id(account_id) else {
-        return Ok(None);
-    };
-    Ok(find_remote_actor_by_actor_uri(db, &actor_uri)
-        .await?
-        .map(AccountReference::Remote))
+
+    Ok(None)
 }
 
 pub(crate) async fn resolve_lookup_account(

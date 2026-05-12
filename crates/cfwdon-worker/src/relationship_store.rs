@@ -21,9 +21,6 @@ pub(crate) struct FollowRow {
     #[serde(rename = "follow_activity_id")]
     pub(crate) _follow_activity_id: Option<String>,
     pub(crate) state: String,
-    pub(crate) show_reblogs: i32,
-    pub(crate) notify: i32,
-    pub(crate) languages_json: Option<String>,
 }
 
 pub(crate) async fn delete_follow_by_target(
@@ -57,7 +54,7 @@ pub(crate) async fn find_follow_by_target(
         D1Type::Text(target_actor_uri),
     ];
     db.prepare(
-        "SELECT follower_account_id, target_account_id, target_actor_uri, follow_activity_id, state, show_reblogs, notify, languages_json
+        "SELECT follower_account_id, target_account_id, target_actor_uri, follow_activity_id, state
          FROM follows
          WHERE follower_account_id = ?1
            AND target_actor_uri = ?2

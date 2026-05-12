@@ -6,7 +6,6 @@ use worker::{D1Database, Result};
 #[derive(Debug, Deserialize)]
 pub(crate) struct MuteRow {
     pub(crate) notifications: i32,
-    pub(crate) expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +69,7 @@ pub(crate) async fn find_active_mute(
     .await?;
 
     db.prepare(
-        "SELECT notifications, expires_at
+        "SELECT notifications
          FROM mutes
          WHERE account_id = ?1
            AND target_actor_uri = ?2

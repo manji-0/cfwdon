@@ -119,47 +119,6 @@ pub(crate) async fn count_pending_follow_requests(
     Ok(local + remote)
 }
 
-pub(crate) async fn has_pending_follow_request_from_account(
-    db: &D1Database,
-    account_id: &str,
-    requester_account_id: &str,
-) -> Result<bool> {
-    let bindings = [D1Type::Text(account_id), D1Type::Text(requester_account_id)];
-    let row = db
-        .prepare(
-            "SELECT 1 AS present
-             FROM follows
-             WHERE target_account_id = ?1
-               AND follower_account_id = ?2
-               AND state = 'pending'
-             LIMIT 1",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<serde_json::Value>(None)
-        .await?;
-    Ok(row.is_some())
-}
-
-pub(crate) async fn has_pending_follow_request_from_actor(
-    db: &D1Database,
-    account_id: &str,
-    requester_actor_uri: &str,
-) -> Result<bool> {
-    let bindings = [D1Type::Text(account_id), D1Type::Text(requester_actor_uri)];
-    let row = db
-        .prepare(
-            "SELECT 1 AS present
-             FROM follow_requests
-             WHERE account_id = ?1
-               AND requester_actor_uri = ?2
-             LIMIT 1",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<serde_json::Value>(None)
-        .await?;
-    Ok(row.is_some())
-}
-
 pub(crate) async fn find_pending_remote_follow_request_by_actor(
     db: &D1Database,
     account_id: &str,

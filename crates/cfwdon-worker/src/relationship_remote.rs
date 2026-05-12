@@ -8,7 +8,7 @@ pub(crate) async fn find_follow_by_activity_id(
 ) -> Result<Option<FollowRow>> {
     let follow_activity_id = D1Type::Text(follow_activity_id);
     db.prepare(
-        "SELECT follower_account_id, target_account_id, target_actor_uri, follow_activity_id, state, show_reblogs, notify, languages_json
+        "SELECT follower_account_id, target_account_id, target_actor_uri, follow_activity_id, state
          FROM follows
          WHERE follow_activity_id = ?1
          LIMIT 1",

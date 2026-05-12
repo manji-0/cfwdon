@@ -3,34 +3,10 @@ use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct AccountSocialMetadataRow {
-    pub(crate) endorsed: i32,
-    pub(crate) note: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub(crate) struct EndorsedAccountEntryRow {
     pub(crate) cursor_id: i64,
     pub(crate) target_account_id: Option<String>,
     pub(crate) target_actor_uri: String,
-}
-
-pub(crate) async fn load_account_social_metadata(
-    db: &D1Database,
-    account_id: &str,
-    target_actor_uri: &str,
-) -> Result<Option<AccountSocialMetadataRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Text(target_actor_uri)];
-    db.prepare(
-        "SELECT endorsed, note
-         FROM account_social_metadata
-         WHERE account_id = ?1
-           AND target_actor_uri = ?2
-         LIMIT 1",
-    )
-    .bind_refs(bindings.iter())?
-    .first::<AccountSocialMetadataRow>(None)
-    .await
 }
 
 pub(crate) async fn set_account_endorsement(
