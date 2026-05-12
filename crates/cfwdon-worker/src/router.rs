@@ -78,7 +78,9 @@ use super::{
     update_push_subscription_response, update_scheduled_status_response, update_status,
     verify_credentials, vote_in_poll, webfinger_response,
 };
-use crate::{log_json_event, observability_duration_ms, observability_started_at_ms};
+use crate::{
+    add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
+};
 use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
@@ -1538,14 +1540,17 @@ fn log_api_request(
     if !enabled || !is_logged_api_path(path) {
         return;
     }
-    let payload = serde_json::json!({
-        "event": "api_request",
-        "method": method,
-        "path": path,
-        "status": status,
-        "duration_ms": duration_ms,
-        "user_agent": sanitize_log_value(user_agent),
-    });
+    let payload = add_log_message(
+        serde_json::json!({
+            "event": "api_request",
+            "method": method,
+            "path": path,
+            "status": status,
+            "duration_ms": duration_ms,
+            "user_agent": sanitize_log_value(user_agent),
+        }),
+        format!("API request {method} {path} completed with HTTP {status} in {duration_ms}ms"),
+    );
 
     log_json_event(payload);
 }
