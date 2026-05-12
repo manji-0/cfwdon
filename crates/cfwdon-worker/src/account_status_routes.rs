@@ -19,6 +19,7 @@ use super::{
     remote_account_rest_id, resolve_account_reference, status_contains_tag, strip_html_tags,
     upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
 };
+use worker::d1::D1Type;
 use worker::{D1Database, ResponseBody};
 
 pub(crate) async fn account_statuses_response(
@@ -500,22 +501,51 @@ async fn hydrate_remote_actor_statuses_from_outbox(
     limit: u32,
 ) -> Result<()> {
     let limit = limit.clamp(1, 20) as usize;
+    let latest = latest_remote_actor_status_cursor(db, &actor.actor_uri).await?;
     let Some(outbox) = remote_actor_outbox_page(actor_document).await? else {
         return Ok(());
     };
-    for item in activitypub_collection_items(&outbox)
-        .into_iter()
-        .take(limit)
-    {
+    let mut inserted = 0usize;
+    for item in activitypub_collection_items(&outbox) {
+        if inserted >= limit {
+            break;
+        }
         let Some(object) = extract_remote_note_object(item) else {
             continue;
         };
         if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
             continue;
         }
+        if !remote_status_is_newer_than_cursor(object, latest.as_ref()) {
+            break;
+        }
         upsert_remote_status(db, config, actor, object).await?;
+        inserted += 1;
     }
     Ok(())
+}
+
+async fn latest_remote_actor_status_cursor(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<Option<(String, String)>> {
+    let actor_uri = D1Type::Text(actor_uri);
+    let row = db
+        .prepare(
+            "SELECT published_at, object_uri
+             FROM remote_statuses
+             WHERE actor_uri = ?1
+             ORDER BY published_at DESC, object_uri DESC
+             LIMIT 1",
+        )
+        .bind_refs(&actor_uri)?
+        .first::<serde_json::Value>(None)
+        .await?;
+    Ok(row.and_then(|value| {
+        let published_at = value.get("published_at")?.as_str()?.to_owned();
+        let object_uri = value.get("object_uri")?.as_str()?.to_owned();
+        Some((published_at, object_uri))
+    }))
 }
 
 async fn load_transient_remote_actor_statuses(
@@ -667,12 +697,28 @@ fn remote_status_row_from_activitypub_object(
             .and_then(serde_json::Value::as_object)
             .and_then(|map| map.keys().next().cloned()),
         quote_state: "accepted".to_owned(),
-        published_at: object
-            .get("published")
+        published_at: remote_status_published_at(object),
+    }
+}
+
+fn remote_status_is_newer_than_cursor(
+    object: &serde_json::Value,
+    latest: Option<&(String, String)>,
+) -> bool {
+    let Some((latest_published_at, latest_object_uri)) = latest else {
+        return true;
+    };
+    let published_at = remote_status_published_at(object);
+    if published_at.is_empty() {
+        return false;
+    }
+    match published_at.as_str().cmp(latest_published_at.as_str()) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => object
+            .get("id")
             .and_then(serde_json::Value::as_str)
-            .or_else(|| object.get("updated").and_then(serde_json::Value::as_str))
-            .unwrap_or_default()
-            .to_owned(),
+            .is_some_and(|object_uri| object_uri > latest_object_uri.as_str()),
+        std::cmp::Ordering::Less => false,
     }
 }
 
@@ -688,6 +734,15 @@ fn remote_status_content_html(object: &serde_json::Value) -> String {
                 .map(escape_html)
         })
         .unwrap_or_default()
+}
+
+fn remote_status_published_at(object: &serde_json::Value) -> String {
+    object
+        .get("published")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| object.get("updated").and_then(serde_json::Value::as_str))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn prefers_statuses_html(req: &Request) -> Result<bool> {
