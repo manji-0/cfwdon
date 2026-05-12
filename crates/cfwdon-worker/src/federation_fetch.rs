@@ -26,6 +26,12 @@ pub(crate) struct RemoteActorProfile {
     pub(crate) header_url: Option<String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct FetchedRemoteActorProfile {
+    pub(crate) document: serde_json::Value,
+    pub(crate) profile: RemoteActorProfile,
+}
+
 pub(crate) async fn fetch_remote_account_profile_by_handle(
     handle: &AccountHandle,
 ) -> Result<RemoteActorProfile> {
@@ -73,11 +79,19 @@ pub(crate) async fn fetch_remote_account_profile_by_handle(
 }
 
 pub(crate) async fn fetch_remote_actor_profile(actor_uri: &str) -> Result<RemoteActorProfile> {
+    Ok(fetch_remote_actor_profile_with_document(actor_uri)
+        .await?
+        .profile)
+}
+
+pub(crate) async fn fetch_remote_actor_profile_with_document(
+    actor_uri: &str,
+) -> Result<FetchedRemoteActorProfile> {
     let actor_url = parse_remote_http_url(actor_uri)?;
-    let actor = fetch_remote_activitypub_document(actor_url.as_str()).await?;
-    let profile = parse_remote_actor_profile_document(&actor, actor_uri)?;
+    let document = fetch_remote_activitypub_document(actor_url.as_str()).await?;
+    let profile = parse_remote_actor_profile_document(&document, actor_uri)?;
     validate_remote_actor_profile_urls(&profile).await?;
-    Ok(profile)
+    Ok(FetchedRemoteActorProfile { document, profile })
 }
 
 pub(crate) fn parse_remote_actor_profile_document(

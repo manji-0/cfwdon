@@ -12,10 +12,9 @@ pub(crate) struct RemoteActorSocialCounts {
     pub(crate) following_count: u64,
 }
 
-pub(crate) async fn load_remote_actor_social_counts(
-    actor_uri: &str,
+pub(crate) async fn load_remote_actor_social_counts_from_document(
+    document: &serde_json::Value,
 ) -> Result<RemoteActorSocialCounts> {
-    let document = fetch_remote_activitypub_document(actor_uri).await?;
     let followers_count = remote_actor_collection_count(&document, "followers")
         .await
         .unwrap_or(0);

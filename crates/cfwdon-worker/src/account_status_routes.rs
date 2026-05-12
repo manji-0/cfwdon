@@ -4,14 +4,15 @@ use super::{
     Result, RouteContext, StatusRow, actor_url, apply_remote_actor_social_counts,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
-    fetch_remote_actor_profile, find_account_by_username, find_authenticated_local_account,
-    find_media_attachments_by_status_ids, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
-    is_public_activitypub_visibility, list_account_statuses, list_pinned_statuses_for_account,
-    list_public_account_statuses, list_public_remote_statuses_by_actor_uri,
-    list_remote_statuses_by_actor_uri, load_account_filter_matcher, load_config,
-    load_in_reply_to_account_ids, load_remote_actor_social_counts, local_status_ap_id,
-    media_attachment_url, preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    fetch_remote_actor_profile_with_document, find_account_by_username,
+    find_authenticated_local_account, find_media_attachments_by_status_ids,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
+    find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
+    list_pinned_statuses_for_account, list_public_account_statuses,
+    list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
+    load_account_filter_matcher, load_config, load_in_reply_to_account_ids,
+    load_remote_actor_social_counts_from_document, local_status_ap_id, media_attachment_url,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
     resolve_account_reference, status_contains_tag, strip_html_tags, upsert_remote_actor,
@@ -254,10 +255,10 @@ async fn account_statuses_response_for_reference(
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            let actor = refresh_remote_status_actor(&db, actor).await?;
-            let actor_social_counts = load_remote_actor_social_counts(&actor.actor_uri).await.ok();
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
+            let (actor, actor_social_counts) =
+                refresh_remote_status_actor(&db, actor, !wants_html).await?;
             let mut statuses = if wants_html {
                 list_public_remote_statuses_by_actor_uri(
                     &db,
@@ -431,15 +432,25 @@ async fn account_statuses_response_for_reference(
 async fn refresh_remote_status_actor(
     db: &D1Database,
     actor: RemoteActorRow,
-) -> Result<RemoteActorRow> {
-    let profile = match fetch_remote_actor_profile(&actor.actor_uri).await {
-        Ok(profile) => profile,
-        Err(_) => return Ok(actor),
+    include_social_counts: bool,
+) -> Result<(RemoteActorRow, Option<crate::RemoteActorSocialCounts>)> {
+    let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
+        Ok(fetched) => fetched,
+        Err(_) => return Ok((actor, None)),
     };
+    let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
-    Ok(find_remote_actor_by_actor_uri(db, &profile.actor_uri)
+    let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?
-        .unwrap_or(actor))
+        .unwrap_or(actor);
+    let social_counts = if include_social_counts {
+        load_remote_actor_social_counts_from_document(&fetched.document)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    Ok((actor, social_counts))
 }
 
 fn prefers_statuses_html(req: &Request) -> Result<bool> {
