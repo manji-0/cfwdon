@@ -2105,6 +2105,12 @@ fn visibility_from_activitypub_object_detects_public_and_unlisted() {
     );
     assert_eq!(
         visibility_from_activitypub_object(&serde_json::json!({
+            "to": "as:Public"
+        })),
+        "public"
+    );
+    assert_eq!(
+        visibility_from_activitypub_object(&serde_json::json!({
             "to": ["https://social.example/users/alice/followers"]
         })),
         "private"

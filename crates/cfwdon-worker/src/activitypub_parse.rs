@@ -136,17 +136,22 @@ pub(crate) fn note_targets_followers(
 }
 
 pub(crate) fn contains_public_audience(value: Option<&serde_json::Value>) -> bool {
+    fn is_public_audience_uri(value: &str) -> bool {
+        matches!(
+            value,
+            "https://www.w3.org/ns/activitystreams#Public" | "as:Public"
+        )
+    }
+
     match value {
-        Some(serde_json::Value::String(value)) => {
-            value == "https://www.w3.org/ns/activitystreams#Public"
-        }
+        Some(serde_json::Value::String(value)) => is_public_audience_uri(value),
         Some(serde_json::Value::Array(values)) => values
             .iter()
             .any(|value| contains_public_audience(Some(value))),
         Some(serde_json::Value::Object(map)) => map
             .get("id")
             .and_then(serde_json::Value::as_str)
-            .map(|value| value == "https://www.w3.org/ns/activitystreams#Public")
+            .map(is_public_audience_uri)
             .unwrap_or(false),
         _ => false,
     }
