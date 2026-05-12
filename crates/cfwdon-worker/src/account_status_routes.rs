@@ -280,7 +280,10 @@ async fn account_statuses_response_for_reference(
             } else {
                 list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?
             };
-            if statuses.is_empty()
+            let has_visible_statuses = statuses
+                .iter()
+                .any(|status| is_public_activitypub_visibility(&status.visibility));
+            if !has_visible_statuses
                 && is_following_remote_actor
                 && !wants_html
                 && !is_pinned_page
