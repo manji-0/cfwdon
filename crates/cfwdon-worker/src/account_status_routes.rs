@@ -257,7 +257,7 @@ async fn account_statuses_response_for_reference(
 
             Response::from_json(&response)
         }
-        Some(AccountReference::Remote(actor)) => {
+        Some(AccountReference::Remote(mut actor)) => {
             let is_pinned_page = query.pinned.unwrap_or(false);
             let html_fetch_limit = limit.saturating_add(1);
             let is_following_remote_actor = match viewer.as_ref() {
@@ -266,14 +266,7 @@ async fn account_statuses_response_for_reference(
                     .is_some_and(|follow| follow.state == "accepted"),
                 None => false,
             };
-            let (actor, actor_social_counts) = refresh_remote_status_actor(
-                &db,
-                &config,
-                actor,
-                !wants_html,
-                is_following_remote_actor.then_some(limit),
-            )
-            .await?;
+            let actor_social_counts = None;
             let mut statuses = if !is_following_remote_actor && !wants_html {
                 Vec::new()
             } else if wants_html {
@@ -288,6 +281,17 @@ async fn account_statuses_response_for_reference(
             } else {
                 list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?
             };
+            if statuses.is_empty()
+                && is_following_remote_actor
+                && !wants_html
+                && !is_pinned_page
+                && !query.only_media.unwrap_or(false)
+            {
+                let (refreshed_actor, _) =
+                    refresh_remote_status_actor(&db, &config, actor, false, Some(limit)).await?;
+                actor = refreshed_actor;
+                statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
+            }
             let transient_statuses = if !is_following_remote_actor && !wants_html {
                 load_transient_remote_actor_statuses(&config, &actor, &query, limit).await?
             } else {
