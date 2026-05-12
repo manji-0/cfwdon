@@ -1,7 +1,7 @@
-use super::parse_profile_fields_json;
+use super::{parse_profile_fields_json, sql_placeholders, unique_ordered_refs};
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -188,23 +188,63 @@ pub(crate) async fn load_account_stats(db: &D1Database, account_id: &str) -> Res
     })
 }
 
-pub(crate) async fn find_accounts_by_ids(
+pub(crate) async fn load_account_stats_map(
     db: &D1Database,
     account_ids: &[String],
-) -> Result<HashMap<String, LocalAccount>> {
-    let mut seen = HashSet::new();
-    let ids = account_ids
-        .iter()
-        .filter(|id| seen.insert(id.as_str()))
-        .collect::<Vec<_>>();
+) -> Result<HashMap<String, AccountStats>> {
+    let ids = unique_ordered_refs(account_ids);
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
 
-    let placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    #[derive(Debug, Deserialize)]
+    struct AccountStatsMapRow {
+        account_id: String,
+        followers_count: u64,
+        following_count: u64,
+        statuses_count: u64,
+        last_status_at: Option<String>,
+    }
+
+    let placeholders = sql_placeholders(1, ids.len());
+    let sql = format!(
+        "SELECT account_id, followers_count, following_count, statuses_count, last_status_at
+         FROM account_stats
+         WHERE account_id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<AccountStatsMapRow>()?
+        .into_iter()
+        .map(|row| {
+            (
+                row.account_id,
+                AccountStats {
+                    followers_count: row.followers_count,
+                    following_count: row.following_count,
+                    statuses_count: row.statuses_count,
+                    last_status_at: row.last_status_at,
+                },
+            )
+        })
+        .collect())
+}
+
+pub(crate) async fn find_accounts_by_ids(
+    db: &D1Database,
+    account_ids: &[String],
+) -> Result<HashMap<String, LocalAccount>> {
+    let ids = unique_ordered_refs(account_ids);
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = sql_placeholders(1, ids.len());
     let sql = format!(
         "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
          FROM accounts

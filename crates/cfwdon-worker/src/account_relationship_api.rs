@@ -35,37 +35,43 @@ pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
-    let mut relationships = Vec::new();
-
-    for account_id in parse_relationship_query_ids(&req)? {
-        match resolve_requested_account_reference(&db, &config, &account_id).await? {
-            Some(AccountReference::Local(target)) => {
-                relationships.push(
-                    build_relationship_for_target(
-                        &db,
-                        &config,
-                        &viewer,
-                        &target.id,
-                        &actor_url(&config, &target.username),
-                    )
-                    .await?,
-                );
-            }
-            Some(AccountReference::Remote(actor)) => {
-                relationships.push(
-                    build_relationship_for_target(
-                        &db,
-                        &config,
-                        &viewer,
-                        &remote_account_rest_id(&actor.actor_uri),
-                        &actor.actor_uri,
-                    )
-                    .await?,
-                );
-            }
-            None => {}
-        }
-    }
+    let relationships =
+        futures_util::future::try_join_all(parse_relationship_query_ids(&req)?.into_iter().map(
+            |account_id| {
+                let db = &db;
+                let config = &config;
+                let viewer = &viewer;
+                async move {
+                    match resolve_requested_account_reference(&db, &config, &account_id).await? {
+                        Some(AccountReference::Local(target)) => Ok::<_, worker::Error>(Some(
+                            build_relationship_for_target(
+                                &db,
+                                &config,
+                                &viewer,
+                                &target.id,
+                                &actor_url(&config, &target.username),
+                            )
+                            .await?,
+                        )),
+                        Some(AccountReference::Remote(actor)) => Ok::<_, worker::Error>(Some(
+                            build_relationship_for_target(
+                                &db,
+                                &config,
+                                &viewer,
+                                &remote_account_rest_id(&actor.actor_uri),
+                                &actor.actor_uri,
+                            )
+                            .await?,
+                        )),
+                        None => Ok::<_, worker::Error>(None),
+                    }
+                }
+            },
+        ))
+        .await?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
     Response::from_json(&relationships)
 }

@@ -1,5 +1,5 @@
 use crate::{
-    AccountFilterMatcher, AppConfig, LocalAccount, MastodonPollResponsePreload,
+    AccountFilterMatcher, AccountRow, AppConfig, LocalAccount, MastodonPollResponsePreload,
     MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow, RemoteMastodonPollResponsePreload,
     RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusRow,
     StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
@@ -628,16 +628,35 @@ pub(crate) async fn build_status_mentions(
     config: &AppConfig,
     text: &str,
 ) -> Result<Vec<serde_json::Value>> {
+    let handles = crate::extract_account_handles_from_text(text, config);
+    if handles.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut local_usernames = Vec::new();
+    let mut remote_pairs = Vec::new();
+    for handle in &handles {
+        if handle.is_local_to(&config.instance_domain) {
+            local_usernames.push(handle.username.to_ascii_lowercase());
+        } else if let Some(domain) = handle.domain.as_deref() {
+            remote_pairs.push((
+                handle.username.to_ascii_lowercase(),
+                domain.to_ascii_lowercase(),
+            ));
+        }
+    }
+    let local_accounts = load_mention_local_accounts(db, &local_usernames).await?;
+    let remote_actors = load_mention_remote_actors(db, &remote_pairs).await?;
     let mut mentions = Vec::new();
 
-    for handle in crate::extract_account_handles_from_text(text, config) {
+    for handle in handles {
         if handle.is_local_to(&config.instance_domain) {
-            let Some(account) = crate::find_account_by_username(db, &handle.username).await? else {
+            let Some(account) = local_accounts.get(&handle.username.to_ascii_lowercase()) else {
                 continue;
             };
             mentions.push(serde_json::json!({
-                "id": account.id,
-                "username": account.username,
+                "id": account.id.clone(),
+                "username": account.username.clone(),
                 "url": actor_url(config, &account.username),
                 "acct": account.acct(),
             }));
@@ -647,9 +666,11 @@ pub(crate) async fn build_status_mentions(
         let Some(domain) = handle.domain.as_deref() else {
             continue;
         };
-        let Some(actor) =
-            crate::find_remote_actor_by_username_domain(db, &handle.username, domain).await?
-        else {
+        let key = (
+            handle.username.to_ascii_lowercase(),
+            domain.to_ascii_lowercase(),
+        );
+        let Some(actor) = remote_actors.get(&key) else {
             continue;
         };
         mentions.push(serde_json::json!({
@@ -661,6 +682,84 @@ pub(crate) async fn build_status_mentions(
     }
 
     Ok(mentions)
+}
+
+async fn load_mention_local_accounts(
+    db: &D1Database,
+    usernames: &[String],
+) -> Result<HashMap<String, LocalAccount>> {
+    let usernames = crate::unique_ordered_refs(usernames);
+    if usernames.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = crate::sql_placeholders(1, usernames.len());
+    let sql = format!(
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+         FROM accounts
+         WHERE lower(username) IN ({placeholders})"
+    );
+    let bindings = usernames
+        .iter()
+        .map(|username| D1Type::Text(username.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<AccountRow>()?
+        .into_iter()
+        .map(|row| (row.username.to_ascii_lowercase(), LocalAccount::from(row)))
+        .collect())
+}
+
+async fn load_mention_remote_actors(
+    db: &D1Database,
+    pairs: &[(String, String)],
+) -> Result<HashMap<(String, String), RemoteActorRow>> {
+    let mut seen = HashSet::new();
+    let pairs = pairs
+        .iter()
+        .filter(|(username, domain)| seen.insert((username.as_str(), domain.as_str())))
+        .collect::<Vec<_>>();
+    if pairs.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let clauses = pairs
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let username = index * 2 + 1;
+            let domain = username + 1;
+            format!("(lower(username) = ?{username} AND lower(domain) = ?{domain})")
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let sql = format!(
+        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+         FROM remote_actors
+         WHERE {clauses}"
+    );
+    let mut bindings = Vec::with_capacity(pairs.len() * 2);
+    for (username, domain) in pairs {
+        bindings.push(D1Type::Text(username.as_str()));
+        bindings.push(D1Type::Text(domain.as_str()));
+    }
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<RemoteActorRow>()?
+        .into_iter()
+        .map(|row| {
+            (
+                (
+                    row.username.to_ascii_lowercase(),
+                    row.domain.to_ascii_lowercase(),
+                ),
+                row,
+            )
+        })
+        .collect())
 }
 
 pub(crate) async fn build_local_status_response(

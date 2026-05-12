@@ -38,9 +38,38 @@ pub(crate) async fn build_relationship_for_target(
     target_id: &str,
     target_actor_uri: &str,
 ) -> Result<RelationshipResponse> {
-    let follow = find_follow_by_target(db, &viewer.id, target_actor_uri).await?;
-    let reciprocal =
-        find_follow_by_target(db, target_id, &actor_url(config, &viewer.username)).await?;
+    let viewer_actor_uri = actor_url(config, &viewer.username);
+    let (
+        follow,
+        reciprocal,
+        followed_by_remote,
+        blocking,
+        blocked_by,
+        mute,
+        requested_by,
+        social_metadata,
+    ) = futures_util::try_join!(
+        find_follow_by_target(db, &viewer.id, target_actor_uri),
+        find_follow_by_target(db, target_id, &viewer_actor_uri),
+        async { Ok(count_followers_by_actor(db, &viewer.id, target_actor_uri).await? > 0) },
+        is_blocking_actor(db, &viewer.id, target_actor_uri),
+        async {
+            if target_id.starts_with("r_") {
+                Ok(false)
+            } else {
+                is_blocking_actor(db, target_id, &viewer_actor_uri).await
+            }
+        },
+        find_active_mute(db, &viewer.id, target_actor_uri),
+        async {
+            if target_id.starts_with("r_") {
+                has_pending_follow_request_from_actor(db, &viewer.id, target_actor_uri).await
+            } else {
+                has_pending_follow_request_from_account(db, &viewer.id, target_id).await
+            }
+        },
+        load_account_social_metadata(db, &viewer.id, target_actor_uri),
+    )?;
     let languages = follow
         .as_ref()
         .and_then(|row| row.languages_json.as_deref())
@@ -49,20 +78,6 @@ pub(crate) async fn build_relationship_for_target(
         .as_ref()
         .map(|row| row.state.as_str())
         .unwrap_or("none");
-    let followed_by_remote = count_followers_by_actor(db, &viewer.id, target_actor_uri).await? > 0;
-    let blocking = is_blocking_actor(db, &viewer.id, target_actor_uri).await?;
-    let blocked_by = if target_id.starts_with("r_") {
-        false
-    } else {
-        is_blocking_actor(db, target_id, &actor_url(config, &viewer.username)).await?
-    };
-    let mute = find_active_mute(db, &viewer.id, target_actor_uri).await?;
-    let requested_by = if target_id.starts_with("r_") {
-        has_pending_follow_request_from_actor(db, &viewer.id, target_actor_uri).await?
-    } else {
-        has_pending_follow_request_from_account(db, &viewer.id, target_id).await?
-    };
-    let social_metadata = load_account_social_metadata(db, &viewer.id, target_actor_uri).await?;
 
     Ok(RelationshipResponse {
         id: target_id.to_owned(),

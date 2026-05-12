@@ -1,12 +1,13 @@
 use crate::RemoteActorRow;
-use crate::account_store::{AccountRow, load_account_stats};
+use crate::account_store::{AccountRow, load_account_stats, load_account_stats_map};
 use crate::instance_host;
 use crate::responses::MastodonAccountResponse;
 use crate::search_text_match_rank;
 use crate::{
     actor_url, find_account_by_username, find_remote_actor_by_username_domain,
-    load_remote_actor_status_summary, normalize_search_match_text, normalize_search_query_input,
-    parse_lookup_handle, strip_html_tags,
+    list_accepted_follow_target_uris, load_remote_actor_status_summaries,
+    normalize_search_match_text, normalize_search_query_input, parse_lookup_handle,
+    strip_html_tags,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -457,19 +458,49 @@ pub(crate) async fn search_cached_accounts(
         .clamp(limit, 200);
     let search_terms = account_search_terms(query, config);
 
-    for account in search_local_accounts(
-        db,
-        config,
-        query,
-        query_limit,
-        0,
-        following_only,
-        viewer_account_id,
-    )
-    .await?
-    {
-        let stats = load_account_stats(db, &account.id).await?;
-        let response = MastodonAccountResponse::from_account_with_stats(&account, config, &stats);
+    let (local_accounts, remote_actors) = futures_util::try_join!(
+        search_local_accounts(
+            db,
+            config,
+            query,
+            query_limit,
+            0,
+            following_only,
+            viewer_account_id,
+        ),
+        search_remote_accounts(
+            db,
+            config,
+            query,
+            query_limit,
+            0,
+            following_only,
+            viewer_account_id,
+        ),
+    )?;
+    let local_account_ids = local_accounts
+        .iter()
+        .map(|account| account.id.clone())
+        .collect::<Vec<_>>();
+    let remote_actor_uris = remote_actors
+        .iter()
+        .map(|actor| actor.actor_uri.clone())
+        .collect::<Vec<_>>();
+    let (local_stats, remote_stats) = futures_util::try_join!(
+        load_account_stats_map(db, &local_account_ids),
+        load_remote_actor_status_summaries(db, &remote_actor_uris),
+    )?;
+
+    for account in local_accounts {
+        let default_stats;
+        let stats = match local_stats.get(&account.id) {
+            Some(stats) => stats,
+            None => {
+                default_stats = Default::default();
+                &default_stats
+            }
+        };
+        let response = MastodonAccountResponse::from_account_with_stats(&account, config, stats);
         if account_matches_search_terms(
             &search_terms,
             &response.username,
@@ -480,21 +511,21 @@ pub(crate) async fn search_cached_accounts(
             accounts.push(response);
         }
     }
-    for actor in search_remote_accounts(
-        db,
-        config,
-        query,
-        query_limit,
-        0,
-        following_only,
-        viewer_account_id,
-    )
-    .await?
-    {
+    for actor in remote_actors {
         let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-        let stats = load_remote_actor_status_summary(db, &actor.actor_uri).await?;
+        let default_stats;
+        let stats = match remote_stats.get(&actor.actor_uri) {
+            Some(stats) => stats,
+            None => {
+                default_stats = crate::RemoteActorStatusSummary {
+                    statuses_count: 0,
+                    last_status_at: None,
+                };
+                &default_stats
+            }
+        };
         response.statuses_count = stats.statuses_count;
-        response.last_status_at = stats.last_status_at;
+        response.last_status_at = stats.last_status_at.clone();
         if account_matches_search_terms(
             &search_terms,
             &response.username,
@@ -507,16 +538,23 @@ pub(crate) async fn search_cached_accounts(
     }
 
     let rank_query = account_search_term(query, config);
+    let followed_target_uris = match viewer {
+        Some(viewer) => {
+            let target_uris = accounts
+                .iter()
+                .map(|account| account.uri.clone())
+                .collect::<Vec<_>>();
+            list_accepted_follow_target_uris(db, &viewer.id, &target_uris).await?
+        }
+        None => Default::default(),
+    };
     let mut ranked_accounts = Vec::with_capacity(accounts.len());
     for account in accounts {
         let relationship_rank = match viewer {
             Some(viewer) if account.id == viewer.id => account_relationship_rank(true, false),
-            Some(viewer) => account_relationship_rank(
-                false,
-                crate::find_follow_by_target(db, &viewer.id, &account.uri)
-                    .await?
-                    .is_some_and(|follow| follow.state == "accepted"),
-            ),
+            Some(_) => {
+                account_relationship_rank(false, followed_target_uris.contains(&account.uri))
+            }
             None => account_relationship_rank(false, false),
         };
         ranked_accounts.push((

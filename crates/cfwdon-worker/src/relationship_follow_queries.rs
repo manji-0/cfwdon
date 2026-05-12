@@ -1,4 +1,6 @@
 use super::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, UsernameRow};
+use crate::{sql_placeholders, unique_ordered_refs};
+use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
@@ -87,6 +89,36 @@ pub(crate) async fn list_following_actor_uris(
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())
+        .collect())
+}
+
+pub(crate) async fn list_accepted_follow_target_uris(
+    db: &D1Database,
+    follower_account_id: &str,
+    target_actor_uris: &[String],
+) -> Result<HashSet<String>> {
+    let uris = unique_ordered_refs(target_actor_uris);
+    if uris.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = sql_placeholders(2, uris.len());
+    let sql = format!(
+        "SELECT target_actor_uri AS target_inbox
+         FROM follows
+         WHERE follower_account_id = ?1
+           AND state = 'accepted'
+           AND target_actor_uri IN ({placeholders})"
+    );
+    let mut bindings = Vec::with_capacity(uris.len() + 1);
+    bindings.push(D1Type::Text(follower_account_id));
+    bindings.extend(uris.iter().map(|uri| D1Type::Text(uri.as_str())));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<FollowerTargetRow>()?
+        .into_iter()
+        .map(|row| row.target_inbox)
         .collect())
 }
 

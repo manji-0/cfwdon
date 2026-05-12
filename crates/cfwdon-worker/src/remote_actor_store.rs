@@ -1,6 +1,9 @@
 use serde::{Deserialize, Deserializer};
+use std::collections::HashMap;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
+
+use crate::{sql_placeholders, unique_ordered_refs};
 
 fn json_boolish(value: Option<&serde_json::Value>) -> bool {
     value
@@ -111,6 +114,34 @@ pub(crate) async fn find_remote_actor_by_actor_uri(
     .await
 }
 
+pub(crate) async fn find_remote_actors_by_actor_uris(
+    db: &D1Database,
+    actor_uris: &[String],
+) -> Result<HashMap<String, RemoteActorRow>> {
+    let uris = unique_ordered_refs(actor_uris);
+    if uris.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = sql_placeholders(1, uris.len());
+    let sql = format!(
+        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+         FROM remote_actors
+         WHERE actor_uri IN ({placeholders})"
+    );
+    let bindings = uris
+        .iter()
+        .map(|uri| D1Type::Text(uri.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<RemoteActorRow>()?
+        .into_iter()
+        .map(|row| (row.actor_uri.clone(), row))
+        .collect())
+}
+
 pub(crate) async fn find_remote_actor_by_profile_url_or_actor_uri(
     db: &D1Database,
     value: &str,
@@ -153,6 +184,52 @@ pub(crate) async fn load_remote_actor_status_summary(
             statuses_count: 0,
             last_status_at: None,
         }))
+}
+
+pub(crate) async fn load_remote_actor_status_summaries(
+    db: &D1Database,
+    actor_uris: &[String],
+) -> Result<HashMap<String, RemoteActorStatusSummary>> {
+    let uris = unique_ordered_refs(actor_uris);
+    if uris.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct RemoteActorStatusSummaryMapRow {
+        actor_uri: String,
+        statuses_count: u64,
+        last_status_at: Option<String>,
+    }
+
+    let placeholders = sql_placeholders(1, uris.len());
+    let sql = format!(
+        "SELECT actor_uri,
+                COUNT(*) AS statuses_count,
+                MAX(substr(published_at, 1, 10)) AS last_status_at
+         FROM remote_statuses
+         WHERE actor_uri IN ({placeholders})
+         GROUP BY actor_uri"
+    );
+    let bindings = uris
+        .iter()
+        .map(|uri| D1Type::Text(uri.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<RemoteActorStatusSummaryMapRow>()?
+        .into_iter()
+        .map(|row| {
+            (
+                row.actor_uri,
+                RemoteActorStatusSummary {
+                    statuses_count: row.statuses_count,
+                    last_status_at: row.last_status_at,
+                },
+            )
+        })
+        .collect())
 }
 
 pub(crate) async fn find_remote_actor_by_username_domain(

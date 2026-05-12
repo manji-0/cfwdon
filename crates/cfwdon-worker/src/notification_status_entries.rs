@@ -5,9 +5,9 @@ use crate::notifications::{
 use crate::{
     AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusNotificationRow,
     RemoteStatusRow, actor_url, build_local_status_response, build_remote_status_response,
-    can_view_local_status, find_account_by_id, find_media_attachments_by_status_id,
-    find_remote_actor_by_actor_uri, list_local_status_notifications_for_account,
-    list_remote_status_notifications_for_account, load_in_reply_to_account_id,
+    can_view_local_status, find_accounts_by_ids, find_media_attachments_by_status_ids,
+    find_remote_actors_by_actor_uris, list_local_status_notifications_for_account,
+    list_remote_status_notifications_for_account, load_in_reply_to_account_ids,
     muted_notifications_for_actor, remote_account_rest_id,
 };
 use cfwdon_domain::LocalAccount;
@@ -44,10 +44,24 @@ pub(crate) async fn collect_status_notification_entries(
         return Ok(());
     }
 
-    for status in
-        list_local_status_notifications_for_account(db, &viewer.id, per_type_limit).await?
-    {
-        let Some(actor) = find_account_by_id(db, &status.account_id).await? else {
+    let local_statuses =
+        list_local_status_notifications_for_account(db, &viewer.id, per_type_limit).await?;
+    let local_account_ids = local_statuses
+        .iter()
+        .map(|status| status.account_id.clone())
+        .collect::<Vec<_>>();
+    let local_status_ids = local_statuses
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+    let (local_accounts, mut media_by_status_id, in_reply_to_account_ids) = futures_util::try_join!(
+        find_accounts_by_ids(db, &local_account_ids),
+        find_media_attachments_by_status_ids(db, &local_status_ids),
+        load_in_reply_to_account_ids(db, &local_statuses),
+    )?;
+
+    for status in local_statuses {
+        let Some(actor) = local_accounts.get(&status.account_id) else {
             continue;
         };
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?
@@ -57,14 +71,14 @@ pub(crate) async fn collect_status_notification_entries(
         {
             continue;
         }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         let status_response = build_local_status_response(
             db,
             config,
             Some(viewer),
             &status,
             &actor,
-            load_in_reply_to_account_id(db, &status).await?,
+            in_reply_to_account_ids.get(&status.id).cloned(),
             media,
         )
         .await?;
@@ -82,13 +96,19 @@ pub(crate) async fn collect_status_notification_entries(
         );
     }
 
-    for status in
-        list_remote_status_notifications_for_account(db, &viewer.id, per_type_limit).await?
-    {
+    let remote_statuses =
+        list_remote_status_notifications_for_account(db, &viewer.id, per_type_limit).await?;
+    let remote_actor_uris = remote_statuses
+        .iter()
+        .map(|status| status.actor_uri.clone())
+        .collect::<Vec<_>>();
+    let remote_actors = find_remote_actors_by_actor_uris(db, &remote_actor_uris).await?;
+
+    for status in remote_statuses {
         if status.visibility == "direct" {
             continue;
         }
-        let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
+        let Some(actor) = remote_actors.get(&status.actor_uri) else {
             continue;
         };
         if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {

@@ -1,7 +1,8 @@
 use crate::{
     AppConfig, D1Database, Error, Result, StatusRow, find_account_by_id,
-    local_status_identity_from_uri,
+    local_status_identity_from_uri, sql_placeholders, unique_ordered_refs,
 };
+use std::collections::HashMap;
 use worker::d1::D1Type;
 
 pub(crate) async fn require_status_by_id(db: &D1Database, status_id: &str) -> Result<StatusRow> {
@@ -54,19 +55,52 @@ pub(crate) async fn load_in_reply_to_account_id(
     }
 }
 
-pub(crate) async fn status_is_reply_to_other_account(
+pub(crate) async fn load_in_reply_to_account_ids(
     db: &D1Database,
-    status: &StatusRow,
-    account_id: &str,
-) -> Result<bool> {
-    let Some(reply_id) = status.in_reply_to_id.as_deref() else {
-        return Ok(false);
-    };
+    statuses: &[StatusRow],
+) -> Result<HashMap<String, String>> {
+    let reply_ids = statuses
+        .iter()
+        .filter_map(|status| status.in_reply_to_id.clone())
+        .collect::<Vec<_>>();
+    let reply_ids = unique_ordered_refs(&reply_ids);
+    if reply_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-    Ok(find_status_by_id(db, reply_id)
-        .await?
-        .map(|reply| reply.account_id != account_id)
-        .unwrap_or(false))
+    #[derive(Debug, serde::Deserialize)]
+    struct ReplyAccountIdRow {
+        id: String,
+        account_id: String,
+    }
+
+    let placeholders = sql_placeholders(1, reply_ids.len());
+    let sql = format!(
+        "SELECT id, account_id
+         FROM statuses
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = reply_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let reply_accounts_by_status_id = result
+        .results::<ReplyAccountIdRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.account_id))
+        .collect::<HashMap<_, _>>();
+
+    Ok(statuses
+        .iter()
+        .filter_map(|status| {
+            status
+                .in_reply_to_id
+                .as_ref()
+                .and_then(|reply_id| reply_accounts_by_status_id.get(reply_id))
+                .map(|account_id| (status.id.clone(), account_id.clone()))
+        })
+        .collect())
 }
 
 pub(crate) async fn list_public_outbox_statuses(

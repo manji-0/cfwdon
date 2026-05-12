@@ -1,13 +1,17 @@
 use super::{
     AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, RemoteActorRow,
     RemoteStatusRow, Request, Response, Result, RouteContext, StatusRow, actor_url,
-    build_local_status_response_with_preloads, build_remote_status_response_with_preloads,
-    can_view_local_status, escape_html, find_account_by_username, find_authenticated_local_account,
-    find_media_attachments_by_status_id, is_public_activitypub_visibility, list_account_statuses,
+    build_local_status_response_with_quote_count_preloads,
+    build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
+    find_account_by_username, find_authenticated_local_account,
+    find_media_attachments_by_status_ids, find_remote_status_attachments_by_status_ids,
+    find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
     list_pinned_statuses_for_account, list_remote_statuses_by_actor_uri,
-    load_account_filter_matcher, load_config, load_in_reply_to_account_id, local_status_ap_id,
-    preload_status_counts, remote_status_has_media, resolve_account_reference, status_contains_tag,
-    status_is_reply_to_other_account, strip_html_tags,
+    load_account_filter_matcher, load_config, load_in_reply_to_account_ids, local_status_ap_id,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
+    resolve_account_reference, status_contains_tag, strip_html_tags,
 };
 use worker::ResponseBody;
 
@@ -55,10 +59,6 @@ async fn account_statuses_response_for_account_id(
 
     let db = ctx.d1(&config.database_binding)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    let filter_matcher = match viewer.as_ref() {
-        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
-        None => None,
-    };
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
             let statuses = if query.pinned.unwrap_or(false) {
@@ -70,9 +70,97 @@ async fn account_statuses_response_for_account_id(
                 .iter()
                 .map(|status| status.id.clone())
                 .collect::<Vec<_>>();
-            let counts_preload = preload_status_counts(&db, &status_ids, &[]).await?;
+            if wants_html {
+                let only_media = query.only_media.unwrap_or(false);
+                let mut media_by_status_id = if only_media {
+                    find_media_attachments_by_status_ids(&db, &status_ids).await?
+                } else {
+                    Default::default()
+                };
+                let exclude_replies = query.exclude_replies.unwrap_or(false);
+                let in_reply_to_account_ids = if exclude_replies {
+                    load_in_reply_to_account_ids(&db, &statuses).await?
+                } else {
+                    Default::default()
+                };
+                let mut html_statuses = Vec::new();
+
+                for status in statuses.into_iter().take(limit as usize) {
+                    if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
+                        continue;
+                    }
+                    if let Some(tag) = query.tagged.as_deref()
+                        && !status_contains_tag(&status, tag)
+                    {
+                        continue;
+                    }
+                    if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+                        continue;
+                    }
+                    if exclude_replies
+                        && status
+                            .in_reply_to_id
+                            .as_ref()
+                            .and_then(|_| in_reply_to_account_ids.get(&status.id))
+                            .is_some_and(|reply_account_id| reply_account_id != &account.id)
+                    {
+                        continue;
+                    }
+
+                    if only_media
+                        && media_by_status_id
+                            .remove(&status.id)
+                            .unwrap_or_default()
+                            .is_empty()
+                    {
+                        continue;
+                    }
+
+                    html_statuses.push(local_status_html_item(&config, &account, &status));
+                }
+
+                return account_statuses_html_response(
+                    &config,
+                    &account.display_name,
+                    &account.username,
+                    &actor_url(&config, &account.username),
+                    &html_statuses,
+                );
+            }
+
+            let status_refs = statuses.iter().collect::<Vec<_>>();
+            let quote_uris = statuses
+                .iter()
+                .map(|status| local_status_ap_id(&config, &account, status))
+                .collect::<Vec<_>>();
+            let (
+                counts_preload,
+                quote_counts_preload,
+                poll_preload,
+                viewer_state_preload,
+                mut media_by_status_id,
+                in_reply_to_account_ids,
+            ) = futures_util::try_join!(
+                preload_status_counts(&db, &status_ids, &[]),
+                preload_status_quote_counts(&db, &quote_uris),
+                preload_mastodon_poll_responses(&db, &status_ids, viewer.as_ref()),
+                async {
+                    match viewer.as_ref() {
+                        Some(viewer) => {
+                            preload_local_status_viewer_state(&db, &viewer.id, &status_refs, None)
+                                .await
+                        }
+                        None => Ok(Default::default()),
+                    }
+                },
+                find_media_attachments_by_status_ids(&db, &status_ids),
+                load_in_reply_to_account_ids(&db, &statuses),
+            )?;
+            let filter_matcher = match viewer.as_ref() {
+                Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+                None => None,
+            };
             let mut response = Vec::new();
-            let mut html_statuses = Vec::new();
 
             for status in statuses.into_iter().take(limit as usize) {
                 if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
@@ -89,56 +177,135 @@ async fn account_statuses_response_for_account_id(
                     }
                 }
                 if query.exclude_replies.unwrap_or(false)
-                    && status_is_reply_to_other_account(&db, &status, &account.id).await?
+                    && status
+                        .in_reply_to_id
+                        .as_ref()
+                        .and_then(|_| in_reply_to_account_ids.get(&status.id))
+                        .is_some_and(|reply_account_id| reply_account_id != &account.id)
                 {
                     continue;
                 }
 
-                let media = find_media_attachments_by_status_id(&db, &status.id).await?;
+                let media = media_by_status_id.remove(&status.id).unwrap_or_default();
                 if query.only_media.unwrap_or(false) && media.is_empty() {
                     continue;
                 }
 
-                if wants_html {
-                    html_statuses.push(local_status_html_item(&config, &account, &status));
-                }
                 response.push(
-                    build_local_status_response_with_preloads(
+                    build_local_status_response_with_quote_count_preloads(
                         &db,
                         &config,
                         viewer.as_ref(),
                         &status,
                         &account,
-                        load_in_reply_to_account_id(&db, &status).await?,
+                        in_reply_to_account_ids.get(&status.id).cloned(),
                         media,
                         filter_matcher.as_ref(),
                         Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&poll_preload),
+                        Some(&viewer_state_preload),
                     )
                     .await?,
-                );
-            }
-
-            if wants_html {
-                return account_statuses_html_response(
-                    &config,
-                    &account.display_name,
-                    &account.username,
-                    &actor_url(&config, &account.username),
-                    &html_statuses,
                 );
             }
 
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            let mut response = Vec::new();
-            let mut html_statuses = Vec::new();
             let statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
             let status_ids = statuses
                 .iter()
                 .map(|status| status.id.clone())
                 .collect::<Vec<_>>();
-            let counts_preload = preload_status_counts(&db, &[], &status_ids).await?;
+            if wants_html {
+                let only_media = query.only_media.unwrap_or(false);
+                let remote_status_ids_with_media = if only_media {
+                    find_remote_status_ids_with_media(&db, &status_ids).await?
+                } else {
+                    Default::default()
+                };
+                let mut html_statuses = Vec::new();
+
+                for status in statuses {
+                    if !is_public_activitypub_visibility(&status.visibility) {
+                        continue;
+                    }
+                    if query.pinned.unwrap_or(false) {
+                        continue;
+                    }
+                    if let Some(tag) = query.tagged.as_deref()
+                        && !status
+                            .content_html
+                            .to_ascii_lowercase()
+                            .contains(&tag.to_ascii_lowercase())
+                    {
+                        continue;
+                    }
+                    if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+                        continue;
+                    }
+                    if query.exclude_replies.unwrap_or(false) && status.in_reply_to_uri.is_some() {
+                        continue;
+                    }
+                    if only_media && !remote_status_ids_with_media.contains(&status.id) {
+                        continue;
+                    }
+
+                    html_statuses.push(remote_status_html_item(&actor, &status));
+                }
+
+                let profile_url = actor
+                    .profile_url
+                    .clone()
+                    .unwrap_or_else(|| actor.actor_uri.clone());
+                return account_statuses_html_response(
+                    &config,
+                    &actor.display_name,
+                    &format!("{}@{}", actor.username, actor.domain),
+                    &profile_url,
+                    &html_statuses,
+                );
+            }
+
+            let remote_status_refs = statuses
+                .iter()
+                .map(|status| (status, &actor))
+                .collect::<Vec<_>>();
+            let quote_uris = statuses
+                .iter()
+                .map(|status| status.object_uri.clone())
+                .collect::<Vec<_>>();
+            let (
+                counts_preload,
+                quote_counts_preload,
+                viewer_state_preload,
+                poll_preload,
+                edit_updated_at_preload,
+                mut remote_attachments_by_status_id,
+                remote_status_ids_with_media,
+            ) = futures_util::try_join!(
+                preload_status_counts(&db, &[], &status_ids),
+                preload_status_quote_counts(&db, &quote_uris),
+                async {
+                    match viewer.as_ref() {
+                        Some(viewer) => {
+                            preload_remote_status_viewer_state(&db, &viewer.id, &remote_status_refs)
+                                .await
+                        }
+                        None => Ok(Default::default()),
+                    }
+                },
+                preload_remote_mastodon_poll_responses(&db, &status_ids, viewer.as_ref()),
+                preload_remote_status_edit_updated_at(&db, &status_ids),
+                find_remote_status_attachments_by_status_ids(&db, &status_ids),
+                find_remote_status_ids_with_media(&db, &status_ids),
+            )?;
+            let filter_matcher = match viewer.as_ref() {
+                Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+                None => None,
+            };
+            let mut response = Vec::new();
             for status in statuses {
                 if !is_public_activitypub_visibility(&status.visibility) {
                     continue;
@@ -161,16 +328,13 @@ async fn account_statuses_response_for_account_id(
                     continue;
                 }
                 if query.only_media.unwrap_or(false)
-                    && !remote_status_has_media(&db, &status.id).await?
+                    && !remote_status_ids_with_media.contains(&status.id)
                 {
                     continue;
                 }
 
-                if wants_html {
-                    html_statuses.push(remote_status_html_item(&actor, &status));
-                }
                 response.push(
-                    build_remote_status_response_with_preloads(
+                    build_remote_status_response_with_timeline_preloads(
                         &db,
                         &config,
                         viewer.as_ref(),
@@ -178,21 +342,15 @@ async fn account_statuses_response_for_account_id(
                         &actor,
                         filter_matcher.as_ref(),
                         Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&viewer_state_preload),
+                        Some(&poll_preload),
+                        Some(&edit_updated_at_preload),
+                        remote_attachments_by_status_id
+                            .remove(&status.id)
+                            .unwrap_or_default(),
                     )
                     .await?,
-                );
-            }
-            if wants_html {
-                let profile_url = actor
-                    .profile_url
-                    .clone()
-                    .unwrap_or_else(|| actor.actor_uri.clone());
-                return account_statuses_html_response(
-                    &config,
-                    &actor.display_name,
-                    &format!("{}@{}", actor.username, actor.domain),
-                    &profile_url,
-                    &html_statuses,
                 );
             }
             Response::from_json(&response)
