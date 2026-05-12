@@ -1,6 +1,7 @@
 use super::{
-    AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, RemoteActorRow,
-    RemoteStatusRow, Request, Response, Result, RouteContext, StatusRow, actor_url,
+    AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MediaAttachmentRow,
+    MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow, Request, Response,
+    Result, RouteContext, StatusRow, actor_url,
     build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
     find_account_by_username, find_authenticated_local_account,
@@ -8,7 +9,7 @@ use super::{
     find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
     list_pinned_statuses_for_account, list_remote_statuses_by_actor_uri,
     load_account_filter_matcher, load_config, load_in_reply_to_account_ids, local_status_ap_id,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    media_attachment_url, preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
     resolve_account_reference, status_contains_tag, strip_html_tags,
@@ -72,11 +73,8 @@ async fn account_statuses_response_for_account_id(
                 .collect::<Vec<_>>();
             if wants_html {
                 let only_media = query.only_media.unwrap_or(false);
-                let mut media_by_status_id = if only_media {
-                    find_media_attachments_by_status_ids(&db, &status_ids).await?
-                } else {
-                    Default::default()
-                };
+                let mut media_by_status_id =
+                    find_media_attachments_by_status_ids(&db, &status_ids).await?;
                 let exclude_replies = query.exclude_replies.unwrap_or(false);
                 let in_reply_to_account_ids = if exclude_replies {
                     load_in_reply_to_account_ids(&db, &statuses).await?
@@ -107,16 +105,12 @@ async fn account_statuses_response_for_account_id(
                         continue;
                     }
 
-                    if only_media
-                        && media_by_status_id
-                            .remove(&status.id)
-                            .unwrap_or_default()
-                            .is_empty()
-                    {
+                    let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+                    if only_media && media.is_empty() {
                         continue;
                     }
 
-                    html_statuses.push(local_status_html_item(&config, &account, &status));
+                    html_statuses.push(local_status_html_item(&config, &account, &status, &media));
                 }
 
                 return account_statuses_html_response(
@@ -220,11 +214,8 @@ async fn account_statuses_response_for_account_id(
                 .collect::<Vec<_>>();
             if wants_html {
                 let only_media = query.only_media.unwrap_or(false);
-                let remote_status_ids_with_media = if only_media {
-                    find_remote_status_ids_with_media(&db, &status_ids).await?
-                } else {
-                    Default::default()
-                };
+                let mut remote_attachments_by_status_id =
+                    find_remote_status_attachments_by_status_ids(&db, &status_ids).await?;
                 let mut html_statuses = Vec::new();
 
                 for status in statuses {
@@ -248,11 +239,14 @@ async fn account_statuses_response_for_account_id(
                     if query.exclude_replies.unwrap_or(false) && status.in_reply_to_uri.is_some() {
                         continue;
                     }
-                    if only_media && !remote_status_ids_with_media.contains(&status.id) {
+                    let media = remote_attachments_by_status_id
+                        .remove(&status.id)
+                        .unwrap_or_default();
+                    if only_media && media.is_empty() {
                         continue;
                     }
 
-                    html_statuses.push(remote_status_html_item(&actor, &status));
+                    html_statuses.push(remote_status_html_item(&actor, &status, &media));
                 }
 
                 let profile_url = actor
@@ -396,7 +390,7 @@ fn account_statuses_html_response(
 <title>{title}</title>
 <style>
 :root{{color-scheme:dark;--bg:#101114;--panel:#181b20;--line:#30343c;--text:#f4f0e8;--muted:#a9adb7;--accent:#45c08d;--accent-2:#f2b84b;--ink:#0f1411}}
-*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:linear-gradient(135deg,#101114 0%,#171a1f 58%,#1f241e 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55}}a{{color:inherit}}main{{width:min(820px,100%);margin:0 auto;padding:32px 20px 56px}}header{{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}}h1{{margin:0;font-size:clamp(34px,6vw,56px);line-height:1.03;letter-spacing:0}}.handle,.meta,.empty,time{{color:var(--muted)}}.nav{{display:flex;gap:10px;flex-wrap:wrap}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.feed{{display:grid;gap:14px}}article{{border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);padding:20px;box-shadow:0 18px 54px rgba(0,0,0,.22)}}.content{{font-size:18px;overflow-wrap:anywhere}}.content p:first-child{{margin-top:0}}.content p:last-child{{margin-bottom:0}}.spoiler{{margin:0 0 12px;color:var(--accent-2);font-weight:700}}time{{display:block;margin-top:16px;font-size:13px}}.empty{{border:1px solid var(--line);border-radius:8px;padding:24px;background:rgba(24,27,32,.92)}}footer{{margin-top:20px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:18px 12px 42px}}header{{display:block}}.nav{{margin-top:18px}}article{{padding:16px}}}}
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:linear-gradient(135deg,#101114 0%,#171a1f 58%,#1f241e 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55}}a{{color:inherit}}main{{width:min(820px,100%);margin:0 auto;padding:32px 20px 56px}}header{{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}}h1{{margin:0;font-size:clamp(34px,6vw,56px);line-height:1.03;letter-spacing:0}}.handle,.meta,.empty,time{{color:var(--muted)}}.nav{{display:flex;gap:10px;flex-wrap:wrap}}.button{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:650}}.primary{{background:var(--accent);border-color:var(--accent);color:var(--ink)}}.feed{{display:grid;gap:14px}}article{{border:1px solid var(--line);border-radius:8px;background:rgba(24,27,32,.92);padding:20px;box-shadow:0 18px 54px rgba(0,0,0,.22)}}article>a{{display:block;text-decoration:none}}.content{{font-size:18px;overflow-wrap:anywhere}}.content p:first-child{{margin-top:0}}.content p:last-child{{margin-bottom:0}}.spoiler{{margin:0 0 12px;color:var(--accent-2);font-weight:700}}.media{{display:grid;gap:10px;margin-top:14px}}.media img{{display:block;width:100%;max-height:520px;object-fit:contain;border-radius:8px;background:#0d0f13}}time{{display:block;margin-top:16px;font-size:13px}}.empty{{border:1px solid var(--line);border-radius:8px;padding:24px;background:rgba(24,27,32,.92)}}footer{{margin-top:20px;color:var(--muted);font-size:13px;text-align:center}}@media (max-width:640px){{main{{padding:18px 12px 42px}}header{{display:block}}.nav{{margin-top:18px}}article{{padding:16px}}.media img{{max-height:360px}}}}
 </style>
 </head>
 <body>
@@ -419,24 +413,33 @@ fn local_status_html_item(
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
+    media: &[MediaAttachmentRow],
 ) -> String {
     let status_url = escape_html(&local_status_ap_id(config, account, status));
+    let media_html = local_media_html(config, media);
     status_html_item(
         &status_url,
         &status.content_html,
         &status.spoiler_text,
         &status.created_at,
+        &media_html,
     )
 }
 
-fn remote_status_html_item(actor: &RemoteActorRow, status: &RemoteStatusRow) -> String {
+fn remote_status_html_item(
+    actor: &RemoteActorRow,
+    status: &RemoteStatusRow,
+    media: &[RemoteStatusAttachmentRow],
+) -> String {
     let status_url = escape_html(status.url.as_deref().unwrap_or(status.object_uri.as_str()));
     let _actor = actor;
+    let media_html = remote_media_html(media);
     status_html_item(
         &status_url,
         &status.content_html,
         &status.spoiler_text,
         &status.published_at,
+        &media_html,
     )
 }
 
@@ -445,6 +448,7 @@ fn status_html_item(
     content_html: &str,
     spoiler_text: &str,
     published_at: &str,
+    media_html: &str,
 ) -> String {
     let spoiler = if spoiler_text.trim().is_empty() {
         String::new()
@@ -458,10 +462,63 @@ fn status_html_item(
         plain
     };
     format!(
-        "<article><a href=\"{url}\" aria-label=\"{}\"><div class=\"content\">{}{}</div><time>{}</time></a></article>",
+        "<article><a href=\"{url}\" aria-label=\"{}\"><div class=\"content\">{}{}</div>{media_html}<time>{}</time></a></article>",
         escape_html(&aria_label),
         spoiler,
         content_html,
         escape_html(published_at)
     )
+}
+
+fn local_media_html(config: &AppConfig, media: &[MediaAttachmentRow]) -> String {
+    let images = media
+        .iter()
+        .filter(|attachment| {
+            super::classify_media_kind(&attachment.content_type) == Some(MediaKind::Image)
+        })
+        .map(|attachment| {
+            (
+                media_attachment_url(config, &attachment.id, &attachment.object_key),
+                attachment.description.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    media_html(images)
+}
+
+fn remote_media_html(media: &[RemoteStatusAttachmentRow]) -> String {
+    let images = media
+        .iter()
+        .filter(|attachment| {
+            super::classify_media_kind(&attachment.content_type) == Some(MediaKind::Image)
+        })
+        .map(|attachment| {
+            (
+                attachment
+                    .preview_url
+                    .clone()
+                    .unwrap_or_else(|| attachment.remote_url.clone()),
+                attachment.description.clone().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    media_html(images)
+}
+
+fn media_html(images: Vec<(String, String)>) -> String {
+    let images = images
+        .into_iter()
+        .map(|(url, description)| {
+            format!(
+                "<img src=\"{}\" alt=\"{}\" loading=\"lazy\">",
+                escape_html(&url),
+                escape_html(&description)
+            )
+        })
+        .collect::<Vec<_>>();
+    if images.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=\"media\">{}</div>", images.join(""))
+    }
 }
