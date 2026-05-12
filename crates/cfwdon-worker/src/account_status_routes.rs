@@ -289,9 +289,10 @@ async fn account_statuses_response_for_reference(
                 && !is_pinned_page
                 && !query.only_media.unwrap_or(false)
             {
-                let (refreshed_actor, _) =
-                    refresh_remote_status_actor(&db, &config, actor, false, Some(limit)).await?;
+                let (refreshed_actor, counts) =
+                    refresh_remote_status_actor(&db, &config, actor, true, Some(limit)).await?;
                 actor = refreshed_actor;
+                actor_social_counts = counts;
                 statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
             }
             let transient_statuses = if !is_following_remote_actor && !wants_html {
@@ -302,6 +303,17 @@ async fn account_statuses_response_for_reference(
             } else {
                 Vec::new()
             };
+            if actor_social_counts.is_none()
+                && !wants_html
+                && !statuses.is_empty()
+                && let Ok(actor_document) =
+                    fetch_remote_activitypub_document(&actor.actor_uri).await
+            {
+                actor_social_counts =
+                    load_remote_actor_social_counts_from_document(&actor_document)
+                        .await
+                        .ok();
+            }
             let older_page_url = if wants_html && !is_pinned_page && statuses.len() > limit as usize
             {
                 statuses.truncate(limit as usize);
