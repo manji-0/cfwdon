@@ -3,8 +3,17 @@ use crate::{
     ProfileField, RemoteActorProfile, RemoteActorRow, actor_url, escape_html,
     fetch_remote_activitypub_document, media_object_url, remote_account_rest_id,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
 use url::Url;
 use worker::Result;
+
+const REMOTE_ACTOR_COLLECTION_COUNT_CACHE_TTL_MS: f64 = 60.0 * 1000.0;
+
+thread_local! {
+    static REMOTE_ACTOR_COLLECTION_COUNT_CACHE: RefCell<HashMap<String, (u64, f64)>> =
+        RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RemoteActorSocialCounts {
@@ -40,8 +49,34 @@ async fn remote_actor_collection_count(
     let Some(collection_uri) = activitypub_reference_uri(value) else {
         return Ok(0);
     };
+    if let Some(count) = remote_actor_collection_count_cache_hit(&collection_uri) {
+        return Ok(count);
+    }
     let collection = fetch_remote_activitypub_document(&collection_uri).await?;
-    Ok(activitypub_collection_count(&collection).unwrap_or(0))
+    let count = activitypub_collection_count(&collection).unwrap_or(0);
+    cache_remote_actor_collection_count(&collection_uri, count);
+    Ok(count)
+}
+
+fn remote_actor_collection_count_cache_hit(collection_uri: &str) -> Option<u64> {
+    let now_ms = js_sys::Date::now();
+    REMOTE_ACTOR_COLLECTION_COUNT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|_, (_, expires_at_ms)| *expires_at_ms > now_ms);
+        cache
+            .get(collection_uri)
+            .filter(|(_, expires_at_ms)| *expires_at_ms > now_ms)
+            .map(|(count, _)| *count)
+    })
+}
+
+fn cache_remote_actor_collection_count(collection_uri: &str, count: u64) {
+    let expires_at_ms = js_sys::Date::now() + REMOTE_ACTOR_COLLECTION_COUNT_CACHE_TTL_MS;
+    REMOTE_ACTOR_COLLECTION_COUNT_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(collection_uri.to_owned(), (count, expires_at_ms));
+    });
 }
 
 fn activitypub_reference_uri(value: &serde_json::Value) -> Option<String> {
