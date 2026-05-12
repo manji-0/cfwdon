@@ -25,6 +25,8 @@ pub(crate) struct MediaAttachmentRow {
     pub(crate) description: String,
     pub(crate) focus_x: Option<f64>,
     pub(crate) focus_y: Option<f64>,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
     #[serde(rename = "created_at")]
     pub(crate) _created_at: String,
 }

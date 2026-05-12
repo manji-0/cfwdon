@@ -35,7 +35,7 @@ pub(crate) async fn find_media_attachment_by_id(
 ) -> Result<Option<MediaAttachmentRow>> {
     let media_id = D1Type::Text(media_id);
     db.prepare(
-        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, created_at
+        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
          FROM media_attachments
          WHERE id = ?1
          LIMIT 1",
@@ -93,7 +93,7 @@ pub(crate) async fn find_media_attachments_by_status_id(
     let status_id = D1Type::Text(status_id);
     let result = db
         .prepare(
-            "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, created_at
+            "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
              FROM media_attachments
              WHERE status_id = ?1
              ORDER BY created_at ASC, id ASC",
@@ -123,7 +123,7 @@ pub(crate) async fn find_media_attachments_by_status_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, created_at
+        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
          FROM media_attachments
          WHERE status_id IN ({placeholders})
          ORDER BY status_id ASC, created_at ASC, id ASC"

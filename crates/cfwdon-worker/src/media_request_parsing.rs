@@ -10,6 +10,8 @@ pub(crate) struct MediaUploadDraft {
     pub(crate) content_type: String,
     pub(crate) description: String,
     pub(crate) kind: MediaKind,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
 }
 
 pub(crate) async fn parse_media_upload(
@@ -52,7 +54,11 @@ pub(crate) async fn parse_media_upload(
         ));
     }
 
+    let dimensions = image_dimensions(&content_type, &bytes);
+
     Ok(MediaUploadDraft {
+        width: dimensions.map(|(width, _)| width),
+        height: dimensions.map(|(_, height)| height),
         bytes,
         content_type,
         description: form
@@ -62,6 +68,129 @@ pub(crate) async fn parse_media_upload(
             .unwrap_or_default(),
         kind,
     })
+}
+
+pub(crate) fn image_dimensions(content_type: &str, bytes: &[u8]) -> Option<(u32, u32)> {
+    match content_type {
+        "image/png" => png_dimensions(bytes),
+        "image/jpeg" | "image/jpg" => jpeg_dimensions(bytes),
+        "image/gif" => gif_dimensions(bytes),
+        "image/webp" => webp_dimensions(bytes),
+        _ => None,
+    }
+    .filter(|(width, height)| *width > 0 && *height > 0)
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || &bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes(bytes[16..20].try_into().ok()?),
+        u32::from_be_bytes(bytes[20..24].try_into().ok()?),
+    ))
+}
+
+fn gif_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 10 || !matches!(&bytes[..6], b"GIF87a" | b"GIF89a") {
+        return None;
+    }
+    Some((
+        u16::from_le_bytes(bytes[6..8].try_into().ok()?) as u32,
+        u16::from_le_bytes(bytes[8..10].try_into().ok()?) as u32,
+    ))
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 4 || bytes[0] != 0xff || bytes[1] != 0xd8 {
+        return None;
+    }
+
+    let mut offset = 2;
+    while offset + 3 < bytes.len() {
+        while offset < bytes.len() && bytes[offset] == 0xff {
+            offset += 1;
+        }
+        if offset >= bytes.len() {
+            return None;
+        }
+
+        let marker = bytes[offset];
+        offset += 1;
+        if marker == 0xd9 || marker == 0xda {
+            return None;
+        }
+        if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+        if offset + 2 > bytes.len() {
+            return None;
+        }
+        let segment_len = u16::from_be_bytes(bytes[offset..offset + 2].try_into().ok()?) as usize;
+        if segment_len < 2 || offset + segment_len > bytes.len() {
+            return None;
+        }
+
+        if matches!(
+            marker,
+            0xc0 | 0xc1
+                | 0xc2
+                | 0xc3
+                | 0xc5
+                | 0xc6
+                | 0xc7
+                | 0xc9
+                | 0xca
+                | 0xcb
+                | 0xcd
+                | 0xce
+                | 0xcf
+        ) {
+            if segment_len < 7 {
+                return None;
+            }
+            let height = u16::from_be_bytes(bytes[offset + 3..offset + 5].try_into().ok()?);
+            let width = u16::from_be_bytes(bytes[offset + 5..offset + 7].try_into().ok()?);
+            return Some((width as u32, height as u32));
+        }
+
+        offset += segment_len;
+    }
+
+    None
+}
+
+fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 30 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+
+    let chunk = &bytes[12..16];
+    let data = &bytes[20..];
+    match chunk {
+        b"VP8X" if data.len() >= 10 => {
+            let width =
+                1 + u32::from(data[4]) + (u32::from(data[5]) << 8) + (u32::from(data[6]) << 16);
+            let height =
+                1 + u32::from(data[7]) + (u32::from(data[8]) << 8) + (u32::from(data[9]) << 16);
+            Some((width, height))
+        }
+        b"VP8L" if data.len() >= 5 && data[0] == 0x2f => {
+            let width = 1 + u32::from(data[1]) + ((u32::from(data[2]) & 0x3f) << 8);
+            let height = 1
+                + ((u32::from(data[2]) & 0xc0) >> 6)
+                + (u32::from(data[3]) << 2)
+                + ((u32::from(data[4]) & 0x0f) << 10);
+            Some((width, height))
+        }
+        b"VP8 " if data.len() >= 10 && data[3..6] == [0x9d, 0x01, 0x2a] => {
+            let width = u16::from_le_bytes(data[6..8].try_into().ok()?) & 0x3fff;
+            let height = u16::from_le_bytes(data[8..10].try_into().ok()?) & 0x3fff;
+            Some((width as u32, height as u32))
+        }
+        _ => None,
+    }
 }
 
 pub(crate) async fn parse_media_update_request(

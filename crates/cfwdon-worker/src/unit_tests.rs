@@ -40,31 +40,32 @@ use super::{
     extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
     extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
     follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
-    include_local_source, include_remote_source, initial_local_quote_approval_policy,
-    instance_base_url, is_activitypub_actor_type, is_admin_account, is_follow_undo,
-    local_quote_policy_allows, local_username_from_actor_uri, local_username_from_status_uri,
-    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
-    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
-    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
-    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    notification_sort_key, notification_timestamp_sort_token,
-    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
-    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
-    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
-    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
-    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
-    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
-    parse_media_id_fields, parse_remote_actor_profile_document, parse_status_search_query,
-    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
-    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
-    redirect_uri_matches_registered, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, remote_follow_base_url,
-    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
-    remote_poll_should_refresh, remote_quote_state_for_local_target,
-    remote_status_has_active_quote, remote_status_targets_local_viewer,
-    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
-    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
-    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    image_dimensions, include_local_source, include_remote_source,
+    initial_local_quote_approval_policy, instance_base_url, is_activitypub_actor_type,
+    is_admin_account, is_follow_undo, local_quote_policy_allows, local_username_from_actor_uri,
+    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
+    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
+    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
+    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
+    normalized_account_search_query, normalized_action_uri, notification_sort_key,
+    notification_timestamp_sort_token, oauth_access_token_has_any_scope_json,
+    oauth_authorize_url_from_form, object_attributed_to_remote_actor,
+    optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
+    paginate_tag_search_matches, parse_basic_authorization_header,
+    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
+    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
+    parse_lookup_handle, parse_media_focus, parse_media_id_fields,
+    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
+    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
+    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
+    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
+    remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_quote_state_for_local_target, remote_status_has_active_quote,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
+    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
+    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -4487,6 +4488,23 @@ fn parse_media_focus_rejects_invalid_coordinates() {
 }
 
 #[test]
+fn image_dimensions_reads_common_image_headers() {
+    let mut png = Vec::from(&b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..]);
+    png.extend_from_slice(&640u32.to_be_bytes());
+    png.extend_from_slice(&480u32.to_be_bytes());
+
+    let jpeg = [
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x07, 0x08, 0x03, 0x20, 0x04, 0x00,
+    ];
+    let gif = b"GIF89a\x20\x03\x58\x02";
+
+    assert_eq!(image_dimensions("image/png", &png), Some((640, 480)));
+    assert_eq!(image_dimensions("image/jpeg", &jpeg), Some((1024, 800)));
+    assert_eq!(image_dimensions("image/gif", gif), Some((800, 600)));
+    assert_eq!(image_dimensions("image/png", b"not a png"), None);
+}
+
+#[test]
 fn media_urls_prefer_custom_domain_and_keep_worker_fallback() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     config.media_public_base_url = Some("https://media.example.com".to_owned());
@@ -4513,6 +4531,8 @@ fn local_media_response_uses_worker_route_without_public_media_base() {
             description: String::new(),
             focus_x: None,
             focus_y: None,
+            width: Some(640),
+            height: Some(480),
             _created_at: "2026-05-09 00:00:00".to_owned(),
         },
         &config,
@@ -4531,6 +4551,18 @@ fn local_media_response_uses_worker_route_without_public_media_base() {
         document.pointer("/text_url"),
         Some(&serde_json::json!("https://social.example/media/media-1"))
     );
+    assert_eq!(
+        document.pointer("/meta/original/width"),
+        Some(&serde_json::json!(640))
+    );
+    assert_eq!(
+        document.pointer("/meta/original/height"),
+        Some(&serde_json::json!(480))
+    );
+    assert_eq!(
+        document.pointer("/meta/original/aspect"),
+        Some(&serde_json::json!(640.0 / 480.0))
+    );
 }
 
 #[test]
@@ -4547,6 +4579,8 @@ fn local_media_response_uses_public_media_base_when_configured() {
             description: String::new(),
             focus_x: None,
             focus_y: None,
+            width: Some(640),
+            height: Some(480),
             _created_at: "2026-05-09 00:00:00".to_owned(),
         },
         &config,
@@ -4584,6 +4618,8 @@ fn local_media_response_keeps_meta_objects_when_dimensions_unknown() {
             description: String::new(),
             focus_x: None,
             focus_y: None,
+            width: None,
+            height: None,
             _created_at: "2026-05-09 00:00:00".to_owned(),
         },
         &config,

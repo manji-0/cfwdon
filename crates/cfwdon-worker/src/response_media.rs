@@ -66,6 +66,14 @@ impl MastodonMediaAttachmentResponse {
     pub(crate) fn from_row(row: &MediaAttachmentRow, config: &AppConfig) -> Self {
         let url = media_attachment_url(config, &row.id, &row.object_key);
         let fallback_url = media_fallback_url(config, &row.id);
+        let aspect = row
+            .width
+            .zip(row.height)
+            .and_then(|(width, height)| (height != 0).then_some(width as f64 / height as f64));
+        let size = row
+            .width
+            .zip(row.height)
+            .map(|(width, height)| format!("{width}x{height}"));
         let focus = row
             .focus_x
             .zip(row.focus_y)
@@ -82,16 +90,16 @@ impl MastodonMediaAttachmentResponse {
             text_url: Some(fallback_url),
             meta: MastodonMediaMeta {
                 original: Some(MastodonMediaMetaDetails {
-                    width: None,
-                    height: None,
-                    size: None,
-                    aspect: None,
+                    width: row.width,
+                    height: row.height,
+                    size: size.clone(),
+                    aspect,
                 }),
                 small: Some(MastodonMediaMetaDetails {
-                    width: None,
-                    height: None,
-                    size: None,
-                    aspect: None,
+                    width: row.width,
+                    height: row.height,
+                    size,
+                    aspect,
                 }),
                 focus,
             },

@@ -51,6 +51,14 @@ pub(crate) async fn store_media_attachment(
         D1Type::Text(object_key.as_str()),
         D1Type::Text(draft.content_type.as_str()),
         D1Type::Text(draft.description.as_str()),
+        draft
+            .width
+            .map(|value| D1Type::Integer(value as i32))
+            .unwrap_or(D1Type::Null),
+        draft
+            .height
+            .map(|value| D1Type::Integer(value as i32))
+            .unwrap_or(D1Type::Null),
     ];
 
     let insert_result = db
@@ -62,6 +70,8 @@ pub(crate) async fn store_media_attachment(
                 object_key,
                 content_type,
                 description,
+                width,
+                height,
                 created_at
             ) VALUES (
                 ?1,
@@ -70,6 +80,8 @@ pub(crate) async fn store_media_attachment(
                 ?3,
                 ?4,
                 ?5,
+                ?6,
+                ?7,
                 CURRENT_TIMESTAMP
             )",
         )
