@@ -3381,7 +3381,23 @@ pub(crate) async fn accounts_index_response(
                 ));
             }
             Some(AccountReference::Remote(actor)) => {
-                response.push(crate::MastodonAccountResponse::from_remote_actor(&actor));
+                let fetched =
+                    crate::fetch_remote_actor_profile_with_document(&actor.actor_uri).await;
+                let mut account = match fetched.as_ref() {
+                    Ok(fetched) => {
+                        let _ = crate::upsert_remote_actor(&db, &fetched.profile).await;
+                        crate::MastodonAccountResponse::from_remote_actor_profile(&fetched.profile)
+                    }
+                    Err(_) => crate::MastodonAccountResponse::from_remote_actor(&actor),
+                };
+                if let Ok(fetched) = fetched
+                    && let Ok(counts) =
+                        crate::load_remote_actor_social_counts_from_document(&fetched.document)
+                            .await
+                {
+                    crate::apply_remote_actor_social_counts(&mut account, counts);
+                }
+                response.push(account);
             }
             None => {}
         }
