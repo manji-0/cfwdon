@@ -13,7 +13,7 @@ use super::{
     list_local_reblog_account_ids_for_status, list_remote_favourite_actor_uris_for_status,
     list_remote_reblog_actor_uris_for_status, list_remote_status_edit_snapshots,
     load_account_stats, load_config, load_in_reply_to_account_id, load_remote_status_updated_at,
-    media_object_url, remote_account_rest_id, status_id_from_context, strip_html_tags,
+    remote_account_rest_id, status_id_from_context, strip_html_tags,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -748,7 +748,11 @@ fn status_object_html_response(
             crate::classify_media_kind(&attachment.content_type) == Some(crate::MediaKind::Image)
         })
         .map(|attachment| {
-            let src = crate::escape_html(&media_object_url(config, &attachment.object_key));
+            let src = crate::escape_html(&crate::media_attachment_url(
+                config,
+                &attachment.id,
+                &attachment.object_key,
+            ));
             let alt = crate::escape_html(&attachment.description);
             format!("<img src=\"{src}\" alt=\"{alt}\" loading=\"lazy\">")
         })

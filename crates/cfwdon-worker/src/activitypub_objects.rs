@@ -2,7 +2,7 @@ use crate::{
     AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
     classify_media_kind, count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
     find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_kind_label, media_object_url, status_has_active_quote,
+    media_attachment_url, media_kind_label, status_has_active_quote,
 };
 use worker::{D1Database, Result};
 
@@ -109,7 +109,7 @@ pub(crate) async fn build_activitypub_note(
                 serde_json::json!({
                     "type": activitypub_media_attachment_type(&attachment.content_type),
                     "mediaType": attachment.content_type,
-                    "url": media_object_url(config, &attachment.object_key),
+                    "url": media_attachment_url(config, &attachment.id, &attachment.object_key),
                     "name": if attachment.description.is_empty() {
                         serde_json::Value::Null
                     } else {

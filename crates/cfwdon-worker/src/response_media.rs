@@ -54,9 +54,17 @@ pub(crate) fn media_fallback_url(config: &AppConfig, media_id: &str) -> String {
     format!("{}/media/{}", instance_base_url(config), media_id)
 }
 
+pub(crate) fn media_attachment_url(config: &AppConfig, media_id: &str, object_key: &str) -> String {
+    if config.media_public_base_url.is_some() {
+        media_object_url(config, object_key)
+    } else {
+        media_fallback_url(config, media_id)
+    }
+}
+
 impl MastodonMediaAttachmentResponse {
     pub(crate) fn from_row(row: &MediaAttachmentRow, config: &AppConfig) -> Self {
-        let url = media_object_url(config, &row.object_key);
+        let url = media_attachment_url(config, &row.id, &row.object_key);
         let fallback_url = media_fallback_url(config, &row.id);
         let focus = row
             .focus_x
