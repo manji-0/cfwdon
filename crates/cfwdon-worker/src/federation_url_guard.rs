@@ -1,7 +1,15 @@
 use serde::Deserialize;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use url::Url;
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, Result};
+
+const REMOTE_HOST_VALIDATION_CACHE_TTL_MS: f64 = 5.0 * 60.0 * 1000.0;
+
+thread_local! {
+    static REMOTE_HOST_VALIDATION_CACHE: RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DnsJsonResponse {
@@ -45,6 +53,10 @@ pub(crate) async fn validate_remote_fetch_url(url: &Url) -> Result<()> {
 }
 
 async fn validate_remote_hostname_resolution(host: &str) -> Result<()> {
+    if remote_hostname_validation_cache_hit(host) {
+        return Ok(());
+    }
+
     let mut resolved = Vec::new();
     resolved.extend(resolve_dns_json_ips(host, "A").await?);
     resolved.extend(resolve_dns_json_ips(host, "AAAA").await?);
@@ -59,7 +71,26 @@ async fn validate_remote_hostname_resolution(host: &str) -> Result<()> {
         )));
     }
 
+    cache_remote_hostname_validation(host);
     Ok(())
+}
+
+fn remote_hostname_validation_cache_hit(host: &str) -> bool {
+    let now_ms = js_sys::Date::now();
+    REMOTE_HOST_VALIDATION_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|_, expires_at_ms| *expires_at_ms > now_ms);
+        cache
+            .get(host)
+            .is_some_and(|expires_at_ms| *expires_at_ms > now_ms)
+    })
+}
+
+fn cache_remote_hostname_validation(host: &str) {
+    let expires_at_ms = js_sys::Date::now() + REMOTE_HOST_VALIDATION_CACHE_TTL_MS;
+    REMOTE_HOST_VALIDATION_CACHE.with(|cache| {
+        cache.borrow_mut().insert(host.to_owned(), expires_at_ms);
+    });
 }
 
 async fn resolve_dns_json_ips(host: &str, record_type: &str) -> Result<Vec<IpAddr>> {

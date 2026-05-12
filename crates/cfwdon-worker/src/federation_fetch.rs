@@ -1,4 +1,6 @@
 use cfwdon_domain::AccountHandle;
+use std::collections::HashSet;
+use std::net::IpAddr;
 use url::Url;
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, Result};
 
@@ -174,12 +176,41 @@ pub(crate) fn parse_remote_actor_profile_document(
 }
 
 pub(crate) async fn validate_remote_actor_profile_urls(profile: &RemoteActorProfile) -> Result<()> {
-    validate_remote_fetch_url(&parse_remote_http_url(&profile.actor_uri)?).await?;
-    validate_remote_fetch_url(&parse_remote_http_url(&profile.inbox_uri)?).await?;
+    let mut validated_hosts = HashSet::new();
+    validate_remote_actor_profile_url(&profile.actor_uri, &mut validated_hosts).await?;
+    validate_remote_actor_profile_url(&profile.inbox_uri, &mut validated_hosts).await?;
     if let Some(shared_inbox_uri) = profile.shared_inbox_uri.as_deref() {
-        validate_remote_fetch_url(&parse_remote_http_url(shared_inbox_uri)?).await?;
+        validate_remote_actor_profile_url(shared_inbox_uri, &mut validated_hosts).await?;
     }
-    validate_remote_fetch_url(&parse_remote_http_url(&profile.public_key_id)?).await?;
+    validate_remote_actor_profile_url(&profile.public_key_id, &mut validated_hosts).await?;
+    Ok(())
+}
+
+async fn validate_remote_actor_profile_url(
+    raw_url: &str,
+    validated_hosts: &mut HashSet<String>,
+) -> Result<()> {
+    let parsed = parse_remote_http_url(raw_url)?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(Error::RustError(
+            "remote URL must not include user info".to_owned(),
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| Error::RustError("remote URL must include host".to_owned()))?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return Err(Error::RustError("localhost is not allowed".to_owned()));
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        validate_remote_fetch_url(&parsed).await?;
+        return Ok(());
+    }
+    if validated_hosts.insert(host) {
+        validate_remote_fetch_url(&parsed).await?;
+    }
     Ok(())
 }
 
