@@ -5,9 +5,10 @@ use super::{
     cached_account_api_response, count_pending_follow_requests, enqueue_profile_update_activities,
     fetch_remote_actor_profile_with_document, find_authenticated_local_account,
     find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
-    load_config, load_remote_actor_social_counts_from_document, media_object_url,
-    normalize_hashtag, parse_update_credentials_request, render_profile_field_value_html,
-    resolve_account_reference, resolve_lookup_account, upsert_remote_actor,
+    load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
+    media_object_url, normalize_hashtag, parse_update_credentials_request,
+    render_profile_field_value_html, resolve_account_reference, resolve_lookup_account,
+    upsert_remote_actor,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -98,6 +99,12 @@ async fn remote_account_response(
     };
     if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
         apply_remote_actor_social_counts(&mut response, counts);
+    }
+    if let Ok(summary) = load_remote_actor_status_summary(db, &profile.actor_uri).await {
+        if summary.statuses_count > 0 {
+            response.statuses_count = summary.statuses_count;
+        }
+        response.last_status_at = summary.last_status_at;
     }
     Ok(response)
 }

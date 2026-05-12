@@ -3397,6 +3397,14 @@ pub(crate) async fn accounts_index_response(
                 {
                     crate::apply_remote_actor_social_counts(&mut account, counts);
                 }
+                if let Ok(summary) =
+                    crate::load_remote_actor_status_summary(&db, &account.uri).await
+                {
+                    if summary.statuses_count > 0 {
+                        account.statuses_count = summary.statuses_count;
+                    }
+                    account.last_status_at = summary.last_status_at;
+                }
                 response.push(account);
             }
             None => {}
