@@ -534,6 +534,12 @@ pub(crate) async fn search_cached_accounts(
             &response.display_name,
             &strip_html_tags(&response.note),
         ) {
+            let mut response = match fresh_remote_search_account_response(db, &actor).await {
+                Ok(fresh_response) => fresh_response,
+                Err(_) => response,
+            };
+            response.statuses_count = stats.statuses_count;
+            response.last_status_at = stats.last_status_at.clone();
             accounts.push(response);
         }
     }
