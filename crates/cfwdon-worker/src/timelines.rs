@@ -11,19 +11,17 @@ use crate::oauth_apps::{
 };
 use crate::runtime_config::load_config;
 use crate::{
-    HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
-    TimelinePaginationQuery, account_has_thread_mutes,
-    build_local_status_response_with_quote_count_preloads,
+    HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE, HomeTimelineQuery,
+    LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery, TimelinePaginationQuery,
+    account_has_thread_mutes, build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, build_status_card_value,
     build_timeline_link_header, canonicalize_link_timeline_url, derive_link_timeline_match_urls,
     enrich_card_with_remote_preview, find_remote_status_attachments_by_status_ids,
-    include_local_source, include_remote_source, list_active_muted_actor_uris,
-    list_followed_tag_names, list_local_direct_timeline_statuses,
-    list_local_home_timeline_statuses, list_local_public_statuses_by_link,
-    list_local_public_statuses_by_tag, list_local_public_statuses_by_tags_without_legacy_fallback,
-    list_local_public_timeline_statuses, list_remote_home_timeline_statuses,
+    find_remote_statuses_with_actors_by_ids, find_statuses_by_ids, include_local_source,
+    include_remote_source, list_active_muted_actor_uris, list_home_timeline_candidate_ids,
+    list_local_direct_timeline_statuses, list_local_public_statuses_by_link,
+    list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
     list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
-    list_remote_public_statuses_by_tags_without_legacy_fallback,
     list_remote_public_timeline_statuses, load_account_filter_matcher,
     matches_tag_timeline_filters, normalize_hashtag, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
@@ -655,133 +653,101 @@ pub(crate) async fn home_timeline_response(
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
-    let (
-        filter_matcher,
-        local_home_statuses,
-        remote_home_statuses,
-        followed_tags,
-        viewer_has_thread_mutes,
-    ) = futures_util::try_join!(
+    let (filter_matcher, candidate_rows, viewer_has_thread_mutes) = futures_util::try_join!(
         load_account_filter_matcher(&db, &viewer.id),
-        list_local_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
-        list_remote_home_timeline_statuses(&db, &viewer.id, &cursor, query_limit),
-        list_followed_tag_names(&db, &viewer.id),
+        list_home_timeline_candidate_ids(&db, &viewer.id, &cursor, query_limit),
         account_has_thread_mutes(&db, &viewer.id),
     )?;
-    let (local_tag_statuses, remote_tag_statuses) = if followed_tags.is_empty() {
-        (Vec::new(), Vec::new())
-    } else {
-        futures_util::try_join!(
-            list_local_public_statuses_by_tags_without_legacy_fallback(
-                &db,
-                &followed_tags,
-                &cursor,
-                query_limit,
-            ),
-            list_remote_public_statuses_by_tags_without_legacy_fallback(
-                &db,
-                &followed_tags,
-                &cursor,
-                query_limit,
-            ),
-        )?
+
+    let mut local_candidate_ids = Vec::new();
+    let mut remote_candidate_ids = Vec::new();
+    for row in &candidate_rows {
+        match row.source.as_str() {
+            HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL => {
+                local_candidate_ids.push(row.status_id.clone());
+            }
+            HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE => {
+                remote_candidate_ids.push(row.status_id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let (local_statuses, remote_statuses) = futures_util::try_join!(
+        find_statuses_by_ids(&db, &local_candidate_ids),
+        find_remote_statuses_with_actors_by_ids(&db, &remote_candidate_ids),
+    )?;
+    let mut local_statuses_by_id = local_statuses
+        .into_iter()
+        .map(|status| (status.id.clone(), status))
+        .collect::<HashMap<_, _>>();
+    let mut remote_statuses_by_id = remote_statuses
+        .into_iter()
+        .map(|(status, actor)| (status.id.clone(), (status, actor)))
+        .collect::<HashMap<_, _>>();
+    let (local_accounts_by_id, mut media_by_status_id, muted_actor_uris) = {
+        let local_status_refs = local_statuses_by_id.values().collect::<Vec<_>>();
+        let remote_status_refs = remote_statuses_by_id.values().collect::<Vec<_>>();
+        let (local_accounts_by_id, media_by_status_id) =
+            preload_local_timeline_rows_from_status_refs(&db, &local_status_refs).await?;
+        let muted_actor_uris = preload_muted_timeline_actor_uris(
+            &db,
+            &config,
+            &viewer,
+            &local_status_refs,
+            &remote_status_refs,
+            &local_accounts_by_id,
+        )
+        .await?;
+        (local_accounts_by_id, media_by_status_id, muted_actor_uris)
     };
-    let local_status_refs = local_home_statuses
-        .iter()
-        .chain(local_tag_statuses.iter())
-        .collect::<Vec<_>>();
-    let remote_status_refs = remote_home_statuses
-        .iter()
-        .chain(remote_tag_statuses.iter())
-        .collect::<Vec<_>>();
-    let (local_accounts_by_id, mut media_by_status_id) =
-        preload_local_timeline_rows_from_status_refs(&db, &local_status_refs).await?;
-    let muted_actor_uris = preload_muted_timeline_actor_uris(
-        &db,
-        &config,
-        &viewer,
-        &local_status_refs,
-        &remote_status_refs,
-        &local_accounts_by_id,
-    )
-    .await?;
     let mut candidates = Vec::new();
     let mut seen_status_ids = HashSet::new();
 
-    for status in local_home_statuses {
-        if !seen_status_ids.insert(status.id.clone()) {
+    for row in candidate_rows {
+        if !seen_status_ids.insert(row.status_id.clone()) {
             continue;
         }
-        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
-        else {
-            continue;
-        };
-        if muted_actor_uris.contains(&actor_uri) {
-            continue;
+        match row.source.as_str() {
+            HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL => {
+                let Some(status) = local_statuses_by_id.remove(&row.status_id) else {
+                    continue;
+                };
+                let Some(actor_uri) =
+                    local_status_actor_uri(&config, &local_accounts_by_id, &status)
+                else {
+                    continue;
+                };
+                if muted_actor_uris.contains(&actor_uri) {
+                    continue;
+                }
+                if viewer_has_thread_mutes
+                    && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+                {
+                    continue;
+                }
+                let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+                candidates.push(PublicTimelineCandidateEntry {
+                    timestamp: row.timestamp,
+                    id: status.id.clone(),
+                    candidate: PublicTimelineCandidate::Local { status, media },
+                });
+            }
+            HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE => {
+                let Some((status, actor)) = remote_statuses_by_id.remove(&row.status_id) else {
+                    continue;
+                };
+                if muted_actor_uris.contains(&actor.actor_uri) {
+                    continue;
+                }
+                candidates.push(PublicTimelineCandidateEntry {
+                    timestamp: row.timestamp,
+                    id: status.id.clone(),
+                    candidate: PublicTimelineCandidate::Remote { status, actor },
+                });
+            }
+            _ => {}
         }
-        if viewer_has_thread_mutes
-            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
-        {
-            continue;
-        }
-        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        candidates.push(PublicTimelineCandidateEntry {
-            timestamp: status.created_at.clone(),
-            id: status.id.clone(),
-            candidate: PublicTimelineCandidate::Local { status, media },
-        });
-    }
-
-    for (status, actor) in remote_home_statuses {
-        if !seen_status_ids.insert(status.id.clone()) {
-            continue;
-        }
-        if muted_actor_uris.contains(&actor.actor_uri) {
-            continue;
-        }
-        candidates.push(PublicTimelineCandidateEntry {
-            timestamp: status.published_at.clone(),
-            id: status.id.clone(),
-            candidate: PublicTimelineCandidate::Remote { status, actor },
-        });
-    }
-
-    for status in local_tag_statuses {
-        if !seen_status_ids.insert(status.id.clone()) {
-            continue;
-        }
-        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
-        else {
-            continue;
-        };
-        if muted_actor_uris.contains(&actor_uri) {
-            continue;
-        }
-        if viewer_has_thread_mutes
-            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
-        {
-            continue;
-        }
-        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        candidates.push(PublicTimelineCandidateEntry {
-            timestamp: status.created_at.clone(),
-            id: status.id.clone(),
-            candidate: PublicTimelineCandidate::Local { status, media },
-        });
-    }
-
-    for (status, actor) in remote_tag_statuses {
-        if !seen_status_ids.insert(status.id.clone()) {
-            continue;
-        }
-        if muted_actor_uris.contains(&actor.actor_uri) {
-            continue;
-        }
-        candidates.push(PublicTimelineCandidateEntry {
-            timestamp: status.published_at.clone(),
-            id: status.id.clone(),
-            candidate: PublicTimelineCandidate::Remote { status, actor },
-        });
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);

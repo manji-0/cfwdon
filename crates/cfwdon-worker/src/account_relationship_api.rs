@@ -242,6 +242,7 @@ fn finalize_collection_response(
             .cmp(&left.created_at)
             .then_with(|| right.cursor_id.cmp(&left.cursor_id))
     });
+    let has_next_page = entries.len() > limit as usize;
     if entries.len() > limit as usize {
         entries.truncate(limit as usize);
     }
@@ -259,7 +260,7 @@ fn finalize_collection_response(
         limit,
         first_id,
         last_id,
-        response.len() as u32 >= limit,
+        has_next_page,
         max_id.is_some() || since_id.is_some(),
     )? {
         builder = builder.with_header("Link", &link_header)?;
@@ -780,7 +781,7 @@ pub(crate) async fn account_followers_response(
                 &config,
                 &actor.actor_uri,
                 "followers",
-                limit,
+                limit.saturating_add(1),
                 max_id,
                 since_id,
             )
@@ -863,7 +864,7 @@ pub(crate) async fn account_following_response(
                 &config,
                 &actor.actor_uri,
                 "following",
-                limit,
+                limit.saturating_add(1),
                 max_id,
                 since_id,
             )

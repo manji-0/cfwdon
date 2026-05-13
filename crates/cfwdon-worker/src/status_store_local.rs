@@ -5,6 +5,25 @@ use crate::{
 use std::collections::HashMap;
 use worker::d1::D1Type;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccountStatusVisibilityScope {
+    All,
+    Public,
+    PublicUnlistedPrivate,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AccountStatusListOptions<'a> {
+    pub(crate) max_id: Option<&'a str>,
+    pub(crate) min_id: Option<&'a str>,
+    pub(crate) limit: u32,
+    pub(crate) visibility: AccountStatusVisibilityScope,
+    pub(crate) only_media: bool,
+    pub(crate) exclude_replies: bool,
+    pub(crate) exclude_reblogs: bool,
+    pub(crate) tagged: Option<&'a str>,
+}
+
 pub(crate) async fn require_status_by_id(db: &D1Database, status_id: &str) -> Result<StatusRow> {
     find_status_by_id(db, status_id)
         .await?
@@ -25,6 +44,30 @@ pub(crate) async fn find_status_by_id(
     .bind_refs(&status_id)?
     .first::<StatusRow>(None)
     .await
+}
+
+pub(crate) async fn find_statuses_by_ids(
+    db: &D1Database,
+    status_ids: &[String],
+) -> Result<Vec<StatusRow>> {
+    let ids = unique_ordered_refs(status_ids);
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = sql_placeholders(1, ids.len());
+    let sql = format!(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+         FROM statuses
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    result.results::<StatusRow>()
 }
 
 pub(crate) async fn find_status_by_ap_id(
@@ -129,21 +172,99 @@ pub(crate) async fn list_public_outbox_statuses(
 pub(crate) async fn list_account_statuses(
     db: &D1Database,
     account_id: &str,
-    limit: u32,
+    options: AccountStatusListOptions<'_>,
 ) -> Result<Vec<StatusRow>> {
-    let account_id = D1Type::Text(account_id);
-    let limit = D1Type::Integer(limit as i32);
-    let result = db
-        .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
-             FROM statuses
-             WHERE account_id = ?1
-             ORDER BY created_at DESC
-             LIMIT ?2",
-        )
-        .bind_refs(&[account_id, limit])?
-        .all()
-        .await?;
+    let tagged_pattern = options
+        .tagged
+        .map(|tag| tag.trim().trim_start_matches('#').to_ascii_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| format!("%#{tag}%"));
+    let mut bindings = vec![
+        D1Type::Text(account_id),
+        options.max_id.map_or(D1Type::Null, D1Type::Text),
+        options.min_id.map_or(D1Type::Null, D1Type::Text),
+    ];
+    let mut next_binding = 4;
+    let mut predicates = vec![
+        "account_id = ?1".to_owned(),
+        "(
+            ?2 IS NULL
+            OR NOT EXISTS (SELECT 1 FROM max_cursor)
+            OR EXISTS (
+                SELECT 1 FROM max_cursor
+                WHERE statuses.created_at < max_cursor.created_at
+                   OR (statuses.created_at = max_cursor.created_at AND statuses.id < max_cursor.id)
+            )
+        )"
+        .to_owned(),
+        "(
+            ?3 IS NULL
+            OR NOT EXISTS (SELECT 1 FROM min_cursor)
+            OR EXISTS (
+                SELECT 1 FROM min_cursor
+                WHERE statuses.created_at > min_cursor.created_at
+                   OR (statuses.created_at = min_cursor.created_at AND statuses.id > min_cursor.id)
+            )
+        )"
+        .to_owned(),
+    ];
+
+    match options.visibility {
+        AccountStatusVisibilityScope::All => {}
+        AccountStatusVisibilityScope::Public => {
+            predicates.push("visibility IN ('public', 'unlisted')".to_owned());
+        }
+        AccountStatusVisibilityScope::PublicUnlistedPrivate => {
+            predicates.push("visibility IN ('public', 'unlisted', 'private')".to_owned());
+        }
+    }
+    if options.exclude_reblogs {
+        predicates.push("boost_of_uri IS NULL".to_owned());
+    }
+    if options.exclude_replies {
+        predicates.push(
+            "(in_reply_to_id IS NULL
+              OR NOT EXISTS (SELECT 1 FROM statuses reply WHERE reply.id = statuses.in_reply_to_id)
+              OR EXISTS (
+                  SELECT 1 FROM statuses reply
+                  WHERE reply.id = statuses.in_reply_to_id
+                    AND reply.account_id = ?1
+              ))"
+            .to_owned(),
+        );
+    }
+    if options.only_media {
+        predicates.push(
+            "EXISTS (
+                SELECT 1 FROM media_attachments media
+                WHERE media.status_id = statuses.id
+            )"
+            .to_owned(),
+        );
+    }
+    if let Some(pattern) = tagged_pattern.as_deref() {
+        predicates.push(format!("lower(text_content) LIKE ?{next_binding}"));
+        bindings.push(D1Type::Text(pattern));
+        next_binding += 1;
+    }
+
+    let limit_binding = next_binding;
+    bindings.push(D1Type::Integer(options.limit as i32));
+    let sql = format!(
+        "WITH max_cursor AS (
+            SELECT id, created_at FROM statuses WHERE id = ?2 LIMIT 1
+         ),
+         min_cursor AS (
+            SELECT id, created_at FROM statuses WHERE id = ?3 LIMIT 1
+         )
+         SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+         FROM statuses
+         WHERE {}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?{limit_binding}",
+        predicates.join("\n           AND ")
+    );
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     result.results::<StatusRow>()
 }

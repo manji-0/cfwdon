@@ -216,16 +216,6 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     Ok(rows)
 }
 
-pub(crate) async fn list_local_public_statuses_by_tags_without_legacy_fallback(
-    db: &D1Database,
-    tags: &[String],
-    cursor: &ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<Vec<StatusRow>> {
-    let (rows, _) = list_local_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
-    Ok(rows)
-}
-
 async fn list_local_public_statuses_by_tags_indexed(
     db: &D1Database,
     tags: &[String],

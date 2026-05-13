@@ -1,6 +1,7 @@
 use super::{
-    AccountReference, AccountStatusesQuery, AppConfig, Error, LocalAccount, MastodonStatusResponse,
-    MediaAttachmentRow, MediaKind, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow,
+    AccountReference, AccountStatusListOptions, AccountStatusVisibilityScope, AccountStatusesQuery,
+    AppConfig, Error, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, MediaKind,
+    RemoteAccountStatusListOptions, RemoteActorRow, RemoteStatusAttachmentRow, RemoteStatusRow,
     Request, Response, Result, RouteContext, StatusRow, actor_url,
     apply_remote_actor_social_counts, build_local_status_response_with_quote_count_preloads,
     build_remote_status_response_with_timeline_preloads, can_view_local_status, escape_html,
@@ -8,16 +9,17 @@ use super::{
     fetch_remote_actor_profile_with_document, find_account_by_username,
     find_authenticated_local_account, find_follow_by_target, find_media_attachments_by_status_ids,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
-    find_remote_status_ids_with_media, is_public_activitypub_visibility, list_account_statuses,
-    list_pinned_statuses_for_account, list_public_account_statuses,
-    list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
-    load_account_filter_matcher, load_config, load_in_reply_to_account_ids,
-    load_remote_actor_social_counts_from_document, local_status_ap_id, media_attachment_url,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses,
-    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
-    preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
-    remote_account_rest_id, resolve_account_reference, status_contains_tag, strip_html_tags,
-    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
+    find_remote_status_ids_with_media, is_local_follower_authorized,
+    is_public_activitypub_visibility, list_account_statuses, list_pinned_statuses_for_account,
+    list_public_account_statuses, list_public_remote_statuses_by_actor_uri,
+    list_remote_statuses_by_actor_uri, load_account_filter_matcher, load_config,
+    load_in_reply_to_account_ids, load_remote_actor_social_counts_from_document,
+    local_status_ap_id, media_attachment_url, preload_local_status_viewer_state,
+    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
+    preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
+    resolve_account_reference, status_contains_tag, strip_html_tags, upsert_remote_actor,
+    upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::{D1Database, ResponseBody};
 
@@ -85,6 +87,7 @@ async fn account_statuses_response_for_reference(
 ) -> Result<Response> {
     let query: AccountStatusesQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
+    let query_limit = crate::timeline_fetch_limit(limit);
     let wants_html = prefers_statuses_html(&req)?;
     let min_id = query.min_id.as_deref().or(query.since_id.as_deref());
 
@@ -104,7 +107,30 @@ async fn account_statuses_response_for_reference(
                 )
                 .await?
             } else {
-                list_account_statuses(&db, &account.id, limit).await?
+                let visibility = match viewer.as_ref() {
+                    Some(viewer) if viewer.id == account.id => AccountStatusVisibilityScope::All,
+                    Some(viewer)
+                        if is_local_follower_authorized(&db, &viewer.id, &account.id).await? =>
+                    {
+                        AccountStatusVisibilityScope::PublicUnlistedPrivate
+                    }
+                    _ => AccountStatusVisibilityScope::Public,
+                };
+                list_account_statuses(
+                    &db,
+                    &account.id,
+                    AccountStatusListOptions {
+                        max_id: query.max_id.as_deref(),
+                        min_id,
+                        limit: query_limit,
+                        visibility,
+                        only_media: query.only_media.unwrap_or(false),
+                        exclude_replies: query.exclude_replies.unwrap_or(false),
+                        exclude_reblogs: query.exclude_reblogs.unwrap_or(false),
+                        tagged: query.tagged.as_deref(),
+                    },
+                )
+                .await?
             };
             let older_page_url = if wants_html && !is_pinned_page && statuses.len() > limit as usize
             {
@@ -278,11 +304,25 @@ async fn account_statuses_response_for_reference(
                 )
                 .await?
             } else {
-                list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?
+                list_remote_statuses_by_actor_uri(
+                    &db,
+                    &actor.actor_uri,
+                    RemoteAccountStatusListOptions {
+                        max_id: query.max_id.as_deref(),
+                        min_id,
+                        limit: query_limit,
+                        visibility: AccountStatusVisibilityScope::PublicUnlistedPrivate,
+                        only_media: query.only_media.unwrap_or(false),
+                        exclude_replies: query.exclude_replies.unwrap_or(false),
+                        exclude_reblogs: query.exclude_reblogs.unwrap_or(false),
+                        tagged: query.tagged.as_deref(),
+                    },
+                )
+                .await?
             };
             let has_visible_statuses = statuses
                 .iter()
-                .any(|status| is_public_activitypub_visibility(&status.visibility));
+                .any(|status| remote_account_status_visible(status, is_following_remote_actor));
             if !has_visible_statuses
                 && is_following_remote_actor
                 && !wants_html
@@ -293,7 +333,21 @@ async fn account_statuses_response_for_reference(
                     refresh_remote_status_actor(&db, &config, actor, true, Some(limit)).await?;
                 actor = refreshed_actor;
                 actor_social_counts = counts;
-                statuses = list_remote_statuses_by_actor_uri(&db, &actor.actor_uri, limit).await?;
+                statuses = list_remote_statuses_by_actor_uri(
+                    &db,
+                    &actor.actor_uri,
+                    RemoteAccountStatusListOptions {
+                        max_id: query.max_id.as_deref(),
+                        min_id,
+                        limit: query_limit,
+                        visibility: AccountStatusVisibilityScope::PublicUnlistedPrivate,
+                        only_media: query.only_media.unwrap_or(false),
+                        exclude_replies: query.exclude_replies.unwrap_or(false),
+                        exclude_reblogs: query.exclude_reblogs.unwrap_or(false),
+                        tagged: query.tagged.as_deref(),
+                    },
+                )
+                .await?;
             }
             let transient_statuses = if !is_following_remote_actor && !wants_html {
                 let (statuses, counts) =
@@ -418,7 +472,7 @@ async fn account_statuses_response_for_reference(
             };
             let mut response = Vec::new();
             for status in statuses {
-                if !is_public_activitypub_visibility(&status.visibility) {
+                if !remote_account_status_visible(&status, is_following_remote_actor) {
                     continue;
                 }
                 if query.pinned.unwrap_or(false) {
@@ -728,6 +782,11 @@ fn prefers_statuses_html(req: &Request) -> Result<bool> {
     let accept = req.headers().get("Accept")?.unwrap_or_default();
     let accept = accept.to_ascii_lowercase();
     Ok(accept.contains("text/html") && !accept.contains("application/json"))
+}
+
+fn remote_account_status_visible(status: &RemoteStatusRow, is_following_actor: bool) -> bool {
+    is_public_activitypub_visibility(&status.visibility)
+        || (is_following_actor && status.visibility == "private")
 }
 
 fn account_statuses_older_page_url(req: &Request, limit: u32, max_id: &str) -> Result<String> {
