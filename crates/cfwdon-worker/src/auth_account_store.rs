@@ -3,8 +3,8 @@ use cfwdon_domain::LocalAccount;
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
-use super::account_store::AccountRow;
 use super::crypto_keys::generate_account_key_material;
+use crate::AccountRow;
 
 pub(crate) async fn resolve_local_account(
     db: &D1Database,

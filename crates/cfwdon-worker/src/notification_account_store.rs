@@ -1,4 +1,4 @@
-use crate::account_store::AccountRow;
+use crate::AccountRow;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use worker::d1::D1Type;

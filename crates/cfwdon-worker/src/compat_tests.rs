@@ -1,4 +1,4 @@
-use crate::account_store::AccountStats;
+use crate::AccountStats;
 use crate::build_activitypub_actor_document;
 use crate::build_announcements_document;
 use crate::build_app_verify_credentials_document;

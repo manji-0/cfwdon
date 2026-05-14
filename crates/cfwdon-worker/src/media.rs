@@ -1,9 +1,14 @@
+mod attachment_store;
+mod request_parsing;
+mod storage;
+
+pub(crate) use attachment_store::*;
+pub(crate) use request_parsing::*;
+pub(crate) use storage::*;
+
 use super::{
-    Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext,
-    apply_media_update, delete_media_attachment_row, delete_orphan_media, delete_queued_media,
-    find_media_attachment_by_id, list_orphan_media, load_config, log_r2_operation,
-    media_object_url, observability_started_at_ms, parse_media_update_request, parse_media_upload,
-    require_authenticated_local_account, store_media_attachment,
+    Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext, load_config,
+    media_object_url, observability_started_at_ms, require_authenticated_local_account,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;

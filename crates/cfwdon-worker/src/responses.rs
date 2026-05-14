@@ -110,4 +110,4 @@ pub(crate) struct MastodonReportResponse {
     pub(crate) rule_ids: Option<Vec<String>>,
 }
 
-pub(crate) use crate::response_collections::*;
+pub(crate) use crate::response::*;

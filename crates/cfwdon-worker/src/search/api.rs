@@ -1,12 +1,12 @@
 use super::accounts::{
     account_search_non_exact_limit, resolve_cached_exact_search_account, search_cached_accounts,
 };
-use crate::account_store::{
-    DirectoryOrder, directory_order, list_discoverable_accounts_with_sort_key, load_account_stats,
-};
 use crate::auth::find_authenticated_local_account;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::{
+    DirectoryOrder, directory_order, list_discoverable_accounts_with_sort_key, load_account_stats,
+};
 use crate::{
     find_remote_actor_by_actor_uri, load_remote_actor_status_summary, resolve_search_account,
 };
