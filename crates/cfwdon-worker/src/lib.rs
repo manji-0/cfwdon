@@ -71,7 +71,6 @@ pub(crate) use conversations::*;
 pub(crate) use db_utils::*;
 pub(crate) use delivery::*;
 pub(crate) use discovery::*;
-pub(crate) use domain_blocks::*;
 pub(crate) use featured_tags::*;
 pub(crate) use federation::*;
 pub(crate) use filters::*;
@@ -106,7 +105,6 @@ pub(crate) use search::*;
 #[allow(unused_imports)]
 pub(crate) use statuses::*;
 pub(crate) use streaming_types::*;
-pub(crate) use suggestions::*;
 pub(crate) use tag_actions::*;
 pub(crate) use tags::*;
 pub(crate) use time_html::*;

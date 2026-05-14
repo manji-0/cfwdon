@@ -1,6 +1,9 @@
-use crate::{
+use crate::domain_blocks::{
     create_domain_block_response, delete_domain_block_response, domain_blocks_preview_response,
-    domain_blocks_response, instance_activity_response, instance_domain_blocks_response,
+    domain_blocks_response,
+};
+use crate::instance::{
+    instance_activity_response, instance_domain_blocks_response,
     instance_extended_description_response, instance_languages_response, instance_peers_response,
     instance_peers_search_response, instance_privacy_policy_response, instance_rules_response,
     instance_summary_response, instance_terms_of_service_response,

@@ -4,6 +4,7 @@ pub(crate) use crate::*;
 mod request_parsing;
 mod search;
 pub(crate) use request_parsing::*;
+#[allow(unused_imports)]
 pub(crate) use search::*;
 
 pub(crate) use self::request_parsing::{

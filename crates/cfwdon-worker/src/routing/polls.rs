@@ -1,7 +1,7 @@
-use crate::{
-    delete_scheduled_status_response, poll_response, process_expired_polls,
-    scheduled_status_response, scheduled_statuses_response, update_scheduled_status_response,
-    vote_in_poll,
+use crate::polls::{poll_response, process_expired_polls, vote_in_poll};
+use crate::scheduled_statuses::{
+    delete_scheduled_status_response, scheduled_status_response, scheduled_statuses_response,
+    update_scheduled_status_response,
 };
 use worker::Router;
 

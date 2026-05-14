@@ -1,7 +1,7 @@
-use crate::{
-    delete_suggestion_response, search_v1, search_v2, suggestions_v1_response,
-    suggestions_v2_response,
+use crate::suggestions::{
+    delete_suggestion_response, suggestions_v1_response, suggestions_v2_response,
 };
+use crate::timelines::{search_v1, search_v2};
 use worker::Router;
 
 pub(crate) fn add_search_routes(router: Router<'static, ()>) -> Router<'static, ()> {
