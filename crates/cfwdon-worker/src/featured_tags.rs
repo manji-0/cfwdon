@@ -1,12 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    AccountReference, Request, Response, Result, RouteContext, actor_url,
-    extract_hashtags_from_text, find_account_by_username, instance_base_url, load_config,
-    normalize_hashtag, require_authenticated_local_account, resolve_account_reference,
-};
+use crate::auth::find_account_by_username;
+use crate::content_helpers::extract_hashtags_from_text;
+use crate::instance::{actor_url, instance_base_url};
+use crate::profile::require_authenticated_local_account;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::runtime_config::load_config;
+use crate::tags::normalize_hashtag;
 use serde::Deserialize;
 use worker::d1::D1Type;
+use worker::{Request, Response, Result, RouteContext};
 
 const MAX_FEATURED_TAGS: usize = 10;
 

@@ -5,7 +5,8 @@ use crate::content_helpers::{
     extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
 };
 use crate::responses::{MastodonTagHistoryEntry, MastodonTagResponse};
-use crate::{
+use crate::search::search_text_match_rank;
+use crate::statuses::{
     ResolvedTimelineCursor, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses,
 };
@@ -16,10 +17,7 @@ use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
 pub(crate) fn tag_search_rank(query: &str, tag: &str) -> (u8, String) {
-    (
-        crate::search_text_match_rank(query, tag),
-        normalize_hashtag(tag),
-    )
+    (search_text_match_rank(query, tag), normalize_hashtag(tag))
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]

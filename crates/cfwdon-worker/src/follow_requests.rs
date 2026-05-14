@@ -1,15 +1,21 @@
-use crate::{
-    AppConfig, D1Database, MastodonAccountResponse, RemoteActorProfile, Request, Response, Result,
-    RouteContext, build_internal_cursor_link_header, build_reject_follow_activity,
-    build_relationship_for_target, build_stored_accept_follow_activity, count_rows,
-    find_account_by_id, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    load_account_stats, load_config, parse_internal_pagination_id, parse_lookup_handle,
-    remote_account_rest_id, remote_actor_uri_from_rest_id, require_authenticated_local_account,
-    upsert_follower_by_inbox,
-};
+use crate::accounts::load_account_stats;
+use crate::activitypub::{build_reject_follow_activity, build_stored_accept_follow_activity};
+use crate::auth::find_account_by_id;
+use crate::db_utils::count_rows;
+use crate::federation::RemoteActorProfile;
+use crate::inbox::upsert_follower_by_inbox;
+use crate::instance::{parse_lookup_handle, remote_account_rest_id, remote_actor_uri_from_rest_id};
+use crate::profile::require_authenticated_local_account;
+use crate::relationships::build_relationship_for_target;
+use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain};
+use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::responses::MastodonAccountResponse;
+use crate::runtime_config::load_config;
+use cfwdon_core::AppConfig;
 use serde::Deserialize;
 use url::Url;
 use worker::d1::D1Type;
+use worker::{D1Database, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 struct FollowRequestsQuery {

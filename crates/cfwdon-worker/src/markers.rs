@@ -1,9 +1,9 @@
-use crate::{
-    Request, Response, Result, RouteContext, load_config, require_authenticated_local_account,
-};
+use crate::profile::require_authenticated_local_account;
+use crate::runtime_config::load_config;
 use serde::Deserialize;
 use worker::Error;
 use worker::d1::D1Type;
+use worker::{Request, Response, Result, RouteContext};
 
 const HOME_MARKER_SCOPE: &str = "home";
 const NOTIFICATIONS_MARKER_SCOPE: &str = "notifications";
