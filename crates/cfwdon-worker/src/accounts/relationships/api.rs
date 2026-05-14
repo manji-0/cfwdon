@@ -7,11 +7,12 @@ use super::collections::{
 };
 use super::query::parse_relationship_query_ids;
 use super::resolution::resolve_requested_account_reference;
-use crate::{AccountReference, actor_url, build_relationship_for_target};
-use crate::{
-    Request, Response, Result, RouteContext, find_authenticated_local_account, load_config,
-    remote_account_rest_id, resolve_account_reference,
-};
+use crate::auth::find_authenticated_local_account;
+use crate::instance::{actor_url, remote_account_rest_id};
+use crate::relationships::build_relationship_for_target;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::runtime_config::load_config;
+use worker::{Request, Response, Result, RouteContext};
 
 pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);

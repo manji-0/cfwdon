@@ -1,13 +1,13 @@
-use crate::public_key_id;
-use crate::{
-    AppConfig, LocalAccount, RemoteActorProfile, build_signature_signing_string,
-    cached_remote_actor_matches_key, extract_activity_actor_uri, fetch_remote_actor_profile,
-    find_cached_remote_actor_profile_by_actor_uri, parse_http_url_parts, parse_signature_header,
-    upsert_remote_actor, validate_request_date, validate_request_digest,
+use super::{
+    build_signature_signing_string, cached_remote_actor_matches_key, extract_activity_actor_uri,
+    now_http_date_string, parse_signature_header, sha256_http_digest, sign_http_signature,
+    validate_request_date, validate_request_digest, verify_http_signature_bytes,
 };
-use crate::{
-    now_http_date_string, sha256_http_digest, sign_http_signature, verify_http_signature_bytes,
-};
+use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts};
+use crate::instance::public_key_id;
+use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use wasm_bindgen::JsValue;
 use worker::{D1Database, Error, Fetch, Headers, Method, Request, RequestInit, Result};
 

@@ -1,9 +1,10 @@
-use crate::profile::UpdateCredentialsRequest;
-use crate::{
-    ProfileMediaUpload, enqueue_profile_update_activities, find_account_by_id, generate_entity_id,
-    profile_field_from_update, render_status_html,
-};
-use crate::{delete_r2_object, log_r2_operation, observability_started_at_ms};
+use crate::auth::find_account_by_id;
+use crate::delivery::enqueue_profile_update_activities;
+use crate::id_utils::generate_entity_id;
+use crate::media::{delete_r2_object, log_r2_operation};
+use crate::observability::observability_started_at_ms;
+use crate::profile::{ProfileMediaUpload, UpdateCredentialsRequest, profile_field_from_update};
+use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::d1::D1Type;

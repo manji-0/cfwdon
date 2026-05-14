@@ -1,5 +1,8 @@
-use crate::{AccountRow, FollowerTargetRow, LocalAccount, RemoteActorRow, UsernameRow};
-use crate::{sql_placeholders, unique_ordered_refs};
+use crate::accounts::AccountRow;
+use crate::db_utils::{sql_placeholders, unique_ordered_refs};
+use crate::relationship::{FollowerTargetRow, UsernameRow};
+use crate::remote::RemoteActorRow;
+use cfwdon_domain::LocalAccount;
 use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
