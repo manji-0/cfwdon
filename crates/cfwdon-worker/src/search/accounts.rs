@@ -1,16 +1,18 @@
 use super::helpers::{
     normalize_search_match_text, normalize_search_query_input, search_text_match_rank,
 };
-use crate::RemoteActorRow;
-use crate::instance_host;
-use crate::responses::MastodonAccountResponse;
-use crate::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
-use crate::{
-    actor_url, apply_remote_actor_social_counts, fetch_remote_actor_profile_with_document,
-    find_account_by_username, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    list_accepted_follow_target_uris, load_remote_actor_social_counts_from_document,
-    load_remote_actor_status_summaries, parse_lookup_handle, strip_html_tags, upsert_remote_actor,
+use crate::accounts::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
+use crate::auth::find_account_by_username;
+use crate::content_helpers::strip_html_tags;
+use crate::instance::{actor_url, instance_host, parse_lookup_handle};
+use crate::relationship::list_accepted_follow_target_uris;
+use crate::remote::{
+    RemoteActorRow, apply_remote_actor_social_counts, fetch_remote_actor_profile_with_document,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    load_remote_actor_social_counts_from_document, load_remote_actor_status_summaries,
+    upsert_remote_actor,
 };
+use crate::responses::MastodonAccountResponse;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::d1::D1Type;
