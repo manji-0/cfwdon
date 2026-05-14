@@ -1,11 +1,11 @@
 use crate::AccountStats;
+use crate::StatusRow;
 use crate::build_activitypub_actor_document;
 use crate::build_announcements_document;
 use crate::build_app_verify_credentials_document;
 use crate::build_featured_collection_document;
 use crate::relationships::RelationshipResponse;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
-use crate::status_store::StatusRow;
 use crate::{
     build_default_privacy_policy_document, build_donation_campaign_document,
     build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,

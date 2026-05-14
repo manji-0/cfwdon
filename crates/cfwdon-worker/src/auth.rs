@@ -1,5 +1,15 @@
-use super::auth_account_store::find_account_by_email;
-use super::auth_jwt::verify_access_jwt;
+#[allow(unused_imports)]
+pub(crate) use crate::*;
+
+mod account_store;
+mod jwt;
+#[allow(unused_imports)]
+pub(crate) use account_store::*;
+#[allow(unused_imports)]
+pub(crate) use jwt::*;
+
+pub(crate) use self::account_store::find_account_by_email;
+use self::jwt::verify_access_jwt;
 use super::oauth_apps::{
     OAuthAccessTokenRow, app_bearer_token_from_request, find_oauth_access_token_by_bearer_token,
     find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
@@ -8,7 +18,7 @@ use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Error, Request, Result};
 
-pub(crate) use super::auth_account_store::{
+pub(crate) use self::account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
 };
 

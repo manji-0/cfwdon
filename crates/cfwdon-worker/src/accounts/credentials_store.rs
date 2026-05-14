@@ -1,6 +1,7 @@
+use crate::profile::UpdateCredentialsRequest;
 use crate::{
-    ProfileMediaUpload, UpdateCredentialsRequest, enqueue_profile_update_activities,
-    find_account_by_id, generate_entity_id, profile_field_from_update, render_status_html,
+    ProfileMediaUpload, enqueue_profile_update_activities, find_account_by_id, generate_entity_id,
+    profile_field_from_update, render_status_html,
 };
 use crate::{delete_r2_object, log_r2_operation, observability_started_at_ms};
 use cfwdon_core::AppConfig;
@@ -292,7 +293,7 @@ async fn store_profile_media(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{UpdateCredentialsField, UpdateCredentialsSource};
+    use crate::profile::{UpdateCredentialsField, UpdateCredentialsSource};
 
     fn test_account() -> LocalAccount {
         LocalAccount {

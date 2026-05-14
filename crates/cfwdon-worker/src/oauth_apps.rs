@@ -1,7 +1,7 @@
+use crate::auth::find_account_by_email;
 use crate::{
-    Request, Response, Result, RouteContext, escape_html, find_account_by_email,
-    find_account_by_id, find_account_by_username, generate_entity_id, load_config,
-    now_unix_timestamp,
+    Request, Response, Result, RouteContext, escape_html, find_account_by_id,
+    find_account_by_username, generate_entity_id, load_config, now_unix_timestamp,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};

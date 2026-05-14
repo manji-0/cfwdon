@@ -1,3 +1,11 @@
+#[allow(unused_imports)]
+pub(crate) use crate::*;
+
+mod expiration_store;
+mod request_parsing;
+pub(crate) use expiration_store::*;
+pub(crate) use request_parsing::*;
+
 use super::auth::{
     extract_authenticated_user, find_account_by_id, find_authenticated_local_account,
 };
@@ -8,8 +16,7 @@ use super::{
     apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
     build_remote_mastodon_poll_response, can_view_local_status, find_remote_actor_by_actor_uri,
     find_remote_status_by_id, find_remote_status_poll_by_id, find_remote_status_poll_by_status_id,
-    find_status_by_id, find_status_poll_by_id, list_expired_polls_requiring_federation_close,
-    mark_status_poll_federated_closed, parse_poll_vote_request, refresh_remote_poll_if_needed,
+    find_status_by_id, find_status_poll_by_id, refresh_remote_poll_if_needed,
     remote_poll_is_visible_to_viewer, send_poll_end_notifications,
 };
 use serde::{Deserialize, Serialize};

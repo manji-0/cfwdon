@@ -1,4 +1,4 @@
-use crate::instance_identity::public_key_id;
+use crate::public_key_id;
 use crate::{
     AppConfig, LocalAccount, RemoteActorProfile, build_signature_signing_string,
     cached_remote_actor_matches_key, extract_activity_actor_uri, fetch_remote_actor_profile,
