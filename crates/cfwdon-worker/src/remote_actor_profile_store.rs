@@ -14,67 +14,38 @@ fn json_boolish(value: Option<&serde_json::Value>) -> bool {
 
 fn remote_actor_profile_from_value(value: &serde_json::Value) -> RemoteActorProfile {
     RemoteActorProfile {
-        actor_uri: value
-            .get("actor_uri")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        username: value
-            .get("username")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        domain: value
-            .get("domain")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        actor_uri: json_string(value, "actor_uri"),
+        username: json_string(value, "username"),
+        domain: json_string(value, "domain"),
         locked: json_boolish(value.get("locked")),
         bot: json_boolish(value.get("bot")),
         discoverable: json_boolish(value.get("discoverable")),
         indexable: json_boolish(value.get("indexable")),
-        inbox_uri: value
-            .get("inbox_uri")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        shared_inbox_uri: value
-            .get("shared_inbox_uri")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        public_key_id: value
-            .get("public_key_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        public_key_pem: value
-            .get("public_key_pem")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        display_name: value
-            .get("display_name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        summary_html: value
-            .get("summary_html")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        profile_url: value
-            .get("profile_url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        avatar_url: value
-            .get("avatar_url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        header_url: value
-            .get("header_url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
+        inbox_uri: json_string(value, "inbox_uri"),
+        shared_inbox_uri: optional_json_string(value, "shared_inbox_uri"),
+        public_key_id: json_string(value, "public_key_id"),
+        public_key_pem: json_string(value, "public_key_pem"),
+        display_name: json_string(value, "display_name"),
+        summary_html: json_string(value, "summary_html"),
+        profile_url: optional_json_string(value, "profile_url"),
+        avatar_url: optional_json_string(value, "avatar_url"),
+        header_url: optional_json_string(value, "header_url"),
     }
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 pub(crate) async fn find_cached_remote_actor_profile_by_actor_uri(
@@ -196,4 +167,88 @@ pub(crate) async fn upsert_remote_actors(
     db.batch(statements).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_actor_profile_from_value_maps_optional_and_boolish_fields() {
+        let profile = remote_actor_profile_from_value(&serde_json::json!({
+            "actor_uri": "https://remote.example/users/alice",
+            "username": "alice",
+            "domain": "remote.example",
+            "locked": 1,
+            "bot": false,
+            "discoverable": true,
+            "indexable": 0,
+            "inbox_uri": "https://remote.example/users/alice/inbox",
+            "shared_inbox_uri": "https://remote.example/inbox",
+            "public_key_id": "https://remote.example/users/alice#main-key",
+            "public_key_pem": "pem",
+            "display_name": "Alice",
+            "summary_html": "<p>Hello</p>",
+            "profile_url": "https://remote.example/@alice",
+            "avatar_url": "https://remote.example/avatar.png",
+            "header_url": "https://remote.example/header.png"
+        }));
+
+        assert_eq!(profile.actor_uri, "https://remote.example/users/alice");
+        assert_eq!(profile.username, "alice");
+        assert_eq!(profile.domain, "remote.example");
+        assert!(profile.locked);
+        assert!(!profile.bot);
+        assert!(profile.discoverable);
+        assert!(!profile.indexable);
+        assert_eq!(
+            profile.inbox_uri,
+            "https://remote.example/users/alice/inbox"
+        );
+        assert_eq!(
+            profile.shared_inbox_uri.as_deref(),
+            Some("https://remote.example/inbox")
+        );
+        assert_eq!(
+            profile.public_key_id,
+            "https://remote.example/users/alice#main-key"
+        );
+        assert_eq!(profile.public_key_pem, "pem");
+        assert_eq!(profile.display_name, "Alice");
+        assert_eq!(profile.summary_html, "<p>Hello</p>");
+        assert_eq!(
+            profile.profile_url.as_deref(),
+            Some("https://remote.example/@alice")
+        );
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some("https://remote.example/avatar.png")
+        );
+        assert_eq!(
+            profile.header_url.as_deref(),
+            Some("https://remote.example/header.png")
+        );
+    }
+
+    #[test]
+    fn remote_actor_profile_from_value_uses_empty_and_false_defaults() {
+        let profile = remote_actor_profile_from_value(&serde_json::json!({}));
+
+        assert_eq!(profile.actor_uri, "");
+        assert_eq!(profile.username, "");
+        assert_eq!(profile.domain, "");
+        assert!(!profile.locked);
+        assert!(!profile.bot);
+        assert!(!profile.discoverable);
+        assert!(!profile.indexable);
+        assert_eq!(profile.inbox_uri, "");
+        assert!(profile.shared_inbox_uri.is_none());
+        assert_eq!(profile.public_key_id, "");
+        assert_eq!(profile.public_key_pem, "");
+        assert_eq!(profile.display_name, "");
+        assert_eq!(profile.summary_html, "");
+        assert!(profile.profile_url.is_none());
+        assert!(profile.avatar_url.is_none());
+        assert!(profile.header_url.is_none());
+    }
 }

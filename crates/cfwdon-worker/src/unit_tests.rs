@@ -1,6 +1,6 @@
 use base64::Engine;
 
-use super::router::is_cors_enabled_path;
+use super::is_cors_enabled_path;
 use super::{
     AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, AccountStatusesQuery,
     CreateStatusPollRequest, HomeTimelineQuery, LinkTimelineQuery, MastodonAccountResponse,
@@ -5005,6 +5005,30 @@ fn parse_remote_actor_profile_document_extracts_profile_fields() {
     );
     assert!(profile.locked);
     assert!(profile.bot);
+    assert!(profile.discoverable);
+    assert!(profile.indexable);
+}
+
+#[test]
+fn parse_remote_actor_profile_document_uses_fallback_identity_fields() {
+    let actor = serde_json::json!({
+        "type": "Person",
+        "inbox": "https://remote.example/users/bob/inbox",
+        "publicKey": {
+            "id": "https://remote.example/users/bob#main-key",
+            "publicKeyPem": "pem"
+        }
+    });
+
+    let profile =
+        parse_remote_actor_profile_document(&actor, "https://remote.example/users/Bob").unwrap();
+    assert_eq!(profile.actor_uri, "https://remote.example/users/Bob");
+    assert_eq!(profile.username, "bob");
+    assert_eq!(profile.domain, "remote.example");
+    assert_eq!(profile.display_name, "");
+    assert_eq!(profile.summary_html, "");
+    assert!(!profile.locked);
+    assert!(!profile.bot);
     assert!(profile.discoverable);
     assert!(profile.indexable);
 }

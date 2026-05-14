@@ -119,6 +119,23 @@ struct RemoteCollectionItemRevalidationRow {
     feature_authorization: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RemoteCollectionDraft {
+    id: String,
+    actor_uri: String,
+    uri: String,
+    name: String,
+    description: String,
+    language: Option<String>,
+    sensitive: bool,
+    discoverable: bool,
+    tag_name: Option<String>,
+    url: Option<String>,
+    published_at: Option<String>,
+    remote_updated_at: Option<String>,
+    includes_items: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct CountRow {
     count: u64,
@@ -1640,67 +1657,78 @@ fn featured_collection_items(object: &serde_json::Value) -> Vec<&serde_json::Val
         .unwrap_or_default()
 }
 
-async fn upsert_remote_collection_from_object(
-    db: &worker::D1Database,
-    config: &cfwdon_core::AppConfig,
+fn remote_collection_draft_from_object(
     remote_actor: &RemoteActorProfile,
     object: &serde_json::Value,
-) -> Result<Option<RemoteCollectionRow>> {
+) -> Option<RemoteCollectionDraft> {
     if object.get("type").and_then(serde_json::Value::as_str) != Some("FeaturedCollection")
         || !collection_object_attributed_to_actor(object, &remote_actor.actor_uri)
     {
-        return Ok(None);
+        return None;
     }
-    let Some(collection_uri) = activitypub_value_id(Some(object)) else {
-        return Ok(None);
-    };
-    let Some(name) = object
+    let collection_uri = activitypub_value_id(Some(object))?;
+    let name = object
         .get("name")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
+        .filter(|value| !value.is_empty())?;
     let (description, language) = featured_collection_description(object);
-    let collection_id = remote_account_rest_id(collection_uri);
-    let tag_name = featured_collection_tag_name(object);
-    let published = object.get("published").and_then(serde_json::Value::as_str);
-    let updated = object.get("updated").and_then(serde_json::Value::as_str);
-    let url = activitypub_value_id(object.get("url"));
+
+    Some(RemoteCollectionDraft {
+        id: remote_account_rest_id(collection_uri),
+        actor_uri: remote_actor.actor_uri.clone(),
+        uri: collection_uri.to_owned(),
+        name: name.to_owned(),
+        description,
+        language,
+        sensitive: object
+            .get("sensitive")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        discoverable: object
+            .get("discoverable")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        tag_name: featured_collection_tag_name(object),
+        url: activitypub_value_id(object.get("url")).map(ToOwned::to_owned),
+        published_at: object
+            .get("published")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        remote_updated_at: object
+            .get("updated")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        includes_items: object
+            .get("orderedItems")
+            .or_else(|| object.get("items"))
+            .is_some(),
+    })
+}
+
+async fn upsert_remote_collection_draft(
+    db: &worker::D1Database,
+    draft: &RemoteCollectionDraft,
+) -> Result<()> {
     let bindings = [
-        D1Type::Text(collection_id.as_str()),
-        D1Type::Text(remote_actor.actor_uri.as_str()),
-        D1Type::Text(collection_uri),
-        D1Type::Text(name),
-        D1Type::Text(description.as_str()),
-        language.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(
-            if object
-                .get("sensitive")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                1
-            } else {
-                0
-            },
-        ),
-        D1Type::Integer(
-            if object
-                .get("discoverable")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true)
-            {
-                1
-            } else {
-                0
-            },
-        ),
-        tag_name.as_deref().map_or(D1Type::Null, D1Type::Text),
-        url.map_or(D1Type::Null, D1Type::Text),
-        published.map_or(D1Type::Null, D1Type::Text),
-        updated.map_or(D1Type::Null, D1Type::Text),
+        D1Type::Text(draft.id.as_str()),
+        D1Type::Text(draft.actor_uri.as_str()),
+        D1Type::Text(draft.uri.as_str()),
+        D1Type::Text(draft.name.as_str()),
+        D1Type::Text(draft.description.as_str()),
+        draft.language.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(i32::from(draft.sensitive)),
+        D1Type::Integer(i32::from(draft.discoverable)),
+        draft.tag_name.as_deref().map_or(D1Type::Null, D1Type::Text),
+        draft.url.as_deref().map_or(D1Type::Null, D1Type::Text),
+        draft
+            .published_at
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        draft
+            .remote_updated_at
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
     ];
     db.prepare(
         "INSERT INTO remote_account_collections (
@@ -1734,23 +1762,25 @@ async fn upsert_remote_collection_from_object(
     )
     .bind_refs(bindings.iter())?
     .run()
-    .await?;
+    .await
+    .map(|_| ())
+}
 
-    let row = remote_collection_row_by_uri(db, collection_uri).await?;
-    if row.is_some()
-        && object
-            .get("orderedItems")
-            .or_else(|| object.get("items"))
-            .is_some()
-    {
-        replace_remote_collection_items_from_object(
-            db,
-            config,
-            &collection_id,
-            collection_uri,
-            object,
-        )
-        .await?;
+async fn upsert_remote_collection_from_object(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    remote_actor: &RemoteActorProfile,
+    object: &serde_json::Value,
+) -> Result<Option<RemoteCollectionRow>> {
+    let Some(draft) = remote_collection_draft_from_object(remote_actor, object) else {
+        return Ok(None);
+    };
+    upsert_remote_collection_draft(db, &draft).await?;
+
+    let row = remote_collection_row_by_uri(db, &draft.uri).await?;
+    if row.is_some() && draft.includes_items {
+        replace_remote_collection_items_from_object(db, config, &draft.id, &draft.uri, object)
+            .await?;
     }
     Ok(row)
 }
@@ -3131,6 +3161,27 @@ mod tests {
         }
     }
 
+    fn remote_actor_profile_fixture(actor_uri: &str) -> RemoteActorProfile {
+        RemoteActorProfile {
+            actor_uri: actor_uri.to_owned(),
+            username: "alice".to_owned(),
+            domain: "remote.example".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            inbox_uri: "https://remote.example/users/alice/inbox".to_owned(),
+            shared_inbox_uri: Some("https://remote.example/inbox".to_owned()),
+            public_key_id: "https://remote.example/users/alice#main-key".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            display_name: "Alice".to_owned(),
+            summary_html: String::new(),
+            profile_url: Some("https://remote.example/@alice".to_owned()),
+            avatar_url: None,
+            header_url: None,
+        }
+    }
+
     #[test]
     fn collection_list_document_uses_upstream_root_key() {
         let document = collection_list_document(vec![serde_json::json!({ "id": "collection-1" })]);
@@ -3328,6 +3379,53 @@ mod tests {
             Some("art".to_owned())
         );
         assert_eq!(featured_collection_items(&object).len(), 1);
+    }
+
+    #[test]
+    fn remote_collection_draft_from_object_extracts_storage_fields() {
+        let actor = remote_actor_profile_fixture("https://remote.example/users/alice");
+        let object = serde_json::json!({
+            "id": "https://remote.example/users/alice/collections/1",
+            "type": "FeaturedCollection",
+            "name": " Art ",
+            "attributedTo": actor.actor_uri,
+            "summary": "Sketches",
+            "contentMap": { "fr": "Dessins" },
+            "sensitive": true,
+            "discoverable": false,
+            "topic": { "type": "Hashtag", "name": "#Art" },
+            "url": { "id": "https://remote.example/@alice/collections/art" },
+            "published": "2025-01-02T03:04:05Z",
+            "updated": "2025-01-03T03:04:05Z",
+            "items": []
+        });
+
+        let draft = remote_collection_draft_from_object(&actor, &object).unwrap();
+        assert_eq!(
+            draft.id,
+            remote_account_rest_id("https://remote.example/users/alice/collections/1")
+        );
+        assert_eq!(draft.actor_uri, actor.actor_uri);
+        assert_eq!(
+            draft.uri,
+            "https://remote.example/users/alice/collections/1"
+        );
+        assert_eq!(draft.name, "Art");
+        assert_eq!(draft.description, "Sketches");
+        assert_eq!(draft.language.as_deref(), None);
+        assert!(draft.sensitive);
+        assert!(!draft.discoverable);
+        assert_eq!(draft.tag_name.as_deref(), Some("art"));
+        assert_eq!(
+            draft.url.as_deref(),
+            Some("https://remote.example/@alice/collections/art")
+        );
+        assert_eq!(draft.published_at.as_deref(), Some("2025-01-02T03:04:05Z"));
+        assert_eq!(
+            draft.remote_updated_at.as_deref(),
+            Some("2025-01-03T03:04:05Z")
+        );
+        assert!(draft.includes_items);
     }
 
     #[test]

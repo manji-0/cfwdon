@@ -83,6 +83,14 @@ fn instance_polls_configuration() -> serde_json::Value {
     })
 }
 
+fn instance_statuses_configuration() -> serde_json::Value {
+    serde_json::json!({
+        "max_characters": 500,
+        "max_media_attachments": 4,
+        "characters_reserved_per_url": 23,
+    })
+}
+
 fn instance_thumbnail_document(config: &AppConfig) -> Option<serde_json::Value> {
     let thumbnail_url = config.instance_thumbnail_url.as_deref()?;
     Some(serde_json::json!({
@@ -104,6 +112,82 @@ fn instance_icon_document(config: &AppConfig) -> serde_json::Value {
         ]),
         None => serde_json::json!(Vec::<serde_json::Value>::new()),
     }
+}
+
+fn optional_configured_url(html: Option<&str>, url: impl FnOnce() -> String) -> Option<String> {
+    html.filter(|value| !value.trim().is_empty()).map(|_| url())
+}
+
+fn instance_v2_urls_configuration(config: &AppConfig) -> serde_json::Value {
+    serde_json::json!({
+        "streaming": streaming_api_url(config),
+        "status": serde_json::Value::Null,
+        "about": optional_configured_url(
+            config.instance_extended_description_html.as_deref(),
+            || extended_description_url(config),
+        ),
+        "privacy_policy": optional_configured_url(
+            config.privacy_policy_html.as_deref(),
+            || privacy_policy_url(config),
+        ),
+        "terms_of_service": optional_configured_url(
+            config.terms_of_service_html.as_deref(),
+            || terms_of_service_url(config),
+        ),
+    })
+}
+
+fn instance_timelines_access_configuration(config: &AppConfig) -> serde_json::Value {
+    serde_json::json!({
+        "live_feeds": {
+            "local": config.timeline_live_feeds_local.as_str(),
+            "remote": config.timeline_live_feeds_remote.as_str(),
+        },
+        "hashtag_feeds": {
+            "local": config.timeline_hashtag_feeds_local.as_str(),
+            "remote": config.timeline_hashtag_feeds_remote.as_str(),
+        },
+        "trending_link_feeds": {
+            "local": config.timeline_trending_link_feeds_local.as_str(),
+            "remote": config.timeline_trending_link_feeds_remote.as_str(),
+        },
+    })
+}
+
+fn instance_v2_configuration(config: &AppConfig) -> serde_json::Value {
+    serde_json::json!({
+        "urls": instance_v2_urls_configuration(config),
+        "vapid": {
+            "public_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
+        },
+        "accounts": instance_accounts_configuration(true),
+        "statuses": instance_statuses_configuration(),
+        "media_attachments": instance_media_attachments_configuration(),
+        "polls": instance_polls_configuration(),
+        "translation": {
+            "enabled": false,
+        },
+        "timelines_access": instance_timelines_access_configuration(config),
+        "limited_federation": false,
+    })
+}
+
+fn instance_v2_registrations_document() -> serde_json::Value {
+    serde_json::json!({
+        "enabled": true,
+        "approval_required": false,
+        "reason_required": false,
+        "message": "Registration is handled by Cloudflare Access.",
+        "min_age": serde_json::Value::Null,
+        "url": serde_json::Value::Null,
+    })
+}
+
+fn instance_v2_contact_document(config: &AppConfig) -> serde_json::Value {
+    serde_json::json!({
+        "email": config.contact_email.clone().unwrap_or_default(),
+        "account": serde_json::Value::Null,
+    })
 }
 
 pub(crate) fn build_instance_v1_document(
@@ -136,11 +220,7 @@ pub(crate) fn build_instance_v1_document(
         "invites_enabled": false,
         "configuration": {
             "accounts": instance_accounts_configuration(false),
-            "statuses": {
-                "max_characters": 500,
-                "max_media_attachments": 4,
-                "characters_reserved_per_url": 23,
-            },
+            "statuses": instance_statuses_configuration(),
             "media_attachments": instance_media_attachments_configuration(),
             "polls": instance_polls_configuration(),
         },
@@ -154,21 +234,6 @@ pub(crate) fn build_instance_v2_document(
     config: &AppConfig,
     active_month: u64,
 ) -> serde_json::Value {
-    let about_url = config
-        .instance_extended_description_html
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(|_| extended_description_url(config));
-    let privacy_policy_url = config
-        .privacy_policy_html
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(|_| privacy_policy_url(config));
-    let terms_of_service_url = config
-        .terms_of_service_html
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(|_| terms_of_service_url(config));
     let mut response = serde_json::Map::new();
     response.insert("domain".to_owned(), serde_json::json!(summary.domain));
     response.insert("title".to_owned(), serde_json::json!(summary.title));
@@ -195,55 +260,11 @@ pub(crate) fn build_instance_v2_document(
     );
     response.insert(
         "configuration".to_owned(),
-        serde_json::json!({
-            "urls": {
-                "streaming": streaming_api_url(config),
-                "status": serde_json::Value::Null,
-                "about": about_url,
-                "privacy_policy": privacy_policy_url,
-                "terms_of_service": terms_of_service_url,
-            },
-            "vapid": {
-                "public_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
-            },
-            "accounts": instance_accounts_configuration(true),
-            "statuses": {
-                "max_characters": 500,
-                "max_media_attachments": 4,
-                "characters_reserved_per_url": 23,
-            },
-            "media_attachments": instance_media_attachments_configuration(),
-            "polls": instance_polls_configuration(),
-            "translation": {
-                "enabled": false,
-            },
-                "timelines_access": {
-                    "live_feeds": {
-                        "local": config.timeline_live_feeds_local.as_str(),
-                        "remote": config.timeline_live_feeds_remote.as_str(),
-                    },
-                    "hashtag_feeds": {
-                        "local": config.timeline_hashtag_feeds_local.as_str(),
-                        "remote": config.timeline_hashtag_feeds_remote.as_str(),
-                    },
-                    "trending_link_feeds": {
-                        "local": config.timeline_trending_link_feeds_local.as_str(),
-                        "remote": config.timeline_trending_link_feeds_remote.as_str(),
-                    },
-                },
-            "limited_federation": false,
-        }),
+        instance_v2_configuration(config),
     );
     response.insert(
         "registrations".to_owned(),
-        serde_json::json!({
-            "enabled": true,
-            "approval_required": false,
-            "reason_required": false,
-            "message": "Registration is handled by Cloudflare Access.",
-            "min_age": serde_json::Value::Null,
-            "url": serde_json::Value::Null,
-        }),
+        instance_v2_registrations_document(),
     );
     response.insert(
         "api_versions".to_owned(),
@@ -262,13 +283,7 @@ pub(crate) fn build_instance_v2_document(
         response.insert("thumbnail".to_owned(), thumbnail);
     }
 
-    response.insert(
-        "contact".to_owned(),
-        serde_json::json!({
-            "email": config.contact_email.clone().unwrap_or_default(),
-            "account": serde_json::Value::Null,
-        }),
-    );
+    response.insert("contact".to_owned(), instance_v2_contact_document(config));
 
     serde_json::Value::Object(response)
 }

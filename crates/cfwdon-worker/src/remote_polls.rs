@@ -33,6 +33,36 @@ struct RemoteStatusPollVotePreloadRow {
     option_title: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RemotePollVoteInsertDraft {
+    vote_id: String,
+    poll_id: String,
+    account_id: String,
+    option_position: u32,
+    option_title: String,
+    activity_id: String,
+}
+
+impl RemotePollVoteInsertDraft {
+    fn from_parts(
+        vote_id: String,
+        poll_id: &str,
+        account_id: &str,
+        option_position: u32,
+        option_title: &str,
+        activity_id: String,
+    ) -> Self {
+        Self {
+            vote_id,
+            poll_id: poll_id.to_owned(),
+            account_id: account_id.to_owned(),
+            option_position,
+            option_title: option_title.to_owned(),
+            activity_id,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct RemoteMastodonPollResponsePreload {
     polls_by_status_id: HashMap<String, serde_json::Value>,
@@ -85,107 +115,23 @@ pub(crate) async fn preload_remote_mastodon_poll_responses(
     status_ids: &[String],
     viewer: Option<&LocalAccount>,
 ) -> Result<RemoteMastodonPollResponsePreload> {
-    let mut seen = HashSet::new();
-    let ids = status_ids
-        .iter()
-        .filter(|id| seen.insert(id.as_str()))
-        .collect::<Vec<_>>();
+    let ids = unique_remote_poll_preload_status_ids(status_ids);
     if ids.is_empty() {
         return Ok(RemoteMastodonPollResponsePreload::default());
     }
 
-    let status_placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let poll_sql = format!(
-        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
-         FROM remote_status_polls
-         WHERE status_id IN ({status_placeholders})"
-    );
-    let status_bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let polls = db
-        .prepare(&poll_sql)
-        .bind_refs(status_bindings.iter())?
-        .all()
-        .await?
-        .results::<RemoteStatusPollRow>()?;
+    let polls = load_remote_status_polls_for_status_ids(db, &ids).await?;
     if polls.is_empty() {
         return Ok(RemoteMastodonPollResponsePreload::default());
     }
 
     let poll_ids = polls.iter().map(|poll| poll.id.clone()).collect::<Vec<_>>();
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let options_sql = format!(
-        "SELECT poll_id, title, votes_count
-         FROM remote_status_poll_options
-         WHERE poll_id IN ({poll_placeholders})
-         ORDER BY poll_id ASC, position ASC"
-    );
-    let poll_bindings = poll_ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let option_rows = db
-        .prepare(&options_sql)
-        .bind_refs(poll_bindings.iter())?
-        .all()
-        .await?
-        .results::<RemoteStatusPollOptionPreloadRow>()?;
-    let mut options_by_poll_id: HashMap<String, Vec<RemoteStatusPollOptionRow>> = HashMap::new();
-    for row in option_rows {
-        options_by_poll_id
-            .entry(row.poll_id)
-            .or_default()
-            .push(RemoteStatusPollOptionRow {
-                title: row.title,
-                votes_count: row.votes_count,
-            });
-    }
-
-    let votes_by_poll_id = if let Some(viewer) = viewer {
-        let vote_sql = format!(
-            "SELECT poll_id, option_position, option_title
-             FROM remote_status_poll_votes
-             WHERE account_id = ?1
-               AND poll_id IN ({})
-             ORDER BY poll_id ASC, option_position ASC",
-            (2..=(poll_ids.len() + 1))
-                .map(|index| format!("?{index}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-        vote_bindings.push(D1Type::Text(viewer.id.as_str()));
-        vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
-        let vote_rows = db
-            .prepare(&vote_sql)
-            .bind_refs(vote_bindings.iter())?
-            .all()
-            .await?
-            .results::<RemoteStatusPollVotePreloadRow>()?;
-        let mut rows_by_poll_id: HashMap<String, Vec<RemoteStatusPollVoteRow>> = HashMap::new();
-        for row in vote_rows {
-            rows_by_poll_id
-                .entry(row.poll_id)
-                .or_default()
-                .push(RemoteStatusPollVoteRow {
-                    option_position: row.option_position,
-                    option_title: row.option_title,
-                });
-        }
-        rows_by_poll_id
-    } else {
-        HashMap::new()
-    };
-
+    let poll_bindings = remote_poll_id_bindings(&poll_ids);
+    let mut options_by_poll_id =
+        preload_remote_poll_options_by_poll_id(db, &poll_ids, &poll_bindings).await?;
+    let votes_by_poll_id = preload_remote_poll_votes_by_poll_id(db, &poll_ids, viewer).await?;
     let mut polls_by_status_id = HashMap::new();
+
     for poll in polls {
         let options = options_by_poll_id.remove(&poll.id).unwrap_or_default();
         let own_votes = votes_by_poll_id
@@ -202,6 +148,121 @@ pub(crate) async fn preload_remote_mastodon_poll_responses(
     }
 
     Ok(RemoteMastodonPollResponsePreload { polls_by_status_id })
+}
+
+fn unique_remote_poll_preload_status_ids(status_ids: &[String]) -> Vec<&String> {
+    let mut seen = HashSet::new();
+    status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect()
+}
+
+async fn load_remote_status_polls_for_status_ids(
+    db: &D1Database,
+    ids: &[&String],
+) -> Result<Vec<RemoteStatusPollRow>> {
+    let status_placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let poll_sql = format!(
+        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
+         FROM remote_status_polls
+         WHERE status_id IN ({status_placeholders})"
+    );
+    let status_bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db
+        .prepare(&poll_sql)
+        .bind_refs(status_bindings.iter())?
+        .all()
+        .await?;
+    result.results::<RemoteStatusPollRow>()
+}
+
+fn remote_poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
+    poll_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect()
+}
+
+async fn preload_remote_poll_options_by_poll_id(
+    db: &D1Database,
+    poll_ids: &[String],
+    poll_bindings: &[D1Type<'_>],
+) -> Result<HashMap<String, Vec<RemoteStatusPollOptionRow>>> {
+    let poll_placeholders = (1..=poll_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let options_sql = format!(
+        "SELECT poll_id, title, votes_count
+         FROM remote_status_poll_options
+         WHERE poll_id IN ({poll_placeholders})
+         ORDER BY poll_id ASC, position ASC"
+    );
+    let option_rows = db
+        .prepare(&options_sql)
+        .bind_refs(poll_bindings.iter())?
+        .all()
+        .await?
+        .results::<RemoteStatusPollOptionPreloadRow>()?;
+    let mut options_by_poll_id: HashMap<String, Vec<RemoteStatusPollOptionRow>> = HashMap::new();
+    for row in option_rows {
+        options_by_poll_id
+            .entry(row.poll_id)
+            .or_default()
+            .push(RemoteStatusPollOptionRow {
+                title: row.title,
+                votes_count: row.votes_count,
+            });
+    }
+    Ok(options_by_poll_id)
+}
+
+async fn preload_remote_poll_votes_by_poll_id(
+    db: &D1Database,
+    poll_ids: &[String],
+    viewer: Option<&LocalAccount>,
+) -> Result<HashMap<String, Vec<RemoteStatusPollVoteRow>>> {
+    let Some(viewer) = viewer else {
+        return Ok(HashMap::new());
+    };
+    let vote_sql = format!(
+        "SELECT poll_id, option_position, option_title
+             FROM remote_status_poll_votes
+             WHERE account_id = ?1
+               AND poll_id IN ({})
+             ORDER BY poll_id ASC, option_position ASC",
+        (2..=(poll_ids.len() + 1))
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
+    vote_bindings.push(D1Type::Text(viewer.id.as_str()));
+    vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
+    let vote_rows = db
+        .prepare(&vote_sql)
+        .bind_refs(vote_bindings.iter())?
+        .all()
+        .await?
+        .results::<RemoteStatusPollVotePreloadRow>()?;
+    let mut rows_by_poll_id: HashMap<String, Vec<RemoteStatusPollVoteRow>> = HashMap::new();
+    for row in vote_rows {
+        rows_by_poll_id
+            .entry(row.poll_id)
+            .or_default()
+            .push(RemoteStatusPollVoteRow {
+                option_position: row.option_position,
+                option_title: row.option_title,
+            });
+    }
+    Ok(rows_by_poll_id)
 }
 
 fn remote_mastodon_poll_response_from_parts(
@@ -540,19 +601,24 @@ fn collect_new_remote_poll_choices(
     Ok(new_choices)
 }
 
-pub(crate) async fn apply_remote_poll_vote(
+struct RemotePollVotePlan {
+    options: Vec<RemoteStatusPollOptionRow>,
+    existing: Vec<u32>,
+    had_existing_votes: bool,
+    new_choices: Vec<u32>,
+}
+
+async fn remote_poll_vote_plan(
     db: &D1Database,
-    config: &AppConfig,
     viewer: &LocalAccount,
-    actor: &RemoteActorRow,
-    status: &RemoteStatusRow,
     poll: &RemoteStatusPollRow,
     choices: &[u32],
-) -> Result<Vec<u32>> {
+) -> Result<RemotePollVotePlan> {
     let options = list_remote_status_poll_options(db, &poll.id).await?;
     if options.is_empty() {
         return Err(Error::RustError("poll not found".to_owned()));
     }
+
     let existing_votes = list_remote_poll_votes_for_account(db, &poll.id, &viewer.id).await?;
     let existing = remap_remote_poll_vote_positions(&options, &existing_votes);
     let had_existing_votes = !existing.is_empty();
@@ -567,8 +633,63 @@ pub(crate) async fn apply_remote_poll_vote(
         ));
     }
 
-    for choice in &new_choices {
-        let option = &options[*choice as usize];
+    Ok(RemotePollVotePlan {
+        options,
+        existing,
+        had_existing_votes,
+        new_choices,
+    })
+}
+
+pub(crate) async fn apply_remote_poll_vote(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    actor: &RemoteActorRow,
+    status: &RemoteStatusRow,
+    poll: &RemoteStatusPollRow,
+    choices: &[u32],
+) -> Result<Vec<u32>> {
+    let plan = remote_poll_vote_plan(db, viewer, poll, choices).await?;
+    queue_and_insert_remote_poll_votes(db, config, viewer, actor, status, poll, &plan).await?;
+
+    apply_optimistic_remote_poll_vote_tally(
+        db,
+        &poll.id,
+        poll.multiple != 0,
+        plan.had_existing_votes,
+        &plan.new_choices,
+    )
+    .await?;
+    let _ = refresh_remote_poll_after_vote_if_acknowledged(
+        db,
+        config,
+        actor,
+        status,
+        poll,
+        &plan.options,
+        plan.had_existing_votes,
+        &plan.new_choices,
+    )
+    .await;
+
+    Ok(merged_remote_poll_own_votes(
+        plan.existing,
+        plan.new_choices,
+    ))
+}
+
+async fn queue_and_insert_remote_poll_votes(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    actor: &RemoteActorRow,
+    status: &RemoteStatusRow,
+    poll: &RemoteStatusPollRow,
+    plan: &RemotePollVotePlan,
+) -> Result<()> {
+    for choice in &plan.new_choices {
+        let option = &plan.options[*choice as usize];
         let (activity_id, payload_json) = build_poll_vote_activity(
             config,
             viewer,
@@ -580,63 +701,67 @@ pub(crate) async fn apply_remote_poll_vote(
             .await?;
 
         let vote_id = generate_entity_id(16)?;
-        let bindings = [
-            D1Type::Text(vote_id.as_str()),
-            D1Type::Text(poll.id.as_str()),
-            D1Type::Text(viewer.id.as_str()),
-            D1Type::Integer(*choice as i32),
-            D1Type::Text(option.title.as_str()),
-            D1Type::Text(activity_id.as_str()),
-        ];
-        db.prepare(
-            "INSERT OR IGNORE INTO remote_status_poll_votes (
-                id,
-                poll_id,
-                account_id,
-                option_position,
-                option_title,
-                activity_id,
-                created_at
-            ) VALUES (
-                ?1,
-                ?2,
-                ?3,
-                ?4,
-                ?5,
-                ?6,
-                CURRENT_TIMESTAMP
-            )",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        let vote_draft = RemotePollVoteInsertDraft::from_parts(
+            vote_id,
+            &poll.id,
+            &viewer.id,
+            *choice,
+            &option.title,
+            activity_id,
+        );
+        insert_remote_poll_vote_row(db, &vote_draft).await?;
     }
 
-    apply_optimistic_remote_poll_vote_tally(
-        db,
-        &poll.id,
-        poll.multiple != 0,
-        had_existing_votes,
-        &new_choices,
-    )
-    .await?;
-    let _ = refresh_remote_poll_after_vote_if_acknowledged(
-        db,
-        config,
-        actor,
-        status,
-        poll,
-        &options,
-        had_existing_votes,
-        &new_choices,
-    )
-    .await;
+    Ok(())
+}
 
+fn merged_remote_poll_own_votes(existing: Vec<u32>, new_choices: Vec<u32>) -> Vec<u32> {
     let mut own_votes = existing;
     own_votes.extend(new_choices);
     own_votes.sort_unstable();
     own_votes.dedup();
-    Ok(own_votes)
+    own_votes
+}
+
+async fn insert_remote_poll_vote_row(
+    db: &D1Database,
+    draft: &RemotePollVoteInsertDraft,
+) -> Result<()> {
+    let bindings = remote_poll_vote_insert_bindings(draft);
+    db.prepare(
+        "INSERT OR IGNORE INTO remote_status_poll_votes (
+            id,
+            poll_id,
+            account_id,
+            option_position,
+            option_title,
+            activity_id,
+            created_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            ?5,
+            ?6,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+fn remote_poll_vote_insert_bindings(draft: &RemotePollVoteInsertDraft) -> [D1Type<'_>; 6] {
+    [
+        D1Type::Text(draft.vote_id.as_str()),
+        D1Type::Text(draft.poll_id.as_str()),
+        D1Type::Text(draft.account_id.as_str()),
+        D1Type::Integer(draft.option_position as i32),
+        D1Type::Text(draft.option_title.as_str()),
+        D1Type::Text(draft.activity_id.as_str()),
+    ]
 }
 
 async fn apply_optimistic_remote_poll_vote_tally(
@@ -720,5 +845,52 @@ mod tests {
             collect_new_remote_poll_choices(2, &[], &[0, 2]).unwrap_err(),
             "choices contains an out-of-range option"
         );
+    }
+
+    #[test]
+    fn merged_remote_poll_own_votes_sorts_and_deduplicates() {
+        assert_eq!(
+            merged_remote_poll_own_votes(vec![3, 1], vec![2, 1]),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn remote_poll_vote_insert_draft_maps_storage_fields() {
+        let draft = RemotePollVoteInsertDraft::from_parts(
+            "vote-1".to_owned(),
+            "poll-1",
+            "acct-1",
+            2,
+            "Choice B",
+            "activity-1".to_owned(),
+        );
+
+        assert_eq!(draft.vote_id, "vote-1");
+        assert_eq!(draft.poll_id, "poll-1");
+        assert_eq!(draft.account_id, "acct-1");
+        assert_eq!(draft.option_position, 2);
+        assert_eq!(draft.option_title, "Choice B");
+        assert_eq!(draft.activity_id, "activity-1");
+    }
+
+    #[test]
+    fn remote_poll_vote_insert_bindings_keep_sql_slot_order_stable() {
+        let draft = RemotePollVoteInsertDraft::from_parts(
+            "vote-1".to_owned(),
+            "poll-1",
+            "acct-1",
+            2,
+            "Choice B",
+            "activity-1".to_owned(),
+        );
+        let bindings = remote_poll_vote_insert_bindings(&draft);
+
+        assert!(matches!(bindings[0], D1Type::Text("vote-1")));
+        assert!(matches!(bindings[1], D1Type::Text("poll-1")));
+        assert!(matches!(bindings[2], D1Type::Text("acct-1")));
+        assert!(matches!(bindings[3], D1Type::Integer(2)));
+        assert!(matches!(bindings[4], D1Type::Text("Choice B")));
+        assert!(matches!(bindings[5], D1Type::Text("activity-1")));
     }
 }

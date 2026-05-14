@@ -129,34 +129,13 @@ pub(crate) async fn preload_remote_status_edit_updated_at(
     db: &D1Database,
     status_ids: &[String],
 ) -> Result<RemoteStatusEditUpdatedAtPreload> {
-    let mut seen = HashSet::new();
-    let ids = status_ids
-        .iter()
-        .filter(|id| seen.insert(id.as_str()))
-        .collect::<Vec<_>>();
+    let ids = unique_remote_status_edit_preload_ids(status_ids);
     if ids.is_empty() {
         return Ok(RemoteStatusEditUpdatedAtPreload::default());
     }
 
-    let placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT rs.id, rs.updated_at
-         FROM remote_statuses rs
-         WHERE rs.id IN ({placeholders})
-           AND EXISTS (
-               SELECT 1
-               FROM remote_status_edits rse
-               WHERE rse.status_id = rs.id
-               LIMIT 1
-           )"
-    );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
+    let sql = remote_status_edit_updated_at_preload_sql(ids.len());
+    let bindings = remote_status_edit_updated_at_preload_bindings(&ids);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     let updated_at_by_status_id = result
         .results::<RemoteStatusUpdatedAtRow>()?
@@ -167,4 +146,64 @@ pub(crate) async fn preload_remote_status_edit_updated_at(
     Ok(RemoteStatusEditUpdatedAtPreload {
         updated_at_by_status_id,
     })
+}
+
+fn unique_remote_status_edit_preload_ids(status_ids: &[String]) -> Vec<&str> {
+    let mut seen = HashSet::new();
+    status_ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| seen.insert(*id))
+        .collect()
+}
+
+fn remote_status_edit_updated_at_preload_sql(id_count: usize) -> String {
+    let placeholders = (1..=id_count)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "SELECT rs.id, rs.updated_at
+         FROM remote_statuses rs
+         WHERE rs.id IN ({placeholders})
+           AND EXISTS (
+               SELECT 1
+               FROM remote_status_edits rse
+               WHERE rse.status_id = rs.id
+               LIMIT 1
+           )"
+    )
+}
+
+fn remote_status_edit_updated_at_preload_bindings<'a>(ids: &[&'a str]) -> Vec<D1Type<'a>> {
+    ids.iter().copied().map(D1Type::Text).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_remote_status_edit_preload_ids_preserves_first_seen_order() {
+        let ids = vec![
+            "remote-1".to_owned(),
+            "remote-2".to_owned(),
+            "remote-1".to_owned(),
+            "remote-3".to_owned(),
+        ];
+
+        assert_eq!(
+            unique_remote_status_edit_preload_ids(&ids),
+            vec!["remote-1", "remote-2", "remote-3"]
+        );
+    }
+
+    #[test]
+    fn remote_status_edit_updated_at_preload_sql_uses_expected_slots() {
+        let sql = remote_status_edit_updated_at_preload_sql(3);
+
+        assert!(sql.contains("rs.id IN (?1, ?2, ?3)"));
+        assert!(sql.contains("EXISTS"));
+        assert!(sql.contains("rse.status_id = rs.id"));
+    }
 }

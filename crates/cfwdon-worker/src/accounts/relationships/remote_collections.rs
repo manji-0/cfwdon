@@ -1,0 +1,449 @@
+use super::collections::CollectionAccountEntry;
+use crate::{
+    MastodonAccountResponse, RemoteActorProfile, Result, fetch_remote_activitypub_document,
+    fetch_remote_actor_profile, find_account_by_username, find_remote_actor_by_actor_uri,
+    is_activitypub_actor_type, load_account_stats, local_username_from_actor_uri,
+    parse_remote_actor_profile_document, upsert_remote_actors, validate_remote_actor_profile_urls,
+};
+use futures_util::{StreamExt, stream};
+use std::collections::HashSet;
+
+const REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT: usize = 8;
+const REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY: usize = 8;
+
+#[derive(Debug)]
+struct ResolvedRemoteFollowAccount {
+    account: MastodonAccountResponse,
+    profile_to_upsert: Option<RemoteActorProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RemoteFollowCollectionReference {
+    Uri(String),
+    EmbeddedActor(serde_json::Value),
+}
+
+async fn resolve_remote_follow_collection_account(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    reference: &RemoteFollowCollectionReference,
+) -> Result<Option<ResolvedRemoteFollowAccount>> {
+    if let RemoteFollowCollectionReference::EmbeddedActor(actor_document) = reference {
+        let fallback_actor_uri = extract_remote_follow_collection_reference(Some(actor_document))
+            .ok_or_else(|| {
+            worker::Error::RustError("embedded remote follow actor is missing id".to_owned())
+        })?;
+        let profile = match parse_remote_actor_profile_document(actor_document, &fallback_actor_uri)
+        {
+            Ok(profile) => profile,
+            Err(_) => return Ok(None),
+        };
+        if validate_remote_actor_profile_urls(&profile).await.is_err() {
+            return Ok(None);
+        }
+        if let Some(username) = local_username_from_actor_uri(config, &profile.actor_uri)
+            && let Some(account) = find_account_by_username(db, &username).await?
+        {
+            let stats = load_account_stats(db, &account.id).await?;
+            return Ok(Some(ResolvedRemoteFollowAccount {
+                account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+                profile_to_upsert: None,
+            }));
+        }
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_remote_actor_profile(&profile),
+            profile_to_upsert: Some(profile),
+        }));
+    }
+
+    let RemoteFollowCollectionReference::Uri(actor_uri) = reference else {
+        return Ok(None);
+    };
+    if let Some(username) = local_username_from_actor_uri(config, actor_uri)
+        && let Some(account) = find_account_by_username(db, &username).await?
+    {
+        let stats = load_account_stats(db, &account.id).await?;
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            profile_to_upsert: None,
+        }));
+    }
+
+    let profile = match fetch_remote_actor_profile(actor_uri).await {
+        Ok(profile) => profile,
+        Err(_) => {
+            return Ok(find_remote_actor_by_actor_uri(db, actor_uri)
+                .await?
+                .map(|actor| ResolvedRemoteFollowAccount {
+                    account: MastodonAccountResponse::from_remote_actor(&actor),
+                    profile_to_upsert: None,
+                }));
+        }
+    };
+    if let Some(username) = local_username_from_actor_uri(config, &profile.actor_uri)
+        && let Some(account) = find_account_by_username(db, &username).await?
+    {
+        let stats = load_account_stats(db, &account.id).await?;
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            profile_to_upsert: None,
+        }));
+    }
+    Ok(Some(ResolvedRemoteFollowAccount {
+        account: MastodonAccountResponse::from_remote_actor_profile(&profile),
+        profile_to_upsert: Some(profile),
+    }))
+}
+
+pub(crate) async fn remote_follow_collection_entries(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    actor_uri: &str,
+    collection_field: &str,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> Result<Option<Vec<CollectionAccountEntry>>> {
+    let actor_document = match fetch_remote_activitypub_document(actor_uri).await {
+        Ok(document) => document,
+        Err(_) => return Ok(None),
+    };
+    let Some(collection_uri) =
+        extract_remote_follow_collection_reference(actor_document.get(collection_field))
+    else {
+        return Ok(Some(Vec::new()));
+    };
+    let references = match fetch_remote_follow_collection_item_references(&collection_uri).await {
+        Ok(references) => references,
+        Err(_) => return Ok(None),
+    };
+
+    let resolved_entries = stream::iter(page_remote_follow_collection_references(
+        references, limit, max_id, since_id,
+    ))
+    .map(|(cursor_id, reference)| async move {
+        let resolved = resolve_remote_follow_collection_account(db, config, &reference).await?;
+        Ok::<_, worker::Error>(resolved.map(|resolved| (cursor_id, resolved)))
+    })
+    .buffered(REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut entries = Vec::new();
+    let mut profiles_to_upsert = Vec::new();
+    let mut seen_profile_uris = HashSet::new();
+    for entry in resolved_entries {
+        if let Some((cursor_id, resolved)) = entry? {
+            if let Some(profile) = resolved.profile_to_upsert
+                && seen_profile_uris.insert(profile.actor_uri.clone())
+            {
+                profiles_to_upsert.push(profile);
+            }
+            entries.push(CollectionAccountEntry {
+                cursor_id,
+                created_at: String::new(),
+                account: resolved.account,
+            });
+        }
+    }
+    upsert_remote_actors(db, &profiles_to_upsert).await?;
+    Ok(Some(entries))
+}
+
+fn page_remote_follow_collection_references(
+    references: Vec<RemoteFollowCollectionReference>,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> Vec<(i64, RemoteFollowCollectionReference)> {
+    let total = references.len() as i64;
+    references
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, reference)| {
+            let cursor_id = total - index as i64;
+            if max_id.is_some_and(|value| cursor_id >= value)
+                || since_id.is_some_and(|value| cursor_id <= value)
+            {
+                return None;
+            }
+            Some((cursor_id, reference))
+        })
+        .take(limit as usize)
+        .collect()
+}
+
+async fn fetch_remote_follow_collection_item_references(
+    collection_uri: &str,
+) -> Result<Vec<RemoteFollowCollectionReference>> {
+    let collection = fetch_remote_activitypub_document(collection_uri).await?;
+    let mut seen_items = HashSet::new();
+    let mut items = Vec::new();
+    append_remote_follow_collection_item_references(&mut items, &mut seen_items, &collection);
+    if !items.is_empty() && collection.get("first").is_none() {
+        return Ok(items);
+    }
+
+    let mut seen_pages = HashSet::new();
+    let mut next_page_uri = if let Some(first_page) = collection.get("first") {
+        if let Some(first_page_uri) =
+            extract_remote_follow_collection_page_reference(Some(first_page))
+        {
+            Some(first_page_uri)
+        } else {
+            append_remote_follow_collection_item_references(
+                &mut items,
+                &mut seen_items,
+                first_page,
+            );
+            extract_remote_follow_collection_page_reference(first_page.get("next"))
+        }
+    } else {
+        extract_remote_follow_collection_page_reference(collection.get("next"))
+    };
+
+    while let Some(page_uri) = next_page_uri.take() {
+        if seen_pages.len() >= REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT
+            || !seen_pages.insert(page_uri.clone())
+        {
+            break;
+        }
+        let page = fetch_remote_activitypub_document(&page_uri).await?;
+        append_remote_follow_collection_item_references(&mut items, &mut seen_items, &page);
+        next_page_uri = extract_remote_follow_collection_page_reference(page.get("next"));
+    }
+
+    Ok(items)
+}
+
+fn append_remote_follow_collection_item_references(
+    items: &mut Vec<RemoteFollowCollectionReference>,
+    seen_items: &mut HashSet<String>,
+    collection: &serde_json::Value,
+) {
+    for item in extract_remote_follow_collection_item_references(collection) {
+        let key = item.key();
+        if seen_items.insert(key) {
+            items.push(item);
+        }
+    }
+}
+
+fn extract_remote_follow_collection_item_references(
+    collection: &serde_json::Value,
+) -> Vec<RemoteFollowCollectionReference> {
+    let Some(items) = collection
+        .get("orderedItems")
+        .or_else(|| collection.get("items"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut references = Vec::new();
+    for item in items {
+        if let Some(reference) = extract_remote_follow_collection_item_reference(Some(item)) {
+            references.push(reference);
+        }
+    }
+    references
+}
+
+fn extract_remote_follow_collection_item_reference(
+    value: Option<&serde_json::Value>,
+) -> Option<RemoteFollowCollectionReference> {
+    match value? {
+        serde_json::Value::Object(map) => {
+            if is_activitypub_actor_type(map.get("type").and_then(serde_json::Value::as_str))
+                && map.get("inbox").is_some()
+                && map.get("publicKey").is_some()
+            {
+                return Some(RemoteFollowCollectionReference::EmbeddedActor(
+                    serde_json::Value::Object(map.clone()),
+                ));
+            }
+            if let Some(reference) =
+                extract_remote_follow_collection_item_reference(map.get("object"))
+            {
+                return Some(reference);
+            }
+            extract_remote_follow_collection_reference(value)
+                .map(RemoteFollowCollectionReference::Uri)
+        }
+        _ => extract_remote_follow_collection_reference(value)
+            .map(RemoteFollowCollectionReference::Uri),
+    }
+}
+
+fn extract_remote_follow_collection_page_reference(
+    value: Option<&serde_json::Value>,
+) -> Option<String> {
+    extract_remote_follow_collection_reference(value)
+}
+
+fn extract_remote_follow_collection_reference(value: Option<&serde_json::Value>) -> Option<String> {
+    let candidate = match value? {
+        serde_json::Value::String(url) => url.clone(),
+        serde_json::Value::Object(map) => {
+            if let Some(value) = map
+                .get("id")
+                .or_else(|| map.get("url"))
+                .or_else(|| map.get("href"))
+                .and_then(serde_json::Value::as_str)
+            {
+                value.to_owned()
+            } else {
+                extract_remote_follow_collection_reference(map.get("object"))?
+            }
+        }
+        _ => return None,
+    };
+    let trimmed = candidate.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+impl RemoteFollowCollectionReference {
+    fn key(&self) -> String {
+        match self {
+            Self::Uri(uri) => format!("uri:{uri}"),
+            Self::EmbeddedActor(actor) => extract_remote_follow_collection_reference(Some(actor))
+                .map(|uri| format!("actor:{uri}"))
+                .unwrap_or_else(|| format!("actor:{actor}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_follow_collection_references_extract_items_in_order() {
+        let collection = serde_json::json!({
+            "orderedItems": [
+                "https://remote.example/users/alice",
+                { "id": "https://remote.example/users/bob" },
+                { "object": { "url": "https://remote.example/@carol" } },
+                { "id": "https://remote.example/users/bob" },
+                { "type": "Note", "content": "ignore me" }
+            ]
+        });
+
+        assert_eq!(
+            extract_remote_follow_collection_item_references(&collection),
+            vec![
+                RemoteFollowCollectionReference::Uri(
+                    "https://remote.example/users/alice".to_owned()
+                ),
+                RemoteFollowCollectionReference::Uri("https://remote.example/users/bob".to_owned()),
+                RemoteFollowCollectionReference::Uri("https://remote.example/@carol".to_owned()),
+                RemoteFollowCollectionReference::Uri("https://remote.example/users/bob".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_follow_collection_references_preserve_embedded_actor_objects() {
+        let collection = serde_json::json!({
+            "items": [
+                {
+                    "type": "Person",
+                    "id": "https://remote.example/users/dana",
+                    "preferredUsername": "dana",
+                    "inbox": "https://remote.example/users/dana/inbox",
+                    "publicKey": {
+                        "id": "https://remote.example/users/dana#main-key",
+                        "publicKeyPem": "pem"
+                    }
+                },
+                {
+                    "type": "Announce",
+                    "object": {
+                        "type": "Service",
+                        "id": "https://remote.example/actors/app",
+                        "preferredUsername": "app",
+                        "inbox": "https://remote.example/actors/app/inbox",
+                        "publicKey": {
+                            "id": "https://remote.example/actors/app#main-key",
+                            "publicKeyPem": "pem"
+                        }
+                    }
+                }
+            ]
+        });
+
+        let references = extract_remote_follow_collection_item_references(&collection);
+        assert!(matches!(
+            references.first(),
+            Some(RemoteFollowCollectionReference::EmbeddedActor(actor))
+                if actor.get("id").and_then(serde_json::Value::as_str)
+                    == Some("https://remote.example/users/dana")
+        ));
+        assert!(matches!(
+            references.get(1),
+            Some(RemoteFollowCollectionReference::EmbeddedActor(actor))
+                if actor.get("id").and_then(serde_json::Value::as_str)
+                    == Some("https://remote.example/actors/app")
+        ));
+    }
+
+    #[test]
+    fn remote_follow_collection_page_reference_extracts_next_page_uri() {
+        let page = serde_json::json!({
+            "id": "https://remote.example/users/alice/followers?page=1",
+            "next": {
+                "id": "https://remote.example/users/alice/followers?page=2"
+            }
+        });
+
+        assert_eq!(
+            extract_remote_follow_collection_page_reference(page.get("next")).as_deref(),
+            Some("https://remote.example/users/alice/followers?page=2")
+        );
+    }
+
+    #[test]
+    fn remote_follow_collection_references_page_before_resolution() {
+        let references = vec![
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/a".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/b".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/c".to_owned()),
+            RemoteFollowCollectionReference::Uri("https://remote.example/users/d".to_owned()),
+        ];
+
+        assert_eq!(
+            page_remote_follow_collection_references(references.clone(), 2, None, None),
+            vec![
+                (
+                    4,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/a".to_owned()
+                    )
+                ),
+                (
+                    3,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/b".to_owned()
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            page_remote_follow_collection_references(references, 2, Some(3), None),
+            vec![
+                (
+                    2,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/c".to_owned()
+                    )
+                ),
+                (
+                    1,
+                    RemoteFollowCollectionReference::Uri(
+                        "https://remote.example/users/d".to_owned()
+                    )
+                ),
+            ]
+        );
+    }
+}

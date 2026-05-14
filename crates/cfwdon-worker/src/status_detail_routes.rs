@@ -821,48 +821,76 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
         return Response::error("status not found", 404);
     };
 
+    let Some(response) = build_status_api_document(&db, &config, viewer.as_ref(), status).await?
+    else {
+        return Response::error("status not found", 404);
+    };
+    if viewer.is_none() {
+        cache_status_api_response(&ctx, &status_id, &response).await?;
+    }
+    Response::from_json(&response)
+}
+
+async fn build_status_api_document(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: ResolvedStatus,
+) -> Result<Option<crate::MastodonStatusResponse>> {
     match status {
         ResolvedStatus::Local(status) => {
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-                return Response::error("status not found", 404);
-            };
-            if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
-                return Response::error("status not found", 404);
-            }
-
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-            let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-            let response = build_local_status_response(
-                &db,
-                &config,
-                viewer.as_ref(),
-                &status,
-                &account,
-                in_reply_to_account_id,
-                media,
-            )
-            .await?;
-            if viewer.is_none() {
-                cache_status_api_response(&ctx, &status_id, &response).await?;
-            }
-            Response::from_json(&response)
+            build_local_status_api_document(db, config, viewer, &status).await
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
-            let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
-                return Response::error("status not found", 404);
-            };
-            let response =
-                crate::build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor)
-                    .await?;
-            if viewer.is_none() {
-                cache_status_api_response(&ctx, &status_id, &response).await?;
-            }
-            Response::from_json(&response)
+            build_remote_status_api_document(db, config, viewer, &status).await
         }
     }
+}
+
+async fn build_local_status_api_document(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: &crate::StatusRow,
+) -> Result<Option<crate::MastodonStatusResponse>> {
+    let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok(None);
+    };
+    if !can_view_local_status(db, status, viewer, &account).await? {
+        return Ok(None);
+    }
+
+    let media = find_media_attachments_by_status_id(db, &status.id).await?;
+    let in_reply_to_account_id = load_in_reply_to_account_id(db, status).await?;
+    Ok(Some(
+        build_local_status_response(
+            db,
+            config,
+            viewer,
+            status,
+            &account,
+            in_reply_to_account_id,
+            media,
+        )
+        .await?,
+    ))
+}
+
+async fn build_remote_status_api_document(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: &crate::RemoteStatusRow,
+) -> Result<Option<crate::MastodonStatusResponse>> {
+    if !is_public_activitypub_visibility(&status.visibility) {
+        return Ok(None);
+    }
+    let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        build_remote_status_response(db, config, viewer, status, &actor).await?,
+    ))
 }
 
 pub(crate) async fn status_source_response(

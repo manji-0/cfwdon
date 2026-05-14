@@ -16,6 +16,7 @@ use crate::{
     load_remote_status_updated_at, load_status_filtered, load_status_updated_at,
     local_status_target_uri, strip_html_tags,
 };
+use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
 
@@ -33,6 +34,24 @@ async fn build_status_application(
         "name": app.name,
         "website": app.website,
     })))
+}
+
+async fn local_status_edited_at(db: &D1Database, status: &StatusRow) -> Result<Option<String>> {
+    let updated_at = match status.updated_at.as_deref() {
+        Some(updated_at) => Some(updated_at.to_owned()),
+        None => load_status_updated_at(db, &status.id).await?,
+    };
+    Ok(local_status_edited_at_from_updated_at(
+        &status.created_at,
+        updated_at,
+    ))
+}
+
+fn local_status_edited_at_from_updated_at(
+    created_at: &str,
+    updated_at: Option<String>,
+) -> Option<String> {
+    updated_at.filter(|updated_at| updated_at != created_at)
 }
 
 pub(crate) fn quote_document_with_state(
@@ -170,6 +189,45 @@ impl LocalStatusViewerStatePreload {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LocalStatusPreloadedViewerState {
+    favourited: bool,
+    reblogged: bool,
+    bookmarked: bool,
+    pinned: bool,
+    muted: Option<bool>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LocalStatusResponseViewerState {
+    favourited: bool,
+    reblogged: bool,
+    bookmarked: bool,
+    pinned: bool,
+    muted: bool,
+}
+
+fn preloaded_local_status_response_viewer_state(
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    preload: Option<&LocalStatusViewerStatePreload>,
+) -> Option<LocalStatusPreloadedViewerState> {
+    match (viewer, preload) {
+        (Some(_), Some(preload)) => Some(LocalStatusPreloadedViewerState {
+            favourited: preload.favourited(status),
+            reblogged: preload.reblogged(status),
+            bookmarked: preload.bookmarked(status),
+            pinned: preload.pinned(&status.id),
+            muted: preload.can_skip_thread_mute_lookup().then_some(false),
+        }),
+        (None, _) => Some(LocalStatusPreloadedViewerState {
+            muted: Some(false),
+            ..LocalStatusPreloadedViewerState::default()
+        }),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct RemoteStatusViewerStatePreload {
     favourited_status_ids: HashSet<String>,
@@ -193,6 +251,32 @@ impl RemoteStatusViewerStatePreload {
 
     fn muted(&self, actor_uri: &str) -> bool {
         self.muted_actor_uris.contains(actor_uri)
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RemoteStatusResponseViewerState {
+    favourited: bool,
+    reblogged: bool,
+    bookmarked: bool,
+    muted: bool,
+}
+
+fn preloaded_remote_status_response_viewer_state(
+    viewer: Option<&LocalAccount>,
+    status_id: &str,
+    actor_uri: &str,
+    preload: Option<&RemoteStatusViewerStatePreload>,
+) -> Option<RemoteStatusResponseViewerState> {
+    match (viewer, preload) {
+        (Some(_), Some(preload)) => Some(RemoteStatusResponseViewerState {
+            favourited: preload.favourited(status_id),
+            reblogged: preload.reblogged(status_id),
+            bookmarked: preload.bookmarked(status_id),
+            muted: preload.muted(actor_uri),
+        }),
+        (None, _) => Some(RemoteStatusResponseViewerState::default()),
+        _ => None,
     }
 }
 
@@ -633,55 +717,78 @@ pub(crate) async fn build_status_mentions(
         return Ok(Vec::new());
     }
 
-    let mut local_usernames = Vec::new();
-    let mut remote_pairs = Vec::new();
-    for handle in &handles {
-        if handle.is_local_to(&config.instance_domain) {
-            local_usernames.push(handle.username.to_ascii_lowercase());
-        } else if let Some(domain) = handle.domain.as_deref() {
-            remote_pairs.push((
-                handle.username.to_ascii_lowercase(),
-                domain.to_ascii_lowercase(),
-            ));
+    let lookup_keys = mention_lookup_keys(&handles, &config.instance_domain);
+    let local_accounts = load_mention_local_accounts(db, &lookup_keys.local_usernames).await?;
+    let remote_actors = load_mention_remote_actors(db, &lookup_keys.remote_pairs).await?;
+
+    Ok(handles
+        .iter()
+        .filter_map(|handle| {
+            mention_document_for_handle(handle, config, &local_accounts, &remote_actors)
+        })
+        .collect())
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct MentionLookupKeys {
+    local_usernames: Vec<String>,
+    remote_pairs: Vec<(String, String)>,
+}
+
+fn mention_lookup_keys(handles: &[AccountHandle], instance_domain: &str) -> MentionLookupKeys {
+    let mut keys = MentionLookupKeys::default();
+    for handle in handles {
+        if handle.is_local_to(instance_domain) {
+            keys.local_usernames
+                .push(handle.username.to_ascii_lowercase());
+        } else if let Some(pair) = mention_remote_pair(handle) {
+            keys.remote_pairs.push(pair);
         }
     }
-    let local_accounts = load_mention_local_accounts(db, &local_usernames).await?;
-    let remote_actors = load_mention_remote_actors(db, &remote_pairs).await?;
-    let mut mentions = Vec::new();
+    keys
+}
 
-    for handle in handles {
-        if handle.is_local_to(&config.instance_domain) {
-            let Some(account) = local_accounts.get(&handle.username.to_ascii_lowercase()) else {
-                continue;
-            };
-            mentions.push(serde_json::json!({
-                "id": account.id.clone(),
-                "username": account.username.clone(),
-                "url": actor_url(config, &account.username),
-                "acct": account.acct(),
-            }));
-            continue;
-        }
-
-        let Some(domain) = handle.domain.as_deref() else {
-            continue;
-        };
-        let key = (
+fn mention_remote_pair(handle: &AccountHandle) -> Option<(String, String)> {
+    handle.domain.as_deref().map(|domain| {
+        (
             handle.username.to_ascii_lowercase(),
             domain.to_ascii_lowercase(),
-        );
-        let Some(actor) = remote_actors.get(&key) else {
-            continue;
-        };
-        mentions.push(serde_json::json!({
-            "id": crate::remote_account_rest_id(&actor.actor_uri),
-            "username": actor.username,
-            "url": actor.profile_url.clone().unwrap_or_else(|| actor.actor_uri.clone()),
-            "acct": format!("{}@{}", actor.username, actor.domain),
-        }));
+        )
+    })
+}
+
+fn mention_document_for_handle(
+    handle: &AccountHandle,
+    config: &AppConfig,
+    local_accounts: &HashMap<String, LocalAccount>,
+    remote_actors: &HashMap<(String, String), RemoteActorRow>,
+) -> Option<serde_json::Value> {
+    if handle.is_local_to(&config.instance_domain) {
+        let account = local_accounts.get(&handle.username.to_ascii_lowercase())?;
+        return Some(local_mention_document(config, account));
     }
 
-    Ok(mentions)
+    let key = mention_remote_pair(handle)?;
+    let actor = remote_actors.get(&key)?;
+    Some(remote_mention_document(actor))
+}
+
+fn local_mention_document(config: &AppConfig, account: &LocalAccount) -> serde_json::Value {
+    serde_json::json!({
+        "id": account.id.clone(),
+        "username": account.username.clone(),
+        "url": actor_url(config, &account.username),
+        "acct": account.acct(),
+    })
+}
+
+fn remote_mention_document(actor: &RemoteActorRow) -> serde_json::Value {
+    serde_json::json!({
+        "id": crate::remote_account_rest_id(&actor.actor_uri),
+        "username": actor.username,
+        "url": actor.profile_url.clone().unwrap_or_else(|| actor.actor_uri.clone()),
+        "acct": format!("{}@{}", actor.username, actor.domain),
+    })
 }
 
 async fn load_mention_local_accounts(
@@ -917,55 +1024,18 @@ async fn build_local_status_response_inner(
     let (favourites_count, reblogs_count) =
         local_status_counts(db, counts_preload, &status.id).await?;
     response.favourites_count = favourites_count;
-    response.favourited = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.favourited(status),
-        (Some(viewer), None) => is_local_status_favourited_by(db, &viewer.id, status).await?,
-        (None, _) => false,
-    };
     response.reblogs_count = reblogs_count;
     response.quotes_count = status_quotes_count(db, quote_counts_preload, &response.uri).await?;
-    response.reblogged = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.reblogged(status),
-        (Some(viewer), None) => is_local_status_reblogged_by(db, &viewer.id, status).await?,
-        (None, _) => false,
-    };
-    response.bookmarked = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.bookmarked(status),
-        (Some(viewer), None) => is_local_status_bookmarked_by(db, &viewer.id, status).await?,
-        (None, _) => false,
-    };
-    response.pinned = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.pinned(&status.id),
-        (Some(viewer), None) => is_local_status_pinned_by(db, &viewer.id, &status.id).await?,
-        (None, _) => false,
-    };
-    response.muted = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) if preload.can_skip_thread_mute_lookup() => false,
-        (Some(viewer), _) => is_local_status_thread_muted_by(db, &viewer.id, status).await?,
-        (None, _) => false,
-    };
-    let updated_at = match status.updated_at.as_deref() {
-        Some(updated_at) => Some(updated_at.to_owned()),
-        None => load_status_updated_at(db, &status.id).await?,
-    };
-    response.edited_at = match updated_at {
-        Some(updated_at) if updated_at != status.created_at => Some(updated_at),
-        _ => None,
-    };
-    response.filtered = match viewer {
-        Some(viewer) => {
-            filtered_status_for_viewer(
-                db,
-                filter_matcher,
-                &viewer.id,
-                &status.id,
-                &status._text_content,
-                &status.spoiler_text,
-            )
-            .await?
-        }
-        None => Vec::new(),
-    };
+    let viewer_state =
+        local_status_response_viewer_state(db, viewer, status, viewer_state_preload).await?;
+    response.favourited = viewer_state.favourited;
+    response.reblogged = viewer_state.reblogged;
+    response.bookmarked = viewer_state.bookmarked;
+    response.pinned = viewer_state.pinned;
+    response.muted = viewer_state.muted;
+    response.edited_at = local_status_edited_at(db, status).await?;
+    response.filtered =
+        local_status_filtered_for_viewer(db, viewer, status, filter_matcher).await?;
     response.quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
     if include_quote {
         response.quote = build_quoted_status_value(
@@ -981,6 +1051,48 @@ async fn build_local_status_response_inner(
         .await?;
     }
     Ok(response)
+}
+
+async fn local_status_response_viewer_state(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    preload: Option<&LocalStatusViewerStatePreload>,
+) -> Result<LocalStatusResponseViewerState> {
+    if let Some(state) = preloaded_local_status_response_viewer_state(viewer, status, preload) {
+        if let Some(muted) = state.muted {
+            return Ok(LocalStatusResponseViewerState {
+                favourited: state.favourited,
+                reblogged: state.reblogged,
+                bookmarked: state.bookmarked,
+                pinned: state.pinned,
+                muted,
+            });
+        }
+
+        let Some(viewer) = viewer else {
+            return Ok(LocalStatusResponseViewerState::default());
+        };
+        return Ok(LocalStatusResponseViewerState {
+            favourited: state.favourited,
+            reblogged: state.reblogged,
+            bookmarked: state.bookmarked,
+            pinned: state.pinned,
+            muted: is_local_status_thread_muted_by(db, &viewer.id, status).await?,
+        });
+    }
+
+    let Some(viewer) = viewer else {
+        return Ok(LocalStatusResponseViewerState::default());
+    };
+
+    Ok(LocalStatusResponseViewerState {
+        favourited: is_local_status_favourited_by(db, &viewer.id, status).await?,
+        reblogged: is_local_status_reblogged_by(db, &viewer.id, status).await?,
+        bookmarked: is_local_status_bookmarked_by(db, &viewer.id, status).await?,
+        pinned: is_local_status_pinned_by(db, &viewer.id, &status.id).await?,
+        muted: is_local_status_thread_muted_by(db, &viewer.id, status).await?,
+    })
 }
 
 pub(crate) async fn build_remote_status_response(
@@ -1114,28 +1226,15 @@ async fn build_remote_status_response_inner(
     let (favourites_count, reblogs_count) =
         remote_status_counts(db, counts_preload, &status.id).await?;
     response.favourites_count = favourites_count;
-    response.favourited = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.favourited(&status.id),
-        (Some(viewer), None) => is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
-        (None, _) => false,
-    };
     response.reblogs_count = reblogs_count;
     response.quotes_count = status_quotes_count(db, quote_counts_preload, &response.uri).await?;
-    response.reblogged = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.reblogged(&status.id),
-        (Some(viewer), None) => is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
-        (None, _) => false,
-    };
-    response.bookmarked = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.bookmarked(&status.id),
-        (Some(viewer), None) => is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await?,
-        (None, _) => false,
-    };
-    response.muted = match (viewer, viewer_state_preload) {
-        (Some(_), Some(preload)) => preload.muted(&actor.actor_uri),
-        (Some(viewer), None) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
-        (None, _) => false,
-    };
+    let viewer_state =
+        remote_status_response_viewer_state(db, viewer, status, actor, viewer_state_preload)
+            .await?;
+    response.favourited = viewer_state.favourited;
+    response.reblogged = viewer_state.reblogged;
+    response.bookmarked = viewer_state.bookmarked;
+    response.muted = viewer_state.muted;
     response.poll = match poll_preload {
         Some(preload) => preload.poll_response(&status.id),
         None => load_remote_mastodon_poll_response(db, status, viewer).await?,
@@ -1150,20 +1249,9 @@ async fn build_remote_status_response_inner(
             }
         }
     };
-    response.filtered = match viewer {
-        Some(viewer) => {
-            filtered_status_for_viewer(
-                db,
-                filter_matcher,
-                &viewer.id,
-                &status.id,
-                &text_content,
-                &status.spoiler_text,
-            )
-            .await?
-        }
-        None => Vec::new(),
-    };
+    response.filtered =
+        remote_status_filtered_for_viewer(db, viewer, status, &text_content, filter_matcher)
+            .await?;
     response.quote_approval = Some(build_remote_quote_approval(status));
     if include_quote {
         response.quote = build_quoted_status_value(
@@ -1179,6 +1267,31 @@ async fn build_remote_status_response_inner(
         .await?;
     }
     Ok(response)
+}
+
+async fn remote_status_response_viewer_state(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    actor: &RemoteActorRow,
+    preload: Option<&RemoteStatusViewerStatePreload>,
+) -> Result<RemoteStatusResponseViewerState> {
+    if let Some(state) =
+        preloaded_remote_status_response_viewer_state(viewer, &status.id, &actor.actor_uri, preload)
+    {
+        return Ok(state);
+    }
+
+    let Some(viewer) = viewer else {
+        return Ok(RemoteStatusResponseViewerState::default());
+    };
+
+    Ok(RemoteStatusResponseViewerState {
+        favourited: is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
+        reblogged: is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
+        bookmarked: is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await?,
+        muted: is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
+    })
 }
 
 async fn build_quoted_status_value(
@@ -1198,6 +1311,39 @@ async fn build_quoted_status_value(
         return Ok(Some(document));
     }
 
+    if let Some(document) = build_local_quoted_status_document(
+        db,
+        config,
+        viewer,
+        quote_of_uri,
+        filter_matcher,
+        counts_preload,
+    )
+    .await?
+    {
+        return Ok(Some(document));
+    }
+
+    build_remote_quoted_status_document(
+        db,
+        config,
+        viewer,
+        quote_of_uri,
+        pending_remote_quote,
+        filter_matcher,
+        counts_preload,
+    )
+    .await
+}
+
+async fn build_local_quoted_status_document(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    quote_of_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+) -> Result<Option<serde_json::Value>> {
     if let Some(local_status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? {
         let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
             return Ok(None);
@@ -1221,32 +1367,31 @@ async fn build_quoted_status_value(
         let (favourites_count, reblogs_count) =
             local_status_counts(db, counts_preload, &local_status.id).await?;
         response.favourites_count = favourites_count;
-        response.favourited = match viewer {
-            Some(viewer) => is_local_status_favourited_by(db, &viewer.id, &local_status).await?,
-            None => false,
-        };
         response.reblogs_count = reblogs_count;
-        response.reblogged = match viewer {
-            Some(viewer) => is_local_status_reblogged_by(db, &viewer.id, &local_status).await?,
-            None => false,
-        };
-        response.bookmarked = match viewer {
-            Some(viewer) => is_local_status_bookmarked_by(db, &viewer.id, &local_status).await?,
-            None => false,
-        };
-        response.pinned = match viewer {
-            Some(viewer) => is_local_status_pinned_by(db, &viewer.id, &local_status.id).await?,
-            None => false,
-        };
-        response.muted = match viewer {
-            Some(viewer) => is_local_status_thread_muted_by(db, &viewer.id, &local_status).await?,
-            None => false,
-        };
+        let viewer_state =
+            local_status_response_viewer_state(db, viewer, &local_status, None).await?;
+        response.favourited = viewer_state.favourited;
+        response.reblogged = viewer_state.reblogged;
+        response.bookmarked = viewer_state.bookmarked;
+        response.pinned = viewer_state.pinned;
+        response.muted = viewer_state.muted;
         response.quote = None;
         let state = local_quoted_status_document_state(db, config, viewer, &local_account).await?;
         return Ok(Some(quote_document_from_response(state, response)));
     }
 
+    Ok(None)
+}
+
+async fn build_remote_quoted_status_document(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    quote_of_uri: &str,
+    pending_remote_quote: bool,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+) -> Result<Option<serde_json::Value>> {
     if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, quote_of_uri).await? {
         if pending_remote_quote {
             return Ok(Some(pending_quote_document()));
@@ -1276,29 +1421,13 @@ async fn build_quoted_status_value(
         let (favourites_count, reblogs_count) =
             remote_status_counts(db, counts_preload, &remote_status.id).await?;
         response.favourites_count = favourites_count;
-        response.favourited = match viewer {
-            Some(viewer) => {
-                is_remote_status_favourited_by(db, &viewer.id, &remote_status.id).await?
-            }
-            None => false,
-        };
         response.reblogs_count = reblogs_count;
-        response.reblogged = match viewer {
-            Some(viewer) => {
-                is_remote_status_reblogged_by(db, &viewer.id, &remote_status.id).await?
-            }
-            None => false,
-        };
-        response.bookmarked = match viewer {
-            Some(viewer) => {
-                is_remote_status_bookmarked_by(db, &viewer.id, &remote_status.id).await?
-            }
-            None => false,
-        };
-        response.muted = match viewer {
-            Some(viewer) => is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
-            None => false,
-        };
+        let viewer_state =
+            remote_status_response_viewer_state(db, viewer, &remote_status, &actor, None).await?;
+        response.favourited = viewer_state.favourited;
+        response.reblogged = viewer_state.reblogged;
+        response.bookmarked = viewer_state.bookmarked;
+        response.muted = viewer_state.muted;
         response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
         response.quote = None;
         let state = remote_quoted_status_document_state(db, viewer, &actor).await?;
@@ -1399,70 +1528,36 @@ async fn build_remote_reblog_wrapper_response(
     counts_preload: Option<&StatusCountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
-    let embedded = if let Some(local_status) =
-        find_local_status_by_object_uri(db, config, boost_of_uri).await?
-    {
-        if let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? {
-            if can_view_local_status(db, &local_status, viewer, &local_account).await? {
-                let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
-                Some(
-                    Box::pin(build_local_status_response_inner(
-                        db,
-                        config,
-                        viewer,
-                        &local_status,
-                        &local_account,
-                        load_in_reply_to_account_id(db, &local_status).await?,
-                        media,
-                        filter_matcher,
-                        counts_preload,
-                        None,
-                        None,
-                        None,
-                        include_quote,
-                    ))
-                    .await?,
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else if let Some(remote_status) =
-        find_remote_status_by_url_or_object_uri(db, boost_of_uri).await?
-    {
-        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
-            None
-        } else if let Some(actor) =
-            find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
-        {
-            Some(
-                Box::pin(build_remote_status_response_inner(
-                    db,
-                    config,
-                    viewer,
-                    &remote_status,
-                    &actor,
-                    filter_matcher,
-                    counts_preload,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    include_quote,
-                ))
-                .await?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let embedded = build_reblog_embedded_response(
+        db,
+        config,
+        viewer,
+        boost_of_uri,
+        filter_matcher,
+        counts_preload,
+        None,
+        None,
+        None,
+        include_quote,
+    )
+    .await?;
 
-    let mut response = embedded.clone().unwrap_or_else(|| {
+    Ok(remote_reblog_wrapper_response_from_embedded(
+        embedded,
+        wrapper_status,
+        wrapper_actor,
+        config,
+    ))
+}
+
+fn remote_reblog_wrapper_response_from_embedded(
+    embedded: Option<MastodonStatusResponse>,
+    wrapper_status: &RemoteStatusRow,
+    wrapper_actor: &RemoteActorRow,
+    config: &AppConfig,
+) -> MastodonStatusResponse {
+    let reblog = embedded_reblog_value(&embedded);
+    let mut response = embedded.unwrap_or_else(|| {
         MastodonStatusResponse::from_remote_row(wrapper_status, wrapper_actor, config)
     });
     response.id = wrapper_status.id.clone();
@@ -1476,8 +1571,18 @@ async fn build_remote_reblog_wrapper_response(
         .clone()
         .unwrap_or_else(|| wrapper_status.object_uri.clone());
     response.account = crate::MastodonAccountResponse::from_remote_actor(wrapper_actor);
-    response.reblog =
-        embedded.map(|status| serde_json::to_value(status).unwrap_or(serde_json::Value::Null));
+    response.reblog = reblog;
+    clear_reblog_wrapper_body(&mut response);
+    response
+}
+
+fn embedded_reblog_value(embedded: &Option<MastodonStatusResponse>) -> Option<serde_json::Value> {
+    embedded
+        .as_ref()
+        .map(|status| serde_json::to_value(status).unwrap_or(serde_json::Value::Null))
+}
+
+fn clear_reblog_wrapper_body(response: &mut MastodonStatusResponse) {
     response.content.clear();
     response.text = None;
     response.media_attachments.clear();
@@ -1487,7 +1592,127 @@ async fn build_remote_reblog_wrapper_response(
     response.card = None;
     response.poll = None;
     response.quote = None;
-    Ok(response)
+}
+
+async fn build_reblog_embedded_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    boost_of_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    poll_preload: Option<&MastodonPollResponsePreload>,
+    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    include_quote: bool,
+) -> Result<Option<MastodonStatusResponse>> {
+    if let Some(local_status) = find_local_status_by_object_uri(db, config, boost_of_uri).await? {
+        return build_local_reblog_embedded_response(
+            db,
+            config,
+            viewer,
+            local_status,
+            filter_matcher,
+            counts_preload,
+            quote_counts_preload,
+            poll_preload,
+            viewer_state_preload,
+            include_quote,
+        )
+        .await;
+    }
+
+    if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, boost_of_uri).await? {
+        return build_remote_reblog_embedded_response(
+            db,
+            config,
+            viewer,
+            remote_status,
+            filter_matcher,
+            counts_preload,
+            include_quote,
+        )
+        .await;
+    }
+
+    Ok(None)
+}
+
+async fn build_local_reblog_embedded_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    local_status: StatusRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    poll_preload: Option<&MastodonPollResponsePreload>,
+    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    include_quote: bool,
+) -> Result<Option<MastodonStatusResponse>> {
+    let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
+        return Ok(None);
+    };
+    if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
+        return Ok(None);
+    }
+
+    let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+    Ok(Some(
+        Box::pin(build_local_status_response_inner(
+            db,
+            config,
+            viewer,
+            &local_status,
+            &local_account,
+            load_in_reply_to_account_id(db, &local_status).await?,
+            media,
+            filter_matcher,
+            counts_preload,
+            quote_counts_preload,
+            poll_preload,
+            viewer_state_preload,
+            include_quote,
+        ))
+        .await?,
+    ))
+}
+
+async fn build_remote_reblog_embedded_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    remote_status: RemoteStatusRow,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    include_quote: bool,
+) -> Result<Option<MastodonStatusResponse>> {
+    if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
+        return Ok(None);
+    }
+
+    let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await? else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        Box::pin(build_remote_status_response_inner(
+            db,
+            config,
+            viewer,
+            &remote_status,
+            &actor,
+            filter_matcher,
+            counts_preload,
+            None,
+            None,
+            None,
+            None,
+            None,
+            include_quote,
+        ))
+        .await?,
+    ))
 }
 
 #[cfg(test)]
@@ -1502,6 +1727,71 @@ mod tests {
         assert!(sql.contains("FROM statuses"));
         assert!(sql.contains("FROM remote_statuses"));
         assert!(sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn local_status_edited_at_ignores_missing_or_creation_timestamp() {
+        assert_eq!(
+            local_status_edited_at_from_updated_at("2026-05-01T00:00:00Z", None),
+            None
+        );
+        assert_eq!(
+            local_status_edited_at_from_updated_at(
+                "2026-05-01T00:00:00Z",
+                Some("2026-05-01T00:00:00Z".to_owned())
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn local_status_edited_at_preserves_real_edit_timestamp() {
+        assert_eq!(
+            local_status_edited_at_from_updated_at(
+                "2026-05-01T00:00:00Z",
+                Some("2026-05-02T00:00:00Z".to_owned())
+            ),
+            Some("2026-05-02T00:00:00Z".to_owned())
+        );
+    }
+
+    #[test]
+    fn mention_lookup_keys_partition_local_and_remote_handles() {
+        let handles = vec![
+            AccountHandle {
+                username: "Alice".to_owned(),
+                domain: Some("social.example".to_owned()),
+            },
+            AccountHandle {
+                username: "Bob".to_owned(),
+                domain: Some("Remote.Example".to_owned()),
+            },
+            AccountHandle::local("Carol"),
+        ];
+
+        let keys = mention_lookup_keys(&handles, "social.example");
+
+        assert_eq!(
+            keys,
+            MentionLookupKeys {
+                local_usernames: vec!["alice".to_owned(), "carol".to_owned()],
+                remote_pairs: vec![("bob".to_owned(), "remote.example".to_owned())],
+            }
+        );
+    }
+
+    #[test]
+    fn mention_remote_pair_lowercases_username_and_domain() {
+        let handle = AccountHandle {
+            username: "Bob".to_owned(),
+            domain: Some("Remote.Example".to_owned()),
+        };
+
+        assert_eq!(
+            mention_remote_pair(&handle),
+            Some(("bob".to_owned(), "remote.example".to_owned()))
+        );
+        assert_eq!(mention_remote_pair(&AccountHandle::local("alice")), None);
     }
 
     #[test]
@@ -1550,6 +1840,269 @@ mod tests {
         assert_eq!(preload.count("https://example.test/statuses/1"), Some(0));
         assert_eq!(preload.count("https://example.test/statuses/2"), None);
     }
+
+    #[test]
+    fn preloaded_local_status_response_viewer_state_maps_flags_without_db_lookup() {
+        let viewer = local_account_fixture();
+        let status = status_row_fixture(
+            "status-1",
+            Some("https://social.example/users/alice/statuses/status-1"),
+        );
+        let target_uri = local_status_target_uri(&status);
+        let preload = LocalStatusViewerStatePreload {
+            favourited_target_uris: HashSet::from([target_uri.clone()]),
+            reblogged_target_uris: HashSet::new(),
+            bookmarked_target_uris: HashSet::from([target_uri]),
+            pinned_status_ids: HashSet::from(["status-1".to_owned()]),
+            has_thread_mutes: false,
+        };
+
+        let state =
+            preloaded_local_status_response_viewer_state(Some(&viewer), &status, Some(&preload));
+
+        assert_eq!(
+            state,
+            Some(LocalStatusPreloadedViewerState {
+                favourited: true,
+                reblogged: false,
+                bookmarked: true,
+                pinned: true,
+                muted: Some(false),
+            })
+        );
+    }
+
+    #[test]
+    fn preloaded_local_status_response_viewer_state_defers_mute_when_thread_mutes_exist() {
+        let viewer = local_account_fixture();
+        let status = status_row_fixture(
+            "status-1",
+            Some("https://social.example/users/alice/statuses/status-1"),
+        );
+        let preload = LocalStatusViewerStatePreload {
+            favourited_target_uris: HashSet::new(),
+            reblogged_target_uris: HashSet::new(),
+            bookmarked_target_uris: HashSet::new(),
+            pinned_status_ids: HashSet::new(),
+            has_thread_mutes: true,
+        };
+
+        let state =
+            preloaded_local_status_response_viewer_state(Some(&viewer), &status, Some(&preload));
+
+        assert_eq!(
+            state,
+            Some(LocalStatusPreloadedViewerState {
+                muted: None,
+                ..LocalStatusPreloadedViewerState::default()
+            })
+        );
+    }
+
+    #[test]
+    fn preloaded_remote_status_response_viewer_state_maps_flags_without_db_lookup() {
+        let viewer = local_account_fixture();
+        let preload = RemoteStatusViewerStatePreload {
+            favourited_status_ids: HashSet::from(["status-1".to_owned()]),
+            reblogged_status_ids: HashSet::new(),
+            bookmarked_status_ids: HashSet::from(["status-1".to_owned()]),
+            muted_actor_uris: HashSet::from(["https://remote.example/users/alice".to_owned()]),
+        };
+
+        let state = preloaded_remote_status_response_viewer_state(
+            Some(&viewer),
+            "status-1",
+            "https://remote.example/users/alice",
+            Some(&preload),
+        );
+
+        assert_eq!(
+            state,
+            Some(RemoteStatusResponseViewerState {
+                favourited: true,
+                reblogged: false,
+                bookmarked: true,
+                muted: true,
+            })
+        );
+    }
+
+    #[test]
+    fn preloaded_remote_status_response_viewer_state_defaults_for_anonymous_viewer() {
+        let preload = RemoteStatusViewerStatePreload {
+            favourited_status_ids: HashSet::from(["status-1".to_owned()]),
+            reblogged_status_ids: HashSet::from(["status-1".to_owned()]),
+            bookmarked_status_ids: HashSet::from(["status-1".to_owned()]),
+            muted_actor_uris: HashSet::from(["https://remote.example/users/alice".to_owned()]),
+        };
+
+        let state = preloaded_remote_status_response_viewer_state(
+            None,
+            "status-1",
+            "https://remote.example/users/alice",
+            Some(&preload),
+        );
+
+        assert_eq!(state, Some(RemoteStatusResponseViewerState::default()));
+    }
+
+    #[test]
+    fn remote_reblog_wrapper_response_overlays_wrapper_fields_and_clears_embedded_body() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let wrapper_actor = remote_actor_row_fixture();
+        let wrapper_status =
+            remote_status_row_fixture("wrapper-status", "https://remote.example/announce/1");
+        let embedded_status =
+            remote_status_row_fixture("embedded-status", "https://remote.example/statuses/1");
+        let mut embedded =
+            MastodonStatusResponse::from_remote_row(&embedded_status, &wrapper_actor, &config);
+        embedded.media_attachments = vec![serde_json::json!({"id": "media-1"})];
+        embedded.quote = Some(serde_json::json!({"state": "accepted"}));
+
+        let response = remote_reblog_wrapper_response_from_embedded(
+            Some(embedded),
+            &wrapper_status,
+            &wrapper_actor,
+            &config,
+        );
+
+        assert_eq!(response.id, "wrapper-status");
+        assert_eq!(response.uri, "https://remote.example/announce/1");
+        assert!(response.reblog.is_some());
+        assert!(response.content.is_empty());
+        assert!(response.media_attachments.is_empty());
+        assert!(response.quote.is_none());
+    }
+
+    #[test]
+    fn local_reblog_wrapper_response_overlays_wrapper_fields_and_clears_embedded_body() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let wrapper_account = local_account_fixture();
+        let wrapper_status = status_row_fixture(
+            "wrapper-status",
+            Some("https://social.example/users/alice/statuses/wrapper"),
+        );
+        let embedded_status = status_row_fixture(
+            "embedded-status",
+            Some("https://social.example/users/alice/statuses/embedded"),
+        );
+        let mut embedded = MastodonStatusResponse::from_row(
+            &embedded_status,
+            &wrapper_account,
+            &config,
+            None,
+            Vec::new(),
+        );
+        embedded.media_attachments = vec![serde_json::json!({"id": "media-1"})];
+        embedded.quote = Some(serde_json::json!({"state": "accepted"}));
+
+        let response = local_reblog_wrapper_response_from_embedded(
+            Some(embedded),
+            &wrapper_status,
+            &wrapper_account,
+            Some("reply-account".to_owned()),
+            &config,
+        );
+
+        assert_eq!(response.id, "wrapper-status");
+        assert_eq!(
+            response.uri,
+            "https://social.example/users/alice/statuses/wrapper"
+        );
+        assert_eq!(
+            response.in_reply_to_account_id.as_deref(),
+            Some("reply-account")
+        );
+        assert!(response.reblog.is_some());
+        assert!(response.content.is_empty());
+        assert!(response.media_attachments.is_empty());
+        assert!(response.quote.is_none());
+    }
+
+    fn remote_status_row_fixture(id: &str, object_uri: &str) -> RemoteStatusRow {
+        RemoteStatusRow {
+            id: id.to_owned(),
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            object_uri: object_uri.to_owned(),
+            url: None,
+            in_reply_to_uri: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>Hello</p>".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: Some("en".to_owned()),
+            quote_state: "accepted".to_owned(),
+            published_at: "2026-05-10T01:02:03Z".to_owned(),
+        }
+    }
+
+    fn remote_actor_row_fixture() -> RemoteActorRow {
+        RemoteActorRow {
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            username: "alice".to_owned(),
+            domain: "remote.example".to_owned(),
+            created_at: "2026-05-01T00:00:00Z".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            display_name: "Alice".to_owned(),
+            summary_html: String::new(),
+            profile_url: Some("https://remote.example/@alice".to_owned()),
+            avatar_url: None,
+            header_url: None,
+        }
+    }
+
+    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> StatusRow {
+        StatusRow {
+            id: id.to_owned(),
+            account_id: "acct-1".to_owned(),
+            ap_id: ap_id.map(str::to_owned),
+            in_reply_to_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>Hello</p>".to_owned(),
+            _text_content: "Hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: Some("en".to_owned()),
+            quote_approval_policy: None,
+            quote_state: "accepted".to_owned(),
+            application_id: None,
+            created_at: "2026-05-10T01:02:03Z".to_owned(),
+            updated_at: None,
+        }
+    }
+
+    fn local_account_fixture() -> LocalAccount {
+        LocalAccount {
+            id: "acct-1".to_owned(),
+            username: "alice".to_owned(),
+            access_email: "alice@example.com".to_owned(),
+            display_name: "Alice".to_owned(),
+            bio_html: String::new(),
+            bio_text: String::new(),
+            fields: Vec::new(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
+            default_sensitive: false,
+            default_language: Some("en".to_owned()),
+            avatar_object_key: None,
+            avatar_content_type: None,
+            header_object_key: None,
+            header_content_type: None,
+            private_key_jwk: "{}".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            created_at: "2026-05-01T00:00:00Z".to_owned(),
+        }
+    }
 }
 
 async fn build_local_reblog_wrapper_response(
@@ -1567,70 +2120,38 @@ async fn build_local_reblog_wrapper_response(
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
-    let embedded = if let Some(local_status) =
-        find_local_status_by_object_uri(db, config, boost_of_uri).await?
-    {
-        if let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? {
-            if can_view_local_status(db, &local_status, viewer, &local_account).await? {
-                let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
-                Some(
-                    Box::pin(build_local_status_response_inner(
-                        db,
-                        config,
-                        viewer,
-                        &local_status,
-                        &local_account,
-                        load_in_reply_to_account_id(db, &local_status).await?,
-                        media,
-                        filter_matcher,
-                        counts_preload,
-                        quote_counts_preload,
-                        poll_preload,
-                        viewer_state_preload,
-                        include_quote,
-                    ))
-                    .await?,
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else if let Some(remote_status) =
-        find_remote_status_by_url_or_object_uri(db, boost_of_uri).await?
-    {
-        if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
-            None
-        } else if let Some(actor) =
-            find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
-        {
-            Some(
-                build_remote_status_response_inner(
-                    db,
-                    config,
-                    viewer,
-                    &remote_status,
-                    &actor,
-                    filter_matcher,
-                    counts_preload,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    include_quote,
-                )
-                .await?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let embedded = build_reblog_embedded_response(
+        db,
+        config,
+        viewer,
+        boost_of_uri,
+        filter_matcher,
+        counts_preload,
+        quote_counts_preload,
+        poll_preload,
+        viewer_state_preload,
+        include_quote,
+    )
+    .await?;
 
-    let mut response = embedded.clone().unwrap_or_else(|| {
+    Ok(local_reblog_wrapper_response_from_embedded(
+        embedded,
+        wrapper_status,
+        wrapper_account,
+        in_reply_to_account_id,
+        config,
+    ))
+}
+
+fn local_reblog_wrapper_response_from_embedded(
+    embedded: Option<MastodonStatusResponse>,
+    wrapper_status: &StatusRow,
+    wrapper_account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    config: &AppConfig,
+) -> MastodonStatusResponse {
+    let reblog = embedded_reblog_value(&embedded);
+    let mut response = embedded.unwrap_or_else(|| {
         MastodonStatusResponse::from_row(
             wrapper_status,
             wrapper_account,
@@ -1653,17 +2174,7 @@ async fn build_local_reblog_wrapper_response(
     });
     response.url = response.uri.clone();
     response.account = crate::MastodonAccountResponse::from_account(wrapper_account, config);
-    response.reblog = embedded
-        .clone()
-        .map(|status| serde_json::to_value(status).unwrap_or(serde_json::Value::Null));
-    response.content.clear();
-    response.text = None;
-    response.media_attachments.clear();
-    response.mentions.clear();
-    response.tags.clear();
-    response.emojis.clear();
-    response.card = None;
-    response.poll = None;
-    response.quote = None;
-    Ok(response)
+    response.reblog = reblog;
+    clear_reblog_wrapper_body(&mut response);
+    response
 }

@@ -53,14 +53,14 @@ pub(crate) async fn find_remote_status_by_id(
     db: &D1Database,
     status_id: &str,
 ) -> Result<Option<RemoteStatusRow>> {
-    let status_id = D1Type::Text(status_id);
+    let bindings = remote_status_id_bindings(status_id);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
          WHERE id = ?1
          LIMIT 1",
     )
-    .bind_refs(&status_id)?
+    .bind_refs(bindings.iter())?
     .first::<RemoteStatusRow>(None)
     .await
 }
@@ -74,7 +74,7 @@ pub(crate) async fn find_remote_status_raw_object_by_id(
         raw_object_json: String,
     }
 
-    let status_id = D1Type::Text(status_id);
+    let bindings = remote_status_id_bindings(status_id);
     let Some(row) = db
         .prepare(
             "SELECT raw_object_json
@@ -82,7 +82,7 @@ pub(crate) async fn find_remote_status_raw_object_by_id(
              WHERE id = ?1
              LIMIT 1",
         )
-        .bind_refs(&status_id)?
+        .bind_refs(bindings.iter())?
         .first::<RemoteStatusRawObjectRow>(None)
         .await?
     else {
@@ -98,14 +98,14 @@ pub(crate) async fn find_remote_status_by_object_uri(
     db: &D1Database,
     object_uri: &str,
 ) -> Result<Option<RemoteStatusRow>> {
-    let object_uri = D1Type::Text(object_uri);
+    let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
          WHERE object_uri = ?1
          LIMIT 1",
     )
-    .bind_refs(&object_uri)?
+    .bind_refs(bindings.iter())?
     .first::<RemoteStatusRow>(None)
     .await
 }
@@ -114,7 +114,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
     db: &D1Database,
     value: &str,
 ) -> Result<Option<RemoteStatusRow>> {
-    let value = D1Type::Text(value);
+    let bindings = remote_status_lookup_value_bindings(value);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
          FROM remote_statuses
@@ -122,7 +122,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
             OR url = ?1
          LIMIT 1",
     )
-    .bind_refs(&value)?
+    .bind_refs(bindings.iter())?
     .first::<RemoteStatusRow>(None)
     .await
 }
@@ -209,11 +209,168 @@ fn bool_binding(value: bool) -> D1Type<'static> {
     D1Type::Integer(i32::from(value))
 }
 
+fn remote_status_id_bindings(status_id: &str) -> [D1Type<'_>; 1] {
+    [D1Type::Text(status_id)]
+}
+
+fn remote_status_object_uri_bindings(object_uri: &str) -> [D1Type<'_>; 1] {
+    [D1Type::Text(object_uri)]
+}
+
+fn remote_status_lookup_value_bindings(value: &str) -> [D1Type<'_>; 1] {
+    [D1Type::Text(value)]
+}
+
+fn remote_status_object_uri(object: &serde_json::Value) -> Result<&str> {
+    object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))
+}
+
+struct RemoteStatusUpsertDraft {
+    status_id: String,
+    actor_uri: String,
+    object_uri: String,
+    url: Option<String>,
+    in_reply_to_uri: Option<String>,
+    quote_of_uri: Option<String>,
+    content_html: String,
+    spoiler_text: String,
+    visibility: String,
+    sensitive: bool,
+    language: Option<String>,
+    quote_state: &'static str,
+    published_at: String,
+    raw_object_json: String,
+    revision_at: String,
+}
+
+struct RemoteReblogUpsertDraft {
+    status_id: String,
+    actor_uri: String,
+    object_uri: String,
+    boost_of_uri: String,
+    quote_of_uri: Option<String>,
+    visibility: String,
+    quote_state: &'static str,
+    published_at: String,
+    raw_object_json: String,
+}
+
+fn serialize_remote_store_json(value: &serde_json::Value, label: &str) -> Result<String> {
+    serde_json::to_string(value)
+        .map_err(|error| Error::RustError(format!("failed to serialize {label}: {error}")))
+}
+
+fn serialize_remote_status_object_json(object: &serde_json::Value) -> Result<String> {
+    serialize_remote_store_json(object, "remote status object")
+}
+
+fn serialize_remote_reblog_activity_json(activity: &serde_json::Value) -> Result<String> {
+    serialize_remote_store_json(activity, "remote announce activity")
+}
+
+fn serialize_remote_status_snapshot_json(snapshot: &serde_json::Value) -> Result<String> {
+    serialize_remote_store_json(snapshot, "remote status snapshot")
+}
+
+fn remote_status_upsert_draft(
+    actor: &RemoteActorProfile,
+    object: &serde_json::Value,
+    status_id: String,
+    quote_state: &'static str,
+    revision_at: String,
+) -> Result<RemoteStatusUpsertDraft> {
+    let object_uri = remote_status_object_uri(object)?.to_owned();
+    let raw_object_json = serialize_remote_status_object_json(object)?;
+    let quote_of_uri = quote_target_uri_from_object(object);
+
+    Ok(RemoteStatusUpsertDraft {
+        status_id,
+        actor_uri: actor.actor_uri.clone(),
+        object_uri,
+        url: object
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        in_reply_to_uri: object
+            .get("inReplyTo")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        quote_of_uri,
+        content_html: remote_status_content_html(object),
+        spoiler_text: object
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        visibility: visibility_from_activitypub_object(object),
+        sensitive: object
+            .get("sensitive")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        language: remote_status_language(object),
+        quote_state,
+        published_at: remote_status_published_at(object),
+        raw_object_json,
+        revision_at,
+    })
+}
+
+fn remote_reblog_activity_uri(activity: &serde_json::Value) -> Result<&str> {
+    activity
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::RustError("remote announce activity is missing id".to_owned()))
+}
+
+fn remote_reblog_boost_of_uri(activity: &serde_json::Value) -> Result<&str> {
+    activity
+        .get("object")
+        .and_then(|value| crate::activity_object_id(Some(value)))
+        .ok_or_else(|| Error::RustError("remote announce activity is missing object id".to_owned()))
+}
+
+fn remote_reblog_published_at(activity: &serde_json::Value, fallback: String) -> String {
+    activity
+        .get("published")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| activity.get("updated").and_then(serde_json::Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or(fallback)
+}
+
+fn remote_reblog_upsert_draft(
+    actor: &RemoteActorProfile,
+    activity: &serde_json::Value,
+    status_id: String,
+    quote_of_uri: Option<String>,
+    quote_state: &'static str,
+    fallback_published_at: String,
+) -> Result<RemoteReblogUpsertDraft> {
+    let object_uri = remote_reblog_activity_uri(activity)?.to_owned();
+    let boost_of_uri = remote_reblog_boost_of_uri(activity)?.to_owned();
+    let raw_object_json = serialize_remote_reblog_activity_json(activity)?;
+
+    Ok(RemoteReblogUpsertDraft {
+        status_id,
+        actor_uri: actor.actor_uri.clone(),
+        object_uri,
+        boost_of_uri,
+        quote_of_uri,
+        visibility: visibility_from_activitypub_object(activity),
+        quote_state,
+        published_at: remote_reblog_published_at(activity, fallback_published_at),
+        raw_object_json,
+    })
+}
+
 async fn find_remote_status_edit_state_by_object_uri(
     db: &D1Database,
     object_uri: &str,
 ) -> Result<Option<RemoteStatusEditStateRow>> {
-    let object_uri = D1Type::Text(object_uri);
+    let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri,
                 content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at,
@@ -222,7 +379,7 @@ async fn find_remote_status_edit_state_by_object_uri(
          WHERE object_uri = ?1
          LIMIT 1",
     )
-    .bind_refs(&object_uri)?
+    .bind_refs(bindings.iter())?
     .first::<RemoteStatusEditStateRow>(None)
     .await
 }
@@ -241,130 +398,117 @@ async fn insert_previous_remote_status_snapshot(
     let mut snapshot = serde_json::to_value(response).unwrap_or_else(|_| serde_json::json!({}));
     snapshot["created_at"] = serde_json::json!(revision_at);
     let snapshot = normalize_status_history_entry(snapshot);
-    let snapshot_json = serde_json::to_string(&snapshot).map_err(|error| {
-        Error::RustError(format!(
-            "failed to serialize remote status snapshot: {error}"
-        ))
-    })?;
+    let snapshot_json = serialize_remote_status_snapshot_json(&snapshot)?;
     insert_remote_status_edit_snapshot(db, &previous.id, &snapshot_json, revision_at).await
 }
 
-pub(crate) async fn upsert_remote_status(
+async fn upsert_remote_status_draft(
+    db: &D1Database,
+    draft: &RemoteStatusUpsertDraft,
+) -> Result<()> {
+    let bindings = remote_status_upsert_bindings(draft);
+    db.prepare(remote_status_upsert_sql())
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(())
+}
+
+fn remote_status_upsert_sql() -> &'static str {
+    "INSERT INTO remote_statuses (
+        id,
+        actor_uri,
+        object_uri,
+        url,
+        in_reply_to_uri,
+        boost_of_uri,
+        quote_of_uri,
+        content_html,
+        spoiler_text,
+        visibility,
+        sensitive,
+        language,
+        quote_state,
+        published_at,
+        raw_object_json,
+        created_at,
+        updated_at
+    ) VALUES (
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+        CURRENT_TIMESTAMP,
+        ?16
+    )
+    ON CONFLICT(object_uri) DO UPDATE SET
+        actor_uri = excluded.actor_uri,
+        url = excluded.url,
+        in_reply_to_uri = excluded.in_reply_to_uri,
+        boost_of_uri = excluded.boost_of_uri,
+        quote_of_uri = excluded.quote_of_uri,
+        content_html = excluded.content_html,
+        spoiler_text = excluded.spoiler_text,
+        visibility = excluded.visibility,
+        sensitive = excluded.sensitive,
+        language = excluded.language,
+        quote_state = CASE
+            WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
+            ELSE excluded.quote_state
+        END,
+        published_at = excluded.published_at,
+        raw_object_json = excluded.raw_object_json,
+        updated_at = ?16"
+}
+
+fn remote_status_upsert_bindings(draft: &RemoteStatusUpsertDraft) -> [D1Type<'_>; 16] {
+    [
+        D1Type::Text(draft.status_id.as_str()),
+        D1Type::Text(draft.actor_uri.as_str()),
+        D1Type::Text(draft.object_uri.as_str()),
+        optional_text_binding(draft.url.as_deref()),
+        optional_text_binding(draft.in_reply_to_uri.as_deref()),
+        D1Type::Null,
+        optional_text_binding(draft.quote_of_uri.as_deref()),
+        D1Type::Text(draft.content_html.as_str()),
+        D1Type::Text(draft.spoiler_text.as_str()),
+        D1Type::Text(draft.visibility.as_str()),
+        bool_binding(draft.sensitive),
+        optional_text_binding(draft.language.as_deref()),
+        D1Type::Text(draft.quote_state),
+        D1Type::Text(draft.published_at.as_str()),
+        D1Type::Text(draft.raw_object_json.as_str()),
+        D1Type::Text(draft.revision_at.as_str()),
+    ]
+}
+
+async fn insert_previous_remote_status_snapshot_if_changed(
     db: &D1Database,
     config: &AppConfig,
-    actor: &RemoteActorProfile,
-    object: &serde_json::Value,
+    previous: Option<&RemoteStatusEditStateRow>,
+    draft: &RemoteStatusUpsertDraft,
 ) -> Result<()> {
-    let object_uri = object
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))?
-        .to_owned();
-    let raw_object_json = serde_json::to_string(object).map_err(|error| {
-        Error::RustError(format!("failed to serialize remote status object: {error}"))
-    })?;
-    let previous = find_remote_status_edit_state_by_object_uri(db, &object_uri).await?;
-    let previous_raw_object_json = previous.as_ref().map(|value| value.raw_object_json.clone());
-    let visibility = visibility_from_activitypub_object(object);
-    let content_html = remote_status_content_html(object);
-    let spoiler_text = object
-        .get("summary")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let sensitive = object
-        .get("sensitive")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let published_at = remote_status_published_at(object);
-    let language = remote_status_language(object);
-    let status_id = generate_entity_id(16)?;
-    let quote_of_uri = quote_target_uri_from_object(object);
-    let quote_state =
-        evaluate_remote_quote_state(db, config, actor, quote_of_uri.as_deref()).await?;
-    let revision_at = now_iso_string()?;
-
-    if previous
-        .as_ref()
-        .is_some_and(|existing| existing.raw_object_json != raw_object_json)
+    if let Some(previous) =
+        previous.filter(|existing| existing.raw_object_json != draft.raw_object_json)
     {
-        insert_previous_remote_status_snapshot(
-            db,
-            config,
-            previous.as_ref().expect("previous checked above"),
-            &revision_at,
-        )
-        .await?;
+        insert_previous_remote_status_snapshot(db, config, previous, &draft.revision_at).await?;
     }
 
-    let bindings = [
-        D1Type::Text(status_id.as_str()),
-        D1Type::Text(actor.actor_uri.as_str()),
-        D1Type::Text(object_uri.as_str()),
-        optional_text_binding(object.get("url").and_then(serde_json::Value::as_str)),
-        optional_text_binding(object.get("inReplyTo").and_then(serde_json::Value::as_str)),
-        D1Type::Null,
-        optional_text_binding(quote_of_uri.as_deref()),
-        D1Type::Text(content_html.as_str()),
-        D1Type::Text(spoiler_text.as_str()),
-        D1Type::Text(visibility.as_str()),
-        bool_binding(sensitive),
-        optional_text_binding(language.as_deref()),
-        D1Type::Text(quote_state),
-        D1Type::Text(published_at.as_str()),
-        D1Type::Text(raw_object_json.as_str()),
-        D1Type::Text(revision_at.as_str()),
-    ];
-    db.prepare(
-        "INSERT INTO remote_statuses (
-            id,
-            actor_uri,
-            object_uri,
-            url,
-            in_reply_to_uri,
-            boost_of_uri,
-            quote_of_uri,
-            content_html,
-            spoiler_text,
-            visibility,
-            sensitive,
-            language,
-            quote_state,
-            published_at,
-            raw_object_json,
-            created_at,
-            updated_at
-        ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-            CURRENT_TIMESTAMP,
-            ?16
-        )
-        ON CONFLICT(object_uri) DO UPDATE SET
-            actor_uri = excluded.actor_uri,
-            url = excluded.url,
-            in_reply_to_uri = excluded.in_reply_to_uri,
-            boost_of_uri = excluded.boost_of_uri,
-            quote_of_uri = excluded.quote_of_uri,
-            content_html = excluded.content_html,
-            spoiler_text = excluded.spoiler_text,
-            visibility = excluded.visibility,
-            sensitive = excluded.sensitive,
-            language = excluded.language,
-            quote_state = CASE
-                WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
-                ELSE excluded.quote_state
-            END,
-            published_at = excluded.published_at,
-            raw_object_json = excluded.raw_object_json,
-            updated_at = ?16",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+    Ok(())
+}
 
-    let status = find_remote_status_by_object_uri(db, &object_uri)
+async fn reload_upserted_remote_status(
+    db: &D1Database,
+    draft: &RemoteStatusUpsertDraft,
+) -> Result<RemoteStatusRow> {
+    find_remote_status_by_object_uri(db, &draft.object_uri)
         .await?
-        .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))?;
+        .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))
+}
+
+async fn replace_remote_status_dependents(
+    db: &D1Database,
+    status: &RemoteStatusRow,
+    object: &serde_json::Value,
+) -> Result<()> {
     replace_remote_status_hashtags(
         db,
         &status.id,
@@ -385,6 +529,16 @@ pub(crate) async fn upsert_remote_status(
         delete_remote_status_poll_by_status_id(db, &status.id).await?;
     }
 
+    Ok(())
+}
+
+async fn send_remote_status_change_notifications(
+    db: &D1Database,
+    config: &AppConfig,
+    previous_raw_object_json: Option<&str>,
+    status: &RemoteStatusRow,
+    draft: &RemoteStatusUpsertDraft,
+) {
     if previous_raw_object_json.is_none() {
         let _ = send_remote_status_quote_notification(
             db,
@@ -395,7 +549,7 @@ pub(crate) async fn upsert_remote_status(
             status.quote_of_uri.as_deref(),
         )
         .await;
-    } else if previous_raw_object_json.as_deref() != Some(raw_object_json.as_str()) {
+    } else if previous_raw_object_json != Some(draft.raw_object_json.as_str()) {
         let _ = send_remote_status_update_notifications(
             db,
             config,
@@ -405,6 +559,44 @@ pub(crate) async fn upsert_remote_status(
         )
         .await;
     }
+}
+
+pub(crate) async fn upsert_remote_status(
+    db: &D1Database,
+    config: &AppConfig,
+    actor: &RemoteActorProfile,
+    object: &serde_json::Value,
+) -> Result<()> {
+    let object_uri = remote_status_object_uri(object)?;
+    let previous = find_remote_status_edit_state_by_object_uri(db, object_uri).await?;
+    let quote_of_uri = quote_target_uri_from_object(object);
+    let quote_state =
+        evaluate_remote_quote_state(db, config, actor, quote_of_uri.as_deref()).await?;
+    let revision_at = now_iso_string()?;
+    let draft = remote_status_upsert_draft(
+        actor,
+        object,
+        generate_entity_id(16)?,
+        quote_state,
+        revision_at,
+    )?;
+
+    insert_previous_remote_status_snapshot_if_changed(db, config, previous.as_ref(), &draft)
+        .await?;
+    upsert_remote_status_draft(db, &draft).await?;
+
+    let status = reload_upserted_remote_status(db, &draft).await?;
+    replace_remote_status_dependents(db, &status, object).await?;
+    send_remote_status_change_notifications(
+        db,
+        config,
+        previous
+            .as_ref()
+            .map(|value| value.raw_object_json.as_str()),
+        &status,
+        &draft,
+    )
+    .await;
 
     Ok(())
 }
@@ -486,98 +678,96 @@ pub(crate) async fn upsert_remote_reblog_status(
     remote_actor: &RemoteActorProfile,
     activity: &serde_json::Value,
 ) -> Result<()> {
-    let object_uri = activity
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote announce activity is missing id".to_owned()))?
-        .to_owned();
-    let boost_of_uri = activity
-        .get("object")
-        .and_then(|value| crate::activity_object_id(Some(value)))
-        .ok_or_else(|| {
-            Error::RustError("remote announce activity is missing object id".to_owned())
-        })?
-        .to_owned();
-    let published_at = activity
-        .get("published")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| activity.get("updated").and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or(now_iso_string()?);
-    let raw_object_json = serde_json::to_string(activity).map_err(|error| {
-        Error::RustError(format!(
-            "failed to serialize remote announce activity: {error}"
-        ))
-    })?;
-    let status_id = generate_entity_id(16)?;
-    let visibility = visibility_from_activitypub_object(activity);
     let quote_of_uri = quote_target_uri_from_object(activity);
     let quote_state =
         evaluate_remote_quote_state(db, config, remote_actor, quote_of_uri.as_deref()).await?;
+    let draft = remote_reblog_upsert_draft(
+        remote_actor,
+        activity,
+        generate_entity_id(16)?,
+        quote_of_uri,
+        quote_state,
+        now_iso_string()?,
+    )?;
+
+    upsert_remote_reblog_status_draft(db, &draft).await
+}
+
+async fn upsert_remote_reblog_status_draft(
+    db: &D1Database,
+    draft: &RemoteReblogUpsertDraft,
+) -> Result<()> {
+    let bindings = remote_reblog_upsert_bindings(draft);
+    db.prepare(remote_reblog_upsert_sql())
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    Ok(())
+}
+
+fn remote_reblog_upsert_sql() -> &'static str {
+    "INSERT INTO remote_statuses (
+        id,
+        actor_uri,
+        object_uri,
+        url,
+        in_reply_to_uri,
+        boost_of_uri,
+        quote_of_uri,
+        content_html,
+        spoiler_text,
+        visibility,
+        sensitive,
+        language,
+        quote_state,
+        published_at,
+        raw_object_json,
+        created_at,
+        updated_at
+    ) VALUES (
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(object_uri) DO UPDATE SET
+        actor_uri = excluded.actor_uri,
+        url = excluded.url,
+        in_reply_to_uri = excluded.in_reply_to_uri,
+        boost_of_uri = excluded.boost_of_uri,
+        quote_of_uri = excluded.quote_of_uri,
+        content_html = excluded.content_html,
+        spoiler_text = excluded.spoiler_text,
+        visibility = excluded.visibility,
+        sensitive = excluded.sensitive,
+        language = excluded.language,
+        quote_state = CASE
+            WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
+            ELSE excluded.quote_state
+        END,
+        published_at = excluded.published_at,
+        raw_object_json = excluded.raw_object_json,
+        updated_at = CURRENT_TIMESTAMP"
+}
+
+fn remote_reblog_upsert_bindings(draft: &RemoteReblogUpsertDraft) -> [D1Type<'_>; 15] {
     let bindings = [
-        D1Type::Text(status_id.as_str()),
-        D1Type::Text(remote_actor.actor_uri.as_str()),
-        D1Type::Text(object_uri.as_str()),
+        D1Type::Text(draft.status_id.as_str()),
+        D1Type::Text(draft.actor_uri.as_str()),
+        D1Type::Text(draft.object_uri.as_str()),
         D1Type::Null,
         D1Type::Null,
-        D1Type::Text(boost_of_uri.as_str()),
-        optional_text_binding(quote_of_uri.as_deref()),
+        D1Type::Text(draft.boost_of_uri.as_str()),
+        optional_text_binding(draft.quote_of_uri.as_deref()),
         D1Type::Text(""),
         D1Type::Text(""),
-        D1Type::Text(visibility.as_str()),
+        D1Type::Text(draft.visibility.as_str()),
         D1Type::Integer(0),
         D1Type::Null,
-        D1Type::Text(quote_state),
-        D1Type::Text(published_at.as_str()),
-        D1Type::Text(raw_object_json.as_str()),
+        D1Type::Text(draft.quote_state),
+        D1Type::Text(draft.published_at.as_str()),
+        D1Type::Text(draft.raw_object_json.as_str()),
     ];
-    db.prepare(
-        "INSERT INTO remote_statuses (
-            id,
-            actor_uri,
-            object_uri,
-            url,
-            in_reply_to_uri,
-            boost_of_uri,
-            quote_of_uri,
-            content_html,
-            spoiler_text,
-            visibility,
-            sensitive,
-            language,
-            quote_state,
-            published_at,
-            raw_object_json,
-            created_at,
-            updated_at
-        ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )
-        ON CONFLICT(object_uri) DO UPDATE SET
-            actor_uri = excluded.actor_uri,
-            url = excluded.url,
-            in_reply_to_uri = excluded.in_reply_to_uri,
-            boost_of_uri = excluded.boost_of_uri,
-            quote_of_uri = excluded.quote_of_uri,
-            content_html = excluded.content_html,
-            spoiler_text = excluded.spoiler_text,
-            visibility = excluded.visibility,
-            sensitive = excluded.sensitive,
-            language = excluded.language,
-            quote_state = CASE
-                WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
-                ELSE excluded.quote_state
-            END,
-            published_at = excluded.published_at,
-            raw_object_json = excluded.raw_object_json,
-            updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(())
+    bindings
 }
 
 async fn evaluate_remote_quote_state(
@@ -610,7 +800,7 @@ pub(crate) async fn update_remote_status_quote_state(
     status_id: &str,
     quote_state: &str,
 ) -> Result<RemoteStatusRow> {
-    let bindings = [D1Type::Text(quote_state), D1Type::Text(status_id)];
+    let bindings = remote_status_quote_state_update_bindings(quote_state, status_id);
     db.prepare(
         "UPDATE remote_statuses
          SET quote_state = ?1,
@@ -626,10 +816,361 @@ pub(crate) async fn update_remote_status_quote_state(
         .ok_or_else(|| Error::RustError("remote status not found".to_owned()))
 }
 
+fn remote_status_quote_state_update_bindings<'a>(
+    quote_state: &'a str,
+    status_id: &'a str,
+) -> [D1Type<'a>; 2] {
+    [D1Type::Text(quote_state), D1Type::Text(status_id)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn remote_actor_profile_fixture() -> RemoteActorProfile {
+        RemoteActorProfile {
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            username: "alice".to_owned(),
+            domain: "remote.example".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            inbox_uri: "https://remote.example/users/alice/inbox".to_owned(),
+            shared_inbox_uri: Some("https://remote.example/inbox".to_owned()),
+            public_key_id: "https://remote.example/users/alice#main-key".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            display_name: "Alice".to_owned(),
+            summary_html: String::new(),
+            profile_url: Some("https://remote.example/@alice".to_owned()),
+            avatar_url: None,
+            header_url: None,
+        }
+    }
+
+    #[test]
+    fn remote_status_object_uri_requires_id() {
+        let error = remote_status_object_uri(&json!({})).unwrap_err();
+
+        assert!(error.to_string().contains("missing id"));
+    }
+
+    #[test]
+    fn remote_status_id_bindings_keep_sql_slot_order_stable() {
+        let bindings = remote_status_id_bindings("remote-status-id");
+
+        assert!(matches!(bindings[0], D1Type::Text("remote-status-id")));
+    }
+
+    #[test]
+    fn remote_status_object_uri_bindings_keep_sql_slot_order_stable() {
+        let bindings =
+            remote_status_object_uri_bindings("https://remote.example/users/alice/statuses/1");
+
+        assert!(matches!(
+            bindings[0],
+            D1Type::Text("https://remote.example/users/alice/statuses/1")
+        ));
+    }
+
+    #[test]
+    fn remote_status_lookup_value_bindings_keep_sql_slot_order_stable() {
+        let bindings = remote_status_lookup_value_bindings("https://remote.example/@alice/1");
+
+        assert!(matches!(
+            bindings[0],
+            D1Type::Text("https://remote.example/@alice/1")
+        ));
+    }
+
+    #[test]
+    fn remote_status_quote_state_update_bindings_keep_sql_slot_order_stable() {
+        let bindings = remote_status_quote_state_update_bindings("revoked", "remote-status-id");
+
+        assert!(matches!(bindings[0], D1Type::Text("revoked")));
+        assert!(matches!(bindings[1], D1Type::Text("remote-status-id")));
+    }
+
+    #[test]
+    fn remote_status_upsert_sql_preserves_revoked_quote_state() {
+        let sql = remote_status_upsert_sql();
+
+        assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
+        assert!(sql.contains("WHEN remote_statuses.quote_state = 'revoked'"));
+        assert!(sql.contains("updated_at = ?16"));
+    }
+
+    #[test]
+    fn remote_reblog_upsert_sql_preserves_revoked_quote_state() {
+        let sql = remote_reblog_upsert_sql();
+
+        assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
+        assert!(sql.contains("WHEN remote_statuses.quote_state = 'revoked'"));
+        assert!(sql.contains("updated_at = CURRENT_TIMESTAMP"));
+    }
+
+    #[test]
+    fn serialize_remote_status_object_json_preserves_status_payload() {
+        let object = json!({
+            "type": "Note",
+            "content": "<p>Hello</p>",
+            "sensitive": false
+        });
+
+        let json = serialize_remote_status_object_json(&object).unwrap();
+
+        assert_eq!(
+            json,
+            "{\"content\":\"<p>Hello</p>\",\"sensitive\":false,\"type\":\"Note\"}"
+        );
+    }
+
+    #[test]
+    fn serialize_remote_reblog_activity_json_preserves_announce_payload() {
+        let activity = json!({
+            "type": "Announce",
+            "object": "https://remote.example/users/bob/statuses/9"
+        });
+
+        let json = serialize_remote_reblog_activity_json(&activity).unwrap();
+
+        assert_eq!(
+            json,
+            "{\"object\":\"https://remote.example/users/bob/statuses/9\",\"type\":\"Announce\"}"
+        );
+    }
+
+    #[test]
+    fn serialize_remote_status_snapshot_json_preserves_history_payload() {
+        let snapshot = json!({
+            "created_at": "2026-05-10T01:02:03Z",
+            "content": "<p>Before</p>"
+        });
+
+        let json = serialize_remote_status_snapshot_json(&snapshot).unwrap();
+
+        assert_eq!(
+            json,
+            "{\"content\":\"<p>Before</p>\",\"created_at\":\"2026-05-10T01:02:03Z\"}"
+        );
+    }
+
+    #[test]
+    fn remote_status_upsert_draft_extracts_storage_fields() {
+        let actor = remote_actor_profile_fixture();
+        let object = json!({
+            "id": "https://remote.example/users/alice/statuses/1",
+            "url": "https://remote.example/@alice/1",
+            "inReplyTo": "https://remote.example/users/bob/statuses/9",
+            "content": "<p>Hello</p>",
+            "summary": "spoiler",
+            "sensitive": true,
+            "published": "2026-05-10T01:02:03Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "contentMap": {
+                "ja": "<p>Hello</p>"
+            }
+        });
+
+        let draft = remote_status_upsert_draft(
+            &actor,
+            &object,
+            "remote-status-id".to_owned(),
+            "accepted",
+            "revision-time".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(draft.actor_uri, actor.actor_uri);
+        assert_eq!(
+            draft.object_uri,
+            "https://remote.example/users/alice/statuses/1"
+        );
+        assert_eq!(
+            draft.url.as_deref(),
+            Some("https://remote.example/@alice/1")
+        );
+        assert_eq!(
+            draft.in_reply_to_uri.as_deref(),
+            Some("https://remote.example/users/bob/statuses/9")
+        );
+        assert_eq!(draft.content_html, "<p>Hello</p>");
+        assert_eq!(draft.spoiler_text, "spoiler");
+        assert_eq!(draft.visibility, "public");
+        assert!(draft.sensitive);
+        assert_eq!(draft.language.as_deref(), Some("ja"));
+        assert_eq!(draft.quote_state, "accepted");
+        assert_eq!(draft.published_at, "2026-05-10T01:02:03Z");
+        assert_eq!(draft.revision_at, "revision-time");
+        assert_eq!(draft.status_id, "remote-status-id");
+    }
+
+    #[test]
+    fn remote_status_upsert_bindings_keep_sql_slot_order_stable() {
+        let draft = RemoteStatusUpsertDraft {
+            status_id: "remote-status-id".to_owned(),
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            object_uri: "https://remote.example/users/alice/statuses/1".to_owned(),
+            url: Some("https://remote.example/@alice/1".to_owned()),
+            in_reply_to_uri: Some("https://remote.example/users/bob/statuses/9".to_owned()),
+            quote_of_uri: Some("https://local.example/users/alice/statuses/2".to_owned()),
+            content_html: "<p>Hello</p>".to_owned(),
+            spoiler_text: "spoiler".to_owned(),
+            visibility: "public".to_owned(),
+            sensitive: true,
+            language: Some("ja".to_owned()),
+            quote_state: "accepted",
+            published_at: "2026-05-10T01:02:03Z".to_owned(),
+            raw_object_json: "{\"type\":\"Note\"}".to_owned(),
+            revision_at: "revision-time".to_owned(),
+        };
+        let bindings = remote_status_upsert_bindings(&draft);
+
+        assert!(matches!(bindings[0], D1Type::Text("remote-status-id")));
+        assert!(matches!(
+            bindings[1],
+            D1Type::Text("https://remote.example/users/alice")
+        ));
+        assert!(matches!(
+            bindings[2],
+            D1Type::Text("https://remote.example/users/alice/statuses/1")
+        ));
+        assert!(matches!(
+            bindings[3],
+            D1Type::Text("https://remote.example/@alice/1")
+        ));
+        assert!(matches!(
+            bindings[4],
+            D1Type::Text("https://remote.example/users/bob/statuses/9")
+        ));
+        assert!(matches!(bindings[5], D1Type::Null));
+        assert!(matches!(
+            bindings[6],
+            D1Type::Text("https://local.example/users/alice/statuses/2")
+        ));
+        assert!(matches!(bindings[7], D1Type::Text("<p>Hello</p>")));
+        assert!(matches!(bindings[8], D1Type::Text("spoiler")));
+        assert!(matches!(bindings[9], D1Type::Text("public")));
+        assert!(matches!(bindings[10], D1Type::Integer(1)));
+        assert!(matches!(bindings[11], D1Type::Text("ja")));
+        assert!(matches!(bindings[12], D1Type::Text("accepted")));
+        assert!(matches!(bindings[13], D1Type::Text("2026-05-10T01:02:03Z")));
+        assert!(matches!(bindings[14], D1Type::Text("{\"type\":\"Note\"}")));
+        assert!(matches!(bindings[15], D1Type::Text("revision-time")));
+    }
+
+    #[test]
+    fn remote_reblog_upsert_draft_extracts_storage_fields() {
+        let actor = remote_actor_profile_fixture();
+        let activity = json!({
+            "id": "https://remote.example/users/alice/activities/announce/1",
+            "type": "Announce",
+            "object": {
+                "id": "https://remote.example/users/bob/statuses/9"
+            },
+            "published": "2026-05-11T01:02:03Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        });
+
+        let draft = remote_reblog_upsert_draft(
+            &actor,
+            &activity,
+            "remote-reblog-id".to_owned(),
+            Some("https://local.example/users/alice/statuses/2".to_owned()),
+            "accepted",
+            "fallback-time".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(draft.status_id, "remote-reblog-id");
+        assert_eq!(draft.actor_uri, actor.actor_uri);
+        assert_eq!(
+            draft.object_uri,
+            "https://remote.example/users/alice/activities/announce/1"
+        );
+        assert_eq!(
+            draft.boost_of_uri,
+            "https://remote.example/users/bob/statuses/9"
+        );
+        assert_eq!(
+            draft.quote_of_uri.as_deref(),
+            Some("https://local.example/users/alice/statuses/2")
+        );
+        assert_eq!(draft.visibility, "public");
+        assert_eq!(draft.quote_state, "accepted");
+        assert_eq!(draft.published_at, "2026-05-11T01:02:03Z");
+        assert!(draft.raw_object_json.contains("\"Announce\""));
+    }
+
+    #[test]
+    fn remote_reblog_upsert_draft_uses_fallback_published_at() {
+        let actor = remote_actor_profile_fixture();
+        let activity = json!({
+            "id": "https://remote.example/users/alice/activities/announce/1",
+            "type": "Announce",
+            "object": "https://remote.example/users/bob/statuses/9"
+        });
+
+        let draft = remote_reblog_upsert_draft(
+            &actor,
+            &activity,
+            "remote-reblog-id".to_owned(),
+            None,
+            "accepted",
+            "fallback-time".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(draft.published_at, "fallback-time");
+    }
+
+    #[test]
+    fn remote_reblog_upsert_bindings_keep_sql_slot_order_stable() {
+        let draft = RemoteReblogUpsertDraft {
+            status_id: "remote-reblog-id".to_owned(),
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            object_uri: "https://remote.example/users/alice/activities/announce/1".to_owned(),
+            boost_of_uri: "https://remote.example/users/bob/statuses/9".to_owned(),
+            quote_of_uri: Some("https://local.example/users/alice/statuses/2".to_owned()),
+            visibility: "unlisted".to_owned(),
+            quote_state: "accepted",
+            published_at: "2026-05-11T01:02:03Z".to_owned(),
+            raw_object_json: "{\"type\":\"Announce\"}".to_owned(),
+        };
+        let bindings = remote_reblog_upsert_bindings(&draft);
+
+        assert!(matches!(bindings[0], D1Type::Text("remote-reblog-id")));
+        assert!(matches!(
+            bindings[1],
+            D1Type::Text("https://remote.example/users/alice")
+        ));
+        assert!(matches!(
+            bindings[2],
+            D1Type::Text("https://remote.example/users/alice/activities/announce/1")
+        ));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(
+            bindings[5],
+            D1Type::Text("https://remote.example/users/bob/statuses/9")
+        ));
+        assert!(matches!(
+            bindings[6],
+            D1Type::Text("https://local.example/users/alice/statuses/2")
+        ));
+        assert!(matches!(bindings[7], D1Type::Text("")));
+        assert!(matches!(bindings[8], D1Type::Text("")));
+        assert!(matches!(bindings[9], D1Type::Text("unlisted")));
+        assert!(matches!(bindings[10], D1Type::Integer(0)));
+        assert!(matches!(bindings[11], D1Type::Null));
+        assert!(matches!(bindings[12], D1Type::Text("accepted")));
+        assert!(matches!(bindings[13], D1Type::Text("2026-05-11T01:02:03Z")));
+        assert!(matches!(
+            bindings[14],
+            D1Type::Text("{\"type\":\"Announce\"}")
+        ));
+    }
 
     #[test]
     fn remote_status_content_html_prefers_content() {

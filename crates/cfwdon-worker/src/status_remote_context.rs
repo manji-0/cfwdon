@@ -15,6 +15,22 @@ use worker::Result;
 const REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT: usize = 8;
 const REMOTE_CONTEXT_REPLY_ITEM_FETCH_LIMIT: usize = 128;
 
+struct RemoteContextDescendantQueueNode {
+    object_uri: String,
+    depth: usize,
+}
+
+type RemoteContextDescendant = (String, MastodonStatusResponse);
+
+fn next_remote_context_child_depth(max_depth: Option<usize>, depth: usize) -> Option<usize> {
+    let child_depth = depth.saturating_add(1);
+    if max_depth.is_some_and(|limit| child_depth > limit) {
+        None
+    } else {
+        Some(child_depth)
+    }
+}
+
 pub(crate) async fn build_remote_status_context(
     db: &D1Database,
     config: &AppConfig,
@@ -23,6 +39,25 @@ pub(crate) async fn build_remote_status_context(
     root_actor: &RemoteActorRow,
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
+    let ancestors = collect_ancestors_for_remote_root(db, config, viewer, root).await?;
+
+    if viewer.is_some() {
+        let _ = hydrate_remote_descendants_for_context(db, config, root, root_actor, 0).await;
+    }
+    let descendants =
+        collect_descendants_for_remote_root(db, config, viewer, root, root_actor).await?;
+    Ok(MastodonContextResponse {
+        ancestors: trim_context_ancestors(ancestors, is_authenticated),
+        descendants,
+    })
+}
+
+async fn collect_ancestors_for_remote_root(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    root: &RemoteStatusRow,
+) -> Result<Vec<MastodonStatusResponse>> {
     let mut ancestors = Vec::new();
     let mut current = root.in_reply_to_uri.clone();
     let mut seen_local_ids = HashSet::new();
@@ -88,17 +123,7 @@ pub(crate) async fn build_remote_status_context(
         current = status.in_reply_to_uri.clone();
     }
     ancestors.reverse();
-    let ancestors = trim_context_ancestors(ancestors, is_authenticated);
-
-    if viewer.is_some() {
-        let _ = hydrate_remote_descendants_for_context(db, config, root, root_actor, 0).await;
-    }
-    let descendants =
-        collect_descendants_for_remote_root(db, config, viewer, root, root_actor).await?;
-    Ok(MastodonContextResponse {
-        ancestors,
-        descendants,
-    })
+    Ok(ancestors)
 }
 
 async fn collect_descendants_for_remote_root(
@@ -110,27 +135,24 @@ async fn collect_descendants_for_remote_root(
 ) -> Result<Vec<MastodonStatusResponse>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
     let mut descendants = Vec::new();
-    let mut queued_uris = vec![(root.object_uri.clone(), 0usize)];
+    let mut queued_uris = vec![RemoteContextDescendantQueueNode {
+        object_uri: root.object_uri.clone(),
+        depth: 0,
+    }];
     let mut seen_remote_ids = HashSet::from([root.id.clone()]);
 
-    while let Some((object_uri, depth)) = queued_uris.pop() {
-        for (status, actor) in list_direct_remote_replies_by_uri(db, &object_uri).await? {
-            if !seen_remote_ids.insert(status.id.clone()) {
-                continue;
-            }
-            let child_depth = depth.saturating_add(1);
-            if max_depth.is_some_and(|limit| child_depth > limit) {
-                continue;
-            }
-            if !is_public_activitypub_visibility(&status.visibility) {
-                continue;
-            }
-            descendants.push((
-                status.published_at.clone(),
-                build_remote_status_response(db, config, viewer, &status, &actor).await?,
-            ));
-            queued_uris.push((status.object_uri.clone(), child_depth));
-        }
+    while let Some(node) = queued_uris.pop() {
+        append_remote_context_child_descendants(
+            db,
+            config,
+            viewer,
+            &node,
+            max_depth,
+            &mut seen_remote_ids,
+            &mut queued_uris,
+            &mut descendants,
+        )
+        .await?;
     }
 
     descendants.sort_by(|left, right| left.0.cmp(&right.0));
@@ -138,6 +160,39 @@ async fn collect_descendants_for_remote_root(
         descendants.into_iter().map(|(_, status)| status).collect(),
         viewer.is_some(),
     ))
+}
+
+async fn append_remote_context_child_descendants(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    node: &RemoteContextDescendantQueueNode,
+    max_depth: Option<usize>,
+    seen_remote_ids: &mut HashSet<String>,
+    queued_uris: &mut Vec<RemoteContextDescendantQueueNode>,
+    descendants: &mut Vec<RemoteContextDescendant>,
+) -> Result<()> {
+    for (status, actor) in list_direct_remote_replies_by_uri(db, &node.object_uri).await? {
+        if !seen_remote_ids.insert(status.id.clone()) {
+            continue;
+        }
+        let Some(child_depth) = next_remote_context_child_depth(max_depth, node.depth) else {
+            continue;
+        };
+        if !is_public_activitypub_visibility(&status.visibility) {
+            continue;
+        }
+        descendants.push((
+            status.published_at.clone(),
+            build_remote_status_response(db, config, viewer, &status, &actor).await?,
+        ));
+        queued_uris.push(RemoteContextDescendantQueueNode {
+            object_uri: status.object_uri.clone(),
+            depth: child_depth,
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -354,7 +409,7 @@ fn extract_remote_reply_reference_item(
 mod tests {
     use super::{
         RemoteReplyReference, extract_remote_reply_reference, extract_remote_reply_reference_item,
-        extract_remote_reply_references,
+        extract_remote_reply_references, next_remote_context_child_depth,
     };
 
     #[test]
@@ -420,5 +475,15 @@ mod tests {
             extract_remote_reply_reference(Some(&page)).as_deref(),
             Some("https://remote.example/contexts/replies?page=2")
         );
+    }
+
+    #[test]
+    fn next_remote_context_child_depth_respects_limit() {
+        assert_eq!(
+            next_remote_context_child_depth(None, usize::MAX),
+            Some(usize::MAX)
+        );
+        assert_eq!(next_remote_context_child_depth(Some(2), 1), Some(2));
+        assert_eq!(next_remote_context_child_depth(Some(2), 2), None);
     }
 }

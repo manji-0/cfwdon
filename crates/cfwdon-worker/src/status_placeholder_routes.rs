@@ -489,83 +489,94 @@ pub(crate) async fn load_translation_provider_languages(
 ) -> Result<serde_json::Value> {
     match translation_provider_kind(&provider_config.provider) {
         Some(TranslationProviderKind::LibreTranslate) => {
-            let languages_url = format!(
-                "{}/languages",
-                provider_config.endpoint_url.trim_end_matches('/')
-            );
-            let headers = Headers::new();
-            let mut init = RequestInit::new();
-            init.with_method(Method::Get).with_headers(headers);
-            let request = Request::new_with_init(&languages_url, &init)?;
-            let mut response = Fetch::Request(request).send().await?;
-            if response.status_code() / 100 != 2 {
-                return Err(worker::Error::RustError(format!(
-                    "translation provider rejected languages request with HTTP {}",
-                    response.status_code()
-                )));
-            }
-            let languages = response
-                .json::<Vec<TranslationProviderLanguageRow>>()
-                .await?;
-            Ok(build_translation_languages_document(&languages))
+            load_libretranslate_languages(provider_config).await
         }
-        Some(TranslationProviderKind::DeepL) => {
-            let base_url = provider_config.endpoint_url.trim_end_matches('/');
-            let source_languages_url = format!("{base_url}/v2/languages?type=source");
-            let target_languages_url = format!("{base_url}/v2/languages?type=target");
-            let headers = Headers::new();
-            if let Some(api_key) = provider_config
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                headers.set("Authorization", &format!("DeepL-Auth-Key {api_key}"))?;
-            }
-            let mut source_init = RequestInit::new();
-            source_init
-                .with_method(Method::Get)
-                .with_headers(headers.clone());
-            let mut target_init = RequestInit::new();
-            target_init.with_method(Method::Get).with_headers(headers);
-
-            let source_request = Request::new_with_init(&source_languages_url, &source_init)?;
-            let target_request = Request::new_with_init(&target_languages_url, &target_init)?;
-            let mut source_response = Fetch::Request(source_request).send().await?;
-            let mut target_response = Fetch::Request(target_request).send().await?;
-            if source_response.status_code() / 100 != 2 {
-                return Err(worker::Error::RustError(format!(
-                    "translation provider rejected source languages request with HTTP {}",
-                    source_response.status_code()
-                )));
-            }
-            if target_response.status_code() / 100 != 2 {
-                return Err(worker::Error::RustError(format!(
-                    "translation provider rejected target languages request with HTTP {}",
-                    target_response.status_code()
-                )));
-            }
-            let source_languages = source_response
-                .json::<Vec<DeepLLanguageRow>>()
-                .await?
-                .into_iter()
-                .filter_map(|row| row.language)
-                .collect::<Vec<_>>();
-            let target_languages = target_response
-                .json::<Vec<DeepLLanguageRow>>()
-                .await?
-                .into_iter()
-                .filter_map(|row| row.language)
-                .collect::<Vec<_>>();
-            Ok(build_deepl_translation_languages_document(
-                &source_languages,
-                &target_languages,
-            ))
-        }
+        Some(TranslationProviderKind::DeepL) => load_deepl_languages(provider_config).await,
         None => Err(worker::Error::RustError(
             "translation provider is not configured".to_owned(),
         )),
     }
+}
+
+async fn load_libretranslate_languages(
+    provider_config: &TranslationProviderConfig,
+) -> Result<serde_json::Value> {
+    let languages_url = format!(
+        "{}/languages",
+        provider_config.endpoint_url.trim_end_matches('/')
+    );
+    let headers = Headers::new();
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let request = Request::new_with_init(&languages_url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+    if response.status_code() / 100 != 2 {
+        return Err(worker::Error::RustError(format!(
+            "translation provider rejected languages request with HTTP {}",
+            response.status_code()
+        )));
+    }
+    let languages = response
+        .json::<Vec<TranslationProviderLanguageRow>>()
+        .await?;
+    Ok(build_translation_languages_document(&languages))
+}
+
+async fn load_deepl_languages(
+    provider_config: &TranslationProviderConfig,
+) -> Result<serde_json::Value> {
+    let base_url = provider_config.endpoint_url.trim_end_matches('/');
+    let source_languages_url = format!("{base_url}/v2/languages?type=source");
+    let target_languages_url = format!("{base_url}/v2/languages?type=target");
+    let headers = deepl_language_request_headers(provider_config)?;
+    let mut source_init = RequestInit::new();
+    source_init
+        .with_method(Method::Get)
+        .with_headers(headers.clone());
+    let mut target_init = RequestInit::new();
+    target_init.with_method(Method::Get).with_headers(headers);
+
+    let source_request = Request::new_with_init(&source_languages_url, &source_init)?;
+    let target_request = Request::new_with_init(&target_languages_url, &target_init)?;
+    let mut source_response = Fetch::Request(source_request).send().await?;
+    let mut target_response = Fetch::Request(target_request).send().await?;
+    if source_response.status_code() / 100 != 2 {
+        return Err(worker::Error::RustError(format!(
+            "translation provider rejected source languages request with HTTP {}",
+            source_response.status_code()
+        )));
+    }
+    if target_response.status_code() / 100 != 2 {
+        return Err(worker::Error::RustError(format!(
+            "translation provider rejected target languages request with HTTP {}",
+            target_response.status_code()
+        )));
+    }
+    let source_languages =
+        deepl_language_codes(source_response.json::<Vec<DeepLLanguageRow>>().await?);
+    let target_languages =
+        deepl_language_codes(target_response.json::<Vec<DeepLLanguageRow>>().await?);
+    Ok(build_deepl_translation_languages_document(
+        &source_languages,
+        &target_languages,
+    ))
+}
+
+fn deepl_language_request_headers(provider_config: &TranslationProviderConfig) -> Result<Headers> {
+    let headers = Headers::new();
+    if let Some(api_key) = provider_config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.set("Authorization", &format!("DeepL-Auth-Key {api_key}"))?;
+    }
+    Ok(headers)
+}
+
+fn deepl_language_codes(rows: Vec<DeepLLanguageRow>) -> Vec<String> {
+    rows.into_iter().filter_map(|row| row.language).collect()
 }
 
 pub(crate) fn build_libretranslate_request_payload(
@@ -846,155 +857,215 @@ fn set_json_pointer_value(document: &mut serde_json::Value, pointer: &str, value
     }
 }
 
+fn status_translation_source_language(status: &serde_json::Value) -> &str {
+    status
+        .get("language")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("und")
+}
+
+struct TranslationDocumentBuilder<'a> {
+    provider_config: &'a TranslationProviderConfig,
+    source_language: &'a str,
+    target_language: &'a str,
+}
+
+impl TranslationDocumentBuilder<'_> {
+    async fn translate_text(&self, text: &str, libretranslate_format: &str) -> Result<String> {
+        match translation_provider_kind(&self.provider_config.provider) {
+            Some(TranslationProviderKind::DeepL) => {
+                translate_text_with_deepl(
+                    self.provider_config,
+                    text,
+                    self.source_language,
+                    self.target_language,
+                )
+                .await
+            }
+            _ => {
+                translate_text_with_libretranslate(
+                    self.provider_config,
+                    text,
+                    self.source_language,
+                    self.target_language,
+                    libretranslate_format,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn translate_status_string_field(
+        &self,
+        document: &mut serde_json::Value,
+        status: &serde_json::Value,
+        field: &str,
+        document_pointer: &str,
+        libretranslate_format: &str,
+        skip_blank: bool,
+    ) -> Result<()> {
+        let Some(text) = status.get(field).and_then(serde_json::Value::as_str) else {
+            return Ok(());
+        };
+        if skip_blank && text.trim().is_empty() {
+            return Ok(());
+        }
+
+        let translated = self.translate_text(text, libretranslate_format).await?;
+        set_json_pointer_value(document, document_pointer, translated);
+        Ok(())
+    }
+
+    async fn translate_indexed_string_values(
+        &self,
+        document: &mut serde_json::Value,
+        items: &[serde_json::Value],
+        item_field: &str,
+        document_pointer_prefix: &str,
+    ) -> Result<()> {
+        for (index, item) in items.iter().enumerate() {
+            let Some(text) = item
+                .get(item_field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let translated = self.translate_text(text, "text").await?;
+            set_json_pointer_value(
+                document,
+                &format!("{document_pointer_prefix}/{index}/{item_field}"),
+                translated,
+            );
+        }
+        Ok(())
+    }
+}
+
 async fn build_translation_document_with_provider(
     status: &serde_json::Value,
     target_language: &str,
     provider_config: &TranslationProviderConfig,
 ) -> Result<serde_json::Value> {
-    let source_language = status
-        .get("language")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("und");
+    let source_language = status_translation_source_language(status);
+    let builder = TranslationDocumentBuilder {
+        provider_config,
+        source_language,
+        target_language,
+    };
     let mut document = build_translation_document_for_language(
         status,
         target_language,
         translation_provider_display_name(&provider_config.provider),
     );
 
-    if let Some(content) = status.get("content").and_then(serde_json::Value::as_str) {
-        let translated = match translation_provider_kind(&provider_config.provider) {
-            Some(TranslationProviderKind::DeepL) => {
-                translate_text_with_deepl(
-                    provider_config,
-                    content,
-                    source_language,
-                    target_language,
-                )
-                .await?
-            }
-            _ => {
-                translate_text_with_libretranslate(
-                    provider_config,
-                    content,
-                    source_language,
-                    target_language,
-                    "html",
-                )
-                .await?
-            }
-        };
-        set_json_pointer_value(&mut document, "/content", translated);
-    }
-    if let Some(spoiler_text) = status
-        .get("spoiler_text")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    {
-        let translated = match translation_provider_kind(&provider_config.provider) {
-            Some(TranslationProviderKind::DeepL) => {
-                translate_text_with_deepl(
-                    provider_config,
-                    spoiler_text,
-                    source_language,
-                    target_language,
-                )
-                .await?
-            }
-            _ => {
-                translate_text_with_libretranslate(
-                    provider_config,
-                    spoiler_text,
-                    source_language,
-                    target_language,
-                    "text",
-                )
-                .await?
-            }
-        };
-        set_json_pointer_value(&mut document, "/spoiler_text", translated);
-    }
+    builder
+        .translate_status_string_field(&mut document, status, "content", "/content", "html", false)
+        .await?;
+    builder
+        .translate_status_string_field(
+            &mut document,
+            status,
+            "spoiler_text",
+            "/spoiler_text",
+            "text",
+            true,
+        )
+        .await?;
     if let Some(media) = status
         .get("media_attachments")
         .and_then(serde_json::Value::as_array)
     {
-        for (index, attachment) in media.iter().enumerate() {
-            let Some(description) = attachment
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            else {
-                continue;
-            };
-            let translated = match translation_provider_kind(&provider_config.provider) {
-                Some(TranslationProviderKind::DeepL) => {
-                    translate_text_with_deepl(
-                        provider_config,
-                        description,
-                        source_language,
-                        target_language,
-                    )
-                    .await?
-                }
-                _ => {
-                    translate_text_with_libretranslate(
-                        provider_config,
-                        description,
-                        source_language,
-                        target_language,
-                        "text",
-                    )
-                    .await?
-                }
-            };
-            set_json_pointer_value(
+        builder
+            .translate_indexed_string_values(
                 &mut document,
-                &format!("/media_attachments/{index}/description"),
-                translated,
-            );
-        }
+                media,
+                "description",
+                "/media_attachments",
+            )
+            .await?;
     }
     if let Some(options) = status
         .pointer("/poll/options")
         .and_then(serde_json::Value::as_array)
     {
-        for (index, option) in options.iter().enumerate() {
-            let Some(title) = option
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            else {
-                continue;
-            };
-            let translated = match translation_provider_kind(&provider_config.provider) {
-                Some(TranslationProviderKind::DeepL) => {
-                    translate_text_with_deepl(
-                        provider_config,
-                        title,
-                        source_language,
-                        target_language,
-                    )
-                    .await?
-                }
-                _ => {
-                    translate_text_with_libretranslate(
-                        provider_config,
-                        title,
-                        source_language,
-                        target_language,
-                        "text",
-                    )
-                    .await?
-                }
-            };
-            set_json_pointer_value(
-                &mut document,
-                &format!("/poll/options/{index}/title"),
-                translated,
-            );
-        }
+        builder
+            .translate_indexed_string_values(&mut document, options, "title", "/poll/options")
+            .await?;
     }
 
     Ok(document)
+}
+
+async fn cached_or_fresh_provider_translation_document(
+    db: &D1Database,
+    status: &serde_json::Value,
+    source_language: &str,
+    target_language: &str,
+    route_status_id: &str,
+    provider_config: &TranslationProviderConfig,
+) -> Result<Option<serde_json::Value>> {
+    let supported_languages = load_translation_provider_languages(provider_config).await?;
+    let Some(normalized_target_language) = translation_provider_supported_target_language(
+        &supported_languages,
+        source_language,
+        target_language,
+    ) else {
+        return Ok(None);
+    };
+    let status_id = translation_status_id(status, route_status_id);
+    let source_fingerprint = translation_cache_source_fingerprint(status).map_err(|error| {
+        worker::Error::RustError(format!(
+            "failed to encode translation source fingerprint: {error}"
+        ))
+    })?;
+    if let Some(document) = find_cached_translation_document(
+        db,
+        status_id,
+        &normalized_target_language,
+        &provider_config.provider,
+        &source_fingerprint,
+    )
+    .await?
+    {
+        return Ok(Some(document));
+    }
+    let document = build_translation_document_with_provider(
+        status,
+        &normalized_target_language,
+        provider_config,
+    )
+    .await?;
+    let timestamp = now_iso_string()?;
+    store_cached_translation_document(
+        db,
+        status_id,
+        &normalized_target_language,
+        &provider_config.provider,
+        &source_fingerprint,
+        &document,
+        &timestamp,
+    )
+    .await?;
+    Ok(Some(document))
+}
+
+fn translation_status_id<'a>(status: &'a serde_json::Value, route_status_id: &'a str) -> &'a str {
+    status
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(route_status_id)
+}
+
+fn translation_status_visibility_allows_translation(visibility: Option<&str>) -> bool {
+    !matches!(visibility.unwrap_or("public"), "private" | "direct")
+}
+
+fn translation_language_pair_allows_translation(
+    source_language: &str,
+    target_language: &str,
+) -> bool {
+    target_language != source_language
 }
 
 pub(crate) async fn status_interaction_policy_response(
@@ -1108,11 +1179,8 @@ pub(crate) async fn translate_status_response(
         return Response::error("Record not found", 404);
     }
     let value = response.json::<serde_json::Value>().await?;
-    let visibility = value
-        .get("visibility")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("public");
-    if matches!(visibility, "private" | "direct") {
+    let visibility = value.get("visibility").and_then(serde_json::Value::as_str);
+    if !translation_status_visibility_allows_translation(visibility) {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "This action is not allowed",
         }))?
@@ -1131,7 +1199,7 @@ pub(crate) async fn translate_status_response(
         &configured_instance_languages(&config),
         source_language,
     );
-    if target_language == source_language {
+    if !translation_language_pair_allows_translation(source_language, &target_language) {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "This action is not allowed",
         }))?
@@ -1139,54 +1207,21 @@ pub(crate) async fn translate_status_response(
     }
 
     if let Some(provider_config) = provider_config {
-        let supported_languages = load_translation_provider_languages(&provider_config).await?;
-        let Some(normalized_target_language) = translation_provider_supported_target_language(
-            &supported_languages,
+        let Some(document) = cached_or_fresh_provider_translation_document(
+            &db,
+            &value,
             source_language,
             &target_language,
-        ) else {
+            &route_status_id,
+            &provider_config,
+        )
+        .await?
+        else {
             return Ok(Response::from_json(&serde_json::json!({
                 "error": "This action is not allowed",
             }))?
             .with_status(403));
         };
-        let status_id = value
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(route_status_id.as_str());
-        let source_fingerprint = translation_cache_source_fingerprint(&value).map_err(|error| {
-            worker::Error::RustError(format!(
-                "failed to encode translation source fingerprint: {error}"
-            ))
-        })?;
-        if let Some(document) = find_cached_translation_document(
-            &db,
-            status_id,
-            &normalized_target_language,
-            &provider_config.provider,
-            &source_fingerprint,
-        )
-        .await?
-        {
-            return Response::from_json(&document);
-        }
-        let document = build_translation_document_with_provider(
-            &value,
-            &normalized_target_language,
-            &provider_config,
-        )
-        .await?;
-        let timestamp = now_iso_string()?;
-        store_cached_translation_document(
-            &db,
-            status_id,
-            &normalized_target_language,
-            &provider_config.provider,
-            &source_fingerprint,
-            &document,
-            &timestamp,
-        )
-        .await?;
         return Response::from_json(&document);
     }
 
@@ -1195,4 +1230,62 @@ pub(crate) async fn translate_status_response(
         &target_language,
         translation_provider_display_name("cfwdon-placeholder"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deepl_language_codes_ignores_rows_without_language() {
+        let rows = vec![
+            DeepLLanguageRow {
+                language: Some("EN".to_owned()),
+            },
+            DeepLLanguageRow { language: None },
+            DeepLLanguageRow {
+                language: Some("JA".to_owned()),
+            },
+        ];
+
+        assert_eq!(deepl_language_codes(rows), vec!["EN", "JA"]);
+    }
+
+    #[test]
+    fn translation_status_id_prefers_document_id_over_route_fallback() {
+        assert_eq!(
+            translation_status_id(
+                &serde_json::json!({"id": "status-from-document"}),
+                "route-1"
+            ),
+            "status-from-document"
+        );
+        assert_eq!(
+            translation_status_id(&serde_json::json!({}), "route-1"),
+            "route-1"
+        );
+    }
+
+    #[test]
+    fn translation_status_visibility_blocks_private_and_direct_statuses() {
+        assert!(translation_status_visibility_allows_translation(None));
+        assert!(translation_status_visibility_allows_translation(Some(
+            "public"
+        )));
+        assert!(translation_status_visibility_allows_translation(Some(
+            "unlisted"
+        )));
+        assert!(!translation_status_visibility_allows_translation(Some(
+            "private"
+        )));
+        assert!(!translation_status_visibility_allows_translation(Some(
+            "direct"
+        )));
+    }
+
+    #[test]
+    fn translation_language_pair_blocks_noop_translations() {
+        assert!(translation_language_pair_allows_translation("en", "ja"));
+        assert!(!translation_language_pair_allows_translation("en", "en"));
+    }
 }

@@ -149,69 +149,228 @@ async fn build_scheduled_status_document(
 
 fn scheduled_status_from_value(value: &serde_json::Value) -> ScheduledStatus {
     ScheduledStatus {
-        cursor_id: value
-            .get("cursor_id")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or_default(),
-        id: value
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        draft: StatusDraft {
-            text: value
-                .get("text_content")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            visibility: value
-                .get("visibility")
-                .and_then(serde_json::Value::as_str)
-                .and_then(Visibility::parse)
-                .unwrap_or(Visibility::Public),
-            spoiler_text: value
-                .get("spoiler_text")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            sensitive: value
-                .get("sensitive")
-                .and_then(|value| value.as_bool().or_else(|| value.as_i64().map(|n| n != 0)))
-                .unwrap_or(false),
-            language: value
-                .get("language")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned),
-            quote_approval_policy: value
-                .get("quote_approval_policy")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned),
-            in_reply_to_id: value
-                .get("in_reply_to_id")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned),
-            media_ids: value
-                .get("media_ids_json")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|value| serde_json::from_str(value).ok())
-                .unwrap_or_default(),
-            poll: value
-                .get("poll_json")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|value| serde_json::from_str(value).ok()),
-        },
-        idempotency_key: value
-            .get("idempotency_key")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        application_id: value
-            .get("application_id")
-            .and_then(serde_json::Value::as_i64),
-        scheduled_at: value
-            .get("scheduled_at")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("2099-01-01T00:00:00.000Z")
-            .to_owned(),
+        cursor_id: json_i64(value, "cursor_id").unwrap_or_default(),
+        id: json_string(value, "id").unwrap_or_default(),
+        draft: scheduled_status_draft_from_value(value),
+        idempotency_key: json_string(value, "idempotency_key"),
+        application_id: json_i64(value, "application_id"),
+        scheduled_at: json_string(value, "scheduled_at")
+            .unwrap_or_else(|| "2099-01-01T00:00:00.000Z".to_owned()),
+    }
+}
+
+fn scheduled_status_draft_from_value(value: &serde_json::Value) -> StatusDraft {
+    StatusDraft {
+        text: json_string(value, "text_content").unwrap_or_default(),
+        visibility: scheduled_status_visibility(value),
+        spoiler_text: json_string(value, "spoiler_text").unwrap_or_default(),
+        sensitive: json_boolish(value, "sensitive").unwrap_or(false),
+        language: json_string(value, "language"),
+        quote_approval_policy: json_string(value, "quote_approval_policy"),
+        in_reply_to_id: json_string(value, "in_reply_to_id"),
+        media_ids: scheduled_status_media_ids(value),
+        poll: scheduled_status_poll(value),
+    }
+}
+
+fn scheduled_status_visibility(value: &serde_json::Value) -> Visibility {
+    value
+        .get("visibility")
+        .and_then(serde_json::Value::as_str)
+        .and_then(Visibility::parse)
+        .unwrap_or(Visibility::Public)
+}
+
+fn scheduled_status_media_ids(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("media_ids_json")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default()
+}
+
+fn scheduled_status_poll(value: &serde_json::Value) -> Option<cfwdon_domain::PollDraft> {
+    value
+        .get("poll_json")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| serde_json::from_str(value).ok())
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(serde_json::Value::as_i64)
+}
+
+fn json_boolish(value: &serde_json::Value, key: &str) -> Option<bool> {
+    value
+        .get(key)
+        .and_then(|value| value.as_bool().or_else(|| value.as_i64().map(|n| n != 0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_status_from_value_maps_stored_fields() {
+        let poll_json = serde_json::to_string(&cfwdon_domain::PollDraft {
+            options: vec!["yes".to_owned(), "no".to_owned()],
+            expires_in_seconds: 3600,
+            multiple: false,
+            hide_totals: true,
+        })
+        .expect("poll draft JSON");
+        let value = serde_json::json!({
+            "cursor_id": 42,
+            "id": "sched-1",
+            "text_content": "hello later",
+            "visibility": "private",
+            "spoiler_text": "cw",
+            "sensitive": 1,
+            "language": "ja",
+            "quote_approval_policy": "followers",
+            "in_reply_to_id": "status-1",
+            "media_ids_json": "[\"media-1\",\"media-2\"]",
+            "poll_json": poll_json,
+            "idempotency_key": "idem-1",
+            "application_id": 7,
+            "scheduled_at": "2099-02-03T04:05:06.000Z"
+        });
+
+        let status = scheduled_status_from_value(&value);
+
+        assert_eq!(status.cursor_id, 42);
+        assert_eq!(status.id, "sched-1");
+        assert_eq!(status.draft.text, "hello later");
+        assert_eq!(status.draft.visibility, Visibility::FollowersOnly);
+        assert_eq!(status.draft.spoiler_text, "cw");
+        assert!(status.draft.sensitive);
+        assert_eq!(status.draft.language.as_deref(), Some("ja"));
+        assert_eq!(
+            status.draft.quote_approval_policy.as_deref(),
+            Some("followers")
+        );
+        assert_eq!(status.draft.in_reply_to_id.as_deref(), Some("status-1"));
+        assert_eq!(status.draft.media_ids, vec!["media-1", "media-2"]);
+        let poll = status.draft.poll.expect("poll draft");
+        assert_eq!(poll.options, vec!["yes", "no"]);
+        assert_eq!(poll.expires_in_seconds, 3600);
+        assert!(!poll.multiple);
+        assert!(poll.hide_totals);
+        assert_eq!(status.idempotency_key.as_deref(), Some("idem-1"));
+        assert_eq!(status.application_id, Some(7));
+        assert_eq!(status.scheduled_at, "2099-02-03T04:05:06.000Z");
+    }
+
+    #[test]
+    fn scheduled_status_from_value_defaults_missing_or_invalid_fields() {
+        let value = serde_json::json!({
+            "visibility": "unknown",
+            "sensitive": 0,
+            "media_ids_json": "not-json",
+            "poll_json": "not-json"
+        });
+
+        let status = scheduled_status_from_value(&value);
+
+        assert_eq!(status.cursor_id, 0);
+        assert_eq!(status.id, "");
+        assert_eq!(status.draft.text, "");
+        assert_eq!(status.draft.visibility, Visibility::Public);
+        assert_eq!(status.draft.spoiler_text, "");
+        assert!(!status.draft.sensitive);
+        assert_eq!(status.draft.language, None);
+        assert_eq!(status.draft.quote_approval_policy, None);
+        assert_eq!(status.draft.in_reply_to_id, None);
+        assert!(status.draft.media_ids.is_empty());
+        assert_eq!(status.draft.poll, None);
+        assert_eq!(status.idempotency_key, None);
+        assert_eq!(status.application_id, None);
+        assert_eq!(status.scheduled_at, "2099-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn scheduled_status_insert_row_encodes_storage_fields() {
+        let draft = StatusDraft {
+            text: "scheduled".to_owned(),
+            visibility: Visibility::Unlisted,
+            spoiler_text: "cw".to_owned(),
+            sensitive: true,
+            language: Some("ja".to_owned()),
+            quote_approval_policy: Some("followers".to_owned()),
+            in_reply_to_id: Some("reply-1".to_owned()),
+            media_ids: vec!["media-1".to_owned()],
+            poll: Some(cfwdon_domain::PollDraft {
+                options: vec!["yes".to_owned(), "no".to_owned()],
+                expires_in_seconds: 600,
+                multiple: true,
+                hide_totals: false,
+            }),
+        };
+
+        let row = ScheduledStatusInsertRow::new("sched-1".to_owned(), "now".to_owned(), &draft)
+            .expect("insert row");
+
+        assert_eq!(row.media_ids_json, "[\"media-1\"]");
+        let poll: cfwdon_domain::PollDraft =
+            serde_json::from_str(row.poll_json.as_deref().expect("poll JSON")).unwrap();
+        assert_eq!(poll.options, vec!["yes", "no"]);
+        assert_eq!(poll.expires_in_seconds, 600);
+        assert!(poll.multiple);
+        assert!(!poll.hide_totals);
+    }
+}
+
+#[derive(Debug)]
+struct ScheduledStatusInsertRow {
+    id: String,
+    created_at: String,
+    media_ids_json: String,
+    poll_json: Option<String>,
+}
+
+impl ScheduledStatusInsertRow {
+    fn new(id: String, created_at: String, draft: &StatusDraft) -> Result<Self> {
+        let media_ids_json = serde_json::to_string(&draft.media_ids).map_err(|error| {
+            Error::RustError(format!("failed to encode scheduled media ids: {error}"))
+        })?;
+        let poll_json = draft
+            .poll
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| {
+                Error::RustError(format!("failed to encode scheduled poll: {error}"))
+            })?;
+        Ok(Self {
+            id,
+            created_at,
+            media_ids_json,
+            poll_json,
+        })
+    }
+
+    fn into_scheduled_status(
+        self,
+        draft: &StatusDraft,
+        idempotency_key: Option<&str>,
+        application_id: Option<i64>,
+        scheduled_at: &str,
+    ) -> ScheduledStatus {
+        ScheduledStatus {
+            cursor_id: 0,
+            id: self.id,
+            draft: draft.clone(),
+            idempotency_key: idempotency_key.map(ToOwned::to_owned),
+            application_id,
+            scheduled_at: scheduled_at.to_owned(),
+        }
     }
 }
 
@@ -224,19 +383,9 @@ async fn insert_scheduled_status(
     quote_of_uri: Option<&str>,
     scheduled_at: &str,
 ) -> Result<ScheduledStatus> {
-    let id = generate_entity_id(16)?;
-    let created_at = now_iso_string()?;
-    let media_ids_json = serde_json::to_string(&draft.media_ids).map_err(|error| {
-        Error::RustError(format!("failed to encode scheduled media ids: {error}"))
-    })?;
-    let poll_json = draft
-        .poll
-        .as_ref()
-        .map(|poll| serde_json::to_string(poll))
-        .transpose()
-        .map_err(|error| Error::RustError(format!("failed to encode scheduled poll: {error}")))?;
+    let row = ScheduledStatusInsertRow::new(generate_entity_id(16)?, now_iso_string()?, draft)?;
     let bindings = [
-        D1Type::Text(id.as_str()),
+        D1Type::Text(row.id.as_str()),
         D1Type::Text(account_id),
         D1Type::Text(draft.text.as_str()),
         D1Type::Text(draft.visibility.as_str()),
@@ -251,15 +400,15 @@ async fn insert_scheduled_status(
             .in_reply_to_id
             .as_deref()
             .map_or(D1Type::Null, D1Type::Text),
-        D1Type::Text(media_ids_json.as_str()),
-        poll_json.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Text(row.media_ids_json.as_str()),
+        row.poll_json.as_deref().map_or(D1Type::Null, D1Type::Text),
         idempotency_key.map_or(D1Type::Null, D1Type::Text),
         application_id.map_or(D1Type::Null, |value| {
             D1Type::Integer(i32::try_from(value).unwrap_or(i32::MAX))
         }),
         quote_of_uri.map_or(D1Type::Null, D1Type::Text),
         D1Type::Text(scheduled_at),
-        D1Type::Text(created_at.as_str()),
+        D1Type::Text(row.created_at.as_str()),
     ];
     db.prepare(
         "INSERT INTO scheduled_statuses (
@@ -288,14 +437,7 @@ async fn insert_scheduled_status(
     .run()
     .await?;
 
-    Ok(ScheduledStatus {
-        cursor_id: 0,
-        id,
-        draft: draft.clone(),
-        idempotency_key: idempotency_key.map(ToOwned::to_owned),
-        application_id,
-        scheduled_at: scheduled_at.to_owned(),
-    })
+    Ok(row.into_scheduled_status(draft, idempotency_key, application_id, scheduled_at))
 }
 
 async fn list_scheduled_statuses_for_account(

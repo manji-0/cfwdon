@@ -2,6 +2,7 @@ use super::{
     AccountReference, D1Database, FormEntry, Request, find_status_by_id, parse_optional_bool,
 };
 use serde::Deserialize;
+use worker::FormData;
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct CreateReportRequest {
@@ -15,6 +16,15 @@ pub(crate) struct CreateReportRequest {
 pub(crate) async fn parse_create_report_request(
     req: &mut Request,
 ) -> std::result::Result<CreateReportRequest, String> {
+    let request = read_create_report_request(req).await?;
+    let request = normalize_create_report_request(request);
+    validate_create_report_request(&request)?;
+    Ok(request)
+}
+
+async fn read_create_report_request(
+    req: &mut Request,
+) -> std::result::Result<CreateReportRequest, String> {
     let content_type = req
         .headers()
         .get("Content-Type")
@@ -22,46 +32,45 @@ pub(crate) async fn parse_create_report_request(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let mut request = if content_type.contains("application/json") {
+    if content_type.contains("application/json") {
         req.json::<CreateReportRequest>()
             .await
-            .map_err(|error| format!("invalid JSON report payload: {error}"))?
+            .map_err(|error| format!("invalid JSON report payload: {error}"))
     } else {
         let form = req
             .form_data()
             .await
             .map_err(|error| format!("invalid form report payload: {error}"))?;
-        CreateReportRequest {
-            account_id: form.get_field("account_id").unwrap_or_default(),
-            status_ids: form.get_all("status_ids[]").map(|entries| {
-                entries
-                    .into_iter()
-                    .filter_map(|entry| match entry {
-                        FormEntry::Field(value) => Some(value),
-                        FormEntry::File(_) => None,
-                    })
-                    .collect()
-            }),
-            comment: form.get_field("comment"),
-            category: form.get_field("category"),
-            forward: parse_optional_bool(form.get_field("forward").as_deref())?,
-        }
-    };
-
-    request.account_id = request.account_id.trim().to_owned();
-    if request.account_id.is_empty() {
-        return Err("account_id is required".to_owned());
+        create_report_request_from_form(&form)
     }
+}
+
+fn create_report_request_from_form(
+    form: &FormData,
+) -> std::result::Result<CreateReportRequest, String> {
+    Ok(CreateReportRequest {
+        account_id: form.get_field("account_id").unwrap_or_default(),
+        status_ids: form.get_all("status_ids[]").map(field_entries),
+        comment: form.get_field("comment"),
+        category: form.get_field("category"),
+        forward: parse_optional_bool(form.get_field("forward").as_deref())?,
+    })
+}
+
+fn field_entries(entries: Vec<FormEntry>) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            FormEntry::Field(value) => Some(value),
+            FormEntry::File(_) => None,
+        })
+        .collect()
+}
+
+fn normalize_create_report_request(mut request: CreateReportRequest) -> CreateReportRequest {
+    request.account_id = request.account_id.trim().to_owned();
     if let Some(comment) = request.comment.as_mut() {
         *comment = comment.trim().to_owned();
-    }
-    if request
-        .comment
-        .as_deref()
-        .map(|value| value.chars().count() > 1000)
-        .unwrap_or(false)
-    {
-        return Err("comment must be at most 1000 characters".to_owned());
     }
     if let Some(category) = request.category.as_mut() {
         *category = category.trim().to_ascii_lowercase();
@@ -78,13 +87,30 @@ pub(crate) async fn parse_create_report_request(
         status_ids.sort();
         status_ids.dedup();
     }
+    request
+}
+
+fn validate_create_report_request(
+    request: &CreateReportRequest,
+) -> std::result::Result<(), String> {
+    if request.account_id.is_empty() {
+        return Err("account_id is required".to_owned());
+    }
+    if request
+        .comment
+        .as_deref()
+        .map(|value| value.chars().count() > 1000)
+        .unwrap_or(false)
+    {
+        return Err("comment must be at most 1000 characters".to_owned());
+    }
 
     match request.category.as_deref().unwrap_or("other") {
         "spam" | "violation" | "other" | "legal" => {}
         _ => return Err("category must be one of: spam, legal, violation, other".to_owned()),
     }
 
-    Ok(request)
+    Ok(())
 }
 
 pub(crate) async fn validate_report_status_ids(
@@ -110,4 +136,74 @@ pub(crate) async fn validate_report_status_ids(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_create_report_request_trims_and_deduplicates_fields() {
+        let request = CreateReportRequest {
+            account_id: " acct-1 ".to_owned(),
+            status_ids: Some(vec![
+                " status-2 ".to_owned(),
+                "status-1".to_owned(),
+                String::new(),
+                "status-2".to_owned(),
+            ]),
+            comment: Some("  please review  ".to_owned()),
+            category: Some(" SPAM ".to_owned()),
+            forward: Some(true),
+        };
+
+        let normalized = normalize_create_report_request(request);
+
+        assert_eq!(normalized.account_id, "acct-1");
+        assert_eq!(
+            normalized.status_ids.as_deref(),
+            Some(["status-1".to_owned(), "status-2".to_owned()].as_slice())
+        );
+        assert_eq!(normalized.comment.as_deref(), Some("please review"));
+        assert_eq!(normalized.category.as_deref(), Some("spam"));
+        assert_eq!(normalized.forward, Some(true));
+    }
+
+    #[test]
+    fn validate_create_report_request_rejects_missing_long_or_unknown_fields() {
+        assert!(
+            validate_create_report_request(&CreateReportRequest {
+                account_id: String::new(),
+                ..CreateReportRequest::default()
+            })
+            .is_err()
+        );
+
+        assert!(
+            validate_create_report_request(&CreateReportRequest {
+                account_id: "acct-1".to_owned(),
+                comment: Some("x".repeat(1001)),
+                ..CreateReportRequest::default()
+            })
+            .is_err()
+        );
+
+        assert!(
+            validate_create_report_request(&CreateReportRequest {
+                account_id: "acct-1".to_owned(),
+                category: Some("abuse".to_owned()),
+                ..CreateReportRequest::default()
+            })
+            .is_err()
+        );
+
+        assert!(
+            validate_create_report_request(&CreateReportRequest {
+                account_id: "acct-1".to_owned(),
+                category: Some("legal".to_owned()),
+                ..CreateReportRequest::default()
+            })
+            .is_ok()
+        );
+    }
 }

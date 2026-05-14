@@ -103,16 +103,62 @@ pub(crate) async fn preload_mastodon_poll_responses(
     status_ids: &[String],
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonPollResponsePreload> {
-    let mut seen = HashSet::new();
-    let ids = status_ids
-        .iter()
-        .filter(|id| seen.insert(id.as_str()))
-        .collect::<Vec<_>>();
+    let ids = unique_poll_preload_status_ids(status_ids);
     if ids.is_empty() {
         return Ok(MastodonPollResponsePreload::default());
     }
     let preloaded_status_ids = ids.iter().map(|id| (*id).clone()).collect::<HashSet<_>>();
 
+    let polls = load_status_polls_for_status_ids(db, &ids).await?;
+    if polls.is_empty() {
+        return Ok(MastodonPollResponsePreload {
+            by_status_id: HashMap::new(),
+            preloaded_status_ids,
+        });
+    }
+
+    let poll_ids = polls.iter().map(|poll| poll.id.clone()).collect::<Vec<_>>();
+    let poll_bindings = poll_id_bindings(&poll_ids);
+    let mut options_by_poll_id =
+        preload_poll_options_by_poll_id(db, &poll_ids, &poll_bindings).await?;
+    let mut own_votes_by_poll_id = preload_own_votes_by_poll_id(db, &poll_ids, viewer).await?;
+    let voters_count_by_poll_id =
+        preload_voters_count_by_poll_id(db, &poll_ids, &poll_bindings).await?;
+    let mut by_status_id = HashMap::new();
+
+    for poll in polls {
+        let Some(response) = mastodon_poll_response_from_rows(
+            &poll,
+            options_by_poll_id.remove(&poll.id).unwrap_or_default(),
+            own_votes_by_poll_id.remove(&poll.id).unwrap_or_default(),
+            voters_count_by_poll_id.get(&poll.id).copied(),
+        ) else {
+            continue;
+        };
+        by_status_id.insert(
+            poll.status_id,
+            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
+        );
+    }
+
+    Ok(MastodonPollResponsePreload {
+        by_status_id,
+        preloaded_status_ids,
+    })
+}
+
+fn unique_poll_preload_status_ids(status_ids: &[String]) -> Vec<&String> {
+    let mut seen = HashSet::new();
+    status_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .collect()
+}
+
+async fn load_status_polls_for_status_ids(
+    db: &D1Database,
+    ids: &[&String],
+) -> Result<Vec<StatusPollRow>> {
     let status_placeholders = (1..=ids.len())
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
@@ -131,24 +177,25 @@ pub(crate) async fn preload_mastodon_poll_responses(
         .bind_refs(status_bindings.iter())?
         .all()
         .await?;
-    let polls = poll_result.results::<StatusPollRow>()?;
-    if polls.is_empty() {
-        return Ok(MastodonPollResponsePreload {
-            by_status_id: HashMap::new(),
-            preloaded_status_ids,
-        });
-    }
+    poll_result.results::<StatusPollRow>()
+}
 
-    let poll_ids = polls.iter().map(|poll| poll.id.clone()).collect::<Vec<_>>();
+fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
+    poll_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect()
+}
+
+async fn preload_poll_options_by_poll_id(
+    db: &D1Database,
+    poll_ids: &[String],
+    poll_bindings: &[D1Type<'_>],
+) -> Result<HashMap<String, Vec<StatusPollOptionRow>>> {
     let poll_placeholders = (1..=poll_ids.len())
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let poll_bindings = poll_ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-
     let options_sql = format!(
         "SELECT poll_id, title, votes_count
          FROM status_poll_options
@@ -170,7 +217,14 @@ pub(crate) async fn preload_mastodon_poll_responses(
                 votes_count: row.votes_count,
             });
     }
+    Ok(options_by_poll_id)
+}
 
+async fn preload_own_votes_by_poll_id(
+    db: &D1Database,
+    poll_ids: &[String],
+    viewer: Option<&LocalAccount>,
+) -> Result<HashMap<String, Vec<u32>>> {
     let mut own_votes_by_poll_id: HashMap<String, Vec<u32>> = HashMap::new();
     if let Some(viewer) = viewer {
         let vote_placeholders = (2..=(poll_ids.len() + 1))
@@ -201,7 +255,18 @@ pub(crate) async fn preload_mastodon_poll_responses(
             }
         }
     }
+    Ok(own_votes_by_poll_id)
+}
 
+async fn preload_voters_count_by_poll_id(
+    db: &D1Database,
+    poll_ids: &[String],
+    poll_bindings: &[D1Type<'_>],
+) -> Result<HashMap<String, u64>> {
+    let poll_placeholders = (1..=poll_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let voters_sql = format!(
         "SELECT poll_id, COUNT(DISTINCT account_id) AS count
          FROM status_poll_votes
@@ -213,59 +278,50 @@ pub(crate) async fn preload_mastodon_poll_responses(
         .bind_refs(poll_bindings.iter())?
         .all()
         .await?;
-    let voters_count_by_poll_id = voters_result
+    Ok(voters_result
         .results::<PreloadedPollVotersCountRow>()?
         .into_iter()
         .map(|row| (row.poll_id, row.count))
-        .collect::<HashMap<_, _>>();
+        .collect::<HashMap<_, _>>())
+}
 
-    let mut by_status_id = HashMap::new();
-    for poll in polls {
-        let Some(options) = options_by_poll_id.remove(&poll.id) else {
-            continue;
-        };
-        if options.is_empty() {
-            continue;
-        }
-        let votes_count = options
-            .iter()
-            .map(|option| option.votes_count.max(0) as u64)
-            .sum();
-        let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
-        let reveal_totals = expired || poll.hide_totals == 0;
-        let own_votes = own_votes_by_poll_id.remove(&poll.id).unwrap_or_default();
-        let voters_count = if poll.multiple != 0 {
-            reveal_totals.then_some(*voters_count_by_poll_id.get(&poll.id).unwrap_or(&0))
-        } else {
-            reveal_totals.then_some(votes_count)
-        };
-        let response = MastodonPollResponse {
-            id: poll.id,
-            expires_at: poll.expires_at,
-            expired,
-            multiple: poll.multiple != 0,
-            votes_count: if reveal_totals { votes_count } else { 0 },
-            voters_count,
-            voted: !own_votes.is_empty(),
-            own_votes,
-            options: options
-                .into_iter()
-                .map(|option| MastodonPollOptionResponse {
-                    title: option.title,
-                    votes_count: reveal_totals.then_some(option.votes_count.max(0) as u64),
-                })
-                .collect(),
-            emojis: Vec::new(),
-        };
-        by_status_id.insert(
-            poll.status_id,
-            serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-        );
+fn mastodon_poll_response_from_rows(
+    poll: &StatusPollRow,
+    options: Vec<StatusPollOptionRow>,
+    own_votes: Vec<u32>,
+    multiple_voters_count: Option<u64>,
+) -> Option<MastodonPollResponse> {
+    if options.is_empty() {
+        return None;
     }
-
-    Ok(MastodonPollResponsePreload {
-        by_status_id,
-        preloaded_status_ids,
+    let votes_count = options
+        .iter()
+        .map(|option| option.votes_count.max(0) as u64)
+        .sum();
+    let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
+    let reveal_totals = expired || poll.hide_totals == 0;
+    let voters_count = if poll.multiple != 0 {
+        reveal_totals.then_some(multiple_voters_count.unwrap_or(0))
+    } else {
+        reveal_totals.then_some(votes_count)
+    };
+    Some(MastodonPollResponse {
+        id: poll.id.clone(),
+        expires_at: poll.expires_at.clone(),
+        expired,
+        multiple: poll.multiple != 0,
+        votes_count: if reveal_totals { votes_count } else { 0 },
+        voters_count,
+        voted: !own_votes.is_empty(),
+        own_votes,
+        options: options
+            .into_iter()
+            .map(|option| MastodonPollOptionResponse {
+                title: option.title,
+                votes_count: reveal_totals.then_some(option.votes_count.max(0) as u64),
+            })
+            .collect(),
+        emojis: Vec::new(),
     })
 }
 
@@ -290,49 +346,28 @@ pub(crate) async fn build_mastodon_poll_response(
     viewer: Option<&LocalAccount>,
 ) -> Result<Option<MastodonPollResponse>> {
     let options = list_status_poll_options(db, &poll.id).await?;
-    if options.is_empty() {
-        return Ok(None);
-    }
-    let votes_count = options
-        .iter()
-        .map(|option| option.votes_count.max(0) as u64)
-        .sum();
     let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
     let reveal_totals = expired || poll.hide_totals == 0;
     let own_votes = match viewer {
         Some(viewer) => list_poll_vote_positions_for_account(db, &poll.id, &viewer.id).await?,
         None => Vec::new(),
     };
-    let voters_count = if poll.multiple != 0 {
+    let multiple_voters_count = if poll.multiple != 0 {
         if reveal_totals {
             Some(count_poll_voters(db, &poll.id).await?)
         } else {
             None
         }
-    } else if reveal_totals {
-        Some(votes_count)
     } else {
         None
     };
 
-    Ok(Some(MastodonPollResponse {
-        id: poll.id.clone(),
-        expires_at: poll.expires_at.clone(),
-        expired,
-        multiple: poll.multiple != 0,
-        votes_count: if reveal_totals { votes_count } else { 0 },
-        voters_count,
-        voted: !own_votes.is_empty(),
+    Ok(mastodon_poll_response_from_rows(
+        poll,
+        options,
         own_votes,
-        options: options
-            .into_iter()
-            .map(|option| MastodonPollOptionResponse {
-                title: option.title,
-                votes_count: reveal_totals.then_some(option.votes_count.max(0) as u64),
-            })
-            .collect(),
-        emojis: Vec::new(),
-    }))
+        multiple_voters_count,
+    ))
 }
 
 pub(crate) fn apply_activitypub_poll_fields(
@@ -378,6 +413,29 @@ pub(crate) fn apply_activitypub_poll_fields(
 mod tests {
     use super::*;
 
+    fn poll_row(multiple: i32, hide_totals: i32, expires_at: &str) -> StatusPollRow {
+        StatusPollRow {
+            id: "poll-1".to_owned(),
+            status_id: "status-1".to_owned(),
+            multiple,
+            hide_totals,
+            expires_at: expires_at.to_owned(),
+        }
+    }
+
+    fn poll_options() -> Vec<StatusPollOptionRow> {
+        vec![
+            StatusPollOptionRow {
+                title: "red".to_owned(),
+                votes_count: 2,
+            },
+            StatusPollOptionRow {
+                title: "blue".to_owned(),
+                votes_count: 3,
+            },
+        ]
+    }
+
     #[test]
     fn preloaded_poll_response_distinguishes_known_absent_from_unknown() {
         let preload = MastodonPollResponsePreload {
@@ -387,5 +445,50 @@ mod tests {
 
         assert_eq!(preload.poll_response("known"), Some(None));
         assert_eq!(preload.poll_response("unknown"), None);
+    }
+
+    #[test]
+    fn mastodon_poll_response_hides_unexpired_hidden_totals() {
+        let response = mastodon_poll_response_from_rows(
+            &poll_row(1, 1, "2099-01-01T00:00:00Z"),
+            poll_options(),
+            vec![1],
+            Some(2),
+        )
+        .expect("poll response");
+
+        assert_eq!(response.votes_count, 0);
+        assert_eq!(response.voters_count, None);
+        assert!(response.voted);
+        assert_eq!(response.own_votes, vec![1]);
+        assert!(
+            response
+                .options
+                .iter()
+                .all(|option| option.votes_count.is_none())
+        );
+    }
+
+    #[test]
+    fn mastodon_poll_response_reveals_single_choice_totals_from_options() {
+        let response = mastodon_poll_response_from_rows(
+            &poll_row(0, 0, "2099-01-01T00:00:00Z"),
+            poll_options(),
+            Vec::new(),
+            None,
+        )
+        .expect("poll response");
+
+        assert_eq!(response.votes_count, 5);
+        assert_eq!(response.voters_count, Some(5));
+        assert!(!response.voted);
+        assert_eq!(
+            response
+                .options
+                .iter()
+                .map(|option| option.votes_count)
+                .collect::<Vec<_>>(),
+            vec![Some(2), Some(3)]
+        );
     }
 }

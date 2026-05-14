@@ -46,66 +46,30 @@ struct RelationshipStateRow {
     note: Option<String>,
 }
 
-pub(crate) async fn build_relationship_for_target(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: &LocalAccount,
-    target_id: &str,
-    target_actor_uri: &str,
-) -> Result<RelationshipResponse> {
-    let viewer_actor_uri = actor_url(config, &viewer.username);
-    let state_row =
-        load_relationship_state(db, viewer, target_id, target_actor_uri, &viewer_actor_uri).await?;
-    let languages = state_row
-        .languages_json
-        .as_deref()
-        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok());
-    let state = state_row.follow_state.as_deref().unwrap_or("none");
-
-    Ok(RelationshipResponse {
-        id: target_id.to_owned(),
-        following: state == "accepted",
-        showing_reblogs: state_row
-            .show_reblogs
-            .map(|value| value != 0)
-            .unwrap_or(false),
-        notifying: state_row.notify.map(|value| value != 0).unwrap_or(false),
-        languages,
-        followed_by: state_row.reciprocal_following != 0 || state_row.followed_by_remote != 0,
-        blocking: state_row.blocking != 0,
-        blocked_by: state_row.blocked_by != 0,
-        muting: state_row.mute_notifications.is_some(),
-        muting_notifications: state_row
-            .mute_notifications
-            .map(|value| value != 0)
-            .unwrap_or(false),
-        muting_expires_at: state_row.mute_expires_at,
-        requested: state == "pending",
-        requested_by: state_row.requested_by != 0,
-        domain_blocking: false,
-        endorsed: state_row.endorsed.map(|value| value != 0).unwrap_or(false),
-        note: state_row.note.unwrap_or_default(),
-    })
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RelationshipTargetKind {
+    Local,
+    Remote,
 }
 
-async fn load_relationship_state(
-    db: &D1Database,
-    viewer: &LocalAccount,
-    target_id: &str,
-    target_actor_uri: &str,
-    viewer_actor_uri: &str,
-) -> Result<RelationshipStateRow> {
-    let is_remote_target = i32::from(target_id.starts_with("r_"));
-    let bindings = [
-        D1Type::Text(viewer.id.as_str()),
-        D1Type::Text(viewer_actor_uri),
-        D1Type::Text(target_id),
-        D1Type::Text(target_actor_uri),
-        D1Type::Integer(is_remote_target),
-    ];
+impl RelationshipTargetKind {
+    fn from_target_id(target_id: &str) -> Self {
+        if target_id.starts_with("r_") {
+            Self::Remote
+        } else {
+            Self::Local
+        }
+    }
 
-    db.prepare(
-        "SELECT
+    fn d1_flag(self) -> i32 {
+        match self {
+            Self::Local => 0,
+            Self::Remote => 1,
+        }
+    }
+}
+
+const RELATIONSHIP_STATE_SQL: &str = "SELECT
             f.state AS follow_state,
             f.show_reblogs AS show_reblogs,
             f.notify AS notify,
@@ -173,12 +137,88 @@ async fn load_relationship_state(
          LEFT JOIN account_social_metadata metadata
            ON metadata.account_id = ?1
           AND metadata.target_actor_uri = ?4
-         LIMIT 1",
-    )
-    .bind_refs(bindings.iter())?
-    .first::<RelationshipStateRow>(None)
-    .await?
-    .ok_or_else(|| Error::RustError("failed to load relationship state".to_owned()))
+         LIMIT 1";
+
+pub(crate) async fn build_relationship_for_target(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    target_id: &str,
+    target_actor_uri: &str,
+) -> Result<RelationshipResponse> {
+    let viewer_actor_uri = actor_url(config, &viewer.username);
+    let state_row =
+        load_relationship_state(db, viewer, target_id, target_actor_uri, &viewer_actor_uri).await?;
+    Ok(relationship_response_from_state(target_id, state_row))
+}
+
+fn relationship_response_from_state(
+    target_id: &str,
+    state_row: RelationshipStateRow,
+) -> RelationshipResponse {
+    let languages = state_row
+        .languages_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok());
+    let state = state_row.follow_state.as_deref().unwrap_or("none");
+
+    RelationshipResponse {
+        id: target_id.to_owned(),
+        following: state == "accepted",
+        showing_reblogs: state_row
+            .show_reblogs
+            .map(|value| value != 0)
+            .unwrap_or(false),
+        notifying: state_row.notify.map(|value| value != 0).unwrap_or(false),
+        languages,
+        followed_by: state_row.reciprocal_following != 0 || state_row.followed_by_remote != 0,
+        blocking: state_row.blocking != 0,
+        blocked_by: state_row.blocked_by != 0,
+        muting: state_row.mute_notifications.is_some(),
+        muting_notifications: state_row
+            .mute_notifications
+            .map(|value| value != 0)
+            .unwrap_or(false),
+        muting_expires_at: state_row.mute_expires_at,
+        requested: state == "pending",
+        requested_by: state_row.requested_by != 0,
+        domain_blocking: false,
+        endorsed: state_row.endorsed.map(|value| value != 0).unwrap_or(false),
+        note: state_row.note.unwrap_or_default(),
+    }
+}
+
+async fn load_relationship_state(
+    db: &D1Database,
+    viewer: &LocalAccount,
+    target_id: &str,
+    target_actor_uri: &str,
+    viewer_actor_uri: &str,
+) -> Result<RelationshipStateRow> {
+    let bindings =
+        relationship_state_bindings(viewer, target_id, target_actor_uri, viewer_actor_uri);
+
+    db.prepare(RELATIONSHIP_STATE_SQL)
+        .bind_refs(bindings.iter())?
+        .first::<RelationshipStateRow>(None)
+        .await?
+        .ok_or_else(|| Error::RustError("failed to load relationship state".to_owned()))
+}
+
+fn relationship_state_bindings<'a>(
+    viewer: &'a LocalAccount,
+    target_id: &'a str,
+    target_actor_uri: &'a str,
+    viewer_actor_uri: &'a str,
+) -> [D1Type<'a>; 5] {
+    let target_kind = RelationshipTargetKind::from_target_id(target_id);
+    [
+        D1Type::Text(viewer.id.as_str()),
+        D1Type::Text(viewer_actor_uri),
+        D1Type::Text(target_id),
+        D1Type::Text(target_actor_uri),
+        D1Type::Integer(target_kind.d1_flag()),
+    ]
 }
 
 pub(crate) fn expiry_from_duration_seconds(duration: u32) -> Result<String> {
@@ -208,6 +248,126 @@ pub(crate) async fn follow_remote_account(
         &actor.actor_uri,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_account() -> LocalAccount {
+        LocalAccount {
+            id: "viewer".to_owned(),
+            username: "alice".to_owned(),
+            access_email: "alice@example.test".to_owned(),
+            display_name: "Alice".to_owned(),
+            bio_html: String::new(),
+            bio_text: String::new(),
+            fields: Vec::new(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
+            default_sensitive: false,
+            default_language: Some("en".to_owned()),
+            avatar_object_key: None,
+            avatar_content_type: None,
+            header_object_key: None,
+            header_content_type: None,
+            private_key_jwk: "private".to_owned(),
+            public_key_pem: "public".to_owned(),
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn empty_state_row() -> RelationshipStateRow {
+        RelationshipStateRow {
+            follow_state: None,
+            show_reblogs: None,
+            notify: None,
+            languages_json: None,
+            reciprocal_following: 0,
+            followed_by_remote: 0,
+            blocking: 0,
+            blocked_by: 0,
+            mute_notifications: None,
+            mute_expires_at: None,
+            requested_by: 0,
+            endorsed: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn relationship_target_kind_uses_remote_rest_id_prefix() {
+        assert_eq!(
+            RelationshipTargetKind::from_target_id("local-account"),
+            RelationshipTargetKind::Local
+        );
+        assert_eq!(
+            RelationshipTargetKind::from_target_id("r_https%3A%2F%2Fexample.test%2Fusers%2Fbob"),
+            RelationshipTargetKind::Remote
+        );
+    }
+
+    #[test]
+    fn relationship_state_bindings_keep_sql_slot_order_stable() {
+        let viewer = local_account();
+        let bindings = relationship_state_bindings(
+            &viewer,
+            "r_remote",
+            "https://remote.example/@bob",
+            "https://local.example/users/alice",
+        );
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(
+            bindings[1],
+            D1Type::Text("https://local.example/users/alice")
+        ));
+        assert!(matches!(bindings[2], D1Type::Text("r_remote")));
+        assert!(matches!(
+            bindings[3],
+            D1Type::Text("https://remote.example/@bob")
+        ));
+        assert!(matches!(bindings[4], D1Type::Integer(1)));
+    }
+
+    #[test]
+    fn relationship_response_from_state_maps_flags_and_defaults() {
+        let mut row = empty_state_row();
+        row.follow_state = Some("accepted".to_owned());
+        row.show_reblogs = Some(1);
+        row.notify = Some(0);
+        row.languages_json = Some("[\"en\",\"ja\"]".to_owned());
+        row.reciprocal_following = 1;
+        row.blocking = 1;
+        row.mute_notifications = Some(0);
+        row.mute_expires_at = Some("2026-01-02T00:00:00Z".to_owned());
+        row.endorsed = Some(1);
+        row.note = Some("trusted".to_owned());
+
+        let response = relationship_response_from_state("target", row);
+
+        assert_eq!(response.id, "target");
+        assert!(response.following);
+        assert!(response.showing_reblogs);
+        assert!(!response.notifying);
+        assert_eq!(
+            response.languages,
+            Some(vec!["en".to_owned(), "ja".to_owned()])
+        );
+        assert!(response.followed_by);
+        assert!(response.blocking);
+        assert!(response.muting);
+        assert!(!response.muting_notifications);
+        assert_eq!(
+            response.muting_expires_at,
+            Some("2026-01-02T00:00:00Z".to_owned())
+        );
+        assert!(response.endorsed);
+        assert_eq!(response.note, "trusted");
+    }
 }
 
 pub(crate) async fn unfollow_remote_account(

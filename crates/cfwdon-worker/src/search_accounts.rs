@@ -1,5 +1,5 @@
 use crate::RemoteActorRow;
-use crate::account_store::{AccountRow, load_account_stats, load_account_stats_map};
+use crate::account_store::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
 use crate::instance_host;
 use crate::responses::MastodonAccountResponse;
 use crate::search_text_match_rank;
@@ -451,14 +451,40 @@ pub(crate) async fn search_cached_accounts(
     offset: u32,
     following_only: bool,
 ) -> Result<Vec<MastodonAccountResponse>> {
-    let mut accounts = Vec::new();
     let viewer_account_id = viewer.map(|account| account.id.as_str());
-    let query_limit = limit
+    let query_limit = account_cache_query_limit(limit, offset);
+    let search_terms = account_search_terms(query, config);
+    let rank_query = account_search_term(query, config);
+
+    let accounts = load_cached_account_search_candidates(
+        db,
+        config,
+        query,
+        query_limit,
+        following_only,
+        viewer_account_id,
+        &search_terms,
+    )
+    .await?;
+    rank_cached_account_search_results(db, viewer, &rank_query, accounts, limit, offset).await
+}
+
+fn account_cache_query_limit(limit: u32, offset: u32) -> u32 {
+    limit
         .saturating_add(offset)
         .saturating_mul(4)
-        .clamp(limit, 200);
-    let search_terms = account_search_terms(query, config);
+        .clamp(limit, 200)
+}
 
+async fn load_cached_account_search_candidates(
+    db: &D1Database,
+    config: &AppConfig,
+    query: &str,
+    query_limit: u32,
+    following_only: bool,
+    viewer_account_id: Option<&str>,
+    search_terms: &[String],
+) -> Result<Vec<MastodonAccountResponse>> {
     let (local_accounts, remote_actors) = futures_util::try_join!(
         search_local_accounts(
             db,
@@ -492,61 +518,110 @@ pub(crate) async fn search_cached_accounts(
         load_remote_actor_status_summaries(db, &remote_actor_uris),
     )?;
 
+    let mut accounts = Vec::with_capacity(local_accounts.len() + remote_actors.len());
     for account in local_accounts {
-        let default_stats;
-        let stats = match local_stats.get(&account.id) {
-            Some(stats) => stats,
-            None => {
-                default_stats = Default::default();
-                &default_stats
-            }
-        };
-        let response = MastodonAccountResponse::from_account_with_stats(&account, config, stats);
-        if account_matches_search_terms(
-            &search_terms,
-            &response.username,
-            &response.acct,
-            &response.display_name,
-            &strip_html_tags(&response.note),
+        if let Some(response) = local_search_account_response(
+            &account,
+            config,
+            local_stats.get(&account.id),
+            search_terms,
         ) {
             accounts.push(response);
         }
     }
     for actor in remote_actors {
-        let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-        let default_stats;
-        let stats = match remote_stats.get(&actor.actor_uri) {
-            Some(stats) => stats,
-            None => {
-                default_stats = crate::RemoteActorStatusSummary {
-                    statuses_count: 0,
-                    last_status_at: None,
-                };
-                &default_stats
-            }
-        };
-        response.statuses_count = stats.statuses_count;
-        response.last_status_at = stats.last_status_at.clone();
-        if account_matches_search_terms(
-            &search_terms,
-            &response.username,
-            &response.acct,
-            &response.display_name,
-            &strip_html_tags(&response.note),
-        ) {
-            let mut response = match fresh_remote_search_account_response(db, &actor).await {
-                Ok(fresh_response) => fresh_response,
-                Err(_) => response,
-            };
-            if stats.statuses_count > 0 {
-                response.statuses_count = stats.statuses_count;
-            }
-            response.last_status_at = stats.last_status_at.clone();
+        if let Some(response) = remote_search_account_response(
+            db,
+            &actor,
+            remote_stats.get(&actor.actor_uri),
+            search_terms,
+        )
+        .await?
+        {
             accounts.push(response);
         }
     }
+    Ok(accounts)
+}
 
-    let rank_query = account_search_term(query, config);
+fn local_search_account_response(
+    account: &LocalAccount,
+    config: &AppConfig,
+    stats: Option<&AccountStats>,
+    search_terms: &[String],
+) -> Option<MastodonAccountResponse> {
+    let default_stats;
+    let stats = match stats {
+        Some(stats) => stats,
+        None => {
+            default_stats = Default::default();
+            &default_stats
+        }
+    };
+    let response = MastodonAccountResponse::from_account_with_stats(account, config, stats);
+    search_account_response_matches(search_terms, response)
+}
+
+async fn remote_search_account_response(
+    db: &D1Database,
+    actor: &RemoteActorRow,
+    stats: Option<&crate::RemoteActorStatusSummary>,
+    search_terms: &[String],
+) -> Result<Option<MastodonAccountResponse>> {
+    let default_stats;
+    let stats = match stats {
+        Some(stats) => stats,
+        None => {
+            default_stats = crate::RemoteActorStatusSummary {
+                statuses_count: 0,
+                last_status_at: None,
+            };
+            &default_stats
+        }
+    };
+    let mut fallback_response = MastodonAccountResponse::from_remote_actor(actor);
+    fallback_response.statuses_count = stats.statuses_count;
+    fallback_response.last_status_at = stats.last_status_at.clone();
+    let Some(_) = search_account_response_matches(search_terms, fallback_response.clone()) else {
+        return Ok(None);
+    };
+
+    let mut response = match fresh_remote_search_account_response(db, actor).await {
+        Ok(fresh_response) => fresh_response,
+        Err(_) => fallback_response,
+    };
+    if stats.statuses_count > 0 {
+        response.statuses_count = stats.statuses_count;
+    }
+    response.last_status_at = stats.last_status_at.clone();
+    Ok(Some(response))
+}
+
+fn search_account_response_matches(
+    search_terms: &[String],
+    response: MastodonAccountResponse,
+) -> Option<MastodonAccountResponse> {
+    if account_matches_search_terms(
+        search_terms,
+        &response.username,
+        &response.acct,
+        &response.display_name,
+        &strip_html_tags(&response.note),
+    ) {
+        Some(response)
+    } else {
+        None
+    }
+}
+
+async fn rank_cached_account_search_results(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    rank_query: &str,
+    accounts: Vec<MastodonAccountResponse>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<MastodonAccountResponse>> {
     let followed_target_uris = match viewer {
         Some(viewer) => {
             let target_uris = accounts

@@ -94,53 +94,81 @@ pub(crate) fn build_announcements_document(
 
     items
         .into_iter()
-        .filter_map(|item| {
-            let mut announcement = item.as_object()?.clone();
-            let id = announcement.get("id")?.as_str()?.to_owned();
-            announcement.insert(
-                "read".to_owned(),
-                serde_json::Value::Bool(read_ids.contains(&id)),
-            );
-
-            let reactions = announcement
-                .get("reactions")
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|reaction| {
-                    let mut reaction = reaction.as_object()?.clone();
-                    let name = reaction.get("name")?.as_str()?.to_owned();
-                    let (count, me) = reaction_state
-                        .get(&(id.clone(), name))
-                        .copied()
-                        .unwrap_or_else(|| {
-                            let count = reaction
-                                .get("count")
-                                .and_then(serde_json::Value::as_u64)
-                                .unwrap_or(0);
-                            let me = reaction
-                                .get("me")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false);
-                            (count, me)
-                        });
-                    reaction.insert("count".to_owned(), serde_json::json!(count));
-                    reaction.insert("me".to_owned(), serde_json::Value::Bool(me));
-                    Some(serde_json::Value::Object(reaction))
-                })
-                .collect::<Vec<_>>();
-            announcement.insert("reactions".to_owned(), serde_json::Value::Array(reactions));
-
-            for key in ["mentions", "statuses", "tags", "emojis"] {
-                if !announcement.contains_key(key) {
-                    announcement.insert(key.to_owned(), serde_json::json!([]));
-                }
-            }
-
-            Some(serde_json::Value::Object(announcement))
-        })
+        .filter_map(|item| announcement_document(item, read_ids, reaction_state))
         .collect()
+}
+
+fn announcement_document(
+    item: serde_json::Value,
+    read_ids: &HashSet<String>,
+    reaction_state: &HashMap<(String, String), (u64, bool)>,
+) -> Option<serde_json::Value> {
+    let mut announcement = item.as_object()?.clone();
+    let id = announcement.get("id")?.as_str()?.to_owned();
+    announcement.insert(
+        "read".to_owned(),
+        serde_json::Value::Bool(read_ids.contains(&id)),
+    );
+
+    let reactions = announcement
+        .get("reactions")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|reaction| announcement_reaction_document(&id, reaction, reaction_state))
+        .collect::<Vec<_>>();
+    announcement.insert("reactions".to_owned(), serde_json::Value::Array(reactions));
+
+    ensure_announcement_collection_fields(&mut announcement);
+
+    Some(serde_json::Value::Object(announcement))
+}
+
+fn ensure_announcement_collection_fields(
+    announcement: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for key in ["mentions", "statuses", "tags", "emojis"] {
+        if !announcement.contains_key(key) {
+            announcement.insert(key.to_owned(), serde_json::json!([]));
+        }
+    }
+}
+
+fn announcement_reaction_document(
+    announcement_id: &str,
+    reaction: serde_json::Value,
+    reaction_state: &HashMap<(String, String), (u64, bool)>,
+) -> Option<serde_json::Value> {
+    let mut reaction = reaction.as_object()?.clone();
+    let name = reaction.get("name")?.as_str()?.to_owned();
+    let (count, me) =
+        announcement_reaction_viewer_state(announcement_id, &name, &reaction, reaction_state);
+    reaction.insert("count".to_owned(), serde_json::json!(count));
+    reaction.insert("me".to_owned(), serde_json::Value::Bool(me));
+    Some(serde_json::Value::Object(reaction))
+}
+
+fn announcement_reaction_viewer_state(
+    announcement_id: &str,
+    name: &str,
+    reaction: &serde_json::Map<String, serde_json::Value>,
+    reaction_state: &HashMap<(String, String), (u64, bool)>,
+) -> (u64, bool) {
+    reaction_state
+        .get(&(announcement_id.to_owned(), name.to_owned()))
+        .copied()
+        .unwrap_or_else(|| {
+            let count = reaction
+                .get("count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let me = reaction
+                .get("me")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            (count, me)
+        })
 }
 
 fn configured_announcement_exists(config: &cfwdon_core::AppConfig, announcement_id: &str) -> bool {
@@ -916,9 +944,66 @@ fn unix_day_bucket(timestamp: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        TrendingLinkCandidate, build_trending_link_candidate, build_trending_link_entries,
-        parse_unix_timestamp, unix_day_bucket,
+        TrendingLinkCandidate, announcement_document, announcement_reaction_document,
+        build_trending_link_candidate, build_trending_link_entries, parse_unix_timestamp,
+        unix_day_bucket,
     };
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn announcement_document_adds_required_empty_collections() {
+        let document = announcement_document(
+            serde_json::json!({
+                "id": "announcement-1",
+                "content": "<p>Hello</p>"
+            }),
+            &HashSet::new(),
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(document["read"], serde_json::json!(false));
+        assert_eq!(document["mentions"], serde_json::json!([]));
+        assert_eq!(document["statuses"], serde_json::json!([]));
+        assert_eq!(document["tags"], serde_json::json!([]));
+        assert_eq!(document["emojis"], serde_json::json!([]));
+        assert_eq!(document["reactions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn announcement_reaction_document_preserves_payload_defaults_without_viewer_state() {
+        let reaction = announcement_reaction_document(
+            "announcement-1",
+            serde_json::json!({
+                "name": "wave",
+                "count": 5
+            }),
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(reaction["count"], serde_json::json!(5));
+        assert_eq!(reaction["me"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn announcement_reaction_document_prefers_viewer_state() {
+        let reaction_state =
+            HashMap::from([(("announcement-1".to_owned(), "wave".to_owned()), (7, true))]);
+        let reaction = announcement_reaction_document(
+            "announcement-1",
+            serde_json::json!({
+                "name": "wave",
+                "count": 5,
+                "me": false
+            }),
+            &reaction_state,
+        )
+        .unwrap();
+
+        assert_eq!(reaction["count"], serde_json::json!(7));
+        assert_eq!(reaction["me"], serde_json::json!(true));
+    }
 
     #[test]
     fn build_trending_link_candidate_normalizes_tracking_and_fragment() {

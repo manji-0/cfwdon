@@ -21,21 +21,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
         .await;
     }
 
-    let bindings = [
-        D1Type::Text(viewer_account_id),
-        D1Type::Text(viewer_account_id),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings = local_home_timeline_bindings(viewer_account_id, cursor, limit);
     let result = db
         .prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
@@ -91,13 +77,8 @@ async fn list_local_home_timeline_statuses_since(
     min_id: Option<&str>,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let bindings = [
-        D1Type::Text(viewer_account_id),
-        D1Type::Text(viewer_account_id),
-        D1Type::Text(min_timestamp),
-        min_id.map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings =
+        local_home_timeline_since_bindings(viewer_account_id, min_timestamp, min_id, limit);
     let result = db
         .prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
@@ -134,12 +115,14 @@ async fn list_local_home_timeline_statuses_since(
     result.results::<StatusRow>()
 }
 
-pub(crate) async fn list_local_public_timeline_statuses(
-    db: &D1Database,
-    cursor: &ResolvedTimelineCursor,
+fn local_home_timeline_bindings<'a>(
+    viewer_account_id: &'a str,
+    cursor: &'a ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
-    let bindings = [
+) -> [D1Type<'a>; 7] {
+    [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(viewer_account_id),
         cursor
             .max_timestamp
             .as_deref()
@@ -151,7 +134,30 @@ pub(crate) async fn list_local_public_timeline_statuses(
             .map_or(D1Type::Null, D1Type::Text),
         cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
-    ];
+    ]
+}
+
+fn local_home_timeline_since_bindings<'a>(
+    viewer_account_id: &'a str,
+    min_timestamp: &'a str,
+    min_id: Option<&'a str>,
+    limit: u32,
+) -> [D1Type<'a>; 5] {
+    [
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(viewer_account_id),
+        D1Type::Text(min_timestamp),
+        min_id.map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]
+}
+
+pub(crate) async fn list_local_public_timeline_statuses(
+    db: &D1Database,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<StatusRow>> {
+    let bindings = local_public_timeline_bindings(cursor, limit);
     let result = db
         .prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
@@ -175,6 +181,25 @@ pub(crate) async fn list_local_public_timeline_statuses(
         .await?;
 
     result.results::<StatusRow>()
+}
+
+fn local_public_timeline_bindings<'a>(
+    cursor: &'a ResolvedTimelineCursor,
+    limit: u32,
+) -> [D1Type<'a>; 5] {
+    [
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]
 }
 
 pub(crate) async fn list_local_public_statuses_by_tag(
@@ -222,26 +247,37 @@ async fn list_local_public_statuses_by_tags_indexed(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<(Vec<StatusRow>, Vec<String>)> {
-    let mut seen = HashSet::new();
-    let tags = tags
-        .iter()
-        .map(|tag| normalize_hashtag(tag))
-        .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
-        .collect::<Vec<_>>();
+    let tags = normalize_unique_tags(tags);
     if tags.is_empty() {
         return Ok((Vec::new(), tags));
     }
 
-    let tag_placeholders = (1..=tags.len())
+    let sql = local_public_statuses_by_tags_indexed_sql(tags.len());
+    let bindings = local_public_statuses_by_tags_indexed_bindings(&tags, cursor, limit);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok((result.results::<StatusRow>()?, tags))
+}
+
+fn normalize_unique_tags(tags: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    tags.iter()
+        .map(|tag| normalize_hashtag(tag))
+        .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
+        .collect()
+}
+
+fn local_public_statuses_by_tags_indexed_sql(tag_count: usize) -> String {
+    let tag_placeholders = (1..=tag_count)
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let max_timestamp_index = tags.len() + 1;
-    let max_id_index = tags.len() + 2;
-    let min_timestamp_index = tags.len() + 3;
-    let min_id_index = tags.len() + 4;
-    let limit_index = tags.len() + 5;
-    let sql = format!(
+    let max_timestamp_index = tag_count + 1;
+    let max_id_index = tag_count + 2;
+    let min_timestamp_index = tag_count + 3;
+    let min_id_index = tag_count + 4;
+    let limit_index = tag_count + 5;
+    format!(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
          FROM statuses
          WHERE visibility = 'public'
@@ -262,7 +298,14 @@ async fn list_local_public_statuses_by_tags_indexed(
            )
          ORDER BY created_at DESC, id DESC
          LIMIT ?{limit_index}"
-    );
+    )
+}
+
+fn local_public_statuses_by_tags_indexed_bindings<'a>(
+    tags: &'a [String],
+    cursor: &'a ResolvedTimelineCursor,
+    limit: u32,
+) -> Vec<D1Type<'a>> {
     let mut bindings = tags
         .iter()
         .map(|tag| D1Type::Text(tag.as_str()))
@@ -280,9 +323,7 @@ async fn list_local_public_statuses_by_tags_indexed(
         cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ]);
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    Ok((result.results::<StatusRow>()?, tags))
+    bindings
 }
 
 async fn list_local_public_statuses_by_tags_legacy(
@@ -291,22 +332,31 @@ async fn list_local_public_statuses_by_tags_legacy(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let patterns = tags
-        .iter()
+    let patterns = local_public_statuses_by_tags_legacy_patterns(tags);
+    let sql = local_public_statuses_by_tags_legacy_sql(patterns.len());
+    let bindings = local_public_statuses_by_tags_legacy_bindings(&patterns, cursor, limit);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    result.results::<StatusRow>()
+}
+
+fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
+    tags.iter()
         .map(|tag| format!("%#{}%", normalize_hashtag(tag)))
-        .collect::<Vec<_>>();
-    let match_clause = patterns
-        .iter()
-        .enumerate()
-        .map(|(index, _)| format!("lower(text_content) LIKE ?{}", index + 1))
+        .collect()
+}
+
+fn local_public_statuses_by_tags_legacy_sql(pattern_count: usize) -> String {
+    let match_clause = (1..=pattern_count)
+        .map(|index| format!("lower(text_content) LIKE ?{index}"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    let max_timestamp_index = patterns.len() + 1;
-    let max_id_index = patterns.len() + 2;
-    let min_timestamp_index = patterns.len() + 3;
-    let min_id_index = patterns.len() + 4;
-    let limit_index = patterns.len() + 5;
-    let sql = format!(
+    let max_timestamp_index = pattern_count + 1;
+    let max_id_index = pattern_count + 2;
+    let min_timestamp_index = pattern_count + 3;
+    let min_id_index = pattern_count + 4;
+    let limit_index = pattern_count + 5;
+    format!(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at
          FROM statuses
          WHERE visibility = 'public'
@@ -323,7 +373,14 @@ async fn list_local_public_statuses_by_tags_legacy(
            )
          ORDER BY created_at DESC, id DESC
          LIMIT ?{limit_index}"
-    );
+    )
+}
+
+fn local_public_statuses_by_tags_legacy_bindings<'a>(
+    patterns: &'a [String],
+    cursor: &'a ResolvedTimelineCursor,
+    limit: u32,
+) -> Vec<D1Type<'a>> {
     let mut bindings = patterns
         .iter()
         .map(|pattern| D1Type::Text(pattern.as_str()))
@@ -341,9 +398,7 @@ async fn list_local_public_statuses_by_tags_legacy(
         cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
     ]);
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    result.results::<StatusRow>()
+    bindings
 }
 
 pub(crate) async fn list_local_public_statuses_by_link(
@@ -356,21 +411,27 @@ pub(crate) async fn list_local_public_statuses_by_link(
         return Ok(Vec::new());
     }
 
-    let patterns = urls
-        .iter()
-        .map(|url| format!("%{url}%"))
-        .collect::<Vec<_>>();
-    let match_clause = patterns
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            let position = index + 1;
+    let patterns = local_public_statuses_by_link_patterns(urls);
+    let sql = local_public_statuses_by_link_sql(patterns.len());
+    let bindings = local_public_statuses_by_link_bindings(&patterns, cursor, limit);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    result.results::<StatusRow>()
+}
+
+fn local_public_statuses_by_link_patterns(urls: &[String]) -> Vec<String> {
+    urls.iter().map(|url| format!("%{url}%")).collect()
+}
+
+fn local_public_statuses_by_link_sql(pattern_count: usize) -> String {
+    let match_clause = (1..=pattern_count)
+        .map(|position| {
             format!("(s.text_content LIKE ?{position} OR s.content_html LIKE ?{position})")
         })
         .collect::<Vec<_>>()
         .join(" OR ");
-    let cursor_offset = patterns.len();
-    let sql = format!(
+    let cursor_offset = pattern_count;
+    format!(
         "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
          FROM statuses s
          JOIN accounts a ON a.id = s.account_id
@@ -394,7 +455,14 @@ pub(crate) async fn list_local_public_statuses_by_link(
         min_timestamp = cursor_offset + 3,
         min_id = cursor_offset + 4,
         limit_position = cursor_offset + 5,
-    );
+    )
+}
+
+fn local_public_statuses_by_link_bindings<'a>(
+    patterns: &'a [String],
+    cursor: &'a ResolvedTimelineCursor,
+    limit: u32,
+) -> Vec<D1Type<'a>> {
     let mut bindings = patterns
         .iter()
         .map(|pattern| D1Type::Text(pattern.as_str()))
@@ -414,9 +482,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
     );
     bindings.push(cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text));
     bindings.push(D1Type::Integer(limit as i32));
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    result.results::<StatusRow>()
+    bindings
 }
 
 pub(crate) async fn list_local_direct_timeline_statuses(
@@ -425,20 +491,7 @@ pub(crate) async fn list_local_direct_timeline_statuses(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let bindings = [
-        D1Type::Text(viewer_account_id),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings = local_direct_timeline_bindings(viewer_account_id, cursor, limit);
     let result = db
         .prepare(
             "SELECT DISTINCT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at
@@ -468,4 +521,342 @@ pub(crate) async fn list_local_direct_timeline_statuses(
         .await?;
 
     result.results::<StatusRow>()
+}
+
+fn local_direct_timeline_bindings<'a>(
+    viewer_account_id: &'a str,
+    cursor: &'a ResolvedTimelineCursor,
+    limit: u32,
+) -> [D1Type<'a>; 6] {
+    [
+        D1Type::Text(viewer_account_id),
+        cursor
+            .max_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        cursor
+            .min_timestamp
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
+        D1Type::Integer(limit as i32),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_cursor() -> ResolvedTimelineCursor {
+        ResolvedTimelineCursor {
+            max_timestamp: None,
+            max_id: None,
+            min_timestamp: None,
+            min_id: None,
+        }
+    }
+
+    #[test]
+    fn local_home_timeline_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+
+        let bindings = local_home_timeline_bindings("viewer", &cursor, 12);
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(bindings[1], D1Type::Text("viewer")));
+        assert!(matches!(bindings[2], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[3], D1Type::Text("status-max")));
+        assert!(matches!(bindings[4], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[5], D1Type::Text("status-min")));
+        assert!(matches!(bindings[6], D1Type::Integer(12)));
+    }
+
+    #[test]
+    fn local_home_timeline_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let bindings = local_home_timeline_bindings("viewer", &cursor, 8);
+
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Null));
+        assert!(matches!(bindings[6], D1Type::Integer(8)));
+    }
+
+    #[test]
+    fn local_home_timeline_since_bindings_keep_sql_slot_order_stable() {
+        let bindings = local_home_timeline_since_bindings(
+            "viewer",
+            "2026-01-01T00:00:00Z",
+            Some("status-min"),
+            10,
+        );
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(bindings[1], D1Type::Text("viewer")));
+        assert!(matches!(bindings[2], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[3], D1Type::Text("status-min")));
+        assert!(matches!(bindings[4], D1Type::Integer(10)));
+    }
+
+    #[test]
+    fn local_home_timeline_since_bindings_use_null_for_open_min_id() {
+        let bindings =
+            local_home_timeline_since_bindings("viewer", "2026-01-01T00:00:00Z", None, 10);
+
+        assert!(matches!(bindings[3], D1Type::Null));
+    }
+
+    #[test]
+    fn local_public_timeline_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+
+        let bindings = local_public_timeline_bindings(&cursor, 14);
+
+        assert!(matches!(bindings[0], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[1], D1Type::Text("status-max")));
+        assert!(matches!(bindings[2], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[3], D1Type::Text("status-min")));
+        assert!(matches!(bindings[4], D1Type::Integer(14)));
+    }
+
+    #[test]
+    fn local_public_timeline_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let bindings = local_public_timeline_bindings(&cursor, 6);
+
+        assert!(matches!(bindings[0], D1Type::Null));
+        assert!(matches!(bindings[1], D1Type::Null));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Integer(6)));
+    }
+
+    #[test]
+    fn normalize_unique_tags_keeps_first_normalized_tag() {
+        let tags = vec![
+            "#Rust".to_owned(),
+            "rust".to_owned(),
+            " wasm ".to_owned(),
+            "#".to_owned(),
+            "WASM".to_owned(),
+        ];
+
+        let normalized = normalize_unique_tags(&tags);
+
+        assert_eq!(normalized, vec!["rust".to_owned(), "wasm".to_owned()]);
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_indexed_sql_offsets_cursor_slots_after_tags() {
+        let sql = local_public_statuses_by_tags_indexed_sql(2);
+
+        assert!(sql.contains("WHERE h.tag IN (?1, ?2)"));
+        assert!(sql.contains("?3 IS NULL"));
+        assert!(sql.contains("id < ?4"));
+        assert!(sql.contains("?5 IS NULL"));
+        assert!(sql.contains("id > ?6"));
+        assert!(sql.contains("LIMIT ?7"));
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_indexed_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+        let tags = vec!["rust".to_owned(), "wasm".to_owned()];
+
+        let bindings = local_public_statuses_by_tags_indexed_bindings(&tags, &cursor, 20);
+
+        assert!(matches!(bindings[0], D1Type::Text("rust")));
+        assert!(matches!(bindings[1], D1Type::Text("wasm")));
+        assert!(matches!(bindings[2], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[3], D1Type::Text("status-max")));
+        assert!(matches!(bindings[4], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[5], D1Type::Text("status-min")));
+        assert!(matches!(bindings[6], D1Type::Integer(20)));
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_indexed_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let tags = vec!["rust".to_owned()];
+
+        let bindings = local_public_statuses_by_tags_indexed_bindings(&tags, &cursor, 9);
+
+        assert!(matches!(bindings[0], D1Type::Text("rust")));
+        assert!(matches!(bindings[1], D1Type::Null));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Integer(9)));
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_legacy_patterns_preserve_fallback_shape() {
+        let patterns = local_public_statuses_by_tags_legacy_patterns(&[
+            " Rust ".to_owned(),
+            "#Masto".to_owned(),
+            "  ".to_owned(),
+        ]);
+
+        assert_eq!(patterns, ["%#rust%", "%#masto%", "%#%"]);
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_legacy_sql_uses_pattern_and_cursor_slots() {
+        let sql = local_public_statuses_by_tags_legacy_sql(2);
+
+        assert!(sql.contains("lower(text_content) LIKE ?1 OR lower(text_content) LIKE ?2"));
+        assert!(sql.contains("?3 IS NULL"));
+        assert!(sql.contains("id < ?4"));
+        assert!(sql.contains("?5 IS NULL"));
+        assert!(sql.contains("id > ?6"));
+        assert!(sql.contains("LIMIT ?7"));
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_legacy_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+        let patterns = vec!["%#rust%".to_owned(), "%#masto%".to_owned()];
+
+        let bindings = local_public_statuses_by_tags_legacy_bindings(&patterns, &cursor, 13);
+
+        assert!(matches!(bindings[0], D1Type::Text("%#rust%")));
+        assert!(matches!(bindings[1], D1Type::Text("%#masto%")));
+        assert!(matches!(bindings[2], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[3], D1Type::Text("status-max")));
+        assert!(matches!(bindings[4], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[5], D1Type::Text("status-min")));
+        assert!(matches!(bindings[6], D1Type::Integer(13)));
+    }
+
+    #[test]
+    fn local_public_statuses_by_tags_legacy_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let patterns = vec!["%#rust%".to_owned()];
+
+        let bindings = local_public_statuses_by_tags_legacy_bindings(&patterns, &cursor, 4);
+
+        assert!(matches!(bindings[0], D1Type::Text("%#rust%")));
+        assert!(matches!(bindings[1], D1Type::Null));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Integer(4)));
+    }
+
+    #[test]
+    fn local_public_statuses_by_link_patterns_wrap_urls_for_like_search() {
+        let patterns = local_public_statuses_by_link_patterns(&[
+            "https://example.test/a".to_owned(),
+            "acct:alice@example.test".to_owned(),
+        ]);
+
+        assert_eq!(
+            patterns,
+            ["%https://example.test/a%", "%acct:alice@example.test%"]
+        );
+    }
+
+    #[test]
+    fn local_public_statuses_by_link_sql_uses_pattern_and_cursor_slots() {
+        let sql = local_public_statuses_by_link_sql(2);
+
+        assert!(sql.contains(
+            "(s.text_content LIKE ?1 OR s.content_html LIKE ?1) OR \
+             (s.text_content LIKE ?2 OR s.content_html LIKE ?2)"
+        ));
+        assert!(sql.contains("?3 IS NULL"));
+        assert!(sql.contains("s.id < ?4"));
+        assert!(sql.contains("?5 IS NULL"));
+        assert!(sql.contains("s.id > ?6"));
+        assert!(sql.contains("LIMIT ?7"));
+    }
+
+    #[test]
+    fn local_public_statuses_by_link_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+        let patterns = vec!["%https://example.test/a%".to_owned()];
+
+        let bindings = local_public_statuses_by_link_bindings(&patterns, &cursor, 15);
+
+        assert!(matches!(
+            bindings[0],
+            D1Type::Text("%https://example.test/a%")
+        ));
+        assert!(matches!(bindings[1], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[2], D1Type::Text("status-max")));
+        assert!(matches!(bindings[3], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[4], D1Type::Text("status-min")));
+        assert!(matches!(bindings[5], D1Type::Integer(15)));
+    }
+
+    #[test]
+    fn local_public_statuses_by_link_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let patterns = vec!["%https://example.test/a%".to_owned()];
+
+        let bindings = local_public_statuses_by_link_bindings(&patterns, &cursor, 7);
+
+        assert!(matches!(
+            bindings[0],
+            D1Type::Text("%https://example.test/a%")
+        ));
+        assert!(matches!(bindings[1], D1Type::Null));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Integer(7)));
+    }
+
+    #[test]
+    fn local_direct_timeline_bindings_keep_sql_slot_order_stable() {
+        let mut cursor = empty_cursor();
+        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
+        cursor.max_id = Some("status-max".to_owned());
+        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
+        cursor.min_id = Some("status-min".to_owned());
+
+        let bindings = local_direct_timeline_bindings("viewer", &cursor, 11);
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(bindings[1], D1Type::Text("2026-01-02T00:00:00Z")));
+        assert!(matches!(bindings[2], D1Type::Text("status-max")));
+        assert!(matches!(bindings[3], D1Type::Text("2026-01-01T00:00:00Z")));
+        assert!(matches!(bindings[4], D1Type::Text("status-min")));
+        assert!(matches!(bindings[5], D1Type::Integer(11)));
+    }
+
+    #[test]
+    fn local_direct_timeline_bindings_use_null_for_open_cursor_bounds() {
+        let cursor = empty_cursor();
+        let bindings = local_direct_timeline_bindings("viewer", &cursor, 5);
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(bindings[1], D1Type::Null));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(bindings[3], D1Type::Null));
+        assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Integer(5)));
+    }
 }

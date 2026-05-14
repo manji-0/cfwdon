@@ -83,13 +83,21 @@ fn bool_binding(value: bool) -> D1Type<'static> {
     D1Type::Integer(if value { 1 } else { 0 })
 }
 
-pub(crate) async fn apply_account_credentials_update(
-    db: &D1Database,
-    bucket: &Bucket,
-    config: &AppConfig,
+struct AccountCredentialsUpdateDraft {
+    display_name: String,
+    bio_text: String,
+    bio_html: String,
+    fields_json: String,
+    locked: bool,
+    bot: bool,
+    discoverable: bool,
+    source_defaults: AccountSourceDefaults,
+}
+
+fn account_credentials_update_draft(
     account: &LocalAccount,
     update: &UpdateCredentialsRequest,
-) -> Result<LocalAccount> {
+) -> Result<AccountCredentialsUpdateDraft> {
     let display_name = update
         .display_name
         .as_deref()
@@ -105,61 +113,98 @@ pub(crate) async fn apply_account_credentials_update(
     let fields_json = serde_json::to_string(&fields).map_err(|error| {
         Error::RustError(format!("failed to serialize account fields: {error}"))
     })?;
-    let locked = update.locked.unwrap_or(account.locked);
-    let bot = update.bot.unwrap_or(account.bot);
-    let discoverable = update.discoverable.unwrap_or(account.discoverable);
-    let source_defaults = account_source_defaults(account, update);
-    let avatar_profile = match update.avatar.as_ref() {
+
+    Ok(AccountCredentialsUpdateDraft {
+        display_name,
+        bio_text,
+        bio_html,
+        fields_json,
+        locked: update.locked.unwrap_or(account.locked),
+        bot: update.bot.unwrap_or(account.bot),
+        discoverable: update.discoverable.unwrap_or(account.discoverable),
+        source_defaults: account_source_defaults(account, update),
+    })
+}
+
+struct StoredProfileMedia {
+    avatar: Option<(String, String)>,
+    header: Option<(String, String)>,
+}
+
+async fn store_account_profile_media(
+    bucket: &Bucket,
+    account: &LocalAccount,
+    update: &UpdateCredentialsRequest,
+) -> Result<StoredProfileMedia> {
+    let avatar = match update.avatar.as_ref() {
         Some(upload) => Some(store_profile_media(bucket, account, upload).await?),
         None => None,
     };
-    let header_profile = match update.header.as_ref() {
+    let header = match update.header.as_ref() {
         Some(upload) => Some(store_profile_media(bucket, account, upload).await?),
         None => None,
     };
+
+    Ok(StoredProfileMedia { avatar, header })
+}
+
+async fn delete_replaced_profile_media(
+    bucket: &Bucket,
+    account: &LocalAccount,
+    media: &StoredProfileMedia,
+) -> Result<()> {
     if let Some(previous) = account.avatar_object_key.as_deref()
-        && profile_media_was_replaced(Some(previous), avatar_profile.as_ref())
+        && profile_media_was_replaced(Some(previous), media.avatar.as_ref())
     {
         delete_r2_object(bucket, previous, "delete_profile_previous").await?;
     }
     if let Some(previous) = account.header_object_key.as_deref()
-        && profile_media_was_replaced(Some(previous), header_profile.as_ref())
+        && profile_media_was_replaced(Some(previous), media.header.as_ref())
     {
         delete_r2_object(bucket, previous, "delete_profile_previous").await?;
     }
 
+    Ok(())
+}
+
+async fn update_account_credentials_row(
+    db: &D1Database,
+    account: &LocalAccount,
+    draft: &AccountCredentialsUpdateDraft,
+    media: &StoredProfileMedia,
+) -> Result<()> {
     let bindings = [
-        D1Type::Text(display_name.as_str()),
-        D1Type::Text(bio_html.as_str()),
-        D1Type::Text(bio_text.as_str()),
-        D1Type::Text(fields_json.as_str()),
-        bool_binding(locked),
-        bool_binding(bot),
-        bool_binding(discoverable),
-        D1Type::Text(source_defaults.post_visibility.as_str()),
-        D1Type::Text(source_defaults.quote_policy.as_str()),
-        bool_binding(source_defaults.sensitive),
-        match source_defaults.language.as_deref() {
+        D1Type::Text(draft.display_name.as_str()),
+        D1Type::Text(draft.bio_html.as_str()),
+        D1Type::Text(draft.bio_text.as_str()),
+        D1Type::Text(draft.fields_json.as_str()),
+        bool_binding(draft.locked),
+        bool_binding(draft.bot),
+        bool_binding(draft.discoverable),
+        D1Type::Text(draft.source_defaults.post_visibility.as_str()),
+        D1Type::Text(draft.source_defaults.quote_policy.as_str()),
+        bool_binding(draft.source_defaults.sensitive),
+        match draft.source_defaults.language.as_deref() {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
         profile_media_value(
-            avatar_profile.as_ref(),
+            media.avatar.as_ref(),
             account.avatar_object_key.as_deref(),
             |value| &value.0,
         ),
         profile_media_value(
-            avatar_profile.as_ref(),
+            media.avatar.as_ref(),
             account.avatar_content_type.as_deref(),
             |value| &value.1,
         ),
         profile_media_value(
-            header_profile.as_ref(),
+            media.header.as_ref(),
             account.header_object_key.as_deref(),
             |value| &value.0,
         ),
         profile_media_value(
-            header_profile.as_ref(),
+            media.header.as_ref(),
             account.header_content_type.as_deref(),
             |value| &value.1,
         ),
@@ -189,6 +234,21 @@ pub(crate) async fn apply_account_credentials_update(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn apply_account_credentials_update(
+    db: &D1Database,
+    bucket: &Bucket,
+    config: &AppConfig,
+    account: &LocalAccount,
+    update: &UpdateCredentialsRequest,
+) -> Result<LocalAccount> {
+    let draft = account_credentials_update_draft(account, update)?;
+    let media = store_account_profile_media(bucket, account, update).await?;
+    delete_replaced_profile_media(bucket, account, &media).await?;
+    update_account_credentials_row(db, account, &draft, &media).await?;
 
     let updated = find_account_by_id(db, &account.id)
         .await?
@@ -321,6 +381,43 @@ mod tests {
                 value: "https://example.com/git".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn account_credentials_update_draft_applies_request_fields() {
+        let account = test_account();
+        let update = UpdateCredentialsRequest {
+            display_name: Some("Alice Updated".to_owned()),
+            note: Some("hello **world**".to_owned()),
+            locked: Some(true),
+            bot: Some(true),
+            discoverable: Some(false),
+            fields_attributes: Some(vec![UpdateCredentialsField {
+                name: Some("Site".to_owned()),
+                value: Some("https://example.com".to_owned()),
+            }]),
+            source: Some(UpdateCredentialsSource {
+                privacy: Some("private".to_owned()),
+                quote_policy: Some("followers".to_owned()),
+                sensitive: Some(true),
+                language: Some("ja".to_owned()),
+            }),
+            ..UpdateCredentialsRequest::default()
+        };
+
+        let draft = account_credentials_update_draft(&account, &update).unwrap();
+
+        assert_eq!(draft.display_name, "Alice Updated");
+        assert_eq!(draft.bio_text, "hello **world**");
+        assert_eq!(draft.bio_html, render_status_html("hello **world**"));
+        assert!(draft.fields_json.contains("\"Site\""));
+        assert!(draft.locked);
+        assert!(draft.bot);
+        assert!(!draft.discoverable);
+        assert_eq!(draft.source_defaults.post_visibility, "private");
+        assert_eq!(draft.source_defaults.quote_policy, "followers");
+        assert!(draft.source_defaults.sensitive);
+        assert_eq!(draft.source_defaults.language.as_deref(), Some("ja"));
     }
 
     #[test]

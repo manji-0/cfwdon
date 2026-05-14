@@ -1,7 +1,8 @@
 use crate::crypto_keys::generate_account_key_material;
 use crate::{
     AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
-    RouteContext, TimelinePaginationQuery, actor_url, app_bearer_token_from_request,
+    RouteContext, StreamingBatch, StreamingEntry, StreamingEvent, StreamingLoopState,
+    StreamingPublicPlan, TimelinePaginationQuery, actor_url, app_bearer_token_from_request,
     authenticate_local_api_request, build_announcements_document,
     build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_delete_quote_authorization_activity,
@@ -35,7 +36,8 @@ use crate::{
     queue_remote_actor_activity_required, remote_account_rest_id, remote_status_has_active_quote,
     remote_status_has_media, resolve_account_reference, resolve_status_reference,
     resolve_timeline_cursor, send_push_notification, status_has_active_quote,
-    store_account_password, timeline_fetch_limit, timeline_limit, update_remote_status_quote_state,
+    store_account_password, streaming_batch_from_entries, timeline_fetch_limit, timeline_limit,
+    update_remote_status_quote_state,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -1444,55 +1446,6 @@ pub(crate) async fn check_email_confirmation_response(
     Response::from_json(&confirmed)
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct StreamingEvent {
-    created_at: String,
-    id: String,
-    event: &'static str,
-    data: String,
-}
-
-#[derive(Debug)]
-struct StreamingBatch {
-    events: Vec<StreamingEvent>,
-    tracked_status_ids: Vec<String>,
-    last_id: Option<String>,
-    last_created_at: Option<String>,
-}
-
-struct StreamingLoopState {
-    since_id: Option<String>,
-    notification_min_created_at: Option<String>,
-    tracked_status_ids: Vec<String>,
-    tracked_status_id_set: HashSet<String>,
-    deleted_status_ids: HashSet<String>,
-    updated_status_ids: HashSet<String>,
-    emitted_event_ids: HashSet<String>,
-    last_filter_updated_at: Option<String>,
-    last_announcements: HashMap<String, String>,
-    last_announcement_reactions: HashMap<(String, String), (u64, bool)>,
-    initialized: bool,
-}
-
-impl StreamingLoopState {
-    fn new() -> Self {
-        Self {
-            since_id: None,
-            notification_min_created_at: None,
-            tracked_status_ids: Vec::new(),
-            tracked_status_id_set: HashSet::new(),
-            deleted_status_ids: HashSet::new(),
-            updated_status_ids: HashSet::new(),
-            emitted_event_ids: HashSet::new(),
-            last_filter_updated_at: None,
-            last_announcements: HashMap::new(),
-            last_announcement_reactions: HashMap::new(),
-            initialized: false,
-        }
-    }
-}
-
 struct StreamingWebSocketSubscription {
     stream_name: String,
     tag: Option<String>,
@@ -1603,6 +1556,66 @@ fn announcement_reaction_entries_for_id(
         .collect()
 }
 
+fn streaming_filter_update_changed(previous: Option<&str>, current: &str) -> bool {
+    previous.map(|value| value != current).unwrap_or(false)
+}
+
+struct AnnouncementStreamEntry {
+    id: String,
+    payload: String,
+    created_at: String,
+}
+
+struct CurrentAnnouncementStreamState {
+    entries: Vec<AnnouncementStreamEntry>,
+    reactions: HashMap<(String, String), (u64, bool)>,
+}
+
+fn announcement_stream_entries(
+    announcements: Vec<serde_json::Value>,
+) -> Result<Vec<AnnouncementStreamEntry>> {
+    let mut entries = Vec::new();
+    for announcement in announcements {
+        if let Some(entry) = announcement_stream_entry(&announcement)? {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+fn announcement_stream_entry(
+    announcement: &serde_json::Value,
+) -> Result<Option<AnnouncementStreamEntry>> {
+    let Some(id) = announcement
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return Ok(None);
+    };
+    let payload = serde_json::to_string(announcement).map_err(|error| {
+        worker::Error::RustError(format!(
+            "failed to serialize announcement stream payload: {error}"
+        ))
+    })?;
+    let created_at = announcement
+        .get("published_at")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            announcement
+                .get("updated_at")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or_default()
+        .to_owned();
+
+    Ok(Some(AnnouncementStreamEntry {
+        id,
+        payload,
+        created_at,
+    }))
+}
+
 async fn streaming_notification_batch(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
@@ -1643,6 +1656,115 @@ async fn streaming_notification_batch(
     })
 }
 
+async fn append_streaming_local_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: crate::StatusRow,
+    only_media: bool,
+    mute_local_actor: bool,
+    tag_filter: Option<&str>,
+    include_reply_context: bool,
+    payload_context: &str,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if let Some(tag) = tag_filter {
+        let status_tags = extract_hashtags_from_text(&status._text_content);
+        if !matches_tag_timeline_filters(&status_tags, tag, &crate::TagTimelineQuery::default()) {
+            return Ok(());
+        }
+    }
+    let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok(());
+    };
+    if mute_local_actor
+        && let Some(viewer) = viewer
+        && is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await?
+    {
+        return Ok(());
+    }
+    if let Some(viewer) = viewer
+        && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
+    {
+        return Ok(());
+    }
+    let media = find_media_attachments_by_status_id(db, &status.id).await?;
+    if only_media && media.is_empty() {
+        return Ok(());
+    }
+    let in_reply_to_account_id = if include_reply_context {
+        load_in_reply_to_account_id(db, &status).await?
+    } else {
+        None
+    };
+    entries.push(StreamingEntry::new(
+        status.created_at.clone(),
+        status.id.clone(),
+        serde_json::to_string(
+            &build_local_status_response(
+                db,
+                config,
+                viewer,
+                &status,
+                &account,
+                in_reply_to_account_id,
+                media,
+            )
+            .await?,
+        )
+        .map_err(|error| {
+            worker::Error::RustError(format!(
+                "failed to serialize {payload_context} stream payload: {error}"
+            ))
+        })?,
+    ));
+    tracked_status_ids.push(status.id);
+    Ok(())
+}
+
+async fn append_streaming_remote_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: crate::RemoteStatusRow,
+    actor: crate::RemoteActorRow,
+    only_media: bool,
+    tag_filter: Option<&str>,
+    payload_context: &str,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if let Some(tag) = tag_filter {
+        let status_tags = extract_hashtags_from_html(&status.content_html);
+        if !matches_tag_timeline_filters(&status_tags, tag, &crate::TagTimelineQuery::default()) {
+            return Ok(());
+        }
+    }
+    if only_media && !remote_status_has_media(db, &status.id).await? {
+        return Ok(());
+    }
+    if let Some(viewer) = viewer
+        && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
+    {
+        return Ok(());
+    }
+    entries.push(StreamingEntry::new(
+        status.published_at.clone(),
+        status.id.clone(),
+        serde_json::to_string(
+            &build_remote_status_response(db, config, viewer, &status, &actor).await?,
+        )
+        .map_err(|error| {
+            worker::Error::RustError(format!(
+                "failed to serialize {payload_context} stream payload: {error}"
+            ))
+        })?,
+    ));
+    tracked_status_ids.push(status.id);
+    Ok(())
+}
+
 async fn streaming_public_batch(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
@@ -1651,20 +1773,7 @@ async fn streaming_public_batch(
     tag: Option<&str>,
     since_id: Option<&str>,
 ) -> Result<StreamingBatch> {
-    let include_local = matches!(
-        stream,
-        "public"
-            | "public:media"
-            | "public:local"
-            | "public:local:media"
-            | "hashtag"
-            | "hashtag:local"
-    ) || stream.starts_with("hashtag");
-    let include_remote = matches!(
-        stream,
-        "public" | "public:media" | "public:remote" | "public:remote:media" | "hashtag"
-    );
-    let only_media = stream.ends_with(":media");
+    let plan = StreamingPublicPlan::from_stream(stream);
     let cursor = resolve_timeline_cursor(
         db,
         &TimelinePaginationQuery {
@@ -1678,177 +1787,141 @@ async fn streaming_public_batch(
     let mut entries = Vec::new();
     let mut tracked_status_ids = Vec::new();
 
-    if stream.starts_with("hashtag") {
+    if plan.hashtag_stream {
         let Some(tag) = tag else {
-            return Ok(StreamingBatch {
-                events: Vec::new(),
-                tracked_status_ids: Vec::new(),
-                last_id: None,
-                last_created_at: None,
-            });
+            return Ok(StreamingBatch::empty());
         };
-        if include_local {
-            for status in list_local_public_statuses_by_tag(db, tag, &cursor, query_limit).await? {
-                let status_tags = extract_hashtags_from_text(&status._text_content);
-                if !matches_tag_timeline_filters(
-                    &status_tags,
-                    tag,
-                    &crate::TagTimelineQuery::default(),
-                ) {
-                    continue;
-                }
-                let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-                    continue;
-                };
-                if let Some(viewer) = viewer
-                    && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
-                {
-                    continue;
-                }
-                let media = find_media_attachments_by_status_id(db, &status.id).await?;
-                if only_media && media.is_empty() {
-                    continue;
-                }
-                entries.push((
-                    status.created_at.clone(),
-                    status.id.clone(),
-                    serde_json::to_string(
-                        &build_local_status_response(
-                            db,
-                            config,
-                            viewer,
-                            &status,
-                            &account,
-                            load_in_reply_to_account_id(db, &status).await?,
-                            media,
-                        )
-                        .await?,
-                    )
-                    .map_err(|error| {
-                        worker::Error::RustError(format!(
-                            "failed to serialize hashtag stream payload: {error}"
-                        ))
-                    })?,
-                ));
-                tracked_status_ids.push(status.id.clone());
-            }
-        }
-        if include_remote {
-            for (status, actor) in
-                list_remote_public_statuses_by_tag(db, tag, &cursor, query_limit).await?
-            {
-                let status_tags = extract_hashtags_from_html(&status.content_html);
-                if !matches_tag_timeline_filters(
-                    &status_tags,
-                    tag,
-                    &crate::TagTimelineQuery::default(),
-                ) {
-                    continue;
-                }
-                if only_media && !remote_status_has_media(db, &status.id).await? {
-                    continue;
-                }
-                if let Some(viewer) = viewer
-                    && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
-                {
-                    continue;
-                }
-                entries.push((
-                    status.published_at.clone(),
-                    status.id.clone(),
-                    serde_json::to_string(
-                        &build_remote_status_response(db, config, viewer, &status, &actor).await?,
-                    )
-                    .map_err(|error| {
-                        worker::Error::RustError(format!(
-                            "failed to serialize hashtag stream payload: {error}"
-                        ))
-                    })?,
-                ));
-                tracked_status_ids.push(status.id.clone());
-            }
-        }
+        append_streaming_hashtag_status_entries(
+            db,
+            config,
+            viewer,
+            plan,
+            tag,
+            &cursor,
+            query_limit,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
     } else {
-        if include_local {
-            for status in list_local_public_timeline_statuses(db, &cursor, query_limit).await? {
-                let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-                    continue;
-                };
-                if let Some(viewer) = viewer
-                    && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
-                {
-                    continue;
-                }
-                let media = find_media_attachments_by_status_id(db, &status.id).await?;
-                if only_media && media.is_empty() {
-                    continue;
-                }
-                entries.push((
-                    status.created_at.clone(),
-                    status.id.clone(),
-                    serde_json::to_string(
-                        &build_local_status_response(
-                            db, config, viewer, &status, &account, None, media,
-                        )
-                        .await?,
-                    )
-                    .map_err(|error| {
-                        worker::Error::RustError(format!(
-                            "failed to serialize public stream payload: {error}"
-                        ))
-                    })?,
-                ));
-                tracked_status_ids.push(status.id.clone());
-            }
-        }
-        if include_remote {
-            for (status, actor) in
-                list_remote_public_timeline_statuses(db, &cursor, query_limit).await?
-            {
-                if only_media && !remote_status_has_media(db, &status.id).await? {
-                    continue;
-                }
-                if let Some(viewer) = viewer
-                    && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
-                {
-                    continue;
-                }
-                entries.push((
-                    status.published_at.clone(),
-                    status.id.clone(),
-                    serde_json::to_string(
-                        &build_remote_status_response(db, config, viewer, &status, &actor).await?,
-                    )
-                    .map_err(|error| {
-                        worker::Error::RustError(format!(
-                            "failed to serialize public stream payload: {error}"
-                        ))
-                    })?,
-                ));
-                tracked_status_ids.push(status.id.clone());
-            }
-        }
+        append_streaming_public_status_entries(
+            db,
+            config,
+            viewer,
+            plan,
+            &cursor,
+            query_limit,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
     }
 
-    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    let last_id = entries.last().map(|(_, id, _)| id.clone());
-    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
-    let events = entries
-        .into_iter()
-        .map(|(created_at, id, data)| StreamingEvent {
-            created_at,
-            id,
-            event: "conversation",
-            data,
-        })
-        .collect::<Vec<_>>();
-
-    Ok(StreamingBatch {
-        events,
+    Ok(streaming_batch_from_entries(
+        entries,
         tracked_status_ids,
-        last_id,
-        last_created_at,
-    })
+        "conversation",
+    ))
+}
+
+async fn append_streaming_hashtag_status_entries(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    plan: StreamingPublicPlan,
+    tag: &str,
+    cursor: &crate::ResolvedTimelineCursor,
+    query_limit: u32,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if plan.include_local {
+        for status in list_local_public_statuses_by_tag(db, tag, cursor, query_limit).await? {
+            append_streaming_local_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                plan.only_media,
+                false,
+                Some(tag),
+                true,
+                "hashtag",
+                entries,
+                tracked_status_ids,
+            )
+            .await?;
+        }
+    }
+    if plan.include_remote {
+        for (status, actor) in
+            list_remote_public_statuses_by_tag(db, tag, cursor, query_limit).await?
+        {
+            append_streaming_remote_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                actor,
+                plan.only_media,
+                Some(tag),
+                "hashtag",
+                entries,
+                tracked_status_ids,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn append_streaming_public_status_entries(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    plan: StreamingPublicPlan,
+    cursor: &crate::ResolvedTimelineCursor,
+    query_limit: u32,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if plan.include_local {
+        for status in list_local_public_timeline_statuses(db, cursor, query_limit).await? {
+            append_streaming_local_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                plan.only_media,
+                false,
+                None,
+                false,
+                "public",
+                entries,
+                tracked_status_ids,
+            )
+            .await?;
+        }
+    }
+    if plan.include_remote {
+        for (status, actor) in list_remote_public_timeline_statuses(db, cursor, query_limit).await?
+        {
+            append_streaming_remote_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                actor,
+                plan.only_media,
+                None,
+                "public",
+                entries,
+                tracked_status_ids,
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn streaming_home_batch(
@@ -1872,151 +1945,126 @@ async fn streaming_home_batch(
     let mut seen_status_ids = HashSet::new();
 
     for status in list_local_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await? {
-        if !seen_status_ids.insert(status.id.clone()) {
-            continue;
-        }
-        let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-            continue;
-        };
-        if is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await? {
-            continue;
-        }
-        if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
-            continue;
-        }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            serde_json::to_string(
-                &build_local_status_response(
-                    db,
-                    config,
-                    Some(viewer),
-                    &status,
-                    &account,
-                    load_in_reply_to_account_id(db, &status).await?,
-                    media,
-                )
-                .await?,
-            )
-            .map_err(|error| {
-                worker::Error::RustError(format!(
-                    "failed to serialize home stream payload: {error}"
-                ))
-            })?,
-        ));
-        tracked_status_ids.push(status.id.clone());
+        append_streaming_home_local_status_entry(
+            db,
+            config,
+            viewer,
+            status,
+            &mut seen_status_ids,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
     }
 
     for (status, actor) in
         list_remote_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await?
     {
-        if !seen_status_ids.insert(status.id.clone()) {
-            continue;
-        }
-        if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
-            continue;
-        }
-        entries.push((
-            status.published_at.clone(),
-            status.id.clone(),
-            serde_json::to_string(
-                &build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
-            )
-            .map_err(|error| {
-                worker::Error::RustError(format!(
-                    "failed to serialize home stream payload: {error}"
-                ))
-            })?,
-        ));
-        tracked_status_ids.push(status.id.clone());
+        append_streaming_home_remote_status_entry(
+            db,
+            config,
+            viewer,
+            status,
+            actor,
+            &mut seen_status_ids,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
     }
 
     for tag in list_followed_tag_names(db, &viewer.id).await? {
         for status in list_local_public_statuses_by_tag(db, &tag, &cursor, query_limit).await? {
-            if !seen_status_ids.insert(status.id.clone()) {
-                continue;
-            }
-            let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-                continue;
-            };
-            if is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await? {
-                continue;
-            }
-            if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
-                continue;
-            }
-            let media = find_media_attachments_by_status_id(db, &status.id).await?;
-            entries.push((
-                status.created_at.clone(),
-                status.id.clone(),
-                serde_json::to_string(
-                    &build_local_status_response(
-                        db,
-                        config,
-                        Some(viewer),
-                        &status,
-                        &account,
-                        load_in_reply_to_account_id(db, &status).await?,
-                        media,
-                    )
-                    .await?,
-                )
-                .map_err(|error| {
-                    worker::Error::RustError(format!(
-                        "failed to serialize home stream payload: {error}"
-                    ))
-                })?,
-            ));
-            tracked_status_ids.push(status.id.clone());
+            append_streaming_home_local_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                &mut seen_status_ids,
+                &mut entries,
+                &mut tracked_status_ids,
+            )
+            .await?;
         }
 
         for (status, actor) in
             list_remote_public_statuses_by_tag(db, &tag, &cursor, query_limit).await?
         {
-            if !seen_status_ids.insert(status.id.clone()) {
-                continue;
-            }
-            if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
-                continue;
-            }
-            entries.push((
-                status.published_at.clone(),
-                status.id.clone(),
-                serde_json::to_string(
-                    &build_remote_status_response(db, config, Some(viewer), &status, &actor)
-                        .await?,
-                )
-                .map_err(|error| {
-                    worker::Error::RustError(format!(
-                        "failed to serialize home stream payload: {error}"
-                    ))
-                })?,
-            ));
-            tracked_status_ids.push(status.id.clone());
+            append_streaming_home_remote_status_entry(
+                db,
+                config,
+                viewer,
+                status,
+                actor,
+                &mut seen_status_ids,
+                &mut entries,
+                &mut tracked_status_ids,
+            )
+            .await?;
         }
     }
 
-    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    let last_id = entries.last().map(|(_, id, _)| id.clone());
-    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
-    let events = entries
-        .into_iter()
-        .map(|(created_at, id, data)| StreamingEvent {
-            created_at,
-            id,
-            event: "update",
-            data,
-        })
-        .collect::<Vec<_>>();
-
-    Ok(StreamingBatch {
-        events,
+    Ok(streaming_batch_from_entries(
+        entries,
         tracked_status_ids,
-        last_id,
-        last_created_at,
-    })
+        "update",
+    ))
+}
+
+async fn append_streaming_home_local_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    status: crate::StatusRow,
+    seen_status_ids: &mut HashSet<String>,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if !seen_status_ids.insert(status.id.clone()) {
+        return Ok(());
+    }
+    append_streaming_local_status_entry(
+        db,
+        config,
+        Some(viewer),
+        status,
+        false,
+        true,
+        None,
+        true,
+        "home",
+        entries,
+        tracked_status_ids,
+    )
+    .await
+}
+
+async fn append_streaming_home_remote_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    status: crate::RemoteStatusRow,
+    actor: crate::RemoteActorRow,
+    seen_status_ids: &mut HashSet<String>,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if !seen_status_ids.insert(status.id.clone()) {
+        return Ok(());
+    }
+    append_streaming_remote_status_entry(
+        db,
+        config,
+        Some(viewer),
+        status,
+        actor,
+        false,
+        None,
+        "home",
+        entries,
+        tracked_status_ids,
+    )
+    .await
 }
 
 async fn streaming_direct_batch(
@@ -2051,7 +2099,7 @@ async fn streaming_direct_batch(
         else {
             continue;
         };
-        entries.push((
+        entries.push(StreamingEntry::new(
             status.created_at.clone(),
             conversation.id.clone(),
             serde_json::to_string(
@@ -2066,25 +2114,11 @@ async fn streaming_direct_batch(
         tracked_conversation_ids.push(conversation.id.clone());
     }
 
-    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    let last_id = entries.last().map(|(_, id, _)| id.clone());
-    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
-    let events = entries
-        .into_iter()
-        .map(|(created_at, id, data)| StreamingEvent {
-            created_at,
-            id,
-            event: "update",
-            data,
-        })
-        .collect::<Vec<_>>();
-
-    Ok(StreamingBatch {
-        events,
-        tracked_status_ids: tracked_conversation_ids,
-        last_id,
-        last_created_at,
-    })
+    Ok(streaming_batch_from_entries(
+        entries,
+        tracked_conversation_ids,
+        "update",
+    ))
 }
 
 async fn streaming_list_batch(
@@ -2094,6 +2128,66 @@ async fn streaming_list_batch(
     list_id: &str,
     since_id: Option<&str>,
 ) -> Result<StreamingBatch> {
+    let Some(context) = streaming_list_batch_context(db, viewer, list_id, since_id).await? else {
+        return Ok(StreamingBatch::empty());
+    };
+    let StreamingListBatchContext {
+        cursor,
+        query_limit,
+        membership_refs,
+        replies_policy,
+    } = context;
+    let mut entries = Vec::new();
+    let mut tracked_status_ids = Vec::new();
+    let policy = ListStreamStatusPolicy::new(&membership_refs, &replies_policy);
+
+    for status in list_local_public_timeline_statuses(db, &cursor, query_limit).await? {
+        append_streaming_list_local_status_entry(
+            db,
+            config,
+            viewer,
+            &policy,
+            status,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
+    }
+
+    for (status, actor) in list_remote_public_timeline_statuses(db, &cursor, query_limit).await? {
+        append_streaming_list_remote_status_entry(
+            db,
+            config,
+            viewer,
+            &policy,
+            status,
+            actor,
+            &mut entries,
+            &mut tracked_status_ids,
+        )
+        .await?;
+    }
+
+    Ok(streaming_batch_from_entries(
+        entries,
+        tracked_status_ids,
+        "update",
+    ))
+}
+
+struct StreamingListBatchContext {
+    cursor: crate::ResolvedTimelineCursor,
+    query_limit: u32,
+    membership_refs: HashSet<String>,
+    replies_policy: String,
+}
+
+async fn streaming_list_batch_context(
+    db: &D1Database,
+    viewer: &crate::LocalAccount,
+    list_id: &str,
+    since_id: Option<&str>,
+) -> Result<Option<StreamingListBatchContext>> {
     let cursor = resolve_timeline_cursor(
         db,
         &TimelinePaginationQuery {
@@ -2105,109 +2199,133 @@ async fn streaming_list_batch(
     .await?;
     let query_limit = timeline_fetch_limit(40);
     let Some(list) = list_row_by_id(db, &viewer.id, list_id).await? else {
-        return Ok(StreamingBatch {
-            events: Vec::new(),
-            tracked_status_ids: Vec::new(),
-            last_id: None,
-            last_created_at: None,
-        });
+        return Ok(None);
     };
     let membership_refs = list_membership_refs(db, list_id)
         .await?
         .into_iter()
         .map(|row| row.target_account_ref)
         .collect::<HashSet<_>>();
-    let mut entries = Vec::new();
-    let mut tracked_status_ids = Vec::new();
+    Ok(Some(StreamingListBatchContext {
+        cursor,
+        query_limit,
+        membership_refs,
+        replies_policy: list.replies_policy,
+    }))
+}
 
-    for status in list_local_public_timeline_statuses(db, &cursor, query_limit).await? {
-        let Some(author) = find_account_by_id(db, &status.account_id).await? else {
-            continue;
-        };
-        if !list_membership_variants_for_local_account(&author, config)
-            .into_iter()
-            .any(|candidate| membership_refs.contains(&candidate))
-        {
-            continue;
-        }
-        if list.replies_policy == "none" && status.in_reply_to_id.is_some() {
-            continue;
-        }
-        if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
-            continue;
-        }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            serde_json::to_string(
-                &build_local_status_response(
-                    db,
-                    config,
-                    Some(viewer),
-                    &status,
-                    &author,
-                    load_in_reply_to_account_id(db, &status).await?,
-                    media,
-                )
-                .await?,
+async fn append_streaming_list_local_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    policy: &ListStreamStatusPolicy<'_>,
+    status: crate::StatusRow,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    let Some(author) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok(());
+    };
+    if !policy.matches(
+        list_membership_variants_for_local_account(&author, config),
+        status.in_reply_to_id.as_deref(),
+    ) {
+        return Ok(());
+    }
+    if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
+        return Ok(());
+    }
+    let media = find_media_attachments_by_status_id(db, &status.id).await?;
+    entries.push(StreamingEntry::new(
+        status.created_at.clone(),
+        status.id.clone(),
+        serde_json::to_string(
+            &build_local_status_response(
+                db,
+                config,
+                Some(viewer),
+                &status,
+                &author,
+                load_in_reply_to_account_id(db, &status).await?,
+                media,
             )
-            .map_err(|error| {
-                worker::Error::RustError(format!(
-                    "failed to serialize list stream payload: {error}"
-                ))
-            })?,
-        ));
-        tracked_status_ids.push(status.id.clone());
+            .await?,
+        )
+        .map_err(|error| {
+            worker::Error::RustError(format!("failed to serialize list stream payload: {error}"))
+        })?,
+    ));
+    tracked_status_ids.push(status.id.clone());
+    Ok(())
+}
+
+async fn append_streaming_list_remote_status_entry(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    policy: &ListStreamStatusPolicy<'_>,
+    status: crate::RemoteStatusRow,
+    actor: crate::RemoteActorRow,
+    entries: &mut Vec<StreamingEntry>,
+    tracked_status_ids: &mut Vec<String>,
+) -> Result<()> {
+    if !policy.matches(
+        list_membership_variants_for_remote_actor(&actor),
+        status.in_reply_to_uri.as_deref(),
+    ) {
+        return Ok(());
+    }
+    if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+        return Ok(());
+    }
+    entries.push(StreamingEntry::new(
+        status.published_at.clone(),
+        status.id.clone(),
+        serde_json::to_string(
+            &build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
+        )
+        .map_err(|error| {
+            worker::Error::RustError(format!("failed to serialize list stream payload: {error}"))
+        })?,
+    ));
+    tracked_status_ids.push(status.id.clone());
+    Ok(())
+}
+
+struct ListStreamStatusPolicy<'a> {
+    membership_refs: &'a HashSet<String>,
+    replies_policy: &'a str,
+}
+
+impl<'a> ListStreamStatusPolicy<'a> {
+    fn new(membership_refs: &'a HashSet<String>, replies_policy: &'a str) -> Self {
+        Self {
+            membership_refs,
+            replies_policy,
+        }
     }
 
-    for (status, actor) in list_remote_public_timeline_statuses(db, &cursor, query_limit).await? {
-        if !list_membership_variants_for_remote_actor(&actor)
-            .into_iter()
-            .any(|candidate| membership_refs.contains(&candidate))
-        {
-            continue;
-        }
-        if list.replies_policy == "none" && status.in_reply_to_uri.is_some() {
-            continue;
-        }
-        if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
-            continue;
-        }
-        entries.push((
-            status.published_at.clone(),
-            status.id.clone(),
-            serde_json::to_string(
-                &build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
-            )
-            .map_err(|error| {
-                worker::Error::RustError(format!(
-                    "failed to serialize list stream payload: {error}"
-                ))
-            })?,
-        ));
-        tracked_status_ids.push(status.id.clone());
+    fn matches(
+        &self,
+        candidates: impl IntoIterator<Item = String>,
+        reply_reference: Option<&str>,
+    ) -> bool {
+        list_stream_membership_refs_include_any(self.membership_refs, candidates)
+            && !list_stream_excludes_reply(self.replies_policy, reply_reference)
     }
+}
 
-    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    let last_id = entries.last().map(|(_, id, _)| id.clone());
-    let last_created_at = entries.last().map(|(created_at, _, _)| created_at.clone());
-    let events = entries
+fn list_stream_membership_refs_include_any(
+    membership_refs: &HashSet<String>,
+    candidates: impl IntoIterator<Item = String>,
+) -> bool {
+    candidates
         .into_iter()
-        .map(|(created_at, id, data)| StreamingEvent {
-            created_at,
-            id,
-            event: "update",
-            data,
-        })
-        .collect::<Vec<_>>();
+        .any(|candidate| membership_refs.contains(&candidate))
+}
 
-    Ok(StreamingBatch {
-        events,
-        tracked_status_ids,
-        last_id,
-        last_created_at,
-    })
+fn list_stream_excludes_reply(replies_policy: &str, reply_reference: Option<&str>) -> bool {
+    replies_policy == "none" && reply_reference.is_some()
 }
 
 async fn streaming_status_delta_events(
@@ -2221,152 +2339,167 @@ async fn streaming_status_delta_events(
     let mut events = Vec::new();
 
     for status_id in tracked_status_ids.iter().rev().take(200) {
-        if deleted_status_ids.contains(status_id) || updated_status_ids.contains(status_id) {
-            continue;
-        }
-
-        if let Some(status) = find_status_by_id(db, status_id).await? {
-            let Some(updated_at) = load_status_updated_at(db, &status.id).await? else {
-                continue;
-            };
-            if updated_at == status.created_at {
-                continue;
-            }
-            let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-                continue;
-            };
-            if let Some(viewer) = viewer
-                && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
-            {
-                continue;
-            }
-            let media = find_media_attachments_by_status_id(db, &status.id).await?;
-            let payload = build_local_status_response(
-                db,
-                config,
-                viewer,
-                &status,
-                &account,
-                load_in_reply_to_account_id(db, &status).await?,
-                media,
-            )
-            .await?;
-            events.push(StreamingEvent {
-                created_at: updated_at,
-                id: status.id.clone(),
-                event: "status.update",
-                data: serde_json::to_string(&payload).map_err(|error| {
-                    worker::Error::RustError(format!(
-                        "failed to serialize streaming local status update payload: {error}"
-                    ))
-                })?,
-            });
-            updated_status_ids.insert(status.id.clone());
-            continue;
-        }
-
-        if let Some(status) = find_remote_status_by_id(db, status_id).await? {
-            let Some(updated_at) = load_remote_status_updated_at(db, &status.id).await? else {
-                continue;
-            };
-            if updated_at == status.published_at {
-                continue;
-            }
-            if let Some(viewer) = viewer
-                && is_muted_actor(db, &viewer.id, &status.actor_uri).await?
-            {
-                continue;
-            }
-            let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
-                continue;
-            };
-            let payload = build_remote_status_response(db, config, viewer, &status, &actor).await?;
-            events.push(StreamingEvent {
-                created_at: updated_at,
-                id: status.id.clone(),
-                event: "status.update",
-                data: serde_json::to_string(&payload).map_err(|error| {
-                    worker::Error::RustError(format!(
-                        "failed to serialize streaming remote status update payload: {error}"
-                    ))
-                })?,
-            });
-            updated_status_ids.insert(status.id.clone());
-            continue;
-        }
-
-        deleted_status_ids.insert(status_id.clone());
-        events.push(StreamingEvent {
-            created_at: now_iso_string()?,
-            id: status_id.clone(),
-            event: "delete",
-            data: status_id.clone(),
-        });
+        append_streaming_status_delta_event(
+            db,
+            config,
+            viewer,
+            status_id,
+            deleted_status_ids,
+            updated_status_ids,
+            &mut events,
+        )
+        .await?;
     }
 
     Ok(events)
 }
 
-async fn poll_streaming_events(
+async fn append_streaming_status_delta_event(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    stream_name: &str,
-    tag: Option<&str>,
-    list: Option<&str>,
     viewer: Option<&crate::LocalAccount>,
-    state: &mut StreamingLoopState,
-) -> Result<Vec<StreamingEvent>> {
-    let is_initial_poll = !state.initialized;
-    let batch = if stream_name == "user" {
-        let viewer = viewer.as_ref().ok_or_else(|| {
-            worker::Error::RustError("missing authenticated viewer for user stream".to_owned())
-        })?;
-        streaming_home_batch(db, config, viewer, state.since_id.as_deref()).await?
-    } else if stream_name == "user:notification" {
-        let viewer = viewer.as_ref().ok_or_else(|| {
-            worker::Error::RustError(
-                "missing authenticated viewer for notification stream".to_owned(),
-            )
-        })?;
-        streaming_notification_batch(
-            db,
-            config,
-            viewer,
-            state.since_id.as_deref(),
-            state.notification_min_created_at.as_deref(),
-        )
-        .await?
-    } else if stream_name == "list" {
-        let viewer = viewer.as_ref().ok_or_else(|| {
-            worker::Error::RustError("missing authenticated viewer for list stream".to_owned())
-        })?;
-        let list_id = list
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                worker::Error::RustError("missing list id for list stream".to_owned())
-            })?;
-        streaming_list_batch(db, config, viewer, list_id, state.since_id.as_deref()).await?
-    } else if stream_name == "direct" {
-        let viewer = viewer.as_ref().ok_or_else(|| {
-            worker::Error::RustError("missing authenticated viewer for direct stream".to_owned())
-        })?;
-        streaming_direct_batch(db, config, viewer, state.since_id.as_deref()).await?
-    } else {
-        streaming_public_batch(
-            db,
-            config,
-            viewer,
-            stream_name,
-            tag,
-            state.since_id.as_deref(),
-        )
-        .await?
+    status_id: &str,
+    deleted_status_ids: &mut HashSet<String>,
+    updated_status_ids: &mut HashSet<String>,
+    events: &mut Vec<StreamingEvent>,
+) -> Result<()> {
+    if streaming_status_delta_already_recorded(status_id, deleted_status_ids, updated_status_ids) {
+        return Ok(());
+    }
+
+    if let Some(status) = find_status_by_id(db, status_id).await? {
+        if let Some(event) =
+            streaming_local_status_update_event(db, config, viewer, &status).await?
+        {
+            updated_status_ids.insert(status.id.clone());
+            events.push(event);
+        }
+        return Ok(());
+    }
+
+    if let Some(status) = find_remote_status_by_id(db, status_id).await? {
+        if let Some(event) =
+            streaming_remote_status_update_event(db, config, viewer, &status).await?
+        {
+            updated_status_ids.insert(status.id.clone());
+            events.push(event);
+        }
+        return Ok(());
+    }
+
+    deleted_status_ids.insert(status_id.to_owned());
+    events.push(streaming_status_delete_event(status_id, now_iso_string()?));
+    Ok(())
+}
+
+fn streaming_status_delta_already_recorded(
+    status_id: &str,
+    deleted_status_ids: &HashSet<String>,
+    updated_status_ids: &HashSet<String>,
+) -> bool {
+    deleted_status_ids.contains(status_id) || updated_status_ids.contains(status_id)
+}
+
+async fn streaming_local_status_update_event(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: &crate::StatusRow,
+) -> Result<Option<StreamingEvent>> {
+    let Some(updated_at) = load_status_updated_at(db, &status.id).await? else {
+        return Ok(None);
     };
-    if let Some(next_since_id) = batch.last_id.clone() {
+    if updated_at == status.created_at {
+        return Ok(None);
+    }
+    let Some(account) = find_account_by_id(db, &status.account_id).await? else {
+        return Ok(None);
+    };
+    if let Some(viewer) = viewer
+        && is_local_status_thread_muted_by(db, &viewer.id, status).await?
+    {
+        return Ok(None);
+    }
+    let media = find_media_attachments_by_status_id(db, &status.id).await?;
+    let payload = build_local_status_response(
+        db,
+        config,
+        viewer,
+        status,
+        &account,
+        load_in_reply_to_account_id(db, status).await?,
+        media,
+    )
+    .await?;
+    let data = serde_json::to_string(&payload).map_err(|error| {
+        worker::Error::RustError(format!(
+            "failed to serialize streaming local status update payload: {error}"
+        ))
+    })?;
+
+    Ok(Some(StreamingEvent {
+        created_at: updated_at,
+        id: status.id.clone(),
+        event: "status.update",
+        data,
+    }))
+}
+
+async fn streaming_remote_status_update_event(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: &crate::RemoteStatusRow,
+) -> Result<Option<StreamingEvent>> {
+    let Some(updated_at) = load_remote_status_updated_at(db, &status.id).await? else {
+        return Ok(None);
+    };
+    if updated_at == status.published_at {
+        return Ok(None);
+    }
+    if let Some(viewer) = viewer
+        && is_muted_actor(db, &viewer.id, &status.actor_uri).await?
+    {
+        return Ok(None);
+    }
+    let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
+        return Ok(None);
+    };
+    let payload = build_remote_status_response(db, config, viewer, status, &actor).await?;
+    let data = serde_json::to_string(&payload).map_err(|error| {
+        worker::Error::RustError(format!(
+            "failed to serialize streaming remote status update payload: {error}"
+        ))
+    })?;
+
+    Ok(Some(StreamingEvent {
+        created_at: updated_at,
+        id: status.id.clone(),
+        event: "status.update",
+        data,
+    }))
+}
+
+fn streaming_status_delete_event(status_id: &str, created_at: String) -> StreamingEvent {
+    StreamingEvent {
+        created_at,
+        id: status_id.to_owned(),
+        event: "delete",
+        data: status_id.to_owned(),
+    }
+}
+
+fn apply_streaming_batch_to_state(
+    stream_name: &str,
+    batch: StreamingBatch,
+    is_initial_poll: bool,
+    state: &mut StreamingLoopState,
+) -> Vec<StreamingEvent> {
+    if let Some(next_since_id) = batch.last_id {
         state.since_id = Some(next_since_id);
     }
     if stream_name == "user:notification"
-        && let Some(next_min_created_at) = batch.last_created_at.clone()
+        && let Some(next_min_created_at) = batch.last_created_at
     {
         state.notification_min_created_at = Some(next_min_created_at);
     }
@@ -2379,16 +2512,326 @@ async fn poll_streaming_events(
         let removed = state.tracked_status_ids.remove(0);
         state.tracked_status_id_set.remove(&removed);
     }
-    let mut events = if is_initial_poll {
+
+    if is_initial_poll {
         for event in &batch.events {
-            state
-                .emitted_event_ids
-                .insert(format!("{}:{}", event.event, event.id));
+            state.emitted_event_ids.insert(streaming_event_key(event));
         }
         Vec::new()
     } else {
         batch.events
-    };
+    }
+}
+
+fn streaming_event_key(event: &StreamingEvent) -> String {
+    format!("{}:{}", event.event, event.id)
+}
+
+async fn append_user_stream_state_events(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &crate::LocalAccount,
+    state: &mut StreamingLoopState,
+    is_initial_poll: bool,
+    events: &mut Vec<StreamingEvent>,
+) -> Result<()> {
+    append_user_filter_state_events(db, viewer, state, is_initial_poll, events).await?;
+    append_user_announcement_state_events(config, db, viewer, state, is_initial_poll, events).await
+}
+
+async fn append_user_filter_state_events(
+    db: &D1Database,
+    viewer: &crate::LocalAccount,
+    state: &mut StreamingLoopState,
+    is_initial_poll: bool,
+    events: &mut Vec<StreamingEvent>,
+) -> Result<()> {
+    let current_filter_updated_at = load_latest_filter_updated_at(db, &viewer.id).await?;
+    if let Some(current_filter_updated_at) = current_filter_updated_at {
+        let changed = streaming_filter_update_changed(
+            state.last_filter_updated_at.as_deref(),
+            &current_filter_updated_at,
+        );
+        if !is_initial_poll && changed {
+            events.push(StreamingEvent {
+                created_at: current_filter_updated_at.clone(),
+                id: current_filter_updated_at.clone(),
+                event: "filters_changed",
+                data: "undefined".to_owned(),
+            });
+        }
+        state.last_filter_updated_at = Some(current_filter_updated_at);
+    }
+
+    Ok(())
+}
+
+async fn append_user_announcement_state_events(
+    config: &cfwdon_core::AppConfig,
+    db: &D1Database,
+    viewer: &crate::LocalAccount,
+    state: &mut StreamingLoopState,
+    is_initial_poll: bool,
+    events: &mut Vec<StreamingEvent>,
+) -> Result<()> {
+    let current_state = load_current_announcement_stream_state(config, db, viewer).await?;
+    let mut current_announcements = HashMap::<String, String>::new();
+
+    for entry in current_state.entries {
+        append_current_announcement_stream_entry_events(
+            &entry,
+            is_initial_poll,
+            &state.last_announcements,
+            &state.last_announcement_reactions,
+            &current_state.reactions,
+            events,
+        );
+        current_announcements.insert(entry.id, entry.payload);
+    }
+
+    if !is_initial_poll {
+        for removed_id in
+            removed_announcement_ids(&state.last_announcements, &current_announcements)
+        {
+            events.push(announcement_delete_event(removed_id, now_iso_string()?));
+        }
+    }
+    state.last_announcement_reactions = current_state.reactions;
+    state.last_announcements = current_announcements;
+    Ok(())
+}
+
+async fn load_current_announcement_stream_state(
+    config: &cfwdon_core::AppConfig,
+    db: &D1Database,
+    viewer: &crate::LocalAccount,
+) -> Result<CurrentAnnouncementStreamState> {
+    let read_ids = list_announcement_read_ids(db, &viewer.id).await?;
+    let reactions = load_announcement_reaction_state(db, &viewer.id).await?;
+    let announcements = build_announcements_document(config, &read_ids, &reactions);
+
+    Ok(CurrentAnnouncementStreamState {
+        entries: announcement_stream_entries(announcements)?,
+        reactions,
+    })
+}
+
+fn append_current_announcement_stream_entry_events(
+    entry: &AnnouncementStreamEntry,
+    is_initial_poll: bool,
+    previous_announcements: &HashMap<String, String>,
+    previous_reactions_state: &HashMap<(String, String), (u64, bool)>,
+    current_reactions_state: &HashMap<(String, String), (u64, bool)>,
+    events: &mut Vec<StreamingEvent>,
+) {
+    let current_reactions =
+        announcement_reaction_entries_for_id(current_reactions_state, &entry.id);
+    let previous_reactions =
+        announcement_reaction_entries_for_id(previous_reactions_state, &entry.id);
+    match announcement_stream_entry_action(
+        is_initial_poll,
+        previous_announcements.get(&entry.id).map(String::as_str),
+        &entry.payload,
+        &current_reactions,
+        &previous_reactions,
+    ) {
+        AnnouncementStreamEntryAction::Reaction => {
+            append_announcement_reaction_events(
+                entry,
+                &current_reactions,
+                previous_reactions_state,
+                events,
+            );
+        }
+        AnnouncementStreamEntryAction::Announcement => {
+            events.push(announcement_stream_event(entry));
+        }
+        AnnouncementStreamEntryAction::None => {}
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AnnouncementStreamEntryAction {
+    None,
+    Reaction,
+    Announcement,
+}
+
+fn announcement_stream_entry_action(
+    is_initial_poll: bool,
+    previous_payload: Option<&str>,
+    current_payload: &str,
+    current_reactions: &BTreeMap<String, (u64, bool)>,
+    previous_reactions: &BTreeMap<String, (u64, bool)>,
+) -> AnnouncementStreamEntryAction {
+    if is_initial_poll {
+        return AnnouncementStreamEntryAction::None;
+    }
+    if current_reactions != previous_reactions {
+        return AnnouncementStreamEntryAction::Reaction;
+    }
+    if previous_payload != Some(current_payload) {
+        return AnnouncementStreamEntryAction::Announcement;
+    }
+    AnnouncementStreamEntryAction::None
+}
+
+fn announcement_stream_event(entry: &AnnouncementStreamEntry) -> StreamingEvent {
+    StreamingEvent {
+        created_at: entry.created_at.clone(),
+        id: entry.id.clone(),
+        event: "announcement",
+        data: entry.payload.clone(),
+    }
+}
+
+fn removed_announcement_ids(
+    previous_announcements: &HashMap<String, String>,
+    current_announcements: &HashMap<String, String>,
+) -> Vec<String> {
+    previous_announcements
+        .keys()
+        .filter(|id| !current_announcements.contains_key(*id))
+        .cloned()
+        .collect()
+}
+
+fn announcement_delete_event(removed_id: String, created_at: String) -> StreamingEvent {
+    StreamingEvent {
+        created_at,
+        id: removed_id.clone(),
+        event: "announcement.delete",
+        data: removed_id,
+    }
+}
+
+fn append_announcement_reaction_events(
+    entry: &AnnouncementStreamEntry,
+    current_reactions: &BTreeMap<String, (u64, bool)>,
+    last_announcement_reactions: &HashMap<(String, String), (u64, bool)>,
+    events: &mut Vec<StreamingEvent>,
+) {
+    for (name, (count, me)) in current_reactions {
+        let previous = last_announcement_reactions
+            .get(&(entry.id.clone(), name.clone()))
+            .copied();
+        if previous != Some((*count, *me)) {
+            events.push(StreamingEvent {
+                created_at: entry.created_at.clone(),
+                id: format!("{}:{name}", entry.id),
+                event: "announcement.reaction",
+                data: serde_json::json!({
+                    "name": name,
+                    "count": count,
+                    "announcement_id": entry.id,
+                })
+                .to_string(),
+            });
+        }
+    }
+}
+
+async fn poll_streaming_events(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    viewer: Option<&crate::LocalAccount>,
+    state: &mut StreamingLoopState,
+) -> Result<Vec<StreamingEvent>> {
+    let is_initial_poll = !state.initialized;
+    let batch =
+        streaming_batch_for_stream(db, config, stream_name, tag, list, viewer, state).await?;
+    let mut events = apply_streaming_batch_to_state(stream_name, batch, is_initial_poll, state);
+    append_streaming_poll_side_effect_events(
+        db,
+        config,
+        stream_name,
+        viewer,
+        state,
+        is_initial_poll,
+        &mut events,
+    )
+    .await?;
+    state.initialized = true;
+    retain_new_streaming_events(state, &mut events);
+    Ok(events)
+}
+
+async fn streaming_batch_for_stream(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    viewer: Option<&crate::LocalAccount>,
+    state: &StreamingLoopState,
+) -> Result<StreamingBatch> {
+    match stream_name {
+        "user" => {
+            let viewer = required_streaming_viewer(viewer, "user")?;
+            streaming_home_batch(db, config, viewer, state.since_id.as_deref()).await
+        }
+        "user:notification" => {
+            let viewer = required_streaming_viewer(viewer, "notification")?;
+            streaming_notification_batch(
+                db,
+                config,
+                viewer,
+                state.since_id.as_deref(),
+                state.notification_min_created_at.as_deref(),
+            )
+            .await
+        }
+        "list" => {
+            let viewer = required_streaming_viewer(viewer, "list")?;
+            let list_id = required_streaming_list_id(list)?;
+            streaming_list_batch(db, config, viewer, list_id, state.since_id.as_deref()).await
+        }
+        "direct" => {
+            let viewer = required_streaming_viewer(viewer, "direct")?;
+            streaming_direct_batch(db, config, viewer, state.since_id.as_deref()).await
+        }
+        _ => {
+            streaming_public_batch(
+                db,
+                config,
+                viewer,
+                stream_name,
+                tag,
+                state.since_id.as_deref(),
+            )
+            .await
+        }
+    }
+}
+
+fn required_streaming_viewer<'a>(
+    viewer: Option<&'a crate::LocalAccount>,
+    stream_label: &str,
+) -> Result<&'a crate::LocalAccount> {
+    viewer.ok_or_else(|| {
+        worker::Error::RustError(format!(
+            "missing authenticated viewer for {stream_label} stream"
+        ))
+    })
+}
+
+fn required_streaming_list_id(list: Option<&str>) -> Result<&str> {
+    list.filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| worker::Error::RustError("missing list id for list stream".to_owned()))
+}
+
+async fn append_streaming_poll_side_effect_events(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    viewer: Option<&crate::LocalAccount>,
+    state: &mut StreamingLoopState,
+    is_initial_poll: bool,
+    events: &mut Vec<StreamingEvent>,
+) -> Result<()> {
     if !is_initial_poll && stream_name != "user:notification" {
         let delta_events = streaming_status_delta_events(
             db,
@@ -2402,120 +2845,15 @@ async fn poll_streaming_events(
         events.extend(delta_events);
     }
     if stream_name == "user" {
-        let viewer = viewer.as_ref().ok_or_else(|| {
-            worker::Error::RustError("missing authenticated viewer for user stream".to_owned())
-        })?;
-        let current_filter_updated_at = load_latest_filter_updated_at(db, &viewer.id).await?;
-        if let Some(current_filter_updated_at) = current_filter_updated_at {
-            let changed = state
-                .last_filter_updated_at
-                .as_deref()
-                .map(|value| value != current_filter_updated_at.as_str())
-                .unwrap_or(false);
-            if !is_initial_poll && changed {
-                events.push(StreamingEvent {
-                    created_at: current_filter_updated_at.clone(),
-                    id: current_filter_updated_at.clone(),
-                    event: "filters_changed",
-                    data: "undefined".to_owned(),
-                });
-            }
-            state.last_filter_updated_at = Some(current_filter_updated_at);
-        }
-        let read_ids = list_announcement_read_ids(db, &viewer.id).await?;
-        let reaction_state = load_announcement_reaction_state(db, &viewer.id).await?;
-        let announcements = build_announcements_document(config, &read_ids, &reaction_state);
-        let mut current_announcements = HashMap::<String, String>::new();
-        for announcement in announcements {
-            let Some(id) = announcement
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned)
-            else {
-                continue;
-            };
-            let payload = serde_json::to_string(&announcement).map_err(|error| {
-                worker::Error::RustError(format!(
-                    "failed to serialize announcement stream payload: {error}"
-                ))
-            })?;
-            let current_reactions = announcement_reaction_entries_for_id(&reaction_state, &id);
-            let previous_reactions =
-                announcement_reaction_entries_for_id(&state.last_announcement_reactions, &id);
-            if !is_initial_poll && current_reactions != previous_reactions {
-                for (name, (count, _me)) in &current_reactions {
-                    let previous = state
-                        .last_announcement_reactions
-                        .get(&(id.clone(), name.clone()))
-                        .copied();
-                    if previous != Some((*count, *_me)) {
-                        events.push(StreamingEvent {
-                            created_at: announcement
-                                .get("published_at")
-                                .and_then(serde_json::Value::as_str)
-                                .or_else(|| {
-                                    announcement
-                                        .get("updated_at")
-                                        .and_then(serde_json::Value::as_str)
-                                })
-                                .unwrap_or_default()
-                                .to_owned(),
-                            id: format!("{id}:{name}"),
-                            event: "announcement.reaction",
-                            data: serde_json::json!({
-                                "name": name,
-                                "count": count,
-                                "announcement_id": id,
-                            })
-                            .to_string(),
-                        });
-                    }
-                }
-            } else if !is_initial_poll && state.last_announcements.get(&id) != Some(&payload) {
-                events.push(StreamingEvent {
-                    created_at: announcement
-                        .get("published_at")
-                        .and_then(serde_json::Value::as_str)
-                        .or_else(|| {
-                            announcement
-                                .get("updated_at")
-                                .and_then(serde_json::Value::as_str)
-                        })
-                        .unwrap_or_default()
-                        .to_owned(),
-                    id: id.clone(),
-                    event: "announcement",
-                    data: payload.clone(),
-                });
-            }
-            current_announcements.insert(id, payload);
-        }
-        for removed_id in state
-            .last_announcements
-            .keys()
-            .filter(|id| !current_announcements.contains_key(*id))
-            .cloned()
-            .collect::<Vec<_>>()
-        {
-            if !is_initial_poll {
-                events.push(StreamingEvent {
-                    created_at: now_iso_string()?,
-                    id: removed_id.clone(),
-                    event: "announcement.delete",
-                    data: removed_id,
-                });
-            }
-        }
-        state.last_announcement_reactions = reaction_state;
-        state.last_announcements = current_announcements;
+        let viewer = required_streaming_viewer(viewer, "user")?;
+        append_user_stream_state_events(db, config, viewer, state, is_initial_poll, events).await?;
     }
-    state.initialized = true;
-    events.retain(|event| {
-        state
-            .emitted_event_ids
-            .insert(format!("{}:{}", event.event, event.id))
-    });
-    Ok(events)
+
+    Ok(())
+}
+
+fn retain_new_streaming_events(state: &mut StreamingLoopState, events: &mut Vec<StreamingEvent>) {
+    events.retain(|event| state.emitted_event_ids.insert(streaming_event_key(event)));
 }
 
 fn build_streaming_event_stream(
@@ -3754,6 +4092,260 @@ mod tests {
             streaming_websocket_stream_labels("list", None, Some("list-1")),
             vec!["list".to_owned(), "list-1".to_owned()]
         );
+    }
+
+    #[test]
+    fn streaming_filter_update_changed_only_after_initial_state() {
+        assert!(!streaming_filter_update_changed(
+            None,
+            "2026-05-01T00:00:00Z"
+        ));
+        assert!(!streaming_filter_update_changed(
+            Some("2026-05-01T00:00:00Z"),
+            "2026-05-01T00:00:00Z"
+        ));
+        assert!(streaming_filter_update_changed(
+            Some("2026-05-01T00:00:00Z"),
+            "2026-05-02T00:00:00Z"
+        ));
+    }
+
+    #[test]
+    fn announcement_stream_entry_action_prioritizes_reaction_delta() {
+        let previous_reactions = BTreeMap::from([("wave".to_owned(), (1, false))]);
+        let current_reactions = BTreeMap::from([("wave".to_owned(), (2, true))]);
+
+        assert_eq!(
+            announcement_stream_entry_action(
+                true,
+                Some("{\"id\":\"announcement-1\"}"),
+                "{\"id\":\"announcement-2\"}",
+                &current_reactions,
+                &previous_reactions,
+            ),
+            AnnouncementStreamEntryAction::None
+        );
+        assert_eq!(
+            announcement_stream_entry_action(
+                false,
+                Some("{\"id\":\"announcement-1\"}"),
+                "{\"id\":\"announcement-2\"}",
+                &current_reactions,
+                &previous_reactions,
+            ),
+            AnnouncementStreamEntryAction::Reaction
+        );
+    }
+
+    #[test]
+    fn announcement_stream_entry_action_detects_payload_delta_after_reactions() {
+        let reactions = BTreeMap::from([("wave".to_owned(), (1, false))]);
+
+        assert_eq!(
+            announcement_stream_entry_action(
+                false,
+                Some("{\"id\":\"announcement-1\"}"),
+                "{\"id\":\"announcement-2\"}",
+                &reactions,
+                &reactions,
+            ),
+            AnnouncementStreamEntryAction::Announcement
+        );
+        assert_eq!(
+            announcement_stream_entry_action(
+                false,
+                Some("{\"id\":\"announcement-1\"}"),
+                "{\"id\":\"announcement-1\"}",
+                &reactions,
+                &reactions,
+            ),
+            AnnouncementStreamEntryAction::None
+        );
+    }
+
+    #[test]
+    fn append_current_announcement_stream_entry_events_prioritizes_reaction_events() {
+        let entry = AnnouncementStreamEntry {
+            id: "announcement-1".to_owned(),
+            payload: "{\"id\":\"announcement-1\",\"content\":\"new\"}".to_owned(),
+            created_at: "2026-05-01T00:00:00Z".to_owned(),
+        };
+        let previous_announcements = HashMap::from([(
+            "announcement-1".to_owned(),
+            "{\"id\":\"announcement-1\",\"content\":\"old\"}".to_owned(),
+        )]);
+        let previous_reactions =
+            HashMap::from([(("announcement-1".to_owned(), "wave".to_owned()), (1, false))]);
+        let current_reactions =
+            HashMap::from([(("announcement-1".to_owned(), "wave".to_owned()), (2, true))]);
+        let mut events = Vec::new();
+
+        append_current_announcement_stream_entry_events(
+            &entry,
+            false,
+            &previous_announcements,
+            &previous_reactions,
+            &current_reactions,
+            &mut events,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "announcement.reaction");
+        assert_eq!(events[0].id, "announcement-1:wave");
+    }
+
+    #[test]
+    fn removed_announcement_ids_returns_only_missing_current_ids() {
+        let previous = HashMap::from([
+            ("announcement-1".to_owned(), "{}".to_owned()),
+            ("announcement-2".to_owned(), "{}".to_owned()),
+        ]);
+        let current = HashMap::from([("announcement-2".to_owned(), "{}".to_owned())]);
+
+        assert_eq!(
+            removed_announcement_ids(&previous, &current),
+            vec!["announcement-1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn required_streaming_list_id_rejects_missing_or_blank_values() {
+        assert!(required_streaming_list_id(None).is_err());
+        assert!(required_streaming_list_id(Some("   ")).is_err());
+        assert_eq!(
+            required_streaming_list_id(Some("list-1")).unwrap(),
+            "list-1"
+        );
+    }
+
+    #[test]
+    fn streaming_event_key_combines_event_type_and_id() {
+        let event = StreamingEvent {
+            created_at: "2026-05-01T00:00:00Z".to_owned(),
+            id: "status-1".to_owned(),
+            event: "update",
+            data: "{}".to_owned(),
+        };
+
+        assert_eq!(streaming_event_key(&event), "update:status-1");
+    }
+
+    #[test]
+    fn streaming_status_delta_already_recorded_skips_deleted_or_updated_ids() {
+        let deleted_status_ids = HashSet::from(["deleted-1".to_owned()]);
+        let updated_status_ids = HashSet::from(["updated-1".to_owned()]);
+
+        assert!(streaming_status_delta_already_recorded(
+            "deleted-1",
+            &deleted_status_ids,
+            &updated_status_ids
+        ));
+        assert!(streaming_status_delta_already_recorded(
+            "updated-1",
+            &deleted_status_ids,
+            &updated_status_ids
+        ));
+        assert!(!streaming_status_delta_already_recorded(
+            "fresh-1",
+            &deleted_status_ids,
+            &updated_status_ids
+        ));
+    }
+
+    #[test]
+    fn streaming_status_delete_event_matches_mastodon_delete_shape() {
+        let event = streaming_status_delete_event("status-1", "2026-05-01T00:00:00Z".to_owned());
+
+        assert_eq!(event.created_at, "2026-05-01T00:00:00Z");
+        assert_eq!(event.id, "status-1");
+        assert_eq!(event.event, "delete");
+        assert_eq!(event.data, "status-1");
+    }
+
+    #[test]
+    fn list_stream_membership_refs_include_any_accepts_any_candidate_variant() {
+        let membership_refs = HashSet::from(["alice@example.com".to_owned()]);
+
+        assert!(list_stream_membership_refs_include_any(
+            &membership_refs,
+            vec![
+                "acct:alice@example.com".to_owned(),
+                "alice@example.com".to_owned()
+            ]
+        ));
+        assert!(!list_stream_membership_refs_include_any(
+            &membership_refs,
+            vec!["bob@example.com".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn list_stream_status_policy_requires_membership_and_allowed_reply() {
+        let membership_refs = HashSet::from(["alice@example.com".to_owned()]);
+        let allow_replies = ListStreamStatusPolicy::new(&membership_refs, "list");
+        let exclude_replies = ListStreamStatusPolicy::new(&membership_refs, "none");
+
+        assert!(allow_replies.matches(
+            vec![
+                "acct:alice@example.com".to_owned(),
+                "alice@example.com".to_owned()
+            ],
+            Some("status-1"),
+        ));
+        assert!(!allow_replies.matches(vec!["bob@example.com".to_owned()], None,));
+        assert!(!exclude_replies.matches(vec!["alice@example.com".to_owned()], Some("status-1"),));
+    }
+
+    #[test]
+    fn list_stream_excludes_reply_only_when_policy_blocks_replies() {
+        assert!(list_stream_excludes_reply("none", Some("status-1")));
+        assert!(!list_stream_excludes_reply("list", Some("status-1")));
+        assert!(!list_stream_excludes_reply("none", None));
+    }
+
+    #[test]
+    fn announcement_stream_entry_extracts_payload_identity_and_time() {
+        let announcement = serde_json::json!({
+            "id": "announcement-1",
+            "published_at": "2026-05-01T00:00:00Z",
+            "content": "<p>Hello</p>"
+        });
+
+        let entry = announcement_stream_entry(&announcement).unwrap().unwrap();
+
+        assert_eq!(entry.id, "announcement-1");
+        assert_eq!(entry.created_at, "2026-05-01T00:00:00Z");
+        assert!(entry.payload.contains("\"announcement-1\""));
+    }
+
+    #[test]
+    fn announcement_stream_entry_uses_updated_at_fallback() {
+        let announcement = serde_json::json!({
+            "id": "announcement-1",
+            "updated_at": "2026-05-02T00:00:00Z",
+        });
+
+        let entry = announcement_stream_entry(&announcement).unwrap().unwrap();
+
+        assert_eq!(entry.created_at, "2026-05-02T00:00:00Z");
+    }
+
+    #[test]
+    fn announcement_stream_entries_skips_documents_without_stream_identity() {
+        let announcements = vec![
+            serde_json::json!({
+                "id": "announcement-1",
+                "published_at": "2026-05-01T00:00:00Z",
+            }),
+            serde_json::json!({
+                "content": "<p>missing id</p>",
+            }),
+        ];
+
+        let entries = announcement_stream_entries(announcements).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "announcement-1");
     }
 
     #[test]

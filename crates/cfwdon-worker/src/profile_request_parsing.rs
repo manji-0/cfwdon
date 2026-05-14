@@ -48,14 +48,9 @@ pub(crate) struct UpdateCredentialsField {
 pub(crate) async fn parse_update_credentials_request(
     req: &mut Request,
 ) -> std::result::Result<UpdateCredentialsRequest, String> {
-    let content_type = req
-        .headers()
-        .get("Content-Type")
-        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let content_type = request_content_type(req)?;
 
-    let mut request = if content_type.contains("application/json") {
+    let mut request = if request_is_json(&content_type) {
         req.json::<UpdateCredentialsRequest>()
             .await
             .map_err(|error| format!("invalid JSON credentials payload: {error}"))?
@@ -64,35 +59,59 @@ pub(crate) async fn parse_update_credentials_request(
             .form_data()
             .await
             .map_err(|error| format!("invalid form credentials payload: {error}"))?;
-        let mut request = UpdateCredentialsRequest {
-            display_name: form.get_field("display_name"),
-            note: form.get_field("note"),
-            fields_attributes: Some(parse_profile_fields_from_form(&form)),
-            discoverable: parse_optional_bool(form.get_field("discoverable").as_deref())?,
-            locked: parse_optional_bool(form.get_field("locked").as_deref())?,
-            bot: parse_optional_bool(form.get_field("bot").as_deref())?,
-            hide_collections: parse_optional_bool(form.get_field("hide_collections").as_deref())?,
-            indexable: parse_optional_bool(form.get_field("indexable").as_deref())?,
-            show_media: parse_optional_bool(form.get_field("show_media").as_deref())?,
-            show_media_replies: parse_optional_bool(
-                form.get_field("show_media_replies").as_deref(),
-            )?,
-            show_featured: parse_optional_bool(form.get_field("show_featured").as_deref())?,
-            avatar_description: form.get_field("avatar_description"),
-            header_description: form.get_field("header_description"),
-            source: Some(UpdateCredentialsSource {
-                privacy: form.get_field("source[privacy]"),
-                quote_policy: form.get_field("source[quote_policy]"),
-                sensitive: parse_optional_bool(form.get_field("source[sensitive]").as_deref())?,
-                language: form.get_field("source[language]"),
-            }),
-            ..UpdateCredentialsRequest::default()
-        };
-        request.avatar = parse_profile_media_upload(form.get("avatar"), "avatar").await?;
-        request.header = parse_profile_media_upload(form.get("header"), "header").await?;
-        request
+        update_credentials_request_from_form(form).await?
     };
 
+    normalize_update_credentials_request(&mut request)?;
+    Ok(request)
+}
+
+fn request_content_type(req: &Request) -> std::result::Result<String, String> {
+    Ok(req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
+        .unwrap_or_default()
+        .to_ascii_lowercase())
+}
+
+fn request_is_json(content_type: &str) -> bool {
+    content_type.contains("application/json")
+}
+
+async fn update_credentials_request_from_form(
+    form: FormData,
+) -> std::result::Result<UpdateCredentialsRequest, String> {
+    let mut request = UpdateCredentialsRequest {
+        display_name: form.get_field("display_name"),
+        note: form.get_field("note"),
+        fields_attributes: Some(parse_profile_fields_from_form(&form)),
+        discoverable: parse_optional_bool(form.get_field("discoverable").as_deref())?,
+        locked: parse_optional_bool(form.get_field("locked").as_deref())?,
+        bot: parse_optional_bool(form.get_field("bot").as_deref())?,
+        hide_collections: parse_optional_bool(form.get_field("hide_collections").as_deref())?,
+        indexable: parse_optional_bool(form.get_field("indexable").as_deref())?,
+        show_media: parse_optional_bool(form.get_field("show_media").as_deref())?,
+        show_media_replies: parse_optional_bool(form.get_field("show_media_replies").as_deref())?,
+        show_featured: parse_optional_bool(form.get_field("show_featured").as_deref())?,
+        avatar_description: form.get_field("avatar_description"),
+        header_description: form.get_field("header_description"),
+        source: Some(UpdateCredentialsSource {
+            privacy: form.get_field("source[privacy]"),
+            quote_policy: form.get_field("source[quote_policy]"),
+            sensitive: parse_optional_bool(form.get_field("source[sensitive]").as_deref())?,
+            language: form.get_field("source[language]"),
+        }),
+        ..UpdateCredentialsRequest::default()
+    };
+    request.avatar = parse_profile_media_upload(form.get("avatar"), "avatar").await?;
+    request.header = parse_profile_media_upload(form.get("header"), "header").await?;
+    Ok(request)
+}
+
+fn normalize_update_credentials_request(
+    request: &mut UpdateCredentialsRequest,
+) -> std::result::Result<(), String> {
     normalize_optional_text(&mut request.display_name, true);
     normalize_optional_text(&mut request.note, false);
     normalize_optional_text(&mut request.avatar_description, false);
@@ -106,28 +125,35 @@ pub(crate) async fn parse_update_credentials_request(
     }
 
     if let Some(source) = request.source.as_mut() {
-        if let Some(privacy) = source.privacy.as_mut() {
-            *privacy = privacy.trim().to_ascii_lowercase();
-            if privacy.is_empty() {
-                source.privacy = None;
-            } else if super::Visibility::parse(privacy).is_none() {
-                return Err(
-                    "source[privacy] must be one of: public, unlisted, private, direct".to_owned(),
-                );
-            }
-        }
-
-        if let Some(language) = source.language.as_mut() {
-            *language = language.trim().to_ascii_lowercase();
-            if language.is_empty() {
-                source.language = None;
-            }
-        }
-
-        source.quote_policy = normalize_quote_approval_policy(source.quote_policy.take())?;
+        normalize_update_credentials_source(source)?;
     }
 
-    Ok(request)
+    Ok(())
+}
+
+fn normalize_update_credentials_source(
+    source: &mut UpdateCredentialsSource,
+) -> std::result::Result<(), String> {
+    if let Some(privacy) = source.privacy.as_mut() {
+        *privacy = privacy.trim().to_ascii_lowercase();
+        if privacy.is_empty() {
+            source.privacy = None;
+        } else if super::Visibility::parse(privacy).is_none() {
+            return Err(
+                "source[privacy] must be one of: public, unlisted, private, direct".to_owned(),
+            );
+        }
+    }
+
+    if let Some(language) = source.language.as_mut() {
+        *language = language.trim().to_ascii_lowercase();
+        if language.is_empty() {
+            source.language = None;
+        }
+    }
+
+    source.quote_policy = normalize_quote_approval_policy(source.quote_policy.take())?;
+    Ok(())
 }
 
 fn deserialize_fields_attributes<'de, D>(
@@ -295,7 +321,10 @@ fn parse_profile_media_data_url(
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateCredentialsRequest, parse_profile_media_data_url};
+    use super::{
+        UpdateCredentialsRequest, UpdateCredentialsSource, normalize_update_credentials_request,
+        parse_profile_media_data_url, request_is_json,
+    };
 
     #[test]
     fn update_credentials_accepts_json_fields_attributes_map() {
@@ -346,5 +375,36 @@ mod tests {
         assert_eq!(upload.bytes, b"hello");
         assert_eq!(upload.content_type, "image/png");
         assert_eq!(upload.object_kind, "avatar");
+    }
+
+    #[test]
+    fn request_is_json_matches_json_content_types() {
+        assert!(request_is_json("application/json"));
+        assert!(request_is_json("application/json; charset=utf-8"));
+        assert!(!request_is_json("multipart/form-data"));
+    }
+
+    #[test]
+    fn normalize_update_credentials_request_trims_source_values() {
+        let mut request = UpdateCredentialsRequest {
+            display_name: Some("  Alice  ".to_owned()),
+            note: Some("  hello  ".to_owned()),
+            source: Some(UpdateCredentialsSource {
+                privacy: Some(" Unlisted ".to_owned()),
+                quote_policy: Some(" Followers ".to_owned()),
+                sensitive: None,
+                language: Some(" JA ".to_owned()),
+            }),
+            ..UpdateCredentialsRequest::default()
+        };
+
+        normalize_update_credentials_request(&mut request).unwrap();
+
+        assert_eq!(request.display_name.as_deref(), Some("Alice"));
+        assert_eq!(request.note.as_deref(), Some("hello"));
+        let source = request.source.expect("source should remain present");
+        assert_eq!(source.privacy.as_deref(), Some("unlisted"));
+        assert_eq!(source.quote_policy.as_deref(), Some("followers"));
+        assert_eq!(source.language.as_deref(), Some("ja"));
     }
 }

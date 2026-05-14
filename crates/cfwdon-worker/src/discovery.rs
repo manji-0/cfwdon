@@ -261,11 +261,7 @@ fn profile_html_document(
     posts_html: &str,
 ) -> String {
     let profile_url = actor_url(config, &account.username);
-    let display_name_source = if account.display_name.trim().is_empty() {
-        format!("@{}", account.username)
-    } else {
-        account.display_name.clone()
-    };
+    let display_name_source = profile_display_name_source(account);
     let display_name = escape_html(&display_name_source);
     let username = escape_html(&format!("@{}@{}", account.username, instance_host(config)));
     let title = escape_html(&format!("{display_name_source} ({})", account.username));
@@ -277,65 +273,14 @@ fn profile_html_document(
         .header_object_key
         .as_deref()
         .map(|object_key| media_object_url(config, object_key));
-    let header_style = header_url
-        .as_ref()
-        .map(|url| format!("background-image:url('{}')", css_single_quoted_value(url)))
-        .unwrap_or_default();
-    let avatar_html = avatar_url
-        .as_ref()
-        .map(|url| {
-            format!(
-                "<img class=\"avatar\" src=\"{}\" alt=\"{}\" loading=\"lazy\">",
-                escape_html(url),
-                display_name
-            )
-        })
-        .unwrap_or_else(|| {
-            format!(
-                "<div class=\"avatar avatar-fallback\">{}</div>",
-                profile_initial(&display_name_source)
-            )
-        });
-    let bio_html = if account.bio_html.trim().is_empty() {
-        "<p class=\"muted\">No profile note yet.</p>".to_owned()
-    } else {
-        account.bio_html.clone()
-    };
-    let fields_html = if account.fields.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<dl class=\"fields\">{}</dl>",
-            account
-                .fields
-                .iter()
-                .map(|field| {
-                    format!(
-                        "<div><dt>{}</dt><dd>{}</dd></div>",
-                        escape_html(&field.name),
-                        render_profile_field_value_html(&field.value)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("")
-        )
-    };
-    let lock_badge = account
-        .locked
-        .then_some("<span class=\"badge\">Locked</span>")
-        .unwrap_or("");
-    let bot_badge = account
-        .bot
-        .then_some("<span class=\"badge\">Bot</span>")
-        .unwrap_or("");
+    let header_style = profile_header_style(header_url.as_deref());
+    let avatar_html =
+        profile_avatar_html(&display_name_source, &display_name, avatar_url.as_deref());
+    let bio_html = profile_bio_html(account);
+    let fields_html = profile_fields_html(account);
+    let badges_html = profile_badges_html(account);
     let created = escape_html(&account.created_at);
-    let posts_section = if posts_html.is_empty() {
-        String::new()
-    } else {
-        format!(
-            r#"<section class="posts"><div class="posts-header"><h2>Recent posts</h2><a href="{profile_url}/statuses">Public posts</a></div><div class="feed">{posts_html}</div></section>"#
-        )
-    };
+    let posts_section = profile_posts_section(&profile_url, posts_html);
     format!(
         r#"<!doctype html>
 <html lang="ja">
@@ -355,7 +300,7 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
 <main>
 <section class="shell">
 <div class="cover" aria-hidden="true"></div>
-<div class="profile">{avatar_html}<div class="identity"><h1>{display_name}</h1><p class="handle">{username}</p><div class="badges">{lock_badge}{bot_badge}</div><div class="profile-actions"><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div></div></div>
+<div class="profile">{avatar_html}<div class="identity"><h1>{display_name}</h1><p class="handle">{username}</p><div class="badges">{badges_html}</div><div class="profile-actions"><form class="remote-follow" action="{profile_url}/remote-follow" method="get"><input name="domain" inputmode="url" autocomplete="url" placeholder="your.server or @you@server" aria-label="Your home server domain or handle" required><button class="button primary" type="submit">Remote follow</button></form></div></div></div>
 <div class="note">{bio_html}</div>
 {fields_html}
 <div class="stats"><div><span class="num">{statuses}</span><span class="label">Posts</span></div><div><span class="num">{followers}</span><span class="label">Followers</span></div><div><span class="num">{following}</span><span class="label">Following</span></div></div>
@@ -370,6 +315,94 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
         following = stats.following_count,
         instance = escape_html(&config.instance_name),
         statuses = stats.statuses_count,
+    )
+}
+
+fn profile_display_name_source(account: &LocalAccount) -> String {
+    if account.display_name.trim().is_empty() {
+        format!("@{}", account.username)
+    } else {
+        account.display_name.clone()
+    }
+}
+
+fn profile_header_style(header_url: Option<&str>) -> String {
+    header_url
+        .map(|url| format!("background-image:url('{}')", css_single_quoted_value(url)))
+        .unwrap_or_default()
+}
+
+fn profile_avatar_html(
+    display_name_source: &str,
+    escaped_display_name: &str,
+    avatar_url: Option<&str>,
+) -> String {
+    avatar_url
+        .map(|url| {
+            format!(
+                "<img class=\"avatar\" src=\"{}\" alt=\"{}\" loading=\"lazy\">",
+                escape_html(url),
+                escaped_display_name
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "<div class=\"avatar avatar-fallback\">{}</div>",
+                profile_initial(display_name_source)
+            )
+        })
+}
+
+fn profile_bio_html(account: &LocalAccount) -> String {
+    if account.bio_html.trim().is_empty() {
+        "<p class=\"muted\">No profile note yet.</p>".to_owned()
+    } else {
+        account.bio_html.clone()
+    }
+}
+
+fn profile_fields_html(account: &LocalAccount) -> String {
+    if account.fields.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "<dl class=\"fields\">{}</dl>",
+        account
+            .fields
+            .iter()
+            .map(|field| {
+                format!(
+                    "<div><dt>{}</dt><dd>{}</dd></div>",
+                    escape_html(&field.name),
+                    render_profile_field_value_html(&field.value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    )
+}
+
+fn profile_badges_html(account: &LocalAccount) -> String {
+    [
+        account
+            .locked
+            .then_some("<span class=\"badge\">Locked</span>"),
+        account.bot.then_some("<span class=\"badge\">Bot</span>"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("")
+}
+
+fn profile_posts_section(profile_url: &str, posts_html: &str) -> String {
+    if posts_html.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        r#"<section class="posts"><div class="posts-header"><h2>Recent posts</h2><a href="{profile_url}/statuses">Public posts</a></div><div class="feed">{posts_html}</div></section>"#
     )
 }
 
@@ -538,5 +571,54 @@ fn build_ordered_collection_document(
             "totalItems": total_items,
             "first": format!("{collection_id}?page=true&offset=0&limit={limit}"),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{profile_avatar_html, profile_header_style, profile_posts_section};
+
+    #[test]
+    fn profile_avatar_html_uses_escaped_image_when_avatar_is_configured() {
+        let html = profile_avatar_html(
+            "Alice",
+            "Alice &amp; Bob",
+            Some("https://media.example/avatar?a=1&b=2"),
+        );
+
+        assert!(html.contains("src=\"https://media.example/avatar?a=1&amp;b=2\""));
+        assert!(html.contains("alt=\"Alice &amp; Bob\""));
+        assert!(!html.contains("avatar-fallback"));
+    }
+
+    #[test]
+    fn profile_avatar_html_falls_back_to_initial() {
+        let html = profile_avatar_html("@alice", "@alice", None);
+
+        assert_eq!(html, "<div class=\"avatar avatar-fallback\">a</div>");
+    }
+
+    #[test]
+    fn profile_header_style_escapes_single_quoted_css_value() {
+        let style = profile_header_style(Some("https://media.example/headers/alice's.png"));
+
+        assert_eq!(
+            style,
+            "background-image:url('https://media.example/headers/alice\\'s.png')"
+        );
+    }
+
+    #[test]
+    fn profile_posts_section_omits_empty_feed() {
+        assert_eq!(
+            profile_posts_section("https://social.example/@alice", ""),
+            ""
+        );
+
+        let html =
+            profile_posts_section("https://social.example/@alice", "<article>hello</article>");
+        assert!(html.contains("Recent posts"));
+        assert!(html.contains("https://social.example/@alice/statuses"));
+        assert!(html.contains("<article>hello</article>"));
     }
 }

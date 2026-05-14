@@ -2,6 +2,103 @@ use crate::{FollowAccountRequest, FollowRow, LocalAccount, RemoteActorProfile, R
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteFollowState {
+    Pending,
+    Accepted,
+}
+
+impl RemoteFollowState {
+    fn for_actor(actor: &RemoteActorRow) -> Self {
+        if actor.locked {
+            Self::Pending
+        } else {
+            Self::Accepted
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RemoteFollowUpsertDraft {
+    follower_account_id: String,
+    target_actor_uri: String,
+    target_inbox_uri: Option<String>,
+    target_shared_inbox_uri: Option<String>,
+    follow_activity_id: String,
+    state: RemoteFollowState,
+    show_reblogs: bool,
+    notify: bool,
+    languages_json: Option<String>,
+}
+
+impl RemoteFollowUpsertDraft {
+    fn new(
+        follower: &LocalAccount,
+        actor: &RemoteActorRow,
+        request: &FollowAccountRequest,
+        follow_activity_id: &str,
+        inbox_uris: (Option<String>, Option<String>),
+    ) -> Result<Self> {
+        Ok(Self {
+            follower_account_id: follower.id.clone(),
+            target_actor_uri: actor.actor_uri.clone(),
+            target_inbox_uri: inbox_uris.0,
+            target_shared_inbox_uri: inbox_uris.1,
+            follow_activity_id: follow_activity_id.to_owned(),
+            state: RemoteFollowState::for_actor(actor),
+            show_reblogs: request.reblogs.unwrap_or(true),
+            notify: request.notify.unwrap_or(false),
+            languages_json: serialize_follow_languages(request)?,
+        })
+    }
+}
+
+const REMOTE_FOLLOW_UPSERT_SQL: &str = "INSERT INTO follows (
+            id,
+            follower_account_id,
+            target_account_id,
+            target_actor_uri,
+            target_inbox_uri,
+            target_shared_inbox_uri,
+            follow_activity_id,
+            state,
+            show_reblogs,
+            notify,
+            languages_json,
+            created_at,
+            updated_at
+        ) VALUES (
+            lower(hex(randomblob(16))),
+            ?1,
+            NULL,
+            ?2,
+            ?3,
+            ?4,
+            ?5,
+            ?6,
+            ?7,
+            ?8,
+            ?9,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(follower_account_id, target_actor_uri) DO UPDATE SET
+            target_inbox_uri = excluded.target_inbox_uri,
+            target_shared_inbox_uri = excluded.target_shared_inbox_uri,
+            follow_activity_id = excluded.follow_activity_id,
+            state = excluded.state,
+            show_reblogs = excluded.show_reblogs,
+            notify = excluded.notify,
+            languages_json = excluded.languages_json,
+            updated_at = CURRENT_TIMESTAMP";
+
 pub(crate) async fn find_follow_by_activity_id(
     db: &D1Database,
     follow_activity_id: &str,
@@ -59,89 +156,56 @@ pub(crate) async fn upsert_remote_follow(
     request: &FollowAccountRequest,
     follow_activity_id: &str,
 ) -> Result<()> {
-    let (inbox_uri, shared_inbox_uri) = load_remote_actor_inbox_uris(db, &actor.actor_uri).await?;
-    let follow_state = if actor.locked { "pending" } else { "accepted" };
-    let languages_json = request
+    let inbox_uris = load_remote_actor_inbox_uris(db, &actor.actor_uri).await?;
+    let draft =
+        RemoteFollowUpsertDraft::new(follower, actor, request, follow_activity_id, inbox_uris)?;
+    upsert_remote_follow_row(db, &draft).await
+}
+
+async fn upsert_remote_follow_row(db: &D1Database, draft: &RemoteFollowUpsertDraft) -> Result<()> {
+    let bindings = remote_follow_upsert_bindings(draft);
+    db.prepare(REMOTE_FOLLOW_UPSERT_SQL)
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(())
+}
+
+fn serialize_follow_languages(request: &FollowAccountRequest) -> Result<Option<String>> {
+    request
         .languages
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
-        .map_err(|error| {
-            Error::RustError(format!("failed to serialize follow languages: {error}"))
-        })?;
-    let bindings = [
-        D1Type::Text(follower.id.as_str()),
-        D1Type::Text(actor.actor_uri.as_str()),
-        match inbox_uri.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
-        match shared_inbox_uri.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
-        D1Type::Text(follow_activity_id),
-        D1Type::Text(follow_state),
-        D1Type::Integer(if request.reblogs.unwrap_or(true) {
-            1
-        } else {
-            0
-        }),
-        D1Type::Integer(if request.notify.unwrap_or(false) {
-            1
-        } else {
-            0
-        }),
-        match languages_json.as_deref() {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
-    ];
-    db.prepare(
-        "INSERT INTO follows (
-            id,
-            follower_account_id,
-            target_account_id,
-            target_actor_uri,
-            target_inbox_uri,
-            target_shared_inbox_uri,
-            follow_activity_id,
-            state,
-            show_reblogs,
-            notify,
-            languages_json,
-            created_at,
-            updated_at
-        ) VALUES (
-            lower(hex(randomblob(16))),
-            ?1,
-            NULL,
-            ?2,
-            ?3,
-            ?4,
-            ?5,
-            ?6,
-            ?7,
-            ?8,
-            ?9,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )
-        ON CONFLICT(follower_account_id, target_actor_uri) DO UPDATE SET
-            target_inbox_uri = excluded.target_inbox_uri,
-            target_shared_inbox_uri = excluded.target_shared_inbox_uri,
-            follow_activity_id = excluded.follow_activity_id,
-            state = excluded.state,
-            show_reblogs = excluded.show_reblogs,
-            notify = excluded.notify,
-            languages_json = excluded.languages_json,
-            updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        .map_err(|error| Error::RustError(format!("failed to serialize follow languages: {error}")))
+}
 
-    Ok(())
+fn bool_d1(value: bool) -> D1Type<'static> {
+    D1Type::Integer(if value { 1 } else { 0 })
+}
+
+fn remote_follow_upsert_bindings(draft: &RemoteFollowUpsertDraft) -> [D1Type<'_>; 9] {
+    [
+        D1Type::Text(draft.follower_account_id.as_str()),
+        D1Type::Text(draft.target_actor_uri.as_str()),
+        draft
+            .target_inbox_uri
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        draft
+            .target_shared_inbox_uri
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        D1Type::Text(draft.follow_activity_id.as_str()),
+        D1Type::Text(draft.state.as_str()),
+        bool_d1(draft.show_reblogs),
+        bool_d1(draft.notify),
+        draft
+            .languages_json
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+    ]
 }
 
 pub(crate) async fn load_remote_actor_inbox_uris(
@@ -206,4 +270,142 @@ pub(crate) async fn load_follow_activity_id(
         .and_then(|value| value.get("follow_activity_id"))
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_account(id: &str) -> LocalAccount {
+        LocalAccount {
+            id: id.to_owned(),
+            username: "alice".to_owned(),
+            access_email: "alice@example.test".to_owned(),
+            display_name: "Alice".to_owned(),
+            bio_html: String::new(),
+            bio_text: String::new(),
+            fields: Vec::new(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            default_post_visibility: "public".to_owned(),
+            default_quote_policy: "public".to_owned(),
+            default_sensitive: false,
+            default_language: None,
+            avatar_object_key: None,
+            avatar_content_type: None,
+            header_object_key: None,
+            header_content_type: None,
+            private_key_jwk: "private".to_owned(),
+            public_key_pem: "public".to_owned(),
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn remote_actor(actor_uri: &str, locked: bool) -> RemoteActorRow {
+        RemoteActorRow {
+            actor_uri: actor_uri.to_owned(),
+            username: "bob".to_owned(),
+            domain: "remote.example".to_owned(),
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+            locked,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            display_name: "Bob".to_owned(),
+            summary_html: String::new(),
+            profile_url: Some("https://remote.example/@bob".to_owned()),
+            avatar_url: None,
+            header_url: None,
+        }
+    }
+
+    #[test]
+    fn remote_follow_upsert_draft_uses_defaults_for_unlocked_actor() {
+        let follower = local_account("viewer");
+        let actor = remote_actor("https://remote.example/users/bob", false);
+        let draft = RemoteFollowUpsertDraft::new(
+            &follower,
+            &actor,
+            &FollowAccountRequest::default(),
+            "activity-1",
+            (None, None),
+        )
+        .expect("draft");
+
+        assert_eq!(draft.follower_account_id, "viewer");
+        assert_eq!(draft.target_actor_uri, "https://remote.example/users/bob");
+        assert_eq!(draft.follow_activity_id, "activity-1");
+        assert_eq!(draft.state, RemoteFollowState::Accepted);
+        assert!(draft.show_reblogs);
+        assert!(!draft.notify);
+        assert_eq!(draft.languages_json, None);
+    }
+
+    #[test]
+    fn remote_follow_upsert_draft_maps_request_and_locked_state() {
+        let follower = local_account("viewer");
+        let actor = remote_actor("https://remote.example/users/bob", true);
+        let request = FollowAccountRequest {
+            reblogs: Some(false),
+            notify: Some(true),
+            languages: Some(vec!["en".to_owned(), "ja".to_owned()]),
+        };
+        let draft = RemoteFollowUpsertDraft::new(
+            &follower,
+            &actor,
+            &request,
+            "activity-2",
+            (
+                Some("https://remote.example/inbox".to_owned()),
+                Some("https://remote.example/shared-inbox".to_owned()),
+            ),
+        )
+        .expect("draft");
+
+        assert_eq!(draft.state, RemoteFollowState::Pending);
+        assert!(!draft.show_reblogs);
+        assert!(draft.notify);
+        assert_eq!(draft.languages_json, Some("[\"en\",\"ja\"]".to_owned()));
+        assert_eq!(
+            draft.target_inbox_uri,
+            Some("https://remote.example/inbox".to_owned())
+        );
+        assert_eq!(
+            draft.target_shared_inbox_uri,
+            Some("https://remote.example/shared-inbox".to_owned())
+        );
+    }
+
+    #[test]
+    fn remote_follow_upsert_bindings_keep_sql_slot_order_stable() {
+        let draft = RemoteFollowUpsertDraft {
+            follower_account_id: "viewer".to_owned(),
+            target_actor_uri: "https://remote.example/users/bob".to_owned(),
+            target_inbox_uri: None,
+            target_shared_inbox_uri: Some("https://remote.example/shared".to_owned()),
+            follow_activity_id: "activity-3".to_owned(),
+            state: RemoteFollowState::Pending,
+            show_reblogs: false,
+            notify: true,
+            languages_json: Some("[\"ja\"]".to_owned()),
+        };
+        let bindings = remote_follow_upsert_bindings(&draft);
+
+        assert!(matches!(bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(
+            bindings[1],
+            D1Type::Text("https://remote.example/users/bob")
+        ));
+        assert!(matches!(bindings[2], D1Type::Null));
+        assert!(matches!(
+            bindings[3],
+            D1Type::Text("https://remote.example/shared")
+        ));
+        assert!(matches!(bindings[4], D1Type::Text("activity-3")));
+        assert!(matches!(bindings[5], D1Type::Text("pending")));
+        assert!(matches!(bindings[6], D1Type::Integer(0)));
+        assert!(matches!(bindings[7], D1Type::Integer(1)));
+        assert!(matches!(bindings[8], D1Type::Text("[\"ja\"]")));
+    }
 }

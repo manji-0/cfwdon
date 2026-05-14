@@ -36,6 +36,42 @@ pub(crate) struct SearchV2Query {
     pub(crate) offset: Option<u32>,
 }
 
+#[derive(Debug)]
+pub(crate) struct SearchV2ExecutionPlan {
+    pub(crate) query: SearchV2Query,
+    normalized_query: String,
+    pub(crate) search_flags: SearchCategoryFlags,
+    pub(crate) limit: u32,
+    pub(crate) offset: u32,
+    pub(crate) resolve_enabled: bool,
+    pub(crate) requires_auth: bool,
+}
+
+impl SearchV2ExecutionPlan {
+    pub(crate) fn from_query(query: SearchV2Query) -> Self {
+        let normalized_query = normalize_search_query_input(&query.q);
+        let search_flags = search_category_flags(query.search_type.as_deref());
+        let limit = search_v2_limit(query.limit);
+        let offset = effective_search_v2_offset(&query);
+        let resolve_enabled = query.resolve.unwrap_or(false);
+        let requires_auth = search_v2_requires_auth(&query);
+
+        Self {
+            query,
+            normalized_query,
+            search_flags,
+            limit,
+            offset,
+            resolve_enabled,
+            requires_auth,
+        }
+    }
+
+    pub(crate) fn query_text(&self) -> &str {
+        self.normalized_query.trim()
+    }
+}
+
 fn normalized_search_v2_type(search_type: Option<&str>) -> Option<String> {
     search_type
         .map(str::trim)
@@ -125,6 +161,31 @@ pub(crate) fn normalize_search_query_input(query: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SearchV2ExecutionPlan, SearchV2Query};
+
+    #[test]
+    fn search_v2_execution_plan_normalizes_and_derives_controls() {
+        let plan = SearchV2ExecutionPlan::from_query(SearchV2Query {
+            q: "  “hello”  ".to_owned(),
+            search_type: Some("statuses".to_owned()),
+            resolve: Some(true),
+            limit: Some(99),
+            offset: Some(3),
+            ..SearchV2Query::default()
+        });
+
+        assert_eq!(plan.query_text(), "\"hello\"");
+        assert!(!plan.search_flags.accounts);
+        assert!(plan.search_flags.statuses);
+        assert_eq!(plan.limit, 40);
+        assert_eq!(plan.offset, 3);
+        assert!(plan.resolve_enabled);
+        assert!(plan.requires_auth);
+    }
 }
 
 fn fold_search_match_character(ch: char) -> Option<&'static str> {

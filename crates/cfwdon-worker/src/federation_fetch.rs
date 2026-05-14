@@ -98,23 +98,46 @@ pub(crate) fn parse_remote_actor_profile_document(
     actor: &serde_json::Value,
     fallback_actor_uri: &str,
 ) -> Result<RemoteActorProfile> {
-    let canonical_actor_uri = actor
+    let canonical_actor_uri = remote_actor_canonical_uri(actor, fallback_actor_uri);
+    let actor_url = parse_remote_http_url(&canonical_actor_uri)?;
+    let (public_key_id, public_key_pem) = remote_actor_public_key(actor)?;
+    let flags = remote_actor_profile_flags(actor);
+    let media = remote_actor_profile_media(actor);
+
+    Ok(RemoteActorProfile {
+        actor_uri: canonical_actor_uri,
+        username: remote_actor_username(actor, &actor_url),
+        domain: remote_actor_domain(&actor_url),
+        locked: flags.locked,
+        bot: flags.bot,
+        discoverable: flags.discoverable,
+        indexable: flags.indexable,
+        inbox_uri: required_remote_actor_string(
+            actor,
+            "inbox",
+            "remote actor document is missing inbox",
+        )?,
+        shared_inbox_uri: remote_actor_shared_inbox_uri(actor),
+        public_key_id,
+        public_key_pem,
+        display_name: remote_actor_optional_string(actor, "name"),
+        summary_html: remote_actor_optional_string(actor, "summary"),
+        profile_url: media.profile_url,
+        avatar_url: media.avatar_url,
+        header_url: media.header_url,
+    })
+}
+
+fn remote_actor_canonical_uri(actor: &serde_json::Value, fallback_actor_uri: &str) -> String {
+    actor
         .get("id")
         .and_then(serde_json::Value::as_str)
         .unwrap_or(fallback_actor_uri)
-        .to_owned();
-    let actor_url = parse_remote_http_url(&canonical_actor_uri)?;
-    let inbox_uri = actor
-        .get("inbox")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote actor document is missing inbox".to_owned()))?
-        .to_owned();
-    let shared_inbox_uri = actor
-        .get("endpoints")
-        .and_then(|value| value.get("sharedInbox"))
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned);
-    let username = actor
+        .to_owned()
+}
+
+fn remote_actor_username(actor: &serde_json::Value, actor_url: &Url) -> String {
+    actor
         .get("preferredUsername")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_else(|| {
@@ -123,70 +146,115 @@ pub(crate) fn parse_remote_actor_profile_document(
                 .and_then(|segments| segments.last())
                 .unwrap_or("remote")
         })
-        .to_ascii_lowercase();
-    let domain = actor_url
+        .to_ascii_lowercase()
+}
+
+fn remote_actor_domain(actor_url: &Url) -> String {
+    actor_url
         .host_str()
         .unwrap_or_default()
-        .to_ascii_lowercase();
-    let locked = actor
-        .get("manuallyApprovesFollowers")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let bot = actor
-        .get("bot")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or_else(|| remote_actor_type_is_bot(actor.get("type")));
-    let discoverable = actor
-        .get("discoverable")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    let indexable = actor
-        .get("indexable")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    let public_key_id = actor
-        .get("publicKey")
-        .and_then(|value| value.get("id"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            Error::RustError("remote actor document is missing publicKey.id".to_owned())
-        })?
-        .to_owned();
-    let public_key_pem = actor
-        .get("publicKey")
-        .and_then(|value| value.get("publicKeyPem"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            Error::RustError("remote actor document is missing publicKey.publicKeyPem".to_owned())
-        })?
-        .to_owned();
+        .to_ascii_lowercase()
+}
 
-    Ok(RemoteActorProfile {
-        actor_uri: canonical_actor_uri,
-        username,
-        domain,
-        locked,
-        bot,
-        discoverable,
-        indexable,
-        inbox_uri,
-        shared_inbox_uri,
-        public_key_id,
-        public_key_pem,
-        display_name: actor
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        summary_html: actor
-            .get("summary")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+fn remote_actor_shared_inbox_uri(actor: &serde_json::Value) -> Option<String> {
+    actor
+        .get("endpoints")
+        .and_then(|value| value.get("sharedInbox"))
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn remote_actor_optional_string(actor: &serde_json::Value, field: &str) -> String {
+    actor
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn required_remote_actor_string(
+    actor: &serde_json::Value,
+    field: &str,
+    missing_message: &str,
+) -> Result<String> {
+    actor
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| Error::RustError(missing_message.to_owned()))
+}
+
+fn required_remote_actor_nested_string(
+    actor: &serde_json::Value,
+    parent: &str,
+    field: &str,
+    missing_message: &str,
+) -> Result<String> {
+    actor
+        .get(parent)
+        .and_then(|value| value.get(field))
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| Error::RustError(missing_message.to_owned()))
+}
+
+fn remote_actor_public_key(actor: &serde_json::Value) -> Result<(String, String)> {
+    Ok((
+        required_remote_actor_nested_string(
+            actor,
+            "publicKey",
+            "id",
+            "remote actor document is missing publicKey.id",
+        )?,
+        required_remote_actor_nested_string(
+            actor,
+            "publicKey",
+            "publicKeyPem",
+            "remote actor document is missing publicKey.publicKeyPem",
+        )?,
+    ))
+}
+
+struct RemoteActorProfileFlags {
+    locked: bool,
+    bot: bool,
+    discoverable: bool,
+    indexable: bool,
+}
+
+fn remote_actor_profile_flags(actor: &serde_json::Value) -> RemoteActorProfileFlags {
+    RemoteActorProfileFlags {
+        locked: actor
+            .get("manuallyApprovesFollowers")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        bot: actor
+            .get("bot")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(|| remote_actor_type_is_bot(actor.get("type"))),
+        discoverable: actor
+            .get("discoverable")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        indexable: actor
+            .get("indexable")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+    }
+}
+
+struct RemoteActorProfileMedia {
+    profile_url: Option<String>,
+    avatar_url: Option<String>,
+    header_url: Option<String>,
+}
+
+fn remote_actor_profile_media(actor: &serde_json::Value) -> RemoteActorProfileMedia {
+    RemoteActorProfileMedia {
         profile_url: actor.get("url").and_then(extract_remote_profile_url),
         avatar_url: extract_remote_profile_media_url(actor.get("icon")),
         header_url: extract_remote_profile_media_url(actor.get("image")),
-    })
+    }
 }
 
 pub(crate) async fn validate_remote_actor_profile_urls(profile: &RemoteActorProfile) -> Result<()> {

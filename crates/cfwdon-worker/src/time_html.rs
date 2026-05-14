@@ -11,10 +11,19 @@ pub(crate) fn delivery_retry_delay_modifier(attempt: u32) -> &'static str {
 }
 
 pub(crate) fn now_iso_string() -> Result<String> {
-    js_sys::Date::new_0()
-        .to_iso_string()
-        .as_string()
-        .ok_or_else(|| Error::RustError("failed to build ISO timestamp".to_owned()))
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::new_0()
+            .to_iso_string()
+            .as_string()
+            .ok_or_else(|| Error::RustError("failed to build ISO timestamp".to_owned()))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .map_err(|error| Error::RustError(format!("failed to format ISO timestamp: {error}")))
+    }
 }
 
 pub(crate) fn now_unix_timestamp() -> i64 {

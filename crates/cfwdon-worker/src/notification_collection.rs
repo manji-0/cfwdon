@@ -12,6 +12,16 @@ use crate::{
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
 
+macro_rules! collect_notification_batch {
+    ($collector:ident, $db:expr, $config:expr, $viewer:expr, $query:expr, $per_type_limit:expr) => {
+        async {
+            let mut entries = Vec::new();
+            $collector(&mut entries, $db, $config, $viewer, $query, $per_type_limit).await?;
+            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
+        }
+    };
+}
+
 pub(crate) async fn collect_visible_notifications(
     db: &D1Database,
     config: &AppConfig,
@@ -53,205 +63,125 @@ pub(crate) async fn collect_notifications(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<Vec<NotificationEntry>> {
-    let (
-        mut admin_reports,
-        admin_signups,
-        follows,
-        follow_requests,
-        collections,
-        favourites,
-        mentions,
-        quotes,
-        updates,
-        quoted_updates,
-        statuses,
-        polls,
-        reblogs,
-    ) = futures_util::try_join!(
-        async {
-            let mut entries = Vec::new();
-            collect_admin_report_notifications_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_admin_sign_up_notifications_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_follow_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_follow_request_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_collection_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_favourite_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_mention_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_quote_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_update_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_quoted_update_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_status_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_poll_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
-        async {
-            let mut entries = Vec::new();
-            collect_reblog_notification_entries(
-                &mut entries,
-                db,
-                config,
-                viewer,
-                query,
-                per_type_limit,
-            )
-            .await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
-        },
+    let batches = futures_util::try_join!(
+        collect_notification_batch!(
+            collect_admin_report_notifications_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_admin_sign_up_notifications_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_follow_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_follow_request_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_collection_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_favourite_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_mention_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_quote_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_update_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_quoted_update_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_status_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_poll_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
+        collect_notification_batch!(
+            collect_reblog_notification_entries,
+            db,
+            config,
+            viewer,
+            query,
+            per_type_limit
+        ),
     )?;
 
+    Ok(merge_notification_batches([
+        batches.0, batches.1, batches.2, batches.3, batches.4, batches.5, batches.6, batches.7,
+        batches.8, batches.9, batches.10, batches.11, batches.12,
+    ]))
+}
+
+fn merge_notification_batches<const N: usize>(
+    batches: [Vec<NotificationEntry>; N],
+) -> Vec<NotificationEntry> {
     let mut entries = Vec::new();
-    entries.append(&mut admin_reports);
-    entries.extend(admin_signups);
-    entries.extend(follows);
-    entries.extend(follow_requests);
-    entries.extend(collections);
-    entries.extend(favourites);
-    entries.extend(mentions);
-    entries.extend(quotes);
-    entries.extend(updates);
-    entries.extend(quoted_updates);
-    entries.extend(statuses);
-    entries.extend(polls);
-    entries.extend(reblogs);
-    Ok(entries)
+    for batch in batches {
+        entries.extend(batch);
+    }
+    entries
 }
