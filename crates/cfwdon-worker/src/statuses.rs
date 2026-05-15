@@ -15,6 +15,7 @@ mod mutations;
 mod outbox_activities;
 mod pins;
 mod placeholder_routes;
+mod reblog_response;
 mod reblog_store;
 mod reblogs;
 mod remote_context;
