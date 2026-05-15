@@ -1,11 +1,11 @@
 use super::{
     Request, Response, Result, RouteContext, build_like_activity,
-    build_loaded_local_status_response, build_remote_status_response,
-    build_saved_status_collection_response, build_undo_like_activity, can_view_local_status,
+    build_local_action_status_response, build_remote_status_response,
+    build_saved_status_collection_response, build_undo_like_activity,
     delete_favourite_by_target_uri, find_favourite_activity_by_target_uri,
-    invalidate_status_api_cache, is_public_activitypub_visibility, list_favourites_for_account,
-    local_status_target_uri, queue_remote_actor_activity, resolve_action_status,
-    resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
+    invalidate_status_api_cache, list_favourites_for_account, local_status_target_uri,
+    queue_remote_actor_activity, resolve_authenticated_status_action_context,
+    resolve_authenticated_status_viewer_context, resolve_visible_action_status,
     upsert_favourite_local_status, upsert_favourite_remote_status,
 };
 use serde::Deserialize;
@@ -33,40 +33,34 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
     };
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             upsert_favourite_local_status(
                 &action.auth.db,
                 &action.auth.config,
                 &viewer.id,
-                &status,
+                &subject.status,
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let response = build_loaded_local_status_response(
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &status,
-                &account,
+                viewer,
+                subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             let existing = find_favourite_activity_by_target_uri(
                 &action.auth.db,
                 &viewer.id,
@@ -123,39 +117,33 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
     };
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_favourite_by_target_uri(
                 &action.auth.db,
                 &viewer.id,
-                &local_status_target_uri(&status),
+                &local_status_target_uri(&subject.status),
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let response = build_loaded_local_status_response(
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &status,
-                &account,
+                viewer,
+                subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             if let Some(row) = find_favourite_activity_by_target_uri(
                 &action.auth.db,
                 &viewer.id,

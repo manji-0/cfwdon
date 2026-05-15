@@ -1,11 +1,11 @@
 use super::{
     Error, Request, Response, Result, RouteContext, build_announce_activity,
-    build_loaded_local_status_response, build_remote_status_response, build_undo_announce_activity,
-    can_view_local_status, delete_reblog_by_target_uri, delete_reblog_wrapper_status_by_target_uri,
-    find_reblog_activity_by_target_uri, invalidate_status_api_cache,
-    is_public_activitypub_visibility, local_status_target_uri, queue_remote_actor_activity,
-    resolve_action_status, resolve_authenticated_status_action_context, upsert_reblog_local_status,
-    upsert_reblog_remote_status, upsert_reblog_wrapper_status,
+    build_local_action_status_response, build_remote_status_response, build_undo_announce_activity,
+    delete_reblog_by_target_uri, delete_reblog_wrapper_status_by_target_uri,
+    find_reblog_activity_by_target_uri, invalidate_status_api_cache, local_status_target_uri,
+    queue_remote_actor_activity, resolve_authenticated_status_action_context,
+    resolve_visible_action_status, upsert_reblog_local_status, upsert_reblog_remote_status,
+    upsert_reblog_wrapper_status,
 };
 use serde::Deserialize;
 
@@ -30,26 +30,24 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
     let visibility = request.visibility.unwrap_or_else(|| "public".to_owned());
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
-            if viewer.id == account.id {
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+            if viewer.id == subject.account.id {
                 return Response::error("cannot reblog your own status", 422);
             }
             upsert_reblog_local_status(
                 &action.auth.db,
                 &action.auth.config,
                 &viewer.id,
-                &status,
+                &subject.status,
                 &visibility,
             )
             .await?;
@@ -58,24 +56,29 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 &action.auth.db,
                 &action.auth.config,
                 viewer,
-                &local_status_target_uri(&status),
+                &local_status_target_uri(&subject.status),
                 &visibility,
             )
             .await?;
-            let response = build_loaded_local_status_response(
+            let wrapper_subject = crate::find_owned_local_status_response_subject(
+                &action.auth.db,
+                &wrapper.id,
+                viewer,
+            )
+            .await?
+            .ok_or_else(|| {
+                worker::Error::RustError("reblog wrapper status not found".to_owned())
+            })?;
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &wrapper,
                 viewer,
+                wrapper_subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             let existing =
                 find_reblog_activity_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri)
                     .await?;
@@ -112,12 +115,20 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 &visibility,
             )
             .await?;
-            let response = build_loaded_local_status_response(
+            let wrapper_subject = crate::find_owned_local_status_response_subject(
+                &action.auth.db,
+                &wrapper.id,
+                viewer,
+            )
+            .await?
+            .ok_or_else(|| {
+                worker::Error::RustError("reblog wrapper status not found".to_owned())
+            })?;
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &wrapper,
                 viewer,
+                wrapper_subject,
             )
             .await?;
             Response::from_json(&response)
@@ -138,45 +149,39 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
     };
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_reblog_by_target_uri(
                 &action.auth.db,
                 &viewer.id,
-                &local_status_target_uri(&status),
+                &local_status_target_uri(&subject.status),
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
             delete_reblog_wrapper_status_by_target_uri(
                 &action.auth.db,
                 &viewer.id,
-                &local_status_target_uri(&status),
+                &local_status_target_uri(&subject.status),
             )
             .await?;
-            let response = build_loaded_local_status_response(
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &status,
-                &account,
+                viewer,
+                subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             if let Some(row) =
                 find_reblog_activity_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri)
                     .await?

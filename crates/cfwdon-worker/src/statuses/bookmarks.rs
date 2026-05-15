@@ -1,10 +1,9 @@
 use super::{
-    Request, Response, Result, RouteContext, build_loaded_local_status_response,
-    build_remote_status_response, build_saved_status_collection_response, can_view_local_status,
-    delete_bookmark_by_target_uri, is_public_activitypub_visibility, list_bookmarks_for_account,
-    local_status_target_uri, resolve_action_status, resolve_authenticated_status_action_context,
-    resolve_authenticated_status_viewer_context, upsert_bookmark_local_status,
-    upsert_bookmark_remote_status,
+    Request, Response, Result, RouteContext, build_local_action_status_response,
+    build_remote_status_response, build_saved_status_collection_response,
+    delete_bookmark_by_target_uri, list_bookmarks_for_account, local_status_target_uri,
+    resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
+    resolve_visible_action_status, upsert_bookmark_local_status, upsert_bookmark_remote_status,
 };
 use serde::Deserialize;
 
@@ -31,33 +30,27 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
     };
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
-            upsert_bookmark_local_status(&action.auth.db, &viewer.id, &status).await?;
-            let response = build_loaded_local_status_response(
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+            upsert_bookmark_local_status(&action.auth.db, &viewer.id, &subject.status).await?;
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &status,
-                &account,
+                viewer,
+                subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             upsert_bookmark_remote_status(&action.auth.db, &viewer.id, &status).await?;
             let response = build_remote_status_response(
                 &action.auth.db,
@@ -85,38 +78,32 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
     };
     let viewer = &action.auth.viewer;
 
-    match resolve_action_status(
+    match resolve_visible_action_status(
         &action.auth.db,
         &action.auth.config,
+        viewer,
         &action.status_id,
         action.action_uri.as_deref(),
     )
     .await?
     {
-        Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_bookmark_by_target_uri(
                 &action.auth.db,
                 &viewer.id,
-                &local_status_target_uri(&status),
+                &local_status_target_uri(&subject.status),
             )
             .await?;
-            let response = build_loaded_local_status_response(
+            let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
-                Some(viewer),
-                &status,
-                &account,
+                viewer,
+                subject,
             )
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
+        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             delete_bookmark_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri).await?;
             let response = build_remote_status_response(
                 &action.auth.db,

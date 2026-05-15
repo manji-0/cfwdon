@@ -4,7 +4,8 @@ use super::{
     find_account_by_id, find_authenticated_local_account, find_local_status_by_object_uri,
     find_remote_actor_by_actor_uri, find_remote_status_by_id,
     find_remote_status_by_url_or_object_uri, find_status_by_id,
-    find_visible_local_status_response_subject, load_config, resolve_remote_status_by_url,
+    find_visible_local_status_response_subject, is_public_activitypub_visibility, load_config,
+    load_visible_local_status_response_subject, resolve_remote_status_by_url,
     status_id_from_context,
 };
 use serde::Deserialize;
@@ -17,6 +18,11 @@ pub(crate) struct StatusActionQuery {
 
 pub(crate) enum ResolvedActionStatus {
     Local(StatusRow, LocalAccount),
+    Remote(RemoteStatusRow, RemoteActorRow),
+}
+
+pub(crate) enum ResolvedVisibleActionStatus {
+    Local(super::LoadedLocalStatusResponseSubject),
     Remote(RemoteStatusRow, RemoteActorRow),
 }
 
@@ -132,6 +138,29 @@ pub(crate) async fn resolve_action_status(
     resolve_action_uri_reference(db, config, &decoded_status_id).await
 }
 
+pub(crate) async fn resolve_visible_action_status(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &LocalAccount,
+    status_id: &str,
+    action_uri: Option<&str>,
+) -> Result<Option<ResolvedVisibleActionStatus>> {
+    match resolve_action_status(db, config, status_id, action_uri).await? {
+        Some(ResolvedActionStatus::Local(status, _)) => Ok(
+            load_visible_local_status_response_subject(db, Some(viewer), status)
+                .await?
+                .map(ResolvedVisibleActionStatus::Local),
+        ),
+        Some(ResolvedActionStatus::Remote(status, actor)) => {
+            if !is_public_activitypub_visibility(&status.visibility) {
+                return Ok(None);
+            }
+            Ok(Some(ResolvedVisibleActionStatus::Remote(status, actor)))
+        }
+        None => Ok(None),
+    }
+}
+
 async fn resolve_action_uri_reference(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
@@ -154,6 +183,29 @@ async fn resolve_action_uri_reference(
     }
 
     Ok(None)
+}
+
+pub(crate) async fn build_local_action_status_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    subject: super::LoadedLocalStatusResponseSubject,
+) -> Result<crate::MastodonStatusResponse> {
+    let super::LoadedLocalStatusResponseSubject {
+        status,
+        account,
+        preload,
+    } = subject;
+    build_local_status_response(
+        db,
+        config,
+        Some(viewer),
+        &status,
+        &account,
+        preload.in_reply_to_account_id,
+        preload.media,
+    )
+    .await
 }
 
 pub(crate) async fn build_saved_status_collection_response<
@@ -183,21 +235,7 @@ where
                 find_visible_local_status_response_subject(db, Some(viewer), local_status_id)
                     .await?
         {
-            let super::LoadedLocalStatusResponseSubject {
-                status,
-                account,
-                preload,
-            } = subject;
-            let response = build_local_status_response(
-                db,
-                config,
-                Some(viewer),
-                &status,
-                &account,
-                preload.in_reply_to_account_id,
-                preload.media,
-            )
-            .await?;
+            let response = build_local_action_status_response(db, config, viewer, subject).await?;
             response_entries.push((
                 created_at(entry).to_owned(),
                 serde_json::to_value(response).unwrap_or_default(),
