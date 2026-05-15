@@ -3577,7 +3577,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
                 return Response::error("status not found", 404);
             };
             if status.account_id != requester.id
-                || !can_view_local_status(&db, &status, Some(&requester), &account).await?
+                || !can_view_local_status(&db, status, Some(&requester), &account).await?
             {
                 return Response::error("status not found", 404);
             }
@@ -3774,10 +3774,7 @@ pub(crate) async fn create_account_placeholder_response(
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
     };
-    let agreement = match parse_optional_bool(request.agreement.as_deref()) {
-        Ok(value) => value,
-        Err(_) => None,
-    };
+    let agreement = parse_optional_bool(request.agreement.as_deref()).unwrap_or_default();
     let mut details = validate_account_registration_request(&AccountRegistrationValidation {
         username: request.username.clone(),
         email: request.email.clone(),

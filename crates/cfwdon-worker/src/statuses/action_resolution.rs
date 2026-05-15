@@ -17,7 +17,7 @@ pub(crate) struct StatusActionQuery {
 }
 
 pub(crate) enum ResolvedActionStatus {
-    Local(StatusRow, LocalAccount),
+    Local(StatusRow),
     Remote(RemoteStatusRow, RemoteActorRow),
 }
 
@@ -121,9 +121,9 @@ pub(crate) async fn resolve_action_status(
     }
 
     if let Some(status) = find_status_by_id(db, status_id).await?
-        && let Some(account) = find_account_by_id(db, &status.account_id).await?
+        && find_account_by_id(db, &status.account_id).await?.is_some()
     {
-        return Ok(Some(ResolvedActionStatus::Local(status, account)));
+        return Ok(Some(ResolvedActionStatus::Local(status)));
     }
 
     if let Some(status) = find_remote_status_by_id(db, status_id).await?
@@ -146,7 +146,7 @@ pub(crate) async fn resolve_visible_action_status(
     action_uri: Option<&str>,
 ) -> Result<Option<ResolvedVisibleActionStatus>> {
     match resolve_action_status(db, config, status_id, action_uri).await? {
-        Some(ResolvedActionStatus::Local(status, _)) => Ok(
+        Some(ResolvedActionStatus::Local(status)) => Ok(
             load_visible_local_status_response_subject(db, Some(viewer), status)
                 .await?
                 .map(ResolvedVisibleActionStatus::Local),
@@ -167,9 +167,9 @@ async fn resolve_action_uri_reference(
     value: &str,
 ) -> Result<Option<ResolvedActionStatus>> {
     if let Some(status) = find_local_status_by_object_uri(db, config, value).await?
-        && let Some(account) = find_account_by_id(db, &status.account_id).await?
+        && find_account_by_id(db, &status.account_id).await?.is_some()
     {
-        return Ok(Some(ResolvedActionStatus::Local(status, account)));
+        return Ok(Some(ResolvedActionStatus::Local(status)));
     }
 
     if let Some(status) = find_remote_status_by_url_or_object_uri(db, value).await?

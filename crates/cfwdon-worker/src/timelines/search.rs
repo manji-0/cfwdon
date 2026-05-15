@@ -323,10 +323,11 @@ async fn resolve_search_url_only_response(
         return Ok(response);
     }
 
-    if let Some(tag) = resolve_search_tag(db, config, query).await? {
-        if search_flags.hashtags && search_v2_type_allows_url_resource(search_type, "hashtags") {
-            response.hashtags.push(tag);
-        }
+    if let Some(tag) = resolve_search_tag(db, config, query).await?
+        && search_flags.hashtags
+        && search_v2_type_allows_url_resource(search_type, "hashtags")
+    {
+        response.hashtags.push(tag);
     }
 
     Ok(response)

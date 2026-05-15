@@ -1,5 +1,5 @@
 use crate::accounts::load_account_stats;
-use crate::auth::{find_account_by_id, find_account_by_username};
+use crate::auth::find_account_by_id;
 use crate::conversation_store::{
     delete_conversation_for_account, find_conversation_for_account, list_conversation_participants,
     list_conversations_for_account, mark_conversation_read, mark_conversation_unread,
@@ -11,9 +11,7 @@ use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_usernam
 use crate::request_utils::build_internal_cursor_link_for_url;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::statuses::{
-    build_local_status_response, build_remote_status_response, find_status_by_id,
-};
+use crate::statuses::{build_local_status_response, find_status_by_id};
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};
 

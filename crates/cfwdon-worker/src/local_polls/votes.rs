@@ -241,7 +241,7 @@ pub(crate) async fn apply_incoming_poll_vote(
     if poll.multiple == 0 && !existing.is_empty() {
         return Ok(());
     }
-    if existing.iter().any(|position| *position == choice) {
+    if existing.contains(&choice) {
         return Ok(());
     }
 

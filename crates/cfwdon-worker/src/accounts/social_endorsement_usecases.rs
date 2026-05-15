@@ -67,11 +67,10 @@ pub(crate) async fn list_remote_endorsement_accounts(
     let Some(collection_uri) = extract_remote_endorsement_collection_uri(&actor_document) else {
         return Ok(empty_social_endorsement_collection());
     };
-    let references =
-        match fetch_remote_endorsement_collection_item_references(&collection_uri).await {
-            Ok(references) => references,
-            Err(_) => Vec::new(),
-        };
+    let references: Vec<RemoteEndorsementReference> =
+        fetch_remote_endorsement_collection_item_references(&collection_uri)
+            .await
+            .unwrap_or_default();
 
     let mut resolved_accounts = Vec::new();
     for reference in references {

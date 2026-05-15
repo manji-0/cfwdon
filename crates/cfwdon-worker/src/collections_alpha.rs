@@ -3680,7 +3680,7 @@ pub(crate) async fn alpha_account_collections_response(
             .iter()
             .map(collection_item_document)
             .collect::<Vec<_>>();
-        response.push(collection_document(&config, &owner, &row, items));
+        response.push(collection_document(&config, &owner, row, items));
     }
     let mut builder = Response::from_json(&collection_list_document(response))?;
     if let Some(link_header) =

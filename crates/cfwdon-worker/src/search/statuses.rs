@@ -477,10 +477,10 @@ pub(crate) fn parse_status_search_query(query: &str) -> ParsedStatusSearchQuery 
     for token in tokenize_status_search_query(query) {
         let (negated, token) = split_status_search_negation(&token);
 
-        if let Some((prefix, value)) = token.split_once(':') {
-            if apply_status_search_prefixed_filter(&mut parsed, prefix, value, negated) {
-                continue;
-            }
+        if let Some((prefix, value)) = token.split_once(':')
+            && apply_status_search_prefixed_filter(&mut parsed, prefix, value, negated)
+        {
+            continue;
         }
         collect_status_search_term(&mut parsed, &mut terms, token, negated);
     }

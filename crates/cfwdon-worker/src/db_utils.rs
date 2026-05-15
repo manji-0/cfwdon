@@ -8,7 +8,7 @@ pub(crate) fn sql_placeholders(start: usize, len: usize) -> String {
         .join(", ")
 }
 
-pub(crate) fn unique_ordered_refs<'a>(values: &'a [String]) -> Vec<&'a String> {
+pub(crate) fn unique_ordered_refs(values: &[String]) -> Vec<&String> {
     let mut seen = std::collections::HashSet::new();
     values
         .iter()
@@ -29,4 +29,39 @@ pub(crate) async fn count_rows(db: &D1Database, sql: &str, value: &str) -> Resul
         .and_then(|row| row.get("count"))
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_ordered_refs;
+
+    #[test]
+    fn unique_ordered_refs_preserves_first_seen_order() {
+        let values = vec![
+            "alpha".to_owned(),
+            "beta".to_owned(),
+            "alpha".to_owned(),
+            "gamma".to_owned(),
+            "beta".to_owned(),
+        ];
+
+        let unique = unique_ordered_refs(&values);
+
+        assert_eq!(
+            unique.into_iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["alpha", "beta", "gamma"]
+        );
+    }
+
+    #[test]
+    fn unique_ordered_refs_keeps_distinct_case_sensitive_values() {
+        let values = vec!["Tag".to_owned(), "tag".to_owned(), "Tag".to_owned()];
+
+        let unique = unique_ordered_refs(&values);
+
+        assert_eq!(
+            unique.into_iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["Tag", "tag"]
+        );
+    }
 }

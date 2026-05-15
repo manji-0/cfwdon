@@ -241,7 +241,7 @@ pub(crate) async fn search_local_status_rows(
         let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
-        db.prepare(&format!(
+        db.prepare(format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE account_id = ?1
                AND {search_filter}
@@ -267,7 +267,7 @@ pub(crate) async fn search_local_status_rows(
         let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
-        db.prepare(&format!(
+        db.prepare(format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE {search_filter}
                {cursor_clause}
@@ -320,7 +320,7 @@ pub(crate) async fn search_remote_status_rows(
         let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
-        db.prepare(&format!(
+        db.prepare(format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE rs.actor_uri = ?1
                AND {search_filter}
@@ -346,7 +346,7 @@ pub(crate) async fn search_remote_status_rows(
         let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
         let cursor_clause =
             cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
-        db.prepare(&format!(
+        db.prepare(format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE {search_filter}
                {cursor_clause}

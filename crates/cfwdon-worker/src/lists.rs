@@ -11,9 +11,9 @@ use crate::remote::{
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{
-    build_local_status_response, build_remote_status_response, find_status_by_id,
-    is_local_status_thread_muted_by, list_local_public_timeline_statuses,
-    list_remote_public_timeline_statuses, load_in_reply_to_account_id,
+    build_local_status_response, build_remote_status_response, is_local_status_thread_muted_by,
+    list_local_public_timeline_statuses, list_remote_public_timeline_statuses,
+    load_in_reply_to_account_id,
 };
 use crate::timelines::{
     TimelinePaginationQuery, build_timeline_link_header, resolve_timeline_cursor,

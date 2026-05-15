@@ -315,11 +315,11 @@ async fn instance_summary_response_for_config(
     db: &worker::D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
-    let summary = load_instance_summary(&db, config.clone()).await?;
-    let active_month = load_active_month_users(&db).await?;
-    let user_count = load_total_local_accounts(&db).await?;
-    let status_count = load_total_local_statuses(&db).await?;
-    let domain_count = load_known_peer_domains(&db, &config).await?.len() as u64;
+    let summary = load_instance_summary(db, config.clone()).await?;
+    let active_month = load_active_month_users(db).await?;
+    let user_count = load_total_local_accounts(db).await?;
+    let status_count = load_total_local_statuses(db).await?;
+    let domain_count = load_known_peer_domains(db, &config).await?.len() as u64;
 
     cache_public_response(
         Response::from_json(&build_instance_v1_document(
@@ -357,8 +357,8 @@ async fn instance_v2_response_for_config(
     config: super::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
-    let summary = load_instance_summary(&db, config.clone()).await?;
-    let active_month = load_active_month_users(&db).await?;
+    let summary = load_instance_summary(db, config.clone()).await?;
+    let active_month = load_active_month_users(db).await?;
     let mut document = build_instance_v2_document(&summary, &config, active_month);
     set_instance_translation_enabled(&mut document, translation_enabled);
 
@@ -512,7 +512,7 @@ pub(crate) fn instance_languages_response_from_env(env: &Env) -> Result<Response
 
 fn instance_languages_response_for_config(config: &super::AppConfig) -> Result<Response> {
     cache_public_response(
-        Response::from_json(&configured_instance_languages(&config))?,
+        Response::from_json(&configured_instance_languages(config))?,
         300,
     )
 }
@@ -1061,7 +1061,7 @@ pub(crate) fn nodeinfo_links_response_from_env(env: &Env) -> Result<Response> {
 
 fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Response> {
     cache_public_response(
-        Response::from_json(&build_nodeinfo_links_document(&config))?,
+        Response::from_json(&build_nodeinfo_links_document(config))?,
         300,
     )
 }
@@ -1082,10 +1082,10 @@ async fn nodeinfo_response_for_config(
     db: &worker::D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
-    let summary = load_instance_summary(&db, config.clone()).await?;
-    let active_month = load_active_month_users(&db).await?;
-    let user_count = load_total_local_accounts(&db).await?;
-    let status_count = load_total_local_statuses(&db).await?;
+    let summary = load_instance_summary(db, config.clone()).await?;
+    let active_month = load_active_month_users(db).await?;
+    let user_count = load_total_local_accounts(db).await?;
+    let status_count = load_total_local_statuses(db).await?;
 
     cache_public_response(
         Response::from_json(&build_nodeinfo_document(

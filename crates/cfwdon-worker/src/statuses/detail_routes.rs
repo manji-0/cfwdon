@@ -76,7 +76,7 @@ pub(crate) fn normalize_status_history_entry(mut value: serde_json::Value) -> se
     let sensitive = value
         .get("sensitive")
         .cloned()
-        .unwrap_or_else(|| serde_json::json!(false));
+        .unwrap_or(serde_json::Value::Bool(false));
     let created_at = value
         .get("created_at")
         .cloned()
@@ -167,7 +167,7 @@ fn strip_common_document_extension(segment: &str) -> &str {
 fn display_title_from_url(parsed: &Url, provider_name: &str) -> String {
     let Some(last_segment) = parsed
         .path_segments()
-        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
     else {
         return provider_name.to_owned();
     };
@@ -578,7 +578,7 @@ async fn build_remote_interaction_account_response(
     };
     let Some(username) = parsed
         .path_segments()
-        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         .map(|segment| segment.trim_start_matches('@').to_owned())
         .filter(|segment| !segment.is_empty())
     else {
@@ -791,7 +791,7 @@ fn status_object_html_response(
         &title_text
     };
     let title = crate::escape_html(title_source);
-    let account_name = crate::escape_html(&account.acct());
+    let account_name = crate::escape_html(account.acct());
     let published = crate::escape_html(&status.created_at);
     let media_html = attachments
         .iter()

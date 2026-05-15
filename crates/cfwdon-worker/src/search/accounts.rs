@@ -646,7 +646,7 @@ async fn rank_cached_account_search_results(
         };
         ranked_accounts.push((
             account_search_sort_key(
-                &rank_query,
+                rank_query,
                 &account.username,
                 &account.acct,
                 &account.display_name,

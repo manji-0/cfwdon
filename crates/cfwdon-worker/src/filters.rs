@@ -127,9 +127,10 @@ fn normalize_contexts(contexts: Vec<String>) -> std::result::Result<Vec<String>,
                 }
             }
             _ => {
-                return Err(Error::RustError(format!(
+                return Err(Error::RustError(
                     "context must be one of: home, notifications, public, thread, account"
-                )));
+                        .to_string(),
+                ));
             }
         }
     }
@@ -1596,6 +1597,26 @@ mod tests {
             split_filter_context("home, notifications,,thread"),
             vec!["home", "notifications", "thread"]
         );
+    }
+
+    #[test]
+    fn normalize_contexts_trims_lowercases_and_deduplicates() {
+        assert_eq!(
+            normalize_contexts(vec![
+                " Home ".to_owned(),
+                "PUBLIC".to_owned(),
+                "home".to_owned(),
+                " thread ".to_owned(),
+            ])
+            .unwrap(),
+            vec!["home", "public", "thread"]
+        );
+    }
+
+    #[test]
+    fn normalize_contexts_rejects_empty_and_unknown_values() {
+        assert!(normalize_contexts(vec![" ".to_owned()]).is_err());
+        assert!(normalize_contexts(vec!["home".to_owned(), "unknown".to_owned()]).is_err());
     }
 
     #[test]

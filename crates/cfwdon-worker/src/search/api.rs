@@ -70,12 +70,11 @@ async fn list_discoverable_remote_actor_rows(
         D1Type::Integer(limit as i32),
         D1Type::Integer(offset as i32),
     ];
-    Ok(db
-        .prepare(sql)
+    db.prepare(sql)
         .bind_refs(bindings.iter())?
         .all()
         .await?
-        .results::<DirectoryRemoteActorRow>()?)
+        .results::<DirectoryRemoteActorRow>()
 }
 
 pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Result<Response> {

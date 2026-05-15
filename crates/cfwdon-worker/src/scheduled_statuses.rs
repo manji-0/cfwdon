@@ -888,7 +888,7 @@ pub(crate) async fn scheduled_statuses_response(
     }
     let mut documents = Vec::new();
     for status in &statuses {
-        documents.push(build_scheduled_status_document(&db, &config, &status).await?);
+        documents.push(build_scheduled_status_document(&db, &config, status).await?);
     }
     let mut builder = Response::builder();
     if let Some(link_header) = build_scheduled_statuses_link_header(

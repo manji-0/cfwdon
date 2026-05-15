@@ -95,8 +95,8 @@ where
     }
 
     Ok(CursorAccountCollection {
-        first_cursor: entries.first().map(|entry| cursor_id(entry)),
-        last_cursor: entries.last().map(|entry| cursor_id(entry)),
+        first_cursor: entries.first().map(&cursor_id),
+        last_cursor: entries.last().map(cursor_id),
         has_next_page: entries.len() as u32 >= limit,
         accounts,
     })

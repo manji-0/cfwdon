@@ -750,7 +750,7 @@ fn remote_reblog_upsert_sql() -> &'static str {
 }
 
 fn remote_reblog_upsert_bindings(draft: &RemoteReblogUpsertDraft) -> [D1Type<'_>; 15] {
-    let bindings = [
+    [
         D1Type::Text(draft.status_id.as_str()),
         D1Type::Text(draft.actor_uri.as_str()),
         D1Type::Text(draft.object_uri.as_str()),
@@ -766,8 +766,7 @@ fn remote_reblog_upsert_bindings(draft: &RemoteReblogUpsertDraft) -> [D1Type<'_>
         D1Type::Text(draft.quote_state),
         D1Type::Text(draft.published_at.as_str()),
         D1Type::Text(draft.raw_object_json.as_str()),
-    ];
-    bindings
+    ]
 }
 
 async fn evaluate_remote_quote_state(

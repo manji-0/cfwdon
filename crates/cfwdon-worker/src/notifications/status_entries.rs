@@ -64,7 +64,7 @@ pub(crate) async fn collect_status_notification_entries(
         let Some(actor) = local_accounts.get(&status.account_id) else {
             continue;
         };
-        if !can_view_local_status(db, &status, Some(viewer), &actor).await?
+        if !can_view_local_status(db, &status, Some(viewer), actor).await?
             || muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
                 .await?
             || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
@@ -77,7 +77,7 @@ pub(crate) async fn collect_status_notification_entries(
             config,
             Some(viewer),
             &status,
-            &actor,
+            actor,
             in_reply_to_account_ids.get(&status.id).cloned(),
             media,
         )
@@ -89,7 +89,7 @@ pub(crate) async fn collect_status_notification_entries(
                 notification_type: "status".to_owned(),
                 group_key: format!("status-local-{}-{}", actor.id, status.id),
                 created_at: status.created_at,
-                account: MastodonAccountResponse::from_account(&actor, config),
+                account: MastodonAccountResponse::from_account(actor, config),
                 status: Some(status_response),
                 report: None,
             },
@@ -124,7 +124,7 @@ pub(crate) async fn collect_status_notification_entries(
         }
         let status_row = remote_status_notification_row(&status);
         let status_response =
-            build_remote_status_response(db, config, Some(viewer), &status_row, &actor).await?;
+            build_remote_status_response(db, config, Some(viewer), &status_row, actor).await?;
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
@@ -132,7 +132,7 @@ pub(crate) async fn collect_status_notification_entries(
                 notification_type: "status".to_owned(),
                 group_key: format!("status-remote-{}-{}", remote_id, status.id),
                 created_at: status.published_at,
-                account: MastodonAccountResponse::from_remote_actor(&actor),
+                account: MastodonAccountResponse::from_remote_actor(actor),
                 status: Some(status_response),
                 report: None,
             },

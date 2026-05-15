@@ -888,7 +888,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let config = load_config(&ctx);
     let tag = ctx
         .param("hashtag")
-        .map(|value| normalize_hashtag(&value))
+        .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing hashtag route parameter".to_owned()))?;
     let query: TagTimelineQuery = req.query().unwrap_or_default();
@@ -1033,7 +1033,7 @@ pub(crate) async fn link_timeline_response(
     }
     let target_url_set = target_urls
         .iter()
-        .filter_map(|url| canonicalize_link_timeline_url(&url))
+        .filter_map(|url| canonicalize_link_timeline_url(url))
         .collect::<HashSet<_>>();
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;

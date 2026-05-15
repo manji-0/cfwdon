@@ -1,5 +1,5 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_notification_group_document,
+    Request, Response, Result, RouteContext, build_notification_group_document,
     build_notifications_v2_document, clear_notifications_usecase,
     dismiss_notification_entry_usecase, dismiss_notification_group_usecase,
     list_notification_group_entries_usecase, list_notifications_usecase,

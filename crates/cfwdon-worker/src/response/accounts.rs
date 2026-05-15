@@ -25,13 +25,13 @@ pub(crate) struct RemoteActorSocialCounts {
 pub(crate) async fn load_remote_actor_social_counts_from_document(
     document: &serde_json::Value,
 ) -> Result<RemoteActorSocialCounts> {
-    let followers_count = remote_actor_collection_count(&document, "followers")
+    let followers_count = remote_actor_collection_count(document, "followers")
         .await
         .unwrap_or(0);
-    let following_count = remote_actor_collection_count(&document, "following")
+    let following_count = remote_actor_collection_count(document, "following")
         .await
         .unwrap_or(0);
-    let statuses_count = remote_actor_collection_count(&document, "outbox")
+    let statuses_count = remote_actor_collection_count(document, "outbox")
         .await
         .unwrap_or(0);
     Ok(RemoteActorSocialCounts {

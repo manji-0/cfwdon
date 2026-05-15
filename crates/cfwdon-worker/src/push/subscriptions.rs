@@ -504,7 +504,7 @@ async fn save_push_subscription_row(
 }
 
 fn push_subscription_save_bindings(draft: &PushSubscriptionSaveDraft) -> [D1Type<'_>; 18] {
-    let bindings = [
+    [
         D1Type::Text(draft.account_id.as_str()),
         D1Type::Text(draft.endpoint.as_str()),
         D1Type::Text(draft.p256dh_key.as_str()),
@@ -523,8 +523,7 @@ fn push_subscription_save_bindings(draft: &PushSubscriptionSaveDraft) -> [D1Type
         D1Type::Integer(bool_to_i32(draft.alerts.admin_sign_up)),
         D1Type::Integer(bool_to_i32(draft.alerts.admin_report)),
         D1Type::Text(draft.policy.as_str()),
-    ];
-    bindings
+    ]
 }
 
 async fn update_push_subscription(
@@ -549,7 +548,7 @@ async fn update_push_subscription_row(
 }
 
 fn push_subscription_update_bindings(draft: &PushSubscriptionUpdateDraft) -> [D1Type<'_>; 14] {
-    let bindings = [
+    [
         D1Type::Text(draft.account_id.as_str()),
         D1Type::Integer(bool_to_i32(draft.alerts.follow)),
         D1Type::Integer(bool_to_i32(draft.alerts.favourite)),
@@ -564,8 +563,7 @@ fn push_subscription_update_bindings(draft: &PushSubscriptionUpdateDraft) -> [D1
         D1Type::Integer(bool_to_i32(draft.alerts.admin_sign_up)),
         D1Type::Integer(bool_to_i32(draft.alerts.admin_report)),
         D1Type::Text(draft.policy.as_str()),
-    ];
-    bindings
+    ]
 }
 
 async fn delete_push_subscription(db: &D1Database, account_id: &str) -> Result<()> {

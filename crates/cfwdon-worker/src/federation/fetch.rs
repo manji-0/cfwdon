@@ -143,7 +143,7 @@ fn remote_actor_username(actor: &serde_json::Value, actor_url: &Url) -> String {
         .unwrap_or_else(|| {
             actor_url
                 .path_segments()
-                .and_then(|segments| segments.last())
+                .and_then(|mut segments| segments.next_back())
                 .unwrap_or("remote")
         })
         .to_ascii_lowercase()

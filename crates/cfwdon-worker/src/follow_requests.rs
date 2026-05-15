@@ -313,7 +313,7 @@ async fn build_follow_request_remote_account_response(
     };
     let Some(username) = parsed
         .path_segments()
-        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         .map(|segment| segment.trim_start_matches('@').to_owned())
         .filter(|segment| !segment.is_empty())
     else {

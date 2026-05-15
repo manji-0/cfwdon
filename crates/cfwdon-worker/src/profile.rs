@@ -282,7 +282,7 @@ async fn update_profile_internal(
         .map_err(Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = apply_account_credentials_update(&db, &bucket, config, &account, &update).await?;
+    let account = apply_account_credentials_update(&db, &bucket, config, account, &update).await?;
     save_account_profile_settings(&db, &account.id, &update).await?;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
@@ -349,7 +349,7 @@ async fn clear_profile_media(
     }
 
     let account_id = D1Type::Text(account.id.as_str());
-    db.prepare(&format!(
+    db.prepare(format!(
         "UPDATE accounts
          SET {object_key_column} = NULL,
              {content_type_column} = NULL,

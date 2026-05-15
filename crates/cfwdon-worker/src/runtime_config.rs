@@ -567,6 +567,8 @@ mod tests {
 
     #[test]
     fn upload_limits_keep_video_above_image_limit() {
-        assert!(MAX_AV_UPLOAD_BYTES > MAX_IMAGE_UPLOAD_BYTES);
+        let av_limit = MAX_AV_UPLOAD_BYTES;
+        let image_limit = MAX_IMAGE_UPLOAD_BYTES;
+        assert!(av_limit > image_limit);
     }
 }

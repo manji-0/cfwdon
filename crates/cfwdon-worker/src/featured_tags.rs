@@ -413,7 +413,7 @@ pub(crate) async fn unfeature_tag_response(
     let config = load_config(&ctx);
     let tag = ctx
         .param("id")
-        .map(|value| normalize_hashtag(&value))
+        .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;

@@ -279,7 +279,7 @@ pub(crate) async fn list_familiar_remote_actors_for_local_target(
         .all()
         .await?;
 
-    Ok(result.results::<RemoteActorRow>()?)
+    result.results::<RemoteActorRow>()
 }
 
 pub(crate) async fn list_familiar_local_accounts_for_remote_target(

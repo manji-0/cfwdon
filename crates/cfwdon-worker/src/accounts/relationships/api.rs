@@ -35,22 +35,22 @@ pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -
                 let config = &config;
                 let viewer = &viewer;
                 async move {
-                    match resolve_requested_account_reference(&db, &config, &account_id).await? {
+                    match resolve_requested_account_reference(db, config, &account_id).await? {
                         Some(AccountReference::Local(target)) => Ok::<_, worker::Error>(Some(
                             build_relationship_for_target(
-                                &db,
-                                &config,
-                                &viewer,
+                                db,
+                                config,
+                                viewer,
                                 &target.id,
-                                &actor_url(&config, &target.username),
+                                &actor_url(config, &target.username),
                             )
                             .await?,
                         )),
                         Some(AccountReference::Remote(actor)) => Ok::<_, worker::Error>(Some(
                             build_relationship_for_target(
-                                &db,
-                                &config,
-                                &viewer,
+                                db,
+                                config,
+                                viewer,
                                 &remote_account_rest_id(&actor.actor_uri),
                                 &actor.actor_uri,
                             )
