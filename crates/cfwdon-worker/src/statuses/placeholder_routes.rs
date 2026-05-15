@@ -436,6 +436,12 @@ struct DeepLLanguageRow {
     language: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DeepLLanguageUrls {
+    source: String,
+    target: String,
+}
+
 pub(crate) fn build_deepl_translation_languages_document(
     source_languages: &[String],
     target_languages: &[String],
@@ -524,40 +530,42 @@ async fn load_libretranslate_languages(
 async fn load_deepl_languages(
     provider_config: &TranslationProviderConfig,
 ) -> Result<serde_json::Value> {
-    let base_url = provider_config.endpoint_url.trim_end_matches('/');
-    let source_languages_url = format!("{base_url}/v2/languages?type=source");
-    let target_languages_url = format!("{base_url}/v2/languages?type=target");
+    let urls = deepl_language_urls(&provider_config.endpoint_url);
     let headers = deepl_language_request_headers(provider_config)?;
-    let mut source_init = RequestInit::new();
-    source_init
-        .with_method(Method::Get)
-        .with_headers(headers.clone());
-    let mut target_init = RequestInit::new();
-    target_init.with_method(Method::Get).with_headers(headers);
-
-    let source_request = Request::new_with_init(&source_languages_url, &source_init)?;
-    let target_request = Request::new_with_init(&target_languages_url, &target_init)?;
-    let mut source_response = Fetch::Request(source_request).send().await?;
-    let mut target_response = Fetch::Request(target_request).send().await?;
-    if source_response.status_code() / 100 != 2 {
-        return Err(worker::Error::RustError(format!(
-            "translation provider rejected source languages request with HTTP {}",
-            source_response.status_code()
-        )));
-    }
-    if target_response.status_code() / 100 != 2 {
-        return Err(worker::Error::RustError(format!(
-            "translation provider rejected target languages request with HTTP {}",
-            target_response.status_code()
-        )));
-    }
     let source_languages =
-        deepl_language_codes(source_response.json::<Vec<DeepLLanguageRow>>().await?);
-    let target_languages =
-        deepl_language_codes(target_response.json::<Vec<DeepLLanguageRow>>().await?);
+        fetch_deepl_language_codes(&urls.source, headers.clone(), "source").await?;
+    let target_languages = fetch_deepl_language_codes(&urls.target, headers, "target").await?;
     Ok(build_deepl_translation_languages_document(
         &source_languages,
         &target_languages,
+    ))
+}
+
+fn deepl_language_urls(endpoint_url: &str) -> DeepLLanguageUrls {
+    let base_url = endpoint_url.trim_end_matches('/');
+    DeepLLanguageUrls {
+        source: format!("{base_url}/v2/languages?type=source"),
+        target: format!("{base_url}/v2/languages?type=target"),
+    }
+}
+
+async fn fetch_deepl_language_codes(
+    url: &str,
+    headers: Headers,
+    language_kind: &str,
+) -> Result<Vec<String>> {
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let request = Request::new_with_init(url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+    if response.status_code() / 100 != 2 {
+        return Err(worker::Error::RustError(format!(
+            "translation provider rejected {language_kind} languages request with HTTP {}",
+            response.status_code()
+        )));
+    }
+    Ok(deepl_language_codes(
+        response.json::<Vec<DeepLLanguageRow>>().await?,
     ))
 }
 
@@ -1238,6 +1246,17 @@ mod tests {
         ];
 
         assert_eq!(deepl_language_codes(rows), vec!["EN", "JA"]);
+    }
+
+    #[test]
+    fn deepl_language_urls_trim_endpoint_trailing_slash() {
+        assert_eq!(
+            deepl_language_urls("https://api-free.deepl.com/"),
+            DeepLLanguageUrls {
+                source: "https://api-free.deepl.com/v2/languages?type=source".to_owned(),
+                target: "https://api-free.deepl.com/v2/languages?type=target".to_owned(),
+            }
+        );
     }
 
     #[test]
