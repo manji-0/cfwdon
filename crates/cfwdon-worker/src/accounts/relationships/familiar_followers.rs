@@ -2,9 +2,9 @@ use super::query::parse_relationship_query_ids;
 use crate::AccountReference;
 use crate::{
     LocalAccount, MastodonAccountResponse, RemoteActorRow, Request, Response, Result, RouteContext,
-    find_authenticated_local_account, list_familiar_local_accounts_for_local_target,
-    list_familiar_local_accounts_for_remote_target, list_familiar_remote_actors_for_local_target,
-    load_account_stats, load_config, resolve_account_reference,
+    build_local_account_response, find_authenticated_local_account,
+    list_familiar_local_accounts_for_local_target, list_familiar_local_accounts_for_remote_target,
+    list_familiar_remote_actors_for_local_target, load_config, resolve_account_reference,
 };
 use std::collections::HashSet;
 
@@ -38,11 +38,10 @@ async fn append_familiar_local_accounts(
     local_accounts: Vec<LocalAccount>,
 ) -> Result<()> {
     for account in local_accounts {
-        let stats = load_account_stats(db, &account.id).await?;
         push_unique_familiar_account(
             accounts,
             seen_ids,
-            MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            build_local_account_response(db, config, &account).await?,
         );
         if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
             break;

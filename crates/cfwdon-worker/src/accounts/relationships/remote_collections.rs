@@ -1,9 +1,9 @@
 use super::collections::CollectionAccountEntry;
 use crate::{
     MastodonAccountResponse, RemoteActorProfile, Result, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_account_by_username, find_remote_actor_by_actor_uri,
-    is_activitypub_actor_type, load_account_stats, local_username_from_actor_uri,
-    parse_remote_actor_profile_document, upsert_remote_actors, validate_remote_actor_profile_urls,
+    fetch_remote_actor_profile, find_local_account_response_by_actor_uri,
+    find_remote_actor_by_actor_uri, is_activitypub_actor_type, parse_remote_actor_profile_document,
+    upsert_remote_actors, validate_remote_actor_profile_urls,
 };
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
@@ -41,12 +41,11 @@ async fn resolve_remote_follow_collection_account(
         if validate_remote_actor_profile_urls(&profile).await.is_err() {
             return Ok(None);
         }
-        if let Some(username) = local_username_from_actor_uri(config, &profile.actor_uri)
-            && let Some(account) = find_account_by_username(db, &username).await?
+        if let Some(account) =
+            find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
         {
-            let stats = load_account_stats(db, &account.id).await?;
             return Ok(Some(ResolvedRemoteFollowAccount {
-                account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+                account,
                 profile_to_upsert: None,
             }));
         }
@@ -59,12 +58,9 @@ async fn resolve_remote_follow_collection_account(
     let RemoteFollowCollectionReference::Uri(actor_uri) = reference else {
         return Ok(None);
     };
-    if let Some(username) = local_username_from_actor_uri(config, actor_uri)
-        && let Some(account) = find_account_by_username(db, &username).await?
-    {
-        let stats = load_account_stats(db, &account.id).await?;
+    if let Some(account) = find_local_account_response_by_actor_uri(db, config, actor_uri).await? {
         return Ok(Some(ResolvedRemoteFollowAccount {
-            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            account,
             profile_to_upsert: None,
         }));
     }
@@ -80,12 +76,11 @@ async fn resolve_remote_follow_collection_account(
                 }));
         }
     };
-    if let Some(username) = local_username_from_actor_uri(config, &profile.actor_uri)
-        && let Some(account) = find_account_by_username(db, &username).await?
+    if let Some(account) =
+        find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
     {
-        let stats = load_account_stats(db, &account.id).await?;
         return Ok(Some(ResolvedRemoteFollowAccount {
-            account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            account,
             profile_to_upsert: None,
         }));
     }

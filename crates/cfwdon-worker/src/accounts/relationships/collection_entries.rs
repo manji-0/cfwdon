@@ -1,11 +1,11 @@
 use super::collections::CollectionAccountEntry;
 use super::remote_collections::remote_follow_collection_entries;
 use crate::{
-    MastodonAccountResponse, Result, fetch_remote_actor_profile, find_account_by_id,
+    MastodonAccountResponse, Result, fetch_remote_actor_profile, find_local_account_response,
     find_remote_actor_by_actor_uri, list_local_followers_for_account,
     list_local_followers_for_remote_actor, list_local_following_for_account,
     list_local_following_for_remote_actor, list_remote_followers_for_account,
-    list_remote_following_for_account, load_account_stats, upsert_remote_actor,
+    list_remote_following_for_account, upserted_remote_actor_response,
 };
 
 async fn remote_follow_account_response(
@@ -13,15 +13,7 @@ async fn remote_follow_account_response(
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
     match fetch_remote_actor_profile(actor_uri).await {
-        Ok(profile) => {
-            upsert_remote_actor(db, &profile).await?;
-            match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
-                Some(actor) => Ok(Some(MastodonAccountResponse::from_remote_actor(&actor))),
-                None => Ok(Some(MastodonAccountResponse::from_remote_actor_profile(
-                    &profile,
-                ))),
-            }
-        }
+        Ok(profile) => Ok(Some(upserted_remote_actor_response(db, &profile).await?)),
         Err(_) => Ok(find_remote_actor_by_actor_uri(db, actor_uri)
             .await?
             .map(|actor| MastodonAccountResponse::from_remote_actor(&actor))),
@@ -35,14 +27,13 @@ async fn local_follow_account_entry(
     created_at: &str,
     account_id: &str,
 ) -> Result<Option<CollectionAccountEntry>> {
-    let Some(account) = find_account_by_id(db, account_id).await? else {
+    let Some(account) = find_local_account_response(db, config, account_id).await? else {
         return Ok(None);
     };
-    let stats = load_account_stats(db, &account.id).await?;
     Ok(Some(CollectionAccountEntry {
         cursor_id,
         created_at: created_at.to_owned(),
-        account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+        account,
     }))
 }
 
