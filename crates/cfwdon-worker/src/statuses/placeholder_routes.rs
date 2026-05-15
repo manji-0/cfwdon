@@ -1,9 +1,8 @@
 use super::{
     Request, Response, Result, RouteContext, app_bearer_token_from_request,
-    build_local_status_response, configured_instance_languages, find_account_by_id,
-    find_authenticated_local_account, find_media_attachments_by_status_id,
-    find_oauth_app_by_bearer_token, find_status_by_id, load_config, load_in_reply_to_account_id,
-    now_iso_string, oauth_app_has_any_scope, status_api_response,
+    build_loaded_local_status_response, configured_instance_languages, find_account_by_id,
+    find_authenticated_local_account, find_oauth_app_by_bearer_token, find_status_by_id,
+    load_config, now_iso_string, oauth_app_has_any_scope, status_api_response,
     update_local_status_quote_approval_policy,
 };
 use serde::Deserialize;
@@ -1113,19 +1112,9 @@ pub(crate) async fn status_interaction_policy_response(
     let Some(account) = find_account_by_id(&db, &updated.account_id).await? else {
         return Response::error("status not found", 404);
     };
-    let media = find_media_attachments_by_status_id(&db, &updated.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(&db, &updated).await?;
     Response::from_json(
-        &build_local_status_response(
-            &db,
-            &config,
-            Some(&viewer),
-            &updated,
-            &account,
-            in_reply_to_account_id,
-            media,
-        )
-        .await?,
+        &build_loaded_local_status_response(&db, &config, Some(&viewer), &updated, &account)
+            .await?,
     )
 }
 

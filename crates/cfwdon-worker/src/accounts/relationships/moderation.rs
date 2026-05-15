@@ -1,8 +1,11 @@
-use super::collections::{AccountCollectionPage, AccountCollectionQuery};
+use super::collections::{
+    AccountCollectionPage, AccountCollectionQuery, CursorAccountCollection,
+    finalize_cursor_account_collection,
+};
 use crate::{
-    MastodonAccountResponse, Request, Response, Result, RouteContext,
-    build_internal_cursor_link_header, find_account_by_id, find_authenticated_local_account,
-    find_remote_actor_by_actor_uri, list_blocks_for_account, list_mutes_for_account, load_config,
+    MastodonAccountResponse, Request, Response, Result, RouteContext, find_account_by_id,
+    find_authenticated_local_account, find_remote_actor_by_actor_uri, list_blocks_for_account,
+    list_mutes_for_account, load_config,
 };
 
 pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -20,33 +23,18 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
     };
 
     let blocks = list_blocks_for_account(&db, &viewer.id, limit, max_id, since_id).await?;
-    let mut response = Vec::new();
-    for block in &blocks {
-        if let Some(target_account_id) = block.target_account_id.as_deref()
-            && let Some(account) = find_account_by_id(&db, target_account_id).await?
-        {
-            response.push(MastodonAccountResponse::from_account(&account, &config));
-            continue;
-        }
-
-        if let Some(actor) = find_remote_actor_by_actor_uri(&db, &block.target_actor_uri).await? {
-            response.push(MastodonAccountResponse::from_remote_actor(&actor));
-        }
-    }
-
-    let mut builder = Response::builder();
-    if let Some(link_header) = build_internal_cursor_link_header(
-        &req,
+    let collection = build_moderation_account_collection(
+        &db,
+        &config,
         limit,
-        blocks.first().map(|block| block.cursor_id),
-        blocks.last().map(|block| block.cursor_id),
-        blocks.len() as u32 >= limit,
-        max_id.is_some() || since_id.is_some(),
-    )? {
-        builder = builder.with_header("Link", &link_header)?;
-    }
+        &blocks,
+        |block| block.target_account_id.as_deref(),
+        |block| block.target_actor_uri.as_str(),
+        |block| block.cursor_id,
+    )
+    .await?;
 
-    builder.from_json(&response)
+    finalize_cursor_account_collection(&req, limit, max_id, since_id, collection)
 }
 
 pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -64,31 +52,71 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
     };
 
     let mutes = list_mutes_for_account(&db, &viewer.id, limit, max_id, since_id).await?;
-    let mut response = Vec::new();
-    for mute in &mutes {
-        if let Some(target_account_id) = mute.target_account_id.as_deref()
-            && let Some(account) = find_account_by_id(&db, target_account_id).await?
-        {
-            response.push(MastodonAccountResponse::from_account(&account, &config));
-            continue;
-        }
-
-        if let Some(actor) = find_remote_actor_by_actor_uri(&db, &mute.target_actor_uri).await? {
-            response.push(MastodonAccountResponse::from_remote_actor(&actor));
-        }
-    }
-
-    let mut builder = Response::builder();
-    if let Some(link_header) = build_internal_cursor_link_header(
-        &req,
+    let collection = build_moderation_account_collection(
+        &db,
+        &config,
         limit,
-        mutes.first().map(|mute| mute.cursor_id),
-        mutes.last().map(|mute| mute.cursor_id),
-        mutes.len() as u32 >= limit,
-        max_id.is_some() || since_id.is_some(),
-    )? {
-        builder = builder.with_header("Link", &link_header)?;
+        &mutes,
+        |mute| mute.target_account_id.as_deref(),
+        |mute| mute.target_actor_uri.as_str(),
+        |mute| mute.cursor_id,
+    )
+    .await?;
+
+    finalize_cursor_account_collection(&req, limit, max_id, since_id, collection)
+}
+
+async fn build_moderation_account_collection<T, FAccount, FActor, FCursor>(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    limit: u32,
+    entries: &[T],
+    target_account_id: FAccount,
+    target_actor_uri: FActor,
+    cursor_id: FCursor,
+) -> Result<CursorAccountCollection>
+where
+    FAccount: Fn(&T) -> Option<&str>,
+    FActor: Fn(&T) -> &str,
+    FCursor: Fn(&T) -> i64,
+{
+    let mut accounts = Vec::new();
+    for entry in entries {
+        if let Some(account) = resolve_moderation_target_account_response(
+            db,
+            config,
+            target_account_id(entry),
+            target_actor_uri(entry),
+        )
+        .await?
+        {
+            accounts.push(account);
+        }
     }
 
-    builder.from_json(&response)
+    Ok(CursorAccountCollection {
+        first_cursor: entries.first().map(|entry| cursor_id(entry)),
+        last_cursor: entries.last().map(|entry| cursor_id(entry)),
+        has_next_page: entries.len() as u32 >= limit,
+        accounts,
+    })
+}
+
+async fn resolve_moderation_target_account_response(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    target_account_id: Option<&str>,
+    target_actor_uri: &str,
+) -> Result<Option<MastodonAccountResponse>> {
+    if let Some(target_account_id) = target_account_id
+        && let Some(account) = find_account_by_id(db, target_account_id).await?
+    {
+        return Ok(Some(MastodonAccountResponse::from_account(
+            &account, config,
+        )));
+    }
+
+    Ok(find_remote_actor_by_actor_uri(db, target_actor_uri)
+        .await?
+        .map(|actor| MastodonAccountResponse::from_remote_actor(&actor)))
 }

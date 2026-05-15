@@ -1,20 +1,20 @@
 use super::{
-    AccountFilterMatcher, AccountRow, AppConfig, LocalAccount, MastodonPollResponsePreload,
-    MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow, RemoteMastodonPollResponsePreload,
-    RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusRow,
-    StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
-    build_remote_status_card_value, build_status_card_value, can_view_local_status, count_rows,
-    effective_remote_status_quote_state, effective_status_quote_state, find_account_by_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_oauth_app_by_id,
-    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
-    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
-    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
-    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
-    is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
-    is_remote_status_reblogged_by, load_in_reply_to_account_id, load_local_status_counts,
-    load_mastodon_poll_response, load_remote_mastodon_poll_response, load_remote_status_counts,
-    load_remote_status_updated_at, load_status_filtered, load_status_updated_at,
-    local_status_target_uri, strip_html_tags,
+    AccountFilterMatcher, AccountRow, AppConfig, LocalAccount, LocalStatusResponseDetails,
+    MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
+    RemoteMastodonPollResponsePreload, RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload,
+    RemoteStatusResponseDetails, RemoteStatusRow, StatusCountsPreload, StatusRow,
+    account_has_thread_mutes, actor_url, build_remote_status_card_value, build_status_card_value,
+    count_rows, effective_remote_status_quote_state, effective_status_quote_state,
+    find_local_status_by_object_uri, find_oauth_app_by_id, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
+    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
+    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
+    load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
+    load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
+    load_status_filtered, load_status_updated_at, local_status_target_uri,
+    resolve_local_status_response_subject, strip_html_tags,
 };
 use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
@@ -891,6 +891,26 @@ pub(crate) async fn build_local_status_response(
     .await
 }
 
+pub(crate) async fn build_loaded_local_status_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+) -> Result<MastodonStatusResponse> {
+    let preload = load_local_status_response_preload(db, status).await?;
+    build_local_status_response(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        preload.in_reply_to_account_id,
+        preload.media,
+    )
+    .await
+}
+
 pub(crate) async fn build_local_status_response_with_filter_matcher(
     db: &D1Database,
     config: &AppConfig,
@@ -1017,28 +1037,53 @@ async fn build_local_status_response_inner(
         in_reply_to_account_id,
         media_attachments,
     );
-    response.application = build_status_application(db, status.application_id).await?;
-    response.card = build_status_card_value(&status._text_content);
-    response.poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
-    response.mentions = build_status_mentions(db, config, &status._text_content).await?;
+    let details = load_local_status_response_details(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        &response.uri,
+        filter_matcher,
+        counts_preload,
+        quote_counts_preload,
+        poll_preload,
+        viewer_state_preload,
+        include_quote,
+    )
+    .await?;
+    response.apply_local_details(details);
+    Ok(response)
+}
+
+async fn load_local_status_response_details(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+    status_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    poll_preload: Option<&MastodonPollResponsePreload>,
+    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    include_quote: bool,
+) -> Result<LocalStatusResponseDetails> {
+    let application = build_status_application(db, status.application_id).await?;
+    let card = build_status_card_value(&status._text_content);
+    let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
+    let mentions = build_status_mentions(db, config, &status._text_content).await?;
     let (favourites_count, reblogs_count) =
         local_status_counts(db, counts_preload, &status.id).await?;
-    response.favourites_count = favourites_count;
-    response.reblogs_count = reblogs_count;
-    response.quotes_count = status_quotes_count(db, quote_counts_preload, &response.uri).await?;
+    let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
     let viewer_state =
         local_status_response_viewer_state(db, viewer, status, viewer_state_preload).await?;
-    response.favourited = viewer_state.favourited;
-    response.reblogged = viewer_state.reblogged;
-    response.bookmarked = viewer_state.bookmarked;
-    response.pinned = viewer_state.pinned;
-    response.muted = viewer_state.muted;
-    response.edited_at = local_status_edited_at(db, status).await?;
-    response.filtered =
-        local_status_filtered_for_viewer(db, viewer, status, filter_matcher).await?;
-    response.quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
-    if include_quote {
-        response.quote = build_quoted_status_value(
+    let edited_at = local_status_edited_at(db, status).await?;
+    let filtered = local_status_filtered_for_viewer(db, viewer, status, filter_matcher).await?;
+    let quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
+    let quote = if include_quote {
+        build_quoted_status_value(
             db,
             config,
             viewer,
@@ -1048,9 +1093,29 @@ async fn build_local_status_response_inner(
             filter_matcher,
             counts_preload,
         )
-        .await?;
-    }
-    Ok(response)
+        .await?
+    } else {
+        None
+    };
+
+    Ok(LocalStatusResponseDetails {
+        application,
+        card,
+        poll,
+        mentions,
+        favourites_count,
+        reblogs_count,
+        quotes_count,
+        favourited: viewer_state.favourited,
+        reblogged: viewer_state.reblogged,
+        muted: viewer_state.muted,
+        bookmarked: viewer_state.bookmarked,
+        pinned: viewer_state.pinned,
+        edited_at,
+        filtered,
+        quote_approval,
+        quote,
+    })
 }
 
 async fn local_status_response_viewer_state(
@@ -1215,31 +1280,62 @@ async fn build_remote_status_response_inner(
     }
 
     let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
+    let details = load_remote_status_response_details(
+        db,
+        config,
+        viewer,
+        status,
+        actor,
+        &response.uri,
+        filter_matcher,
+        counts_preload,
+        quote_counts_preload,
+        viewer_state_preload,
+        poll_preload,
+        edit_updated_at_preload,
+        remote_attachments,
+        include_quote,
+    )
+    .await?;
+    response.apply_remote_details(details);
+    Ok(response)
+}
+
+async fn load_remote_status_response_details(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &RemoteStatusRow,
+    actor: &RemoteActorRow,
+    status_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
+    poll_preload: Option<&RemoteMastodonPollResponsePreload>,
+    edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
+    remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
+    include_quote: bool,
+) -> Result<RemoteStatusResponseDetails> {
     let text_content = strip_html_tags(&status.content_html);
     let remote_attachments = match remote_attachments {
         Some(attachments) => attachments,
         None => find_remote_status_attachments_by_status_id(db, &status.id).await?,
     };
-    response.card = build_remote_status_card_value(&text_content, &remote_attachments);
-    response.media_attachments = remote_media_attachment_values(&remote_attachments);
-    response.mentions = build_status_mentions(db, config, &text_content).await?;
+    let card = build_remote_status_card_value(&text_content, &remote_attachments);
+    let media_attachments = remote_media_attachment_values(&remote_attachments);
+    let mentions = build_status_mentions(db, config, &text_content).await?;
     let (favourites_count, reblogs_count) =
         remote_status_counts(db, counts_preload, &status.id).await?;
-    response.favourites_count = favourites_count;
-    response.reblogs_count = reblogs_count;
-    response.quotes_count = status_quotes_count(db, quote_counts_preload, &response.uri).await?;
+    let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
     let viewer_state =
         remote_status_response_viewer_state(db, viewer, status, actor, viewer_state_preload)
             .await?;
-    response.favourited = viewer_state.favourited;
-    response.reblogged = viewer_state.reblogged;
-    response.bookmarked = viewer_state.bookmarked;
-    response.muted = viewer_state.muted;
-    response.poll = match poll_preload {
+    let poll = match poll_preload {
         Some(preload) => preload.poll_response(&status.id),
         None => load_remote_mastodon_poll_response(db, status, viewer).await?,
     };
-    response.edited_at = match edit_updated_at_preload {
+    let edited_at = match edit_updated_at_preload {
         Some(preload) => preload.updated_at(&status.id).map(ToOwned::to_owned),
         None => {
             if has_remote_status_edit_snapshots(db, &status.id).await? {
@@ -1249,12 +1345,12 @@ async fn build_remote_status_response_inner(
             }
         }
     };
-    response.filtered =
+    let filtered =
         remote_status_filtered_for_viewer(db, viewer, status, &text_content, filter_matcher)
             .await?;
-    response.quote_approval = Some(build_remote_quote_approval(status));
-    if include_quote {
-        response.quote = build_quoted_status_value(
+    let quote_approval = Some(build_remote_quote_approval(status));
+    let quote = if include_quote {
+        build_quoted_status_value(
             db,
             config,
             viewer,
@@ -1264,9 +1360,28 @@ async fn build_remote_status_response_inner(
             filter_matcher,
             counts_preload,
         )
-        .await?;
-    }
-    Ok(response)
+        .await?
+    } else {
+        None
+    };
+
+    Ok(RemoteStatusResponseDetails {
+        media_attachments,
+        card,
+        poll,
+        mentions,
+        favourites_count,
+        reblogs_count,
+        quotes_count,
+        favourited: viewer_state.favourited,
+        reblogged: viewer_state.reblogged,
+        muted: viewer_state.muted,
+        bookmarked: viewer_state.bookmarked,
+        edited_at,
+        filtered,
+        quote_approval,
+        quote,
+    })
 }
 
 async fn remote_status_response_viewer_state(
@@ -1345,18 +1460,27 @@ async fn build_local_quoted_status_document(
     counts_preload: Option<&StatusCountsPreload>,
 ) -> Result<Option<serde_json::Value>> {
     if let Some(local_status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? {
-        let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
+        let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
+        else {
             return Ok(None);
         };
-        if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
+        let super::ResolvedLocalStatusResponseSubject::Loaded(subject) = subject else {
             return Ok(Some(unauthorized_quote_document()));
-        }
-        let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+        };
+        let super::LoadedLocalStatusResponseSubject {
+            status: local_status,
+            account: local_account,
+            preload:
+                super::LocalStatusResponsePreload {
+                    media,
+                    in_reply_to_account_id,
+                },
+        } = subject;
         let mut response = MastodonStatusResponse::from_row(
             &local_status,
             &local_account,
             config,
-            load_in_reply_to_account_id(db, &local_status).await?,
+            in_reply_to_account_id,
             media,
         );
         response.card = build_status_card_value(&local_status._text_content);
@@ -1650,14 +1774,22 @@ async fn build_local_reblog_embedded_response(
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
-    let Some(local_account) = find_account_by_id(db, &local_status.account_id).await? else {
+    let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
+    else {
         return Ok(None);
     };
-    if !can_view_local_status(db, &local_status, viewer, &local_account).await? {
+    let super::ResolvedLocalStatusResponseSubject::Loaded(subject) = subject else {
         return Ok(None);
-    }
-
-    let media = find_media_attachments_by_status_id(db, &local_status.id).await?;
+    };
+    let super::LoadedLocalStatusResponseSubject {
+        status: local_status,
+        account: local_account,
+        preload:
+            super::LocalStatusResponsePreload {
+                media,
+                in_reply_to_account_id,
+            },
+    } = subject;
     Ok(Some(
         Box::pin(build_local_status_response_inner(
             db,
@@ -1665,7 +1797,7 @@ async fn build_local_reblog_embedded_response(
             viewer,
             &local_status,
             &local_account,
-            load_in_reply_to_account_id(db, &local_status).await?,
+            in_reply_to_account_id,
             media,
             filter_matcher,
             counts_preload,

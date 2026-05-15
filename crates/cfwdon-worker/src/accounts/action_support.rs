@@ -1,8 +1,9 @@
 use crate::{
-    AppConfig, D1Database, Error, FollowAccountRequest, FormEntry, LocalAccount, Result, actor_url,
-    parse_optional_bool, send_push_notification,
+    AccountReference, AppConfig, D1Database, Error, FollowAccountRequest, FormEntry, LocalAccount,
+    Request, ResolvedRelationshipTarget, Response, Result, RouteContext, SocialActionError,
+    actor_url, parse_optional_bool, require_authenticated_local_account, resolve_account_reference,
+    send_push_notification,
 };
-use worker::Request;
 use worker::d1::D1Type;
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -238,6 +239,89 @@ fn serialize_follow_languages(request: &FollowAccountRequest) -> Result<Option<S
 
 fn bool_d1(value: bool) -> D1Type<'static> {
     D1Type::Integer(if value { 1 } else { 0 })
+}
+
+pub(crate) struct ResolvedSocialActionContext {
+    pub(crate) db: D1Database,
+    pub(crate) config: AppConfig,
+    pub(crate) viewer: LocalAccount,
+    pub(crate) target_account_id: Option<String>,
+    pub(crate) target_id: String,
+    pub(crate) target_actor_uri: String,
+}
+
+impl ResolvedSocialActionContext {
+    pub(crate) fn relationship_target(&self) -> ResolvedRelationshipTarget<'_> {
+        ResolvedRelationshipTarget {
+            viewer: &self.viewer,
+            target_account_id: self.target_account_id.as_deref(),
+            target_id: &self.target_id,
+            target_actor_uri: &self.target_actor_uri,
+        }
+    }
+}
+
+pub(crate) enum SocialActionContextError {
+    NotFound,
+    Worker(Error),
+}
+
+impl From<Error> for SocialActionContextError {
+    fn from(error: Error) -> Self {
+        Self::Worker(error)
+    }
+}
+
+pub(crate) async fn resolve_social_action_context(
+    req: &Request,
+    ctx: &RouteContext<()>,
+) -> std::result::Result<Option<ResolvedSocialActionContext>, SocialActionContextError> {
+    let config = crate::load_config(ctx);
+    let target_account_id = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Ok(None),
+    };
+    let (target_account_id, target_id, target_actor_uri) =
+        match resolve_account_reference(&db, &target_account_id).await? {
+            Some(AccountReference::Local(target)) => (
+                Some(target.id.clone()),
+                target.id,
+                actor_url(&config, &target.username),
+            ),
+            Some(AccountReference::Remote(actor)) => (
+                None,
+                crate::remote_account_rest_id(&actor.actor_uri),
+                actor.actor_uri,
+            ),
+            None => return Err(SocialActionContextError::NotFound),
+        };
+    Ok(Some(ResolvedSocialActionContext {
+        db,
+        config,
+        viewer,
+        target_account_id,
+        target_id,
+        target_actor_uri,
+    }))
+}
+
+pub(crate) fn social_action_usecase_response<T: serde::Serialize>(
+    result: std::result::Result<T, SocialActionError>,
+) -> Result<Response> {
+    match result {
+        Ok(value) => Response::from_json(&value),
+        Err(SocialActionError::FollowRequired) => Response::error(
+            "Validation failed: You must be already following the person you want to endorse",
+            422,
+        ),
+        Err(SocialActionError::Worker(error)) => Err(error),
+    }
 }
 
 fn local_follow_upsert_bindings(draft: &LocalFollowUpsertDraft) -> [D1Type<'_>; 7] {

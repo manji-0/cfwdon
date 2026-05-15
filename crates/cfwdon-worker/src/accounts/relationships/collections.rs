@@ -44,6 +44,13 @@ pub(crate) struct CollectionAccountEntry {
     pub(crate) account: MastodonAccountResponse,
 }
 
+pub(crate) struct CursorAccountCollection {
+    pub(crate) first_cursor: Option<i64>,
+    pub(crate) last_cursor: Option<i64>,
+    pub(crate) has_next_page: bool,
+    pub(crate) accounts: Vec<MastodonAccountResponse>,
+}
+
 pub(crate) fn finalize_collection_response(
     req: &Request,
     limit: u32,
@@ -71,6 +78,47 @@ pub(crate) fn finalize_collection_response(
         .map(|entry| entry.account)
         .collect::<Vec<_>>();
 
+    finalize_cursor_collection_response(
+        req,
+        limit,
+        max_id,
+        since_id,
+        first_id,
+        last_id,
+        has_next_page,
+        response,
+    )
+}
+
+pub(crate) fn finalize_cursor_account_collection(
+    req: &Request,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    collection: CursorAccountCollection,
+) -> Result<Response> {
+    finalize_cursor_collection_response(
+        req,
+        limit,
+        max_id,
+        since_id,
+        collection.first_cursor,
+        collection.last_cursor,
+        collection.has_next_page,
+        collection.accounts,
+    )
+}
+
+pub(crate) fn finalize_cursor_collection_response(
+    req: &Request,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    first_id: Option<i64>,
+    last_id: Option<i64>,
+    has_next_page: bool,
+    response: Vec<MastodonAccountResponse>,
+) -> Result<Response> {
     let mut builder = Response::builder();
     if let Some(link_header) = build_internal_cursor_link_header(
         req,

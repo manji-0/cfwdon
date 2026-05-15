@@ -1,11 +1,10 @@
 use super::{
-    Request, Response, Result, RouteContext, build_local_status_response,
-    build_remote_status_response, can_view_local_status, delete_bookmark_by_target_uri,
-    find_account_by_id, find_authenticated_local_account, find_media_attachments_by_status_id,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
-    is_public_activitypub_visibility, list_bookmarks_for_account, load_config,
-    load_in_reply_to_account_id, local_status_target_uri, resolve_action_status,
-    status_id_from_context, upsert_bookmark_local_status, upsert_bookmark_remote_status,
+    Request, Response, Result, RouteContext, build_loaded_local_status_response,
+    build_remote_status_response, build_saved_status_collection_response, can_view_local_status,
+    delete_bookmark_by_target_uri, is_public_activitypub_visibility, list_bookmarks_for_account,
+    local_status_target_uri, resolve_action_status, resolve_authenticated_status_action_context,
+    resolve_authenticated_status_viewer_context, upsert_bookmark_local_status,
+    upsert_bookmark_remote_status,
 };
 use serde::Deserialize;
 
@@ -21,38 +20,36 @@ pub(crate) struct BookmarksQuery {
 }
 
 pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
+        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+            return Response::error("missing status id route parameter", 400);
+        }
+        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+            return Response::error("Cloudflare Access authentication required", 401);
+        }
     };
-    let action_query: crate::StatusActionQuery = req.query().unwrap_or_default();
-    if action_query.uri.is_some()
-        && crate::normalized_action_uri(action_query.uri.as_deref()).is_none()
-    {
-        return Response::error("uri query parameter must not be empty", 400);
-    }
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
+    let viewer = &action.auth.viewer;
 
-    match resolve_action_status(&db, &config, &status_id, action_query.uri.as_deref()).await? {
+    match resolve_action_status(
+        &action.auth.db,
+        &action.auth.config,
+        &action.status_id,
+        action.action_uri.as_deref(),
+    )
+    .await?
+    {
         Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
+            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
                 return Response::error("status not found", 404);
             }
-            upsert_bookmark_local_status(&db, &viewer.id, &status).await?;
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-            let response = build_local_status_response(
-                &db,
-                &config,
-                Some(&viewer),
+            upsert_bookmark_local_status(&action.auth.db, &viewer.id, &status).await?;
+            let response = build_loaded_local_status_response(
+                &action.auth.db,
+                &action.auth.config,
+                Some(viewer),
                 &status,
                 &account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
             )
             .await?;
             Response::from_json(&response)
@@ -61,9 +58,15 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            upsert_bookmark_remote_status(&db, &viewer.id, &status).await?;
-            let response =
-                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
+            upsert_bookmark_remote_status(&action.auth.db, &viewer.id, &status).await?;
+            let response = build_remote_status_response(
+                &action.auth.db,
+                &action.auth.config,
+                Some(viewer),
+                &status,
+                &actor,
+            )
+            .await?;
             Response::from_json(&response)
         }
         None => Response::error("status not found", 404),
@@ -71,39 +74,41 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
 }
 
 pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
+        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+            return Response::error("missing status id route parameter", 400);
+        }
+        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+            return Response::error("Cloudflare Access authentication required", 401);
+        }
     };
-    let action_query: crate::StatusActionQuery = req.query().unwrap_or_default();
-    if action_query.uri.is_some()
-        && crate::normalized_action_uri(action_query.uri.as_deref()).is_none()
-    {
-        return Response::error("uri query parameter must not be empty", 400);
-    }
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
-    };
+    let viewer = &action.auth.viewer;
 
-    match resolve_action_status(&db, &config, &status_id, action_query.uri.as_deref()).await? {
+    match resolve_action_status(
+        &action.auth.db,
+        &action.auth.config,
+        &action.status_id,
+        action.action_uri.as_deref(),
+    )
+    .await?
+    {
         Some(crate::ResolvedActionStatus::Local(status, account)) => {
-            if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
+            if !can_view_local_status(&action.auth.db, &status, Some(viewer), &account).await? {
                 return Response::error("status not found", 404);
             }
-            delete_bookmark_by_target_uri(&db, &viewer.id, &local_status_target_uri(&status))
-                .await?;
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-            let response = build_local_status_response(
-                &db,
-                &config,
-                Some(&viewer),
+            delete_bookmark_by_target_uri(
+                &action.auth.db,
+                &viewer.id,
+                &local_status_target_uri(&status),
+            )
+            .await?;
+            let response = build_loaded_local_status_response(
+                &action.auth.db,
+                &action.auth.config,
+                Some(viewer),
                 &status,
                 &account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
             )
             .await?;
             Response::from_json(&response)
@@ -112,9 +117,15 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            delete_bookmark_by_target_uri(&db, &viewer.id, &status.object_uri).await?;
-            let response =
-                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
+            delete_bookmark_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri).await?;
+            let response = build_remote_status_response(
+                &action.auth.db,
+                &action.auth.config,
+                Some(viewer),
+                &status,
+                &actor,
+            )
+            .await?;
             Response::from_json(&response)
         }
         None => Response::error("status not found", 404),
@@ -122,61 +133,23 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
 }
 
 pub(crate) async fn bookmarks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
     let query: BookmarksQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+    let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
+        return Response::error("Cloudflare Access authentication required", 401);
     };
 
-    let mut entries = Vec::new();
-    for entry in list_bookmarks_for_account(&db, &viewer.id, limit.saturating_mul(3)).await? {
-        if let Some(status_id) = entry.status_id.as_deref()
-            && let Some(status) = find_status_by_id(&db, status_id).await?
-            && let Some(account) = find_account_by_id(&db, &status.account_id).await?
-        {
-            if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
-                continue;
-            }
-            let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-            let response = build_local_status_response(
-                &db,
-                &config,
-                Some(&viewer),
-                &status,
-                &account,
-                load_in_reply_to_account_id(&db, &status).await?,
-                media,
-            )
-            .await?;
-            entries.push((
-                entry.created_at,
-                serde_json::to_value(response).unwrap_or_default(),
-            ));
-            continue;
-        }
-
-        if let Some(remote_status_id) = entry.remote_status_id.as_deref()
-            && let Some(status) = find_remote_status_by_id(&db, remote_status_id).await?
-            && let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await?
-        {
-            let response =
-                build_remote_status_response(&db, &config, Some(&viewer), &status, &actor).await?;
-            entries.push((
-                entry.created_at,
-                serde_json::to_value(response).unwrap_or_default(),
-            ));
-        }
-    }
-
-    entries.sort_by(|left, right| right.0.cmp(&left.0));
-    Response::from_json(
-        &entries
-            .into_iter()
-            .map(|(_, value)| value)
-            .take(limit as usize)
-            .collect::<Vec<_>>(),
+    let bookmark_entries =
+        list_bookmarks_for_account(&auth.db, &auth.viewer.id, limit.saturating_mul(3)).await?;
+    build_saved_status_collection_response(
+        &auth.db,
+        &auth.config,
+        &auth.viewer,
+        &bookmark_entries,
+        limit,
+        |entry| &entry.created_at,
+        |entry| entry.status_id.as_deref(),
+        |entry| entry.remote_status_id.as_deref(),
     )
+    .await
 }

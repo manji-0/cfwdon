@@ -1,8 +1,7 @@
 use crate::{
-    AccountReference, Request, Response, Result, RouteContext, actor_url,
-    build_relationship_for_target, delete_follow_by_target, follow_remote_account, load_config,
-    parse_follow_account_request, require_authenticated_local_account, resolve_account_reference,
-    unfollow_remote_account, upsert_local_follow,
+    FollowActionError, Request, Response, Result, RouteContext, follow_account_usecase,
+    load_config, parse_follow_account_request, require_authenticated_local_account,
+    unfollow_account_usecase,
 };
 use worker::Error;
 
@@ -27,29 +26,13 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    match resolve_account_reference(&db, &target_account_id).await? {
-        Some(AccountReference::Local(target)) => {
-            if follower.id == target.id {
-                return Response::error("cannot follow your own account", 422);
-            }
-
-            upsert_local_follow(&db, &config, &follower, &target, &request).await?;
-            let relationship = build_relationship_for_target(
-                &db,
-                &config,
-                &follower,
-                &target.id,
-                &actor_url(&config, &target.username),
-            )
-            .await?;
-            Response::from_json(&relationship)
+    match follow_account_usecase(&db, &config, &follower, &target_account_id, &request).await {
+        Ok(relationship) => Response::from_json(&relationship),
+        Err(FollowActionError::NotFound) => Response::error("account not found", 404),
+        Err(FollowActionError::CannotFollowSelf) => {
+            Response::error("cannot follow your own account", 422)
         }
-        Some(AccountReference::Remote(actor)) => {
-            let relationship =
-                follow_remote_account(&db, &config, &follower, &actor, &request).await?;
-            Response::from_json(&relationship)
-        }
-        None => Response::error("account not found", 404),
+        Err(FollowActionError::Worker(error)) => Err(error),
     }
 }
 
@@ -66,24 +49,12 @@ pub(crate) async fn unfollow_account(req: Request, ctx: RouteContext<()>) -> Res
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    match resolve_account_reference(&db, &target_account_id).await? {
-        Some(AccountReference::Local(target)) => {
-            let target_actor_uri = actor_url(&config, &target.username);
-            delete_follow_by_target(&db, &follower.id, &target_actor_uri).await?;
-            let relationship = build_relationship_for_target(
-                &db,
-                &config,
-                &follower,
-                &target.id,
-                &target_actor_uri,
-            )
-            .await?;
-            Response::from_json(&relationship)
+    match unfollow_account_usecase(&db, &config, &follower, &target_account_id).await {
+        Ok(relationship) => Response::from_json(&relationship),
+        Err(FollowActionError::NotFound) => Response::error("account not found", 404),
+        Err(FollowActionError::CannotFollowSelf) => {
+            Response::error("cannot follow your own account", 422)
         }
-        Some(AccountReference::Remote(actor)) => {
-            let relationship = unfollow_remote_account(&db, &config, &follower, &actor).await?;
-            Response::from_json(&relationship)
-        }
-        None => Response::error("account not found", 404),
+        Err(FollowActionError::Worker(error)) => Err(error),
     }
 }

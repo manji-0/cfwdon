@@ -1,13 +1,12 @@
 use super::{
     AppConfig, D1Database, LocalAccount, MastodonContextResponse, MastodonStatusResponse,
-    RemoteActorRow, RemoteStatusRow, build_local_status_response, build_remote_status_response,
-    context_descendant_max_depth, extract_remote_note_object, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_account_by_id, find_media_attachments_by_status_id,
+    RemoteActorRow, RemoteStatusRow, build_loaded_local_status_response,
+    build_remote_status_response, context_descendant_max_depth, extract_remote_note_object,
+    fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
     find_remote_actor_by_actor_uri, find_remote_status_by_object_uri, find_status_by_ap_id,
     find_status_by_id, is_public_activitypub_visibility, list_direct_remote_replies_by_uri,
-    load_in_reply_to_account_id, resolve_remote_status_by_url, trim_context_ancestors,
-    trim_context_descendants, upsert_remote_actor, upsert_remote_status,
-    visibility_from_activitypub_object,
+    resolve_remote_status_by_url, trim_context_ancestors, trim_context_descendants,
+    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
 };
 use std::collections::HashSet;
 use worker::Result;
@@ -76,19 +75,8 @@ async fn collect_ancestors_for_remote_root(
                 if !is_public_activitypub_visibility(&status.visibility) {
                     break;
                 }
-                let media = find_media_attachments_by_status_id(db, &status.id).await?;
-                let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
                 ancestors.push(
-                    build_local_status_response(
-                        db,
-                        config,
-                        viewer,
-                        &status,
-                        &owner,
-                        in_reply_to_account_id,
-                        media,
-                    )
-                    .await?,
+                    build_loaded_local_status_response(db, config, viewer, &status, &owner).await?,
                 );
                 current_local = match status.in_reply_to_id.as_deref() {
                     Some(parent_id) => find_status_by_id(db, parent_id).await?,

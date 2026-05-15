@@ -1,9 +1,8 @@
 use super::{
     AppConfig, D1Database, LocalAccount, MastodonContextResponse, MastodonStatusResponse,
-    StatusRow, actor_url, build_local_status_response, build_remote_status_response,
-    can_view_local_status, context_descendant_max_depth, find_account_by_id,
-    find_media_attachments_by_status_id, find_status_by_id, is_public_activitypub_visibility,
-    list_direct_local_replies, list_direct_remote_replies_by_uri, load_in_reply_to_account_id,
+    StatusRow, actor_url, build_loaded_local_status_response, build_remote_status_response,
+    can_view_local_status, context_descendant_max_depth, find_account_by_id, find_status_by_id,
+    is_public_activitypub_visibility, list_direct_local_replies, list_direct_remote_replies_by_uri,
     trim_context_ancestors, trim_context_descendants,
 };
 use std::collections::HashSet;
@@ -74,20 +73,8 @@ pub(crate) async fn build_local_status_context(
         if !can_view_local_status(db, &status, viewer, &owner).await? {
             break;
         }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
-        ancestors.push(
-            build_local_status_response(
-                db,
-                config,
-                viewer,
-                &status,
-                &owner,
-                in_reply_to_account_id,
-                media,
-            )
-            .await?,
-        );
+        ancestors
+            .push(build_loaded_local_status_response(db, config, viewer, &status, &owner).await?);
         current = status.in_reply_to_id.clone();
     }
     ancestors.reverse();
@@ -192,20 +179,9 @@ async fn append_local_child_descendants(
         if !can_view_local_status(db, &status, viewer, &owner).await? {
             continue;
         }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
         descendants.push((
             status.created_at.clone(),
-            build_local_status_response(
-                db,
-                config,
-                viewer,
-                &status,
-                &owner,
-                in_reply_to_account_id,
-                media,
-            )
-            .await?,
+            build_loaded_local_status_response(db, config, viewer, &status, &owner).await?,
         ));
         queued_local_nodes.push(LocalContextQueueNode {
             status_id: status.id.clone(),

@@ -1,6 +1,5 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, load_config,
-    require_authenticated_local_account,
+    Error, Request, Response, Result, RouteContext, resolve_authenticated_notification_context,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -120,14 +119,11 @@ pub(crate) async fn notifications_policy_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+    let Some(auth) = resolve_authenticated_notification_context(&req, &ctx).await? else {
+        return Response::error("Cloudflare Access authentication required", 401);
     };
 
-    let row = load_notification_policy_row(&db, &viewer.id).await?;
+    let row = load_notification_policy_row(&auth.db, &auth.viewer.id).await?;
     Response::from_json(&build_notification_policy_document(&row))
 }
 
@@ -135,15 +131,12 @@ pub(crate) async fn update_notifications_policy_response(
     req: &mut Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+    let Some(auth) = resolve_authenticated_notification_context(req, &ctx).await? else {
+        return Response::error("Cloudflare Access authentication required", 401);
     };
 
     let update = parse_update_notification_policy_request(req).await?;
-    let current = load_notification_policy_row(&db, &viewer.id).await?;
+    let current = load_notification_policy_row(&auth.db, &auth.viewer.id).await?;
     let next = NotificationPolicyRow {
         for_not_following: match update.for_not_following.as_deref() {
             Some(value) => normalize_policy_value(value, "for_not_following")?,
@@ -168,15 +161,16 @@ pub(crate) async fn update_notifications_policy_response(
     };
 
     let bindings = [
-        D1Type::Text(viewer.id.as_str()),
+        D1Type::Text(auth.viewer.id.as_str()),
         D1Type::Text(next.for_not_following.as_str()),
         D1Type::Text(next.for_not_followers.as_str()),
         D1Type::Text(next.for_new_accounts.as_str()),
         D1Type::Text(next.for_private_mentions.as_str()),
         D1Type::Text(next.for_limited_accounts.as_str()),
     ];
-    db.prepare(
-        "INSERT INTO notification_policies (
+    auth.db
+        .prepare(
+            "INSERT INTO notification_policies (
             account_id,
             for_not_following,
             for_not_followers,
@@ -194,10 +188,10 @@ pub(crate) async fn update_notifications_policy_response(
             for_private_mentions = excluded.for_private_mentions,
             for_limited_accounts = excluded.for_limited_accounts,
             updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
     Response::from_json(&build_notification_policy_document(&next))
 }

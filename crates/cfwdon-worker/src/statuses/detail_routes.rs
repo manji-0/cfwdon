@@ -1,19 +1,19 @@
 use super::{
     Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
     build_activitypub_note, build_finished_context_async_refresh_header,
-    build_local_status_context, build_local_status_response, build_remote_status_context,
-    build_remote_status_response, cache_status_api_response, cached_status_api_response,
-    can_view_local_status, find_account_by_id, find_account_by_username,
-    find_authenticated_local_account, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, is_public_activitypub_visibility,
-    list_local_favourite_account_ids_for_remote_status,
+    build_loaded_local_status_response, build_local_status_context, build_local_status_response,
+    build_remote_status_context, build_remote_status_response, cache_status_api_response,
+    cached_status_api_response, can_view_local_status, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
+    is_public_activitypub_visibility, list_local_favourite_account_ids_for_remote_status,
     list_local_favourite_account_ids_for_status, list_local_reblog_account_ids_for_remote_status,
     list_local_reblog_account_ids_for_status, list_remote_favourite_actor_uris_for_status,
     list_remote_reblog_actor_uris_for_status, list_remote_status_edit_snapshots,
-    load_account_stats, load_config, load_in_reply_to_account_id, load_remote_status_updated_at,
-    remote_account_rest_id, status_id_from_context, strip_html_tags,
+    load_account_stats, load_config, load_local_status_response_preload,
+    load_remote_status_updated_at, remote_account_rest_id, resolve_local_status_response_subject,
+    status_id_from_context, strip_html_tags,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -25,9 +25,34 @@ struct StatusInteractionAccountsQuery {
     limit: Option<u32>,
 }
 
+#[derive(Clone, Copy)]
+enum StatusInteractionKind {
+    Reblogged,
+    Favourited,
+}
+
 pub(crate) enum ResolvedStatus {
     Local(crate::StatusRow),
     Remote(crate::RemoteStatusRow),
+}
+
+enum LoadedStatusApiSubject {
+    Local(super::LoadedLocalStatusResponseSubject),
+    Remote {
+        status: crate::RemoteStatusRow,
+        actor: crate::RemoteActorRow,
+    },
+}
+
+struct StatusDetailBaseContext {
+    config: cfwdon_core::AppConfig,
+    db: worker::D1Database,
+    status_id: String,
+}
+
+struct StatusDetailRequestContext {
+    base: StatusDetailBaseContext,
+    viewer: Option<crate::LocalAccount>,
 }
 
 #[derive(Debug, Serialize)]
@@ -482,6 +507,33 @@ pub(crate) async fn resolve_status_reference(
     Ok(None)
 }
 
+fn resolve_status_detail_base_context(
+    ctx: &RouteContext<()>,
+) -> Result<Option<StatusDetailBaseContext>> {
+    let status_id = match status_id_from_context(ctx) {
+        Ok(status_id) => status_id,
+        Err(_) => return Ok(None),
+    };
+    let config = load_config(ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    Ok(Some(StatusDetailBaseContext {
+        config,
+        db,
+        status_id,
+    }))
+}
+
+async fn resolve_status_detail_request_context(
+    req: &Request,
+    ctx: &RouteContext<()>,
+) -> Result<Option<StatusDetailRequestContext>> {
+    let Some(base) = resolve_status_detail_base_context(ctx)? else {
+        return Ok(None);
+    };
+    let viewer = find_authenticated_local_account(req, &base.db, &base.config).await?;
+    Ok(Some(StatusDetailRequestContext { base, viewer }))
+}
+
 async fn build_local_interaction_account_responses(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
@@ -580,38 +632,59 @@ async fn build_remote_interaction_account_responses(
     Ok(responses)
 }
 
-pub(crate) async fn status_reblogged_by_response(
+async fn status_interaction_accounts_response(
     req: Request,
     ctx: RouteContext<()>,
+    kind: StatusInteractionKind,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_base_context(&ctx)? else {
+        return Response::error("missing status id route parameter", 400);
+    };
+    let Some(status) =
+        resolve_status_reference(&detail.db, &detail.config, &detail.status_id).await?
+    else {
+        return Response::error("status not found", 404);
     };
     let query: StatusInteractionAccountsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).min(80);
-
-    let db = ctx.d1(&config.database_binding)?;
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
-        return Response::error("status not found", 404);
-    };
 
     let mut responses = match status {
         ResolvedStatus::Local(status) => {
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            let local_accounts =
-                list_local_reblog_account_ids_for_status(&db, &status.id, limit).await?;
-            let mut responses =
-                build_local_interaction_account_responses(&db, &config, &local_accounts).await?;
+            let local_accounts = match kind {
+                StatusInteractionKind::Reblogged => {
+                    list_local_reblog_account_ids_for_status(&detail.db, &status.id, limit).await?
+                }
+                StatusInteractionKind::Favourited => {
+                    list_local_favourite_account_ids_for_status(&detail.db, &status.id, limit)
+                        .await?
+                }
+            };
+            let mut responses = build_local_interaction_account_responses(
+                &detail.db,
+                &detail.config,
+                &local_accounts,
+            )
+            .await?;
             if responses.len() < limit as usize {
                 let remaining = limit.saturating_sub(responses.len() as u32);
-                let remote_actor_uris =
-                    list_remote_reblog_actor_uris_for_status(&db, &status.id, remaining).await?;
+                let remote_actor_uris = match kind {
+                    StatusInteractionKind::Reblogged => {
+                        list_remote_reblog_actor_uris_for_status(&detail.db, &status.id, remaining)
+                            .await?
+                    }
+                    StatusInteractionKind::Favourited => {
+                        list_remote_favourite_actor_uris_for_status(
+                            &detail.db, &status.id, remaining,
+                        )
+                        .await?
+                    }
+                };
                 responses.extend(
-                    build_remote_interaction_account_responses(&db, &remote_actor_uris).await?,
+                    build_remote_interaction_account_responses(&detail.db, &remote_actor_uris)
+                        .await?,
                 );
             }
             responses
@@ -620,62 +693,38 @@ pub(crate) async fn status_reblogged_by_response(
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            let local_accounts =
-                list_local_reblog_account_ids_for_remote_status(&db, &status.id, limit).await?;
-            build_local_interaction_account_responses(&db, &config, &local_accounts).await?
+            let local_accounts = match kind {
+                StatusInteractionKind::Reblogged => {
+                    list_local_reblog_account_ids_for_remote_status(&detail.db, &status.id, limit)
+                        .await?
+                }
+                StatusInteractionKind::Favourited => {
+                    list_local_favourite_account_ids_for_remote_status(
+                        &detail.db, &status.id, limit,
+                    )
+                    .await?
+                }
+            };
+            build_local_interaction_account_responses(&detail.db, &detail.config, &local_accounts)
+                .await?
         }
     };
     responses.truncate(limit as usize);
     Response::from_json(&responses)
 }
 
+pub(crate) async fn status_reblogged_by_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    status_interaction_accounts_response(req, ctx, StatusInteractionKind::Reblogged).await
+}
+
 pub(crate) async fn status_favourited_by_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
-    };
-    let query: StatusInteractionAccountsQuery = req.query().unwrap_or_default();
-    let limit = query.limit.unwrap_or(40).min(80);
-
-    let db = ctx.d1(&config.database_binding)?;
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
-        return Response::error("status not found", 404);
-    };
-
-    let mut responses = match status {
-        ResolvedStatus::Local(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
-            let local_accounts =
-                list_local_favourite_account_ids_for_status(&db, &status.id, limit).await?;
-            let mut responses =
-                build_local_interaction_account_responses(&db, &config, &local_accounts).await?;
-            if responses.len() < limit as usize {
-                let remaining = limit.saturating_sub(responses.len() as u32);
-                let remote_actor_uris =
-                    list_remote_favourite_actor_uris_for_status(&db, &status.id, remaining).await?;
-                responses.extend(
-                    build_remote_interaction_account_responses(&db, &remote_actor_uris).await?,
-                );
-            }
-            responses
-        }
-        ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
-                return Response::error("status not found", 404);
-            }
-            let local_accounts =
-                list_local_favourite_account_ids_for_remote_status(&db, &status.id, limit).await?;
-            build_local_interaction_account_responses(&db, &config, &local_accounts).await?
-        }
-    };
-    responses.truncate(limit as usize);
-    Response::from_json(&responses)
+    status_interaction_accounts_response(req, ctx, StatusInteractionKind::Favourited).await
 }
 
 pub(crate) async fn status_object_response(
@@ -709,8 +758,8 @@ pub(crate) async fn status_object_response(
     }
 
     if status_object_prefers_html(&req)? {
-        let attachments = find_media_attachments_by_status_id(&db, &status.id).await?;
-        return status_object_html_response(&config, &account, &status, &attachments);
+        let preload = load_local_status_response_preload(&db, &status).await?;
+        return status_object_html_response(&config, &account, &status, &preload.media);
     }
 
     let note = build_activitypub_note(&db, &config, &account, &status, true).await?;
@@ -771,14 +820,13 @@ fn status_object_html_response(
 
 pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let _ = req;
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_base_context(&ctx)? else {
+        return Response::error("missing status id route parameter", 400);
     };
 
-    let db = ctx.d1(&config.database_binding)?;
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
+    let Some(status) =
+        resolve_status_reference(&detail.db, &detail.config, &detail.status_id).await?
+    else {
         return Response::error("status not found", 404);
     };
 
@@ -793,7 +841,8 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            let attachments = find_remote_status_attachments_by_status_id(&db, &status.id).await?;
+            let attachments =
+                find_remote_status_attachments_by_status_id(&detail.db, &status.id).await?;
             build_remote_status_card_value(&strip_html_tags(&status.content_html), &attachments)
         }
     }
@@ -804,119 +853,170 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
 }
 
 pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_request_context(&req, &ctx).await? else {
+        return Response::error("missing status id route parameter", 400);
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    if viewer.is_none()
-        && let Some(response) = cached_status_api_response(&ctx, &status_id).await?
+    if detail.viewer.is_none()
+        && let Some(response) = cached_status_api_response(&ctx, &detail.base.status_id).await?
     {
         return Ok(response);
     }
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
-        return Response::error("status not found", 404);
-    };
-
-    let Some(response) = build_status_api_document(&db, &config, viewer.as_ref(), status).await?
+    let Some(status) =
+        resolve_status_reference(&detail.base.db, &detail.base.config, &detail.base.status_id)
+            .await?
     else {
         return Response::error("status not found", 404);
     };
-    if viewer.is_none() {
-        cache_status_api_response(&ctx, &status_id, &response).await?;
+
+    let Some(subject) = load_status_api_subject(
+        &detail.base.db,
+        &detail.base.config,
+        detail.viewer.as_ref(),
+        status,
+    )
+    .await?
+    else {
+        return Response::error("status not found", 404);
+    };
+    let response = build_status_api_document(
+        &detail.base.db,
+        &detail.base.config,
+        detail.viewer.as_ref(),
+        subject,
+    )
+    .await?;
+    if detail.viewer.is_none() {
+        cache_status_api_response(&ctx, &detail.base.status_id, &response).await?;
     }
     Response::from_json(&response)
+}
+
+async fn load_status_api_subject(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: Option<&crate::LocalAccount>,
+    status: ResolvedStatus,
+) -> Result<Option<LoadedStatusApiSubject>> {
+    match status {
+        ResolvedStatus::Local(status) => {
+            load_local_status_api_subject(db, config, viewer, status).await
+        }
+        ResolvedStatus::Remote(status) => load_remote_status_api_subject(db, status).await,
+    }
 }
 
 async fn build_status_api_document(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&crate::LocalAccount>,
-    status: ResolvedStatus,
-) -> Result<Option<crate::MastodonStatusResponse>> {
-    match status {
-        ResolvedStatus::Local(status) => {
-            build_local_status_api_document(db, config, viewer, &status).await
+    subject: LoadedStatusApiSubject,
+) -> Result<crate::MastodonStatusResponse> {
+    match subject {
+        LoadedStatusApiSubject::Local(subject) => {
+            let super::LoadedLocalStatusResponseSubject {
+                status,
+                account,
+                preload:
+                    super::LocalStatusResponsePreload {
+                        in_reply_to_account_id,
+                        media,
+                    },
+            } = subject;
+            build_local_status_response(
+                db,
+                config,
+                viewer,
+                &status,
+                &account,
+                in_reply_to_account_id,
+                media,
+            )
+            .await
         }
-        ResolvedStatus::Remote(status) => {
-            build_remote_status_api_document(db, config, viewer, &status).await
+        LoadedStatusApiSubject::Remote { status, actor } => {
+            build_remote_status_response(db, config, viewer, &status, &actor).await
         }
     }
 }
 
-async fn build_local_status_api_document(
+async fn load_local_status_api_subject(
     db: &worker::D1Database,
-    config: &cfwdon_core::AppConfig,
+    _config: &cfwdon_core::AppConfig,
     viewer: Option<&crate::LocalAccount>,
-    status: &crate::StatusRow,
-) -> Result<Option<crate::MastodonStatusResponse>> {
-    let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-        return Ok(None);
-    };
-    if !can_view_local_status(db, status, viewer, &account).await? {
-        return Ok(None);
+    status: crate::StatusRow,
+) -> Result<Option<LoadedStatusApiSubject>> {
+    match resolve_local_status_response_subject(db, viewer, status).await? {
+        Some(super::ResolvedLocalStatusResponseSubject::Loaded(subject)) => {
+            Ok(Some(LoadedStatusApiSubject::Local(subject)))
+        }
+        Some(super::ResolvedLocalStatusResponseSubject::Hidden) | None => Ok(None),
     }
-
-    let media = find_media_attachments_by_status_id(db, &status.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(db, status).await?;
-    Ok(Some(
-        build_local_status_response(
-            db,
-            config,
-            viewer,
-            status,
-            &account,
-            in_reply_to_account_id,
-            media,
-        )
-        .await?,
-    ))
 }
 
-async fn build_remote_status_api_document(
+async fn load_remote_status_api_subject(
     db: &worker::D1Database,
-    config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
-    status: &crate::RemoteStatusRow,
-) -> Result<Option<crate::MastodonStatusResponse>> {
+    status: crate::RemoteStatusRow,
+) -> Result<Option<LoadedStatusApiSubject>> {
     if !is_public_activitypub_visibility(&status.visibility) {
         return Ok(None);
     }
     let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
         return Ok(None);
     };
-    Ok(Some(
-        build_remote_status_response(db, config, viewer, status, &actor).await?,
-    ))
+    Ok(Some(LoadedStatusApiSubject::Remote { status, actor }))
+}
+
+async fn context_response_with_async_refresh<T: Serialize>(
+    db: &worker::D1Database,
+    status_id: &str,
+    viewer_present: bool,
+    context: &T,
+) -> Result<Response> {
+    let mut response = Response::from_json(context)?;
+    if viewer_present {
+        let header = build_finished_context_async_refresh_header(db, status_id).await?;
+        response
+            .headers_mut()
+            .set("Mastodon-Async-Refresh", &header)?;
+    }
+    Ok(response)
+}
+
+fn status_history_response_from_parts(
+    response: crate::MastodonStatusResponse,
+    created_at: String,
+    snapshots: Vec<serde_json::Value>,
+) -> Result<Response> {
+    let mut current_revision = serde_json::to_value(response).unwrap_or(serde_json::json!({}));
+    current_revision["created_at"] = serde_json::json!(created_at);
+    let mut history = vec![normalize_status_history_entry(current_revision)];
+    history.extend(snapshots);
+    Response::from_json(&history)
 }
 
 pub(crate) async fn status_source_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_request_context(&req, &ctx).await? else {
+        return Response::error("missing status id route parameter", 400);
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let Some(viewer) = find_authenticated_local_account(&req, &db, &config).await? else {
+    let Some(viewer) = detail.viewer else {
         return Response::error("Cloudflare Access authentication required", 401);
     };
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
+    let Some(status) =
+        resolve_status_reference(&detail.base.db, &detail.base.config, &detail.base.status_id)
+            .await?
+    else {
         return Response::error("status not found", 404);
     };
     let ResolvedStatus::Local(status) = status else {
         return Response::error("status source is only available for local statuses", 403);
     };
-    let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+    let Some(account) = find_account_by_id(&detail.base.db, &status.account_id).await? else {
         return Response::error("status not found", 404);
     };
-    if !can_view_local_status(&db, &status, Some(&viewer), &account).await? {
+    if !can_view_local_status(&detail.base.db, &status, Some(&viewer), &account).await? {
         return Response::error("status not found", 404);
     }
 
@@ -931,56 +1031,67 @@ pub(crate) async fn status_context_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_request_context(&req, &ctx).await? else {
+        return Response::error("missing status id route parameter", 400);
     };
-
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
+    let Some(status) =
+        resolve_status_reference(&detail.base.db, &detail.base.config, &detail.base.status_id)
+            .await?
+    else {
         return Response::error("status not found", 404);
     };
 
     match status {
         ResolvedStatus::Local(status) => {
-            let Some(owner) = find_account_by_id(&db, &status.account_id).await? else {
+            let Some(owner) = find_account_by_id(&detail.base.db, &status.account_id).await? else {
                 return Response::error("status not found", 404);
             };
-            if !can_view_local_status(&db, &status, viewer.as_ref(), &owner).await? {
+            if !can_view_local_status(&detail.base.db, &status, detail.viewer.as_ref(), &owner)
+                .await?
+            {
                 return Response::error("status not found", 404);
             }
 
-            let context =
-                build_local_status_context(&db, &config, viewer.as_ref(), &status, &owner).await?;
-            let mut response = Response::from_json(&context)?;
-            if viewer.is_some() {
-                let header = build_finished_context_async_refresh_header(&db, &status.id).await?;
-                response
-                    .headers_mut()
-                    .set("Mastodon-Async-Refresh", &header)?;
-            }
-            Ok(response)
+            let context = build_local_status_context(
+                &detail.base.db,
+                &detail.base.config,
+                detail.viewer.as_ref(),
+                &status,
+                &owner,
+            )
+            .await?;
+            context_response_with_async_refresh(
+                &detail.base.db,
+                &status.id,
+                detail.viewer.is_some(),
+                &context,
+            )
+            .await
         }
         ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(&status.visibility) {
                 return Response::error("status not found", 404);
             }
-            let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
+            let Some(actor) =
+                find_remote_actor_by_actor_uri(&detail.base.db, &status.actor_uri).await?
+            else {
                 return Response::error("status not found", 404);
             };
-            let context =
-                build_remote_status_context(&db, &config, viewer.as_ref(), &status, &actor).await?;
-            let mut response = Response::from_json(&context)?;
-            if viewer.is_some() {
-                let header = build_finished_context_async_refresh_header(&db, &status.id).await?;
-                response
-                    .headers_mut()
-                    .set("Mastodon-Async-Refresh", &header)?;
-            }
-            Ok(response)
+            let context = build_remote_status_context(
+                &detail.base.db,
+                &detail.base.config,
+                detail.viewer.as_ref(),
+                &status,
+                &actor,
+            )
+            .await?;
+            context_response_with_async_refresh(
+                &detail.base.db,
+                &status.id,
+                detail.viewer.is_some(),
+                &context,
+            )
+            .await
         }
     }
 }
@@ -989,63 +1100,64 @@ pub(crate) async fn status_history_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let config = load_config(&ctx);
-    let status_id = match status_id_from_context(&ctx) {
-        Ok(status_id) => status_id,
-        Err(_) => return Response::error("missing status id route parameter", 400),
+    let Some(detail) = resolve_status_detail_request_context(&req, &ctx).await? else {
+        return Response::error("missing status id route parameter", 400);
     };
 
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-
-    if let Some(status) = find_status_by_id(&db, &status_id).await? {
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+    if let Some(status) = find_status_by_id(&detail.base.db, &detail.base.status_id).await? {
+        let Some(account) = find_account_by_id(&detail.base.db, &status.account_id).await? else {
             return Response::error("status not found", 404);
         };
-        if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
+        if !can_view_local_status(&detail.base.db, &status, detail.viewer.as_ref(), &account)
+            .await?
+        {
             return Response::error("status not found", 404);
         }
 
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-        let response = build_local_status_response(
-            &db,
-            &config,
-            viewer.as_ref(),
+        let response = build_loaded_local_status_response(
+            &detail.base.db,
+            &detail.base.config,
+            detail.viewer.as_ref(),
             &status,
             &account,
-            in_reply_to_account_id,
-            media,
         )
         .await?;
-        let mut current_revision = serde_json::to_value(response).unwrap_or(serde_json::json!({}));
-        let created_at = crate::load_status_updated_at(&db, &status.id)
+        let created_at = crate::load_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.created_at.clone());
-        current_revision["created_at"] = serde_json::json!(created_at);
-        let mut history = vec![normalize_status_history_entry(current_revision)];
-        history.extend(crate::list_status_edit_snapshots(&db, &status.id).await?);
-        return Response::from_json(&history);
+        return status_history_response_from_parts(
+            response,
+            created_at,
+            crate::list_status_edit_snapshots(&detail.base.db, &status.id).await?,
+        );
     }
 
-    if let Some(status) = find_remote_status_by_id(&db, &status_id).await? {
+    if let Some(status) = find_remote_status_by_id(&detail.base.db, &detail.base.status_id).await? {
         if !is_public_activitypub_visibility(&status.visibility) {
             return Response::error("status not found", 404);
         }
-        let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await? else {
+        let Some(actor) =
+            find_remote_actor_by_actor_uri(&detail.base.db, &status.actor_uri).await?
+        else {
             return Response::error("status not found", 404);
         };
 
-        let response =
-            build_remote_status_response(&db, &config, viewer.as_ref(), &status, &actor).await?;
-        let mut current_revision = serde_json::to_value(response).unwrap_or(serde_json::json!({}));
-        let created_at = load_remote_status_updated_at(&db, &status.id)
+        let response = build_remote_status_response(
+            &detail.base.db,
+            &detail.base.config,
+            detail.viewer.as_ref(),
+            &status,
+            &actor,
+        )
+        .await?;
+        let created_at = load_remote_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.published_at.clone());
-        current_revision["created_at"] = serde_json::json!(created_at);
-        let mut history = vec![normalize_status_history_entry(current_revision)];
-        history.extend(list_remote_status_edit_snapshots(&db, &status.id).await?);
-        return Response::from_json(&history);
+        return status_history_response_from_parts(
+            response,
+            created_at,
+            list_remote_status_edit_snapshots(&detail.base.db, &status.id).await?,
+        );
     }
 
     Response::error("status not found", 404)

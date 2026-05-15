@@ -1,7 +1,7 @@
 use super::query::parse_relationship_query_ids;
 use crate::AccountReference;
 use crate::{
-    MastodonAccountResponse, Request, Response, Result, RouteContext,
+    LocalAccount, MastodonAccountResponse, RemoteActorRow, Request, Response, Result, RouteContext,
     find_authenticated_local_account, list_familiar_local_accounts_for_local_target,
     list_familiar_local_accounts_for_remote_target, list_familiar_remote_actors_for_local_target,
     load_account_stats, load_config, resolve_account_reference,
@@ -18,6 +18,54 @@ fn build_familiar_followers_entry(
         "id": account_id,
         "accounts": accounts,
     })
+}
+
+fn push_unique_familiar_account(
+    accounts: &mut Vec<MastodonAccountResponse>,
+    seen_ids: &mut HashSet<String>,
+    response_account: MastodonAccountResponse,
+) {
+    if seen_ids.insert(response_account.id.clone()) {
+        accounts.push(response_account);
+    }
+}
+
+async fn append_familiar_local_accounts(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    accounts: &mut Vec<MastodonAccountResponse>,
+    seen_ids: &mut HashSet<String>,
+    local_accounts: Vec<LocalAccount>,
+) -> Result<()> {
+    for account in local_accounts {
+        let stats = load_account_stats(db, &account.id).await?;
+        push_unique_familiar_account(
+            accounts,
+            seen_ids,
+            MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+        );
+        if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn append_familiar_remote_actors(
+    accounts: &mut Vec<MastodonAccountResponse>,
+    seen_ids: &mut HashSet<String>,
+    remote_actors: Vec<RemoteActorRow>,
+) {
+    for actor in remote_actors {
+        push_unique_familiar_account(
+            accounts,
+            seen_ids,
+            MastodonAccountResponse::from_remote_actor(&actor),
+        );
+        if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
+            break;
+        }
+    }
 }
 
 pub(crate) async fn familiar_followers_response(
@@ -38,62 +86,47 @@ pub(crate) async fn familiar_followers_response(
 
         match resolve_account_reference(&db, &requested_account_id).await? {
             Some(AccountReference::Local(target)) => {
-                for account in list_familiar_local_accounts_for_local_target(
+                append_familiar_local_accounts(
                     &db,
-                    &viewer.id,
-                    &target.id,
-                    FAMILIAR_FOLLOWERS_LIMIT as u32,
-                )
-                .await?
-                {
-                    let stats = load_account_stats(&db, &account.id).await?;
-                    let response_account =
-                        MastodonAccountResponse::from_account_with_stats(&account, &config, &stats);
-                    if seen_ids.insert(response_account.id.clone()) {
-                        accounts.push(response_account);
-                    }
-                    if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
-                        break;
-                    }
-                }
-                if accounts.len() < FAMILIAR_FOLLOWERS_LIMIT {
-                    for actor in list_familiar_remote_actors_for_local_target(
+                    &config,
+                    &mut accounts,
+                    &mut seen_ids,
+                    list_familiar_local_accounts_for_local_target(
                         &db,
                         &viewer.id,
                         &target.id,
-                        (FAMILIAR_FOLLOWERS_LIMIT - accounts.len()) as u32,
+                        FAMILIAR_FOLLOWERS_LIMIT as u32,
                     )
-                    .await?
-                    {
-                        let response_account = MastodonAccountResponse::from_remote_actor(&actor);
-                        if seen_ids.insert(response_account.id.clone()) {
-                            accounts.push(response_account);
-                        }
-                        if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
-                            break;
-                        }
-                    }
+                    .await?,
+                )
+                .await?;
+                if accounts.len() < FAMILIAR_FOLLOWERS_LIMIT {
+                    let remaining = (FAMILIAR_FOLLOWERS_LIMIT - accounts.len()) as u32;
+                    append_familiar_remote_actors(
+                        &mut accounts,
+                        &mut seen_ids,
+                        list_familiar_remote_actors_for_local_target(
+                            &db, &viewer.id, &target.id, remaining,
+                        )
+                        .await?,
+                    );
                 }
             }
             Some(AccountReference::Remote(actor)) => {
-                for account in list_familiar_local_accounts_for_remote_target(
+                append_familiar_local_accounts(
                     &db,
-                    &viewer.id,
-                    &actor.actor_uri,
-                    FAMILIAR_FOLLOWERS_LIMIT as u32,
+                    &config,
+                    &mut accounts,
+                    &mut seen_ids,
+                    list_familiar_local_accounts_for_remote_target(
+                        &db,
+                        &viewer.id,
+                        &actor.actor_uri,
+                        FAMILIAR_FOLLOWERS_LIMIT as u32,
+                    )
+                    .await?,
                 )
-                .await?
-                {
-                    let stats = load_account_stats(&db, &account.id).await?;
-                    let response_account =
-                        MastodonAccountResponse::from_account_with_stats(&account, &config, &stats);
-                    if seen_ids.insert(response_account.id.clone()) {
-                        accounts.push(response_account);
-                    }
-                    if accounts.len() >= FAMILIAR_FOLLOWERS_LIMIT {
-                        break;
-                    }
-                }
+                .await?;
             }
             None => {}
         }

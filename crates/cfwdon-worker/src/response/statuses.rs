@@ -5,6 +5,43 @@ use crate::{
     tag_rest_id, tag_url,
 };
 
+pub(crate) struct LocalStatusResponseDetails {
+    pub(crate) application: Option<serde_json::Value>,
+    pub(crate) card: Option<serde_json::Value>,
+    pub(crate) poll: Option<serde_json::Value>,
+    pub(crate) mentions: Vec<serde_json::Value>,
+    pub(crate) favourites_count: u64,
+    pub(crate) reblogs_count: u64,
+    pub(crate) quotes_count: u64,
+    pub(crate) favourited: bool,
+    pub(crate) reblogged: bool,
+    pub(crate) muted: bool,
+    pub(crate) bookmarked: bool,
+    pub(crate) pinned: bool,
+    pub(crate) edited_at: Option<String>,
+    pub(crate) filtered: Vec<serde_json::Value>,
+    pub(crate) quote_approval: Option<serde_json::Value>,
+    pub(crate) quote: Option<serde_json::Value>,
+}
+
+pub(crate) struct RemoteStatusResponseDetails {
+    pub(crate) media_attachments: Vec<serde_json::Value>,
+    pub(crate) card: Option<serde_json::Value>,
+    pub(crate) poll: Option<serde_json::Value>,
+    pub(crate) mentions: Vec<serde_json::Value>,
+    pub(crate) favourites_count: u64,
+    pub(crate) reblogs_count: u64,
+    pub(crate) quotes_count: u64,
+    pub(crate) favourited: bool,
+    pub(crate) reblogged: bool,
+    pub(crate) muted: bool,
+    pub(crate) bookmarked: bool,
+    pub(crate) edited_at: Option<String>,
+    pub(crate) filtered: Vec<serde_json::Value>,
+    pub(crate) quote_approval: Option<serde_json::Value>,
+    pub(crate) quote: Option<serde_json::Value>,
+}
+
 impl MastodonStatusResponse {
     pub(crate) fn from_row(
         row: &StatusRow,
@@ -153,5 +190,42 @@ impl MastodonStatusResponse {
             filtered: Vec::new(),
             quote: None,
         }
+    }
+
+    pub(crate) fn apply_local_details(&mut self, details: LocalStatusResponseDetails) {
+        self.application = details.application;
+        self.card = details.card;
+        self.poll = details.poll;
+        self.mentions = details.mentions;
+        self.favourites_count = details.favourites_count;
+        self.reblogs_count = details.reblogs_count;
+        self.quotes_count = details.quotes_count;
+        self.favourited = details.favourited;
+        self.reblogged = details.reblogged;
+        self.muted = details.muted;
+        self.bookmarked = details.bookmarked;
+        self.pinned = details.pinned;
+        self.edited_at = details.edited_at;
+        self.filtered = details.filtered;
+        self.quote_approval = details.quote_approval;
+        self.quote = details.quote;
+    }
+
+    pub(crate) fn apply_remote_details(&mut self, details: RemoteStatusResponseDetails) {
+        self.media_attachments = details.media_attachments;
+        self.card = details.card;
+        self.poll = details.poll;
+        self.mentions = details.mentions;
+        self.favourites_count = details.favourites_count;
+        self.reblogs_count = details.reblogs_count;
+        self.quotes_count = details.quotes_count;
+        self.favourited = details.favourited;
+        self.reblogged = details.reblogged;
+        self.muted = details.muted;
+        self.bookmarked = details.bookmarked;
+        self.edited_at = details.edited_at;
+        self.filtered = details.filtered;
+        self.quote_approval = details.quote_approval;
+        self.quote = details.quote;
     }
 }

@@ -19,12 +19,14 @@ mod reblog_store;
 mod reblogs;
 mod remote_context;
 mod remote_mutations;
+mod repository;
 mod request_parsing;
 mod response_builders;
 mod store;
 mod store_local;
 mod store_remote;
 mod thread_mutes;
+mod usecases;
 pub(crate) use action_resolution::*;
 pub(crate) use bookmark_store::*;
 pub(crate) use bookmarks::*;
@@ -43,12 +45,14 @@ pub(crate) use reblog_store::*;
 pub(crate) use reblogs::*;
 pub(crate) use remote_context::*;
 pub(crate) use remote_mutations::*;
+pub(crate) use repository::*;
 pub(crate) use request_parsing::*;
 pub(crate) use response_builders::*;
 pub(crate) use store::*;
 pub(crate) use store_local::*;
 pub(crate) use store_remote::*;
 pub(crate) use thread_mutes::*;
+pub(crate) use usecases::*;
 
 use cfwdon_domain::{LocalAccount, StatusDraft, Visibility};
 
@@ -285,8 +289,8 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Err(message) => return Response::error(message, 422),
     };
     let in_reply_to_account_id = match draft.in_reply_to_id.as_deref() {
-        Some(status_id) => match find_status_by_id(&db, status_id).await? {
-            Some(status) => Some(status.account_id),
+        Some(status_id) => match find_local_status_owner_id(&db, status_id).await? {
+            Some(account_id) => Some(account_id),
             None => return Response::error("in_reply_to_id references unknown local status", 422),
         },
         None => None,
@@ -325,77 +329,17 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         );
     }
 
-    let status = insert_status(
+    let response = create_published_status_and_response(
         &db,
         &config,
-        &access.account,
-        &draft,
-        access.application_id,
-        quote_of_uri.as_deref(),
-    )
-    .await?;
-    ensure_direct_conversation_for_status(&db, &config, &access.account, &draft, &status).await?;
-    attach_media_to_status(&db, &status.id, &pending_media).await?;
-    let attached_media = find_media_attachments_by_status_id(&db, &status.id).await?;
-    enqueue_outbox_activity(&db, &config, &access.account, &status).await?;
-    let _ = send_status_quote_notification(&db, &config, &status).await;
-    if let Some(recipient_account_id) = in_reply_to_account_id.as_deref()
-        && recipient_account_id != access.account.id
-    {
-        let _ = send_push_notification(
-            &db,
-            &config,
-            recipient_account_id,
-            "status",
-            serde_json::json!({
-                "account_id": access.account.id,
-                "status_id": status.id,
-                "in_reply_to_account_id": recipient_account_id,
-            }),
-        )
-        .await;
-    }
-    for handle in extract_mentions_from_text(&status._text_content, &config) {
-        if let Some(account) = find_account_by_username(&db, &handle.username).await?
-            && account.id != access.account.id
-        {
-            let _ = send_push_notification(
-                &db,
-                &config,
-                &account.id,
-                "mention",
-                serde_json::json!({
-                    "account_id": access.account.id,
-                    "status_id": status.id,
-                }),
-            )
-            .await;
-        }
-    }
-    let status_ids = vec![status.id.clone()];
-    let quote_count_uris = vec![local_status_ap_id(&config, &access.account, &status)];
-    let status_refs = vec![&status];
-    let (counts_preload, quote_counts_preload, poll_preload, viewer_state_preload, filter_matcher) =
-        futures_util::try_join!(
-            preload_status_counts(&db, &status_ids, &[]),
-            preload_status_quote_counts(&db, &quote_count_uris),
-            preload_mastodon_poll_responses(&db, &status_ids, Some(&access.account)),
-            preload_local_status_viewer_state(&db, &access.account.id, &status_refs, None),
-            load_account_filter_matcher(&db, &access.account.id),
-        )?;
-    let response = build_local_status_response_with_quote_count_preloads(
-        &db,
-        &config,
-        Some(&access.account),
-        &status,
-        &access.account,
-        in_reply_to_account_id,
-        attached_media,
-        Some(&filter_matcher),
-        Some(&counts_preload),
-        Some(&quote_counts_preload),
-        Some(&poll_preload),
-        Some(&viewer_state_preload),
+        CreatePublishedStatusInput {
+            account: &access.account,
+            application_id: access.application_id,
+            draft: &draft,
+            pending_media: &pending_media,
+            in_reply_to_account_id,
+            quote_of_uri: quote_of_uri.as_deref(),
+        },
     )
     .await?;
     invalidate_account_dynamic_public_cache(&ctx, &access.account.id, &access.account.username)
@@ -417,34 +361,18 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(deleted) = delete_owned_local_status(&db, &config, &requester, &status_id).await?
+    else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != requester.id {
-        return Response::error("status not found", 404);
-    }
-
-    let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-    let mut response = MastodonStatusResponse::from_deleted_row(
-        &status,
-        &requester,
-        &config,
-        in_reply_to_account_id,
-        media.clone(),
-    );
-    response.poll = load_mastodon_poll_response(&db, &status.id, Some(&requester)).await?;
-
-    enqueue_outbox_delete(&db, &config, &requester, &status).await?;
-    delete_status_by_id(&db, &status.id).await?;
-    invalidate_status_api_cache(&ctx, &status.id).await;
+    invalidate_status_api_cache(&ctx, &deleted.status_id).await;
     invalidate_account_dynamic_public_cache(&ctx, &requester.id, &requester.username).await;
     if query.delete_media.unwrap_or(false) {
         let bucket = ctx.bucket(&config.media_binding)?;
-        delete_media_attachments(&db, &bucket, &media).await?;
+        delete_media_attachments(&db, &bucket, &deleted.media).await?;
     }
 
-    Response::from_json(&response)
+    Response::from_json(&deleted.response)
 }
 
 pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -462,13 +390,13 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(status) = find_owned_local_status(&db, &status_id, &account.id).await? else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != account.id {
-        return Response::error("status not found", 404);
-    }
-    let current_media = find_media_attachments_by_status_id(&db, &status.id).await?;
+    let LocalStatusResponsePreload {
+        media: current_media,
+        in_reply_to_account_id: current_in_reply_to_account_id,
+    } = load_local_status_response_preload(&db, &status).await?;
 
     let next_text = request
         .status
@@ -532,102 +460,47 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         return Response::error("status must include text, media_ids, or poll", 422);
     }
     if !changed {
-        let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
         let response = build_local_status_response(
             &db,
             &config,
             Some(&account),
             &status,
             &account,
-            in_reply_to_account_id,
+            current_in_reply_to_account_id,
             current_media,
         )
         .await?;
         return Response::from_json(&response);
     }
 
-    let previous_in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-    let previous_response = build_local_status_response(
+    let updated = match apply_local_status_update(
         &db,
         &config,
-        Some(&account),
-        &status,
-        &account,
-        previous_in_reply_to_account_id,
-        current_media.clone(),
+        UpdateLocalStatusInput {
+            account: &account,
+            status: &status,
+            current_media: current_media.clone(),
+            current_in_reply_to_account_id,
+            next_text: &next_text,
+            next_spoiler_text: &next_spoiler_text,
+            next_sensitive,
+            next_language: next_language.as_deref(),
+            next_poll: next_poll.as_ref(),
+            requested_media: requested_media.as_deref(),
+            media_attributes: request.media_attributes.as_deref(),
+        },
     )
-    .await?;
-    let mut previous_snapshot =
-        serde_json::to_value(previous_response).unwrap_or_else(|_| serde_json::json!({}));
-    let revision_at = now_iso_string()?;
-    previous_snapshot["created_at"] = serde_json::json!(revision_at.clone());
-    let previous_snapshot = normalize_status_history_entry(previous_snapshot);
-    let previous_snapshot_json = serde_json::to_string(&previous_snapshot).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize status snapshot: {error}"))
-    })?;
-    insert_status_edit_snapshot(&db, &status.id, &previous_snapshot_json, &revision_at).await?;
-
-    let status = update_local_status(
-        &db,
-        &status,
-        &next_text,
-        &next_spoiler_text,
-        next_sensitive,
-        next_language.as_deref(),
-        &revision_at,
-    )
-    .await?;
-    if let Some(media) = requested_media.as_ref() {
-        replace_status_media(&db, &status.id, media).await?;
-    }
-    if let Some(poll) = next_poll.as_ref() {
-        replace_status_poll(&db, &status.id, poll, &revision_at).await?;
-    }
-    if let Some(attributes) = request.media_attributes.as_ref() {
-        let attached_media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        for (index, attribute) in attributes.iter().enumerate() {
-            let target_id = attribute
-                .id
-                .as_deref()
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-                .or_else(|| attached_media.get(index).map(|media| media.id.clone()));
-            let Some(target_id) = target_id else {
-                continue;
-            };
-            let Some(media) = attached_media.iter().find(|media| media.id == target_id) else {
-                return Response::error(
-                    format!("unknown media attachment in media_attributes: {target_id}"),
-                    422,
-                );
-            };
-            crate::apply_media_update(
-                &db,
-                media,
-                UpdateMediaRequest {
-                    description: attribute.description.clone(),
-                    focus: attribute.focus.clone(),
-                },
-            )
-            .await?;
+    .await
+    {
+        Ok(updated) => updated,
+        Err(worker::Error::RustError(message))
+            if message.starts_with("unknown media attachment in media_attributes:") =>
+        {
+            return Response::error(message, 422);
         }
-    }
-    enqueue_status_update_activity(&db, &config, &account, &status).await?;
-    let _ = send_status_update_notifications(&db, &config, &status).await;
-    invalidate_status_api_cache(&ctx, &status.id).await;
+        Err(error) => return Err(error),
+    };
+    invalidate_status_api_cache(&ctx, &updated.status_id).await;
 
-    let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(&db, &status).await?;
-    let response = build_local_status_response(
-        &db,
-        &config,
-        Some(&account),
-        &status,
-        &account,
-        in_reply_to_account_id,
-        media,
-    )
-    .await?;
-
-    Response::from_json(&response)
+    Response::from_json(&updated.response)
 }

@@ -1,7 +1,6 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_local_status_response,
-    can_view_local_status, find_account_by_id, find_media_attachments_by_status_id,
-    find_status_by_id, load_config, load_in_reply_to_account_id,
+    Error, Request, Response, Result, RouteContext, build_loaded_local_status_response,
+    can_view_local_status, find_account_by_id, find_status_by_id, load_config,
     require_authenticated_local_account,
 };
 use std::collections::HashSet;
@@ -139,18 +138,8 @@ pub(crate) async fn mute_status_response(req: Request, ctx: RouteContext<()>) ->
     }
 
     mute_thread_for_status(&db, &viewer.id, &status).await?;
-    let media = find_media_attachments_by_status_id(&db, &status.id).await?;
     Response::from_json(
-        &build_local_status_response(
-            &db,
-            &config,
-            Some(&viewer),
-            &status,
-            &author,
-            load_in_reply_to_account_id(&db, &status).await?,
-            media,
-        )
-        .await?,
+        &build_loaded_local_status_response(&db, &config, Some(&viewer), &status, &author).await?,
     )
 }
 
@@ -180,17 +169,7 @@ pub(crate) async fn unmute_status_response(
     }
 
     unmute_thread_for_status(&db, &viewer.id, &status).await?;
-    let media = find_media_attachments_by_status_id(&db, &status.id).await?;
     Response::from_json(
-        &build_local_status_response(
-            &db,
-            &config,
-            Some(&viewer),
-            &status,
-            &author,
-            load_in_reply_to_account_id(&db, &status).await?,
-            media,
-        )
-        .await?,
+        &build_loaded_local_status_response(&db, &config, Some(&viewer), &status, &author).await?,
     )
 }

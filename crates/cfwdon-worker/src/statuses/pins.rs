@@ -1,8 +1,7 @@
 use super::{
-    Request, Response, Result, RouteContext, build_local_status_response,
+    Request, Response, Result, RouteContext, build_loaded_local_status_response,
     enqueue_add_featured_status_activity, enqueue_remove_featured_status_activity,
-    find_media_attachments_by_status_id, find_status_by_id, load_config,
-    load_in_reply_to_account_id, require_authenticated_local_account,
+    find_status_by_id, load_config, require_authenticated_local_account,
 };
 use worker::d1::D1Type;
 
@@ -89,18 +88,7 @@ async fn pinned_status_response(
     let author = crate::find_account_by_id(db, &status.account_id)
         .await?
         .ok_or_else(|| worker::Error::RustError("status author not found".to_owned()))?;
-    let media = find_media_attachments_by_status_id(db, &status.id).await?;
-    let in_reply_to_account_id = load_in_reply_to_account_id(db, status).await?;
-    build_local_status_response(
-        db,
-        config,
-        Some(viewer),
-        status,
-        &author,
-        in_reply_to_account_id,
-        media,
-    )
-    .await
+    build_loaded_local_status_response(db, config, Some(viewer), status, &author).await
 }
 
 pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
