@@ -1,7 +1,6 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_loaded_local_status_response,
-    can_view_local_status, find_account_by_id, find_status_by_id, load_config,
-    require_authenticated_local_account,
+    Error, Request, Response, Result, RouteContext, build_local_status_response, find_status_by_id,
+    find_visible_local_status_response_subject, load_config, require_authenticated_local_account,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -127,20 +126,14 @@ pub(crate) async fn mute_status_response(req: Request, ctx: RouteContext<()>) ->
         Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(subject) =
+        find_visible_local_status_response_subject(&db, Some(&viewer), &status_id).await?
+    else {
         return Response::error("status not found", 404);
     };
-    let Some(author) = find_account_by_id(&db, &status.account_id).await? else {
-        return Response::error("status not found", 404);
-    };
-    if !can_view_local_status(&db, &status, Some(&viewer), &author).await? {
-        return Response::error("status not found", 404);
-    }
 
-    mute_thread_for_status(&db, &viewer.id, &status).await?;
-    Response::from_json(
-        &build_loaded_local_status_response(&db, &config, Some(&viewer), &status, &author).await?,
-    )
+    mute_thread_for_status(&db, &viewer.id, &subject.status).await?;
+    Response::from_json(&thread_mute_status_response(&db, &config, &viewer, subject).await?)
 }
 
 pub(crate) async fn unmute_status_response(
@@ -158,18 +151,35 @@ pub(crate) async fn unmute_status_response(
         Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(subject) =
+        find_visible_local_status_response_subject(&db, Some(&viewer), &status_id).await?
+    else {
         return Response::error("status not found", 404);
     };
-    let Some(author) = find_account_by_id(&db, &status.account_id).await? else {
-        return Response::error("status not found", 404);
-    };
-    if !can_view_local_status(&db, &status, Some(&viewer), &author).await? {
-        return Response::error("status not found", 404);
-    }
 
-    unmute_thread_for_status(&db, &viewer.id, &status).await?;
-    Response::from_json(
-        &build_loaded_local_status_response(&db, &config, Some(&viewer), &status, &author).await?,
+    unmute_thread_for_status(&db, &viewer.id, &subject.status).await?;
+    Response::from_json(&thread_mute_status_response(&db, &config, &viewer, subject).await?)
+}
+
+async fn thread_mute_status_response(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    viewer: &cfwdon_domain::LocalAccount,
+    subject: super::LoadedLocalStatusResponseSubject,
+) -> Result<crate::MastodonStatusResponse> {
+    let super::LoadedLocalStatusResponseSubject {
+        status,
+        account,
+        preload,
+    } = subject;
+    build_local_status_response(
+        db,
+        config,
+        Some(viewer),
+        &status,
+        &account,
+        preload.in_reply_to_account_id,
+        preload.media,
     )
+    .await
 }

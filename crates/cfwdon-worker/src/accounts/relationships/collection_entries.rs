@@ -28,31 +28,104 @@ async fn remote_follow_account_response(
     }
 }
 
+async fn local_follow_account_entry(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    cursor_id: i64,
+    created_at: &str,
+    account_id: &str,
+) -> Result<Option<CollectionAccountEntry>> {
+    let Some(account) = find_account_by_id(db, account_id).await? else {
+        return Ok(None);
+    };
+    let stats = load_account_stats(db, &account.id).await?;
+    Ok(Some(CollectionAccountEntry {
+        cursor_id,
+        created_at: created_at.to_owned(),
+        account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+    }))
+}
+
+async fn build_local_follow_entries<T, I, FCursorId, FCreatedAt, FAccountId>(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    entries: I,
+    cursor_id: FCursorId,
+    created_at: FCreatedAt,
+    account_id: FAccountId,
+) -> Result<Vec<CollectionAccountEntry>>
+where
+    I: IntoIterator<Item = T>,
+    FCursorId: Fn(&T) -> i64,
+    FCreatedAt: Fn(&T) -> &str,
+    FAccountId: Fn(&T) -> &str,
+{
+    let mut collected = Vec::new();
+    for entry in entries {
+        if let Some(account_entry) = local_follow_account_entry(
+            db,
+            config,
+            cursor_id(&entry),
+            created_at(&entry),
+            account_id(&entry),
+        )
+        .await?
+        {
+            collected.push(account_entry);
+        }
+    }
+    Ok(collected)
+}
+
+async fn append_remote_follow_entries<T, I, FCursorId, FCreatedAt, FActorUri>(
+    entries: &mut Vec<CollectionAccountEntry>,
+    db: &worker::D1Database,
+    records: I,
+    cursor_id: FCursorId,
+    created_at: FCreatedAt,
+    actor_uri: FActorUri,
+) -> Result<()>
+where
+    I: IntoIterator<Item = T>,
+    FCursorId: Fn(&T) -> i64,
+    FCreatedAt: Fn(&T) -> &str,
+    FActorUri: Fn(&T) -> &str,
+{
+    for record in records {
+        if let Some(account) = remote_follow_account_response(db, actor_uri(&record)).await? {
+            entries.push(CollectionAccountEntry {
+                cursor_id: cursor_id(&record),
+                created_at: created_at(&record).to_owned(),
+                account,
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn local_account_follower_entries(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Vec<CollectionAccountEntry>> {
-    let mut entries = Vec::new();
-    for follower in list_local_followers_for_account(db, account_id).await? {
-        if let Some(author) = find_account_by_id(db, &follower.account_id).await? {
-            let stats = load_account_stats(db, &author.id).await?;
-            entries.push(CollectionAccountEntry {
-                cursor_id: follower.cursor_id,
-                created_at: follower.created_at,
-                account: MastodonAccountResponse::from_account_with_stats(&author, config, &stats),
-            });
-        }
-    }
-    for follower in list_remote_followers_for_account(db, account_id).await? {
-        if let Some(account) = remote_follow_account_response(db, &follower.actor_uri).await? {
-            entries.push(CollectionAccountEntry {
-                cursor_id: follower.cursor_id,
-                created_at: follower.created_at,
-                account,
-            });
-        }
-    }
+    let mut entries = build_local_follow_entries(
+        db,
+        config,
+        list_local_followers_for_account(db, account_id).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.account_id,
+    )
+    .await?;
+    append_remote_follow_entries(
+        &mut entries,
+        db,
+        list_remote_followers_for_account(db, account_id).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.actor_uri,
+    )
+    .await?;
     Ok(entries)
 }
 
@@ -78,18 +151,15 @@ pub(crate) async fn remote_actor_follower_entries(
         return Ok(remote_entries);
     }
 
-    let mut entries = Vec::new();
-    for follower in list_local_followers_for_remote_actor(db, actor_uri).await? {
-        if let Some(account) = find_account_by_id(db, &follower.account_id).await? {
-            let stats = load_account_stats(db, &account.id).await?;
-            entries.push(CollectionAccountEntry {
-                cursor_id: follower.cursor_id,
-                created_at: follower.created_at,
-                account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
-            });
-        }
-    }
-    Ok(entries)
+    build_local_follow_entries(
+        db,
+        config,
+        list_local_followers_for_remote_actor(db, actor_uri).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.account_id,
+    )
+    .await
 }
 
 pub(crate) async fn local_account_following_entries(
@@ -97,26 +167,24 @@ pub(crate) async fn local_account_following_entries(
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Vec<CollectionAccountEntry>> {
-    let mut entries = Vec::new();
-    for followed in list_local_following_for_account(db, account_id).await? {
-        if let Some(target) = find_account_by_id(db, &followed.account_id).await? {
-            let stats = load_account_stats(db, &target.id).await?;
-            entries.push(CollectionAccountEntry {
-                cursor_id: followed.cursor_id,
-                created_at: followed.created_at,
-                account: MastodonAccountResponse::from_account_with_stats(&target, config, &stats),
-            });
-        }
-    }
-    for followed in list_remote_following_for_account(db, account_id).await? {
-        if let Some(account) = remote_follow_account_response(db, &followed.actor_uri).await? {
-            entries.push(CollectionAccountEntry {
-                cursor_id: followed.cursor_id,
-                created_at: followed.created_at,
-                account,
-            });
-        }
-    }
+    let mut entries = build_local_follow_entries(
+        db,
+        config,
+        list_local_following_for_account(db, account_id).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.account_id,
+    )
+    .await?;
+    append_remote_follow_entries(
+        &mut entries,
+        db,
+        list_remote_following_for_account(db, account_id).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.actor_uri,
+    )
+    .await?;
     Ok(entries)
 }
 
@@ -142,16 +210,13 @@ pub(crate) async fn remote_actor_following_entries(
         return Ok(remote_entries);
     }
 
-    let mut entries = Vec::new();
-    for followed in list_local_following_for_remote_actor(db, actor_uri).await? {
-        if let Some(account) = find_account_by_id(db, &followed.account_id).await? {
-            let stats = load_account_stats(db, &account.id).await?;
-            entries.push(CollectionAccountEntry {
-                cursor_id: followed.cursor_id,
-                created_at: followed.created_at,
-                account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
-            });
-        }
-    }
-    Ok(entries)
+    build_local_follow_entries(
+        db,
+        config,
+        list_local_following_for_remote_actor(db, actor_uri).await?,
+        |entry| entry.cursor_id,
+        |entry| &entry.created_at,
+        |entry| &entry.account_id,
+    )
+    .await
 }

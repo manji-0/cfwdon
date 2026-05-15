@@ -73,3 +73,36 @@ pub(crate) async fn resolve_local_status_response_subject(
         },
     )))
 }
+
+pub(crate) async fn load_visible_local_status_response_subject(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status: StatusRow,
+) -> Result<Option<LoadedLocalStatusResponseSubject>> {
+    match resolve_local_status_response_subject(db, viewer, status).await? {
+        Some(ResolvedLocalStatusResponseSubject::Loaded(subject)) => Ok(Some(subject)),
+        Some(ResolvedLocalStatusResponseSubject::Hidden) | None => Ok(None),
+    }
+}
+
+pub(crate) async fn find_visible_local_status_response_subject(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    status_id: &str,
+) -> Result<Option<LoadedLocalStatusResponseSubject>> {
+    let Some(status) = find_status_by_id(db, status_id).await? else {
+        return Ok(None);
+    };
+    load_visible_local_status_response_subject(db, viewer, status).await
+}
+
+pub(crate) async fn find_owned_local_status_response_subject(
+    db: &D1Database,
+    status_id: &str,
+    owner: &LocalAccount,
+) -> Result<Option<LoadedLocalStatusResponseSubject>> {
+    let Some(status) = find_owned_local_status(db, status_id, &owner.id).await? else {
+        return Ok(None);
+    };
+    load_visible_local_status_response_subject(db, Some(owner), status).await
+}

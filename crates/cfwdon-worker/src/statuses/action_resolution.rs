@@ -1,10 +1,11 @@
 use super::{
     AppConfig, LocalAccount, RemoteActorRow, RemoteStatusRow, Request, Response, Result,
-    RouteContext, StatusRow, build_loaded_local_status_response, build_remote_status_response,
-    can_view_local_status, find_account_by_id, find_authenticated_local_account,
-    find_local_status_by_object_uri, find_remote_actor_by_actor_uri, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, load_config,
-    resolve_remote_status_by_url, status_id_from_context,
+    RouteContext, StatusRow, build_local_status_response, build_remote_status_response,
+    find_account_by_id, find_authenticated_local_account, find_local_status_by_object_uri,
+    find_remote_actor_by_actor_uri, find_remote_status_by_id,
+    find_remote_status_by_url_or_object_uri, find_status_by_id,
+    find_visible_local_status_response_subject, load_config, resolve_remote_status_by_url,
+    status_id_from_context,
 };
 use serde::Deserialize;
 use worker::{D1Database, Error};
@@ -178,15 +179,25 @@ where
     let mut response_entries = Vec::new();
     for entry in entries {
         if let Some(local_status_id) = status_id(entry)
-            && let Some(status) = find_status_by_id(db, local_status_id).await?
-            && let Some(account) = find_account_by_id(db, &status.account_id).await?
+            && let Some(subject) =
+                find_visible_local_status_response_subject(db, Some(viewer), local_status_id)
+                    .await?
         {
-            if !can_view_local_status(db, &status, Some(viewer), &account).await? {
-                continue;
-            }
-            let response =
-                build_loaded_local_status_response(db, config, Some(viewer), &status, &account)
-                    .await?;
+            let super::LoadedLocalStatusResponseSubject {
+                status,
+                account,
+                preload,
+            } = subject;
+            let response = build_local_status_response(
+                db,
+                config,
+                Some(viewer),
+                &status,
+                &account,
+                preload.in_reply_to_account_id,
+                preload.media,
+            )
+            .await?;
             response_entries.push((
                 created_at(entry).to_owned(),
                 serde_json::to_value(response).unwrap_or_default(),

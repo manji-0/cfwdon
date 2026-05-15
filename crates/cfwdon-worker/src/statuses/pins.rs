@@ -1,7 +1,7 @@
 use super::{
-    Request, Response, Result, RouteContext, build_loaded_local_status_response,
+    Request, Response, Result, RouteContext, build_local_status_response,
     enqueue_add_featured_status_activity, enqueue_remove_featured_status_activity,
-    find_status_by_id, load_config, require_authenticated_local_account,
+    find_owned_local_status_response_subject, load_config, require_authenticated_local_account,
 };
 use worker::d1::D1Type;
 
@@ -83,12 +83,23 @@ async fn pinned_status_response(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
-    status: &crate::StatusRow,
+    subject: super::LoadedLocalStatusResponseSubject,
 ) -> Result<crate::MastodonStatusResponse> {
-    let author = crate::find_account_by_id(db, &status.account_id)
-        .await?
-        .ok_or_else(|| worker::Error::RustError("status author not found".to_owned()))?;
-    build_loaded_local_status_response(db, config, Some(viewer), status, &author).await
+    let super::LoadedLocalStatusResponseSubject {
+        status,
+        account,
+        preload,
+    } = subject;
+    build_local_status_response(
+        db,
+        config,
+        Some(viewer),
+        &status,
+        &account,
+        preload.in_reply_to_account_id,
+        preload.media,
+    )
+    .await
 }
 
 pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -103,16 +114,14 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
         Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(subject) = find_owned_local_status_response_subject(&db, &status_id, &viewer).await?
+    else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != viewer.id {
-        return Response::error("status not found", 404);
-    }
 
-    pin_local_status(&db, &viewer.id, &status.id).await?;
-    enqueue_add_featured_status_activity(&db, &config, &viewer, &status).await?;
-    Response::from_json(&pinned_status_response(&db, &config, &viewer, &status).await?)
+    pin_local_status(&db, &viewer.id, &subject.status.id).await?;
+    enqueue_add_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
+    Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
 }
 
 pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -127,14 +136,12 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
         Some(viewer) => viewer,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let Some(status) = find_status_by_id(&db, &status_id).await? else {
+    let Some(subject) = find_owned_local_status_response_subject(&db, &status_id, &viewer).await?
+    else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != viewer.id {
-        return Response::error("status not found", 404);
-    }
 
-    unpin_local_status(&db, &viewer.id, &status.id).await?;
-    enqueue_remove_featured_status_activity(&db, &config, &viewer, &status).await?;
-    Response::from_json(&pinned_status_response(&db, &config, &viewer, &status).await?)
+    unpin_local_status(&db, &viewer.id, &subject.status.id).await?;
+    enqueue_remove_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
+    Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
 }
