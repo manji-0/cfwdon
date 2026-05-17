@@ -110,18 +110,18 @@ pub(crate) async fn count_pending_follow_requests(
     db: &D1Database,
     account_id: &str,
 ) -> Result<u64> {
-    let local = count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM follows WHERE target_account_id = ?1 AND state = 'pending'",
-        account_id,
-    )
-    .await?;
-    let remote = count_rows(
-        db,
-        "SELECT COUNT(*) AS count FROM follow_requests WHERE account_id = ?1",
-        account_id,
-    )
-    .await?;
+    let (local, remote) = futures_util::try_join!(
+        count_rows(
+            db,
+            "SELECT COUNT(*) AS count FROM follows WHERE target_account_id = ?1 AND state = 'pending'",
+            account_id,
+        ),
+        count_rows(
+            db,
+            "SELECT COUNT(*) AS count FROM follow_requests WHERE account_id = ?1",
+            account_id,
+        ),
+    )?;
     Ok(local + remote)
 }
 

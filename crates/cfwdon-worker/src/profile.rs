@@ -141,10 +141,12 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
         Some(account) => account,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let stats = load_account_stats(&db, &account.id).await?;
-    let settings = load_account_profile_settings(&db, &account.id).await?;
-    let featured_tags = featured_tags_payload(&db, &config, &account).await?;
-    let follow_requests_count = count_pending_follow_requests(&db, &account.id).await?;
+    let (stats, settings, featured_tags, follow_requests_count) = futures_util::try_join!(
+        load_account_stats(&db, &account.id),
+        load_account_profile_settings(&db, &account.id),
+        featured_tags_payload(&db, &config, &account),
+        count_pending_follow_requests(&db, &account.id),
+    )?;
 
     Response::from_json(&build_credentials_document(
         &account,
