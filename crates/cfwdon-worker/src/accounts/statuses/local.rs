@@ -7,8 +7,8 @@ use crate::{
     can_view_local_status, find_media_attachments_by_status_ids, is_local_follower_authorized,
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
     load_account_filter_matcher, load_in_reply_to_account_ids, local_status_ap_id,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses, preload_status_counts,
-    preload_status_quote_counts,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
 };
 use worker::D1Database;
 
@@ -117,8 +117,10 @@ pub(crate) async fn local_account_statuses_response(
         quote_counts_preload,
         poll_preload,
         viewer_state_preload,
+        application_preload,
         mut media_by_status_id,
         in_reply_to_account_ids,
+        filter_matcher,
     ) = futures_util::try_join!(
         preload_status_counts(db, &status_ids, &[]),
         preload_status_quote_counts(db, &quote_uris),
@@ -131,13 +133,16 @@ pub(crate) async fn local_account_statuses_response(
                 None => Ok(Default::default()),
             }
         },
+        preload_status_applications(db, config, &status_refs),
         find_media_attachments_by_status_ids(db, &status_ids),
         load_in_reply_to_account_ids(db, &statuses),
+        async {
+            match viewer {
+                Some(viewer) => load_account_filter_matcher(db, &viewer.id).await.map(Some),
+                None => Ok(None),
+            }
+        },
     )?;
-    let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(db, &viewer.id).await?),
-        None => None,
-    };
     let mut response = Vec::new();
 
     for status in statuses.into_iter().take(limit as usize) {
@@ -172,6 +177,7 @@ pub(crate) async fn local_account_statuses_response(
                 Some(&quote_counts_preload),
                 Some(&poll_preload),
                 Some(&viewer_state_preload),
+                Some(&application_preload),
             )
             .await?,
         );

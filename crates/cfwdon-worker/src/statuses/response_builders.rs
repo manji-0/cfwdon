@@ -10,13 +10,14 @@ use super::{
     count_rows, effective_remote_status_quote_state, effective_status_quote_state,
     find_local_status_by_object_uri, find_oauth_app_by_id, find_oauth_apps_by_ids,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
-    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
-    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
-    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
-    is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
-    is_remote_status_reblogged_by, load_local_status_counts, load_local_status_response_preload,
-    load_mastodon_poll_response, load_remote_mastodon_poll_response, load_remote_status_counts,
-    load_remote_status_updated_at, load_status_filtered, load_status_updated_at,
+    find_remote_status_by_url_or_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids,
+    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
+    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
+    load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
+    load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
+    load_status_filtered, load_status_updated_at, local_status_identity_from_uri,
     local_status_target_uri, resolve_local_status_response_subject, strip_html_tags,
 };
 use cfwdon_domain::AccountHandle;
@@ -48,36 +49,91 @@ fn status_application_value(name: String, website: Option<String>) -> serde_json
 
 #[derive(Debug, Default)]
 pub(crate) struct StatusApplicationPreload {
+    requested_application_ids: HashSet<i64>,
     applications: HashMap<i64, serde_json::Value>,
 }
 
 impl StatusApplicationPreload {
-    fn application(&self, application_id: Option<i64>) -> Option<serde_json::Value> {
-        application_id.and_then(|id| self.applications.get(&id).cloned())
+    fn application(&self, application_id: Option<i64>) -> Option<Option<serde_json::Value>> {
+        let Some(application_id) = application_id else {
+            return Some(None);
+        };
+        if self.requested_application_ids.contains(&application_id) {
+            return Some(self.applications.get(&application_id).cloned());
+        }
+
+        None
+    }
+}
+
+fn collect_status_application_id(
+    application_ids: &mut Vec<i64>,
+    seen_application_ids: &mut HashSet<i64>,
+    status: &StatusRow,
+) {
+    if let Some(application_id) = status.application_id
+        && seen_application_ids.insert(application_id)
+    {
+        application_ids.push(application_id);
+    }
+}
+
+fn collect_local_reblog_target_refs(
+    config: &AppConfig,
+    status_ids: &mut Vec<String>,
+    ap_ids: &mut Vec<String>,
+    status: &StatusRow,
+) {
+    let Some(boost_of_uri) = status.boost_of_uri.as_deref() else {
+        return;
+    };
+    if let Some((_, status_id)) = local_status_identity_from_uri(config, boost_of_uri) {
+        status_ids.push(status_id);
+    } else {
+        ap_ids.push(boost_of_uri.to_owned());
     }
 }
 
 pub(crate) async fn preload_status_applications(
     db: &D1Database,
+    config: &AppConfig,
     statuses: &[&StatusRow],
 ) -> Result<StatusApplicationPreload> {
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
+    let mut application_ids = Vec::new();
+    let mut seen_application_ids = HashSet::new();
+    let mut reblog_target_status_ids = Vec::new();
+    let mut reblog_target_ap_ids = Vec::new();
     for status in statuses {
-        if let Some(application_id) = status.application_id
-            && seen.insert(application_id)
-        {
-            ids.push(application_id);
-        }
+        collect_status_application_id(&mut application_ids, &mut seen_application_ids, status);
+        collect_local_reblog_target_refs(
+            config,
+            &mut reblog_target_status_ids,
+            &mut reblog_target_ap_ids,
+            status,
+        );
     }
 
-    let applications = find_oauth_apps_by_ids(db, &ids)
+    let (reblog_targets_by_id, reblog_targets_by_ap_id) = futures_util::try_join!(
+        find_statuses_by_ids(db, &reblog_target_status_ids),
+        find_statuses_by_ap_ids(db, &reblog_target_ap_ids),
+    )?;
+    for status in reblog_targets_by_id
+        .iter()
+        .chain(reblog_targets_by_ap_id.iter())
+    {
+        collect_status_application_id(&mut application_ids, &mut seen_application_ids, status);
+    }
+
+    let applications = find_oauth_apps_by_ids(db, &application_ids)
         .await?
         .into_iter()
         .map(|app| (app.id, status_application_value(app.name, app.website)))
         .collect();
 
-    Ok(StatusApplicationPreload { applications })
+    Ok(StatusApplicationPreload {
+        requested_application_ids: seen_application_ids,
+        applications,
+    })
 }
 
 async fn local_status_edited_at(db: &D1Database, status: &StatusRow) -> Result<Option<String>> {
@@ -1021,6 +1077,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_local_status_response_with_timeline_preloads(
         db,
@@ -1035,7 +1092,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
         quote_counts_preload,
         poll_preload,
         viewer_state_preload,
-        None,
+        application_preload,
     )
     .await
 }
@@ -1152,10 +1209,11 @@ async fn load_local_status_response_details(
     application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<LocalStatusResponseDetails> {
-    let application = match application_preload {
-        Some(preload) => preload.application(status.application_id),
-        None => build_status_application(db, status.application_id).await?,
-    };
+    let application =
+        match application_preload.and_then(|preload| preload.application(status.application_id)) {
+            Some(application) => application,
+            None => build_status_application(db, status.application_id).await?,
+        };
     let card = build_status_card_value(&status._text_content);
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
     let mentions = build_status_mentions(db, config, &status._text_content).await?;
@@ -2017,6 +2075,57 @@ mod tests {
 
         assert_eq!(preload.count("https://example.test/statuses/1"), Some(0));
         assert_eq!(preload.count("https://example.test/statuses/2"), None);
+    }
+
+    #[test]
+    fn preloaded_status_application_distinguishes_absent_from_unknown() {
+        let application = serde_json::json!({
+            "name": "cfwdon",
+            "website": "https://apps.example/cfwdon",
+        });
+        let preload = StatusApplicationPreload {
+            requested_application_ids: HashSet::from([1, 2]),
+            applications: HashMap::from([(1, application.clone())]),
+        };
+
+        assert_eq!(preload.application(None), Some(None));
+        assert_eq!(preload.application(Some(1)), Some(Some(application)));
+        assert_eq!(preload.application(Some(2)), Some(None));
+        assert_eq!(preload.application(Some(3)), None);
+    }
+
+    #[test]
+    fn collect_status_application_id_deduplicates_ids() {
+        let mut status = status_row_fixture("status-1", None);
+        status.application_id = Some(7);
+        let mut application_ids = Vec::new();
+        let mut seen_application_ids = HashSet::new();
+
+        collect_status_application_id(&mut application_ids, &mut seen_application_ids, &status);
+        collect_status_application_id(&mut application_ids, &mut seen_application_ids, &status);
+
+        assert_eq!(application_ids, vec![7]);
+    }
+
+    #[test]
+    fn collect_local_reblog_target_refs_splits_local_urls_from_ap_ids() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let mut local_reblog = status_row_fixture("reblog-1", None);
+        local_reblog.boost_of_uri =
+            Some("https://social.example/users/Alice/statuses/status-1".to_owned());
+        let mut remote_reblog = status_row_fixture("reblog-2", None);
+        remote_reblog.boost_of_uri = Some("https://remote.example/statuses/status-2".to_owned());
+        let mut status_ids = Vec::new();
+        let mut ap_ids = Vec::new();
+
+        collect_local_reblog_target_refs(&config, &mut status_ids, &mut ap_ids, &local_reblog);
+        collect_local_reblog_target_refs(&config, &mut status_ids, &mut ap_ids, &remote_reblog);
+
+        assert_eq!(status_ids, vec!["status-1".to_owned()]);
+        assert_eq!(
+            ap_ids,
+            vec!["https://remote.example/statuses/status-2".to_owned()]
+        );
     }
 
     #[test]

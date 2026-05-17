@@ -245,6 +245,7 @@ pub(crate) async fn create_published_status_and_response(
         Some(&quote_counts_preload),
         Some(&poll_preload),
         Some(&viewer_state_preload),
+        None,
     )
     .await
 }

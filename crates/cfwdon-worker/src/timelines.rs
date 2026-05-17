@@ -452,7 +452,7 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_remote_polls(db, &candidates, viewer),
         preload_public_timeline_remote_edits(db, &candidates),
         preload_timeline_candidate_reply_account_ids(db, &candidates),
-        preload_public_timeline_status_applications(db, &candidates),
+        preload_public_timeline_status_applications(db, config, &candidates),
         preload_public_timeline_remote_attachments(db, &candidates),
     )?;
     let mut entries = Vec::with_capacity(candidates.len());
@@ -522,6 +522,7 @@ async fn timeline_entries_from_candidates(
 
 async fn preload_public_timeline_status_applications(
     db: &D1Database,
+    config: &cfwdon_core::AppConfig,
     candidates: &[PublicTimelineCandidateEntry],
 ) -> Result<crate::StatusApplicationPreload> {
     let statuses = candidates
@@ -532,7 +533,7 @@ async fn preload_public_timeline_status_applications(
         })
         .collect::<Vec<_>>();
 
-    preload_status_applications(db, &statuses).await
+    preload_status_applications(db, config, &statuses).await
 }
 
 async fn remote_media_status_ids_for_filter(

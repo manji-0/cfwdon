@@ -86,6 +86,30 @@ pub(crate) async fn find_status_by_ap_id(
     .await
 }
 
+pub(crate) async fn find_statuses_by_ap_ids(
+    db: &D1Database,
+    ap_ids: &[String],
+) -> Result<Vec<StatusRow>> {
+    let ap_ids = unique_ordered_refs(ap_ids);
+    if ap_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = sql_placeholders(1, ap_ids.len());
+    let sql = format!(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+         FROM statuses
+         WHERE ap_id IN ({placeholders})"
+    );
+    let bindings = ap_ids
+        .iter()
+        .map(|ap_id| D1Type::Text(ap_id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    result.results::<StatusRow>()
+}
+
 pub(crate) async fn load_in_reply_to_account_id(
     db: &D1Database,
     status: &StatusRow,
