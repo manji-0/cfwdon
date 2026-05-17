@@ -216,19 +216,18 @@ fn v1_filter_document(row: &V1FilterRow) -> serde_json::Value {
     })
 }
 
-async fn v2_filter_document(db: &worker::D1Database, row: &FilterRow) -> Result<serde_json::Value> {
-    let keywords = list_filter_keywords(db, &row.id)
-        .await?
-        .into_iter()
-        .map(|row| keyword_document(&row))
-        .collect::<Vec<_>>();
-    let statuses = list_filter_statuses(db, &row.id)
-        .await?
-        .into_iter()
-        .map(|row| status_filter_document(&row))
+fn v2_filter_document_from_parts(
+    row: &FilterRow,
+    keywords: &[FilterKeywordRow],
+    statuses: &[FilterStatusRow],
+) -> serde_json::Value {
+    let keywords = keywords.iter().map(keyword_document).collect::<Vec<_>>();
+    let statuses = statuses
+        .iter()
+        .map(status_filter_document)
         .collect::<Vec<_>>();
 
-    Ok(serde_json::json!({
+    serde_json::json!({
         "id": row.id,
         "title": row.title,
         "context": split_filter_context(&row.context_csv),
@@ -236,7 +235,16 @@ async fn v2_filter_document(db: &worker::D1Database, row: &FilterRow) -> Result<
         "filter_action": row.filter_action,
         "keywords": keywords,
         "statuses": statuses,
-    }))
+    })
+}
+
+async fn v2_filter_document(db: &worker::D1Database, row: &FilterRow) -> Result<serde_json::Value> {
+    let (keywords, statuses) = futures_util::try_join!(
+        list_filter_keywords(db, &row.id),
+        list_filter_statuses(db, &row.id),
+    )?;
+
+    Ok(v2_filter_document_from_parts(row, &keywords, &statuses))
 }
 
 async fn list_filters(db: &worker::D1Database, account_id: &str) -> Result<Vec<FilterRow>> {
@@ -1179,10 +1187,27 @@ pub(crate) async fn filters_v2_response(req: Request, ctx: RouteContext<()>) -> 
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
-    let mut response = Vec::new();
-    for row in list_filters(&db, &viewer.id).await? {
-        response.push(v2_filter_document(&db, &row).await?);
-    }
+    let filters = list_filters(&db, &viewer.id).await?;
+    let (keywords_by_filter_id, statuses_by_filter_id) = futures_util::try_join!(
+        list_filter_keywords_for_filters(&db, &filters),
+        list_filter_statuses_for_filters(&db, &filters),
+    )?;
+    let response = filters
+        .iter()
+        .map(|row| {
+            v2_filter_document_from_parts(
+                row,
+                keywords_by_filter_id
+                    .get(&row.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                statuses_by_filter_id
+                    .get(&row.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
     Response::from_json(&response)
 }
 
@@ -1630,6 +1655,44 @@ mod tests {
     fn latest_filter_updated_at_uses_filter_status_created_at() {
         assert!(LOAD_LATEST_FILTER_UPDATED_AT_SQL.contains("s.created_at AS updated_at"));
         assert!(!LOAD_LATEST_FILTER_UPDATED_AT_SQL.contains("s.updated_at"));
+    }
+
+    #[test]
+    fn v2_filter_document_from_parts_embeds_preloaded_keywords_and_statuses() {
+        let filter = FilterRow {
+            id: "filter-1".to_owned(),
+            title: "Quiet words".to_owned(),
+            context_csv: "home, notifications".to_owned(),
+            expires_at: None,
+            filter_action: "warn".to_owned(),
+        };
+        let keywords = vec![FilterKeywordRow {
+            id: "keyword-1".to_owned(),
+            filter_id: "filter-1".to_owned(),
+            keyword: "launch".to_owned(),
+            whole_word: 1,
+        }];
+        let statuses = vec![FilterStatusRow {
+            id: "status-filter-1".to_owned(),
+            filter_id: "filter-1".to_owned(),
+            status_id: "status-1".to_owned(),
+        }];
+
+        let document = v2_filter_document_from_parts(&filter, &keywords, &statuses);
+
+        assert_eq!(document["id"], serde_json::json!("filter-1"));
+        assert_eq!(
+            document["context"],
+            serde_json::json!(["home", "notifications"])
+        );
+        assert_eq!(
+            document["keywords"][0]["keyword"],
+            serde_json::json!("launch")
+        );
+        assert_eq!(
+            document["statuses"][0]["status_id"],
+            serde_json::json!("status-1")
+        );
     }
 
     #[test]
