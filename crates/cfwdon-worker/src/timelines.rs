@@ -27,7 +27,7 @@ use crate::oauth_apps::{
 use crate::runtime_config::load_config;
 use crate::{
     HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
-    account_has_thread_mutes, build_local_status_response_with_quote_count_preloads,
+    account_has_thread_mutes, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, build_status_card_value,
     enrich_card_with_remote_preview, find_remote_status_attachments_by_status_ids,
     find_remote_statuses_with_actors_by_ids, find_statuses_by_ids, list_active_muted_actor_uris,
@@ -38,8 +38,8 @@ use crate::{
     load_account_filter_matcher, normalize_hashtag, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_counts, preload_status_quote_counts, require_authenticated_local_account,
-    strip_html_tags,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    require_authenticated_local_account, strip_html_tags,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -436,6 +436,7 @@ async fn timeline_entries_from_candidates(
         remote_poll_preload,
         remote_edit_updated_at_preload,
         in_reply_to_account_ids,
+        application_preload,
         mut remote_attachments_by_status_id,
     ) = futures_util::try_join!(
         preload_public_timeline_candidate_counts(db, &candidates),
@@ -451,6 +452,7 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_remote_polls(db, &candidates, viewer),
         preload_public_timeline_remote_edits(db, &candidates),
         preload_timeline_candidate_reply_account_ids(db, &candidates),
+        preload_public_timeline_status_applications(db, &candidates),
         preload_public_timeline_remote_attachments(db, &candidates),
     )?;
     let mut entries = Vec::with_capacity(candidates.len());
@@ -462,7 +464,7 @@ async fn timeline_entries_from_candidates(
                     continue;
                 };
                 let mut value = serde_json::to_value(
-                    build_local_status_response_with_quote_count_preloads(
+                    build_local_status_response_with_timeline_preloads(
                         db,
                         config,
                         viewer,
@@ -475,6 +477,7 @@ async fn timeline_entries_from_candidates(
                         Some(&quote_counts_preload),
                         Some(&local_poll_preload),
                         Some(&local_viewer_state_preload),
+                        Some(&application_preload),
                     )
                     .await?,
                 )
@@ -515,6 +518,21 @@ async fn timeline_entries_from_candidates(
     }
 
     Ok(entries)
+}
+
+async fn preload_public_timeline_status_applications(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+) -> Result<crate::StatusApplicationPreload> {
+    let statuses = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { status, .. } => Some(status),
+            PublicTimelineCandidate::Remote { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+    preload_status_applications(db, &statuses).await
 }
 
 async fn remote_media_status_ids_for_filter(

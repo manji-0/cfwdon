@@ -8,16 +8,16 @@ use super::{
     RemoteStatusResponseDetails, RemoteStatusRow, StatusCountsPreload, StatusRow,
     account_has_thread_mutes, actor_url, build_remote_status_card_value, build_status_card_value,
     count_rows, effective_remote_status_quote_state, effective_status_quote_state,
-    find_local_status_by_object_uri, find_oauth_app_by_id, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
-    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
-    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
-    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
-    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
-    load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
-    load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
-    load_status_filtered, load_status_updated_at, local_status_target_uri,
-    resolve_local_status_response_subject, strip_html_tags,
+    find_local_status_by_object_uri, find_oauth_app_by_id, find_oauth_apps_by_ids,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_url_or_object_uri, has_remote_status_edit_snapshots, is_blocking_actor,
+    is_local_follower_authorized, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
+    is_muted_actor, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
+    is_remote_status_reblogged_by, load_local_status_counts, load_local_status_response_preload,
+    load_mastodon_poll_response, load_remote_mastodon_poll_response, load_remote_status_counts,
+    load_remote_status_updated_at, load_status_filtered, load_status_updated_at,
+    local_status_target_uri, resolve_local_status_response_subject, strip_html_tags,
 };
 use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,47 @@ async fn build_status_application(
         "name": app.name,
         "website": app.website,
     })))
+}
+
+fn status_application_value(name: String, website: Option<String>) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "website": website,
+    })
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct StatusApplicationPreload {
+    applications: HashMap<i64, serde_json::Value>,
+}
+
+impl StatusApplicationPreload {
+    fn application(&self, application_id: Option<i64>) -> Option<serde_json::Value> {
+        application_id.and_then(|id| self.applications.get(&id).cloned())
+    }
+}
+
+pub(crate) async fn preload_status_applications(
+    db: &D1Database,
+    statuses: &[&StatusRow],
+) -> Result<StatusApplicationPreload> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for status in statuses {
+        if let Some(application_id) = status.application_id
+            && seen.insert(application_id)
+        {
+            ids.push(application_id);
+        }
+    }
+
+    let applications = find_oauth_apps_by_ids(db, &ids)
+        .await?
+        .into_iter()
+        .map(|app| (app.id, status_application_value(app.name, app.website)))
+        .collect();
+
+    Ok(StatusApplicationPreload { applications })
 }
 
 async fn local_status_edited_at(db: &D1Database, status: &StatusRow) -> Result<Option<String>> {
@@ -949,7 +990,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
 ) -> Result<MastodonStatusResponse> {
-    build_local_status_response_inner(
+    build_local_status_response_with_timeline_preloads(
         db,
         config,
         viewer,
@@ -962,7 +1003,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
         None,
         None,
         None,
-        true,
+        None,
     )
     .await
 }
@@ -981,6 +1022,39 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
 ) -> Result<MastodonStatusResponse> {
+    build_local_status_response_with_timeline_preloads(
+        db,
+        config,
+        viewer,
+        status,
+        account,
+        in_reply_to_account_id,
+        media_attachments,
+        filter_matcher,
+        counts_preload,
+        quote_counts_preload,
+        poll_preload,
+        viewer_state_preload,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn build_local_status_response_with_timeline_preloads(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    media_attachments: Vec<MediaAttachmentRow>,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    poll_preload: Option<&MastodonPollResponsePreload>,
+    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
+) -> Result<MastodonStatusResponse> {
     build_local_status_response_inner(
         db,
         config,
@@ -994,6 +1068,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
         quote_counts_preload,
         poll_preload,
         viewer_state_preload,
+        application_preload,
         true,
     )
     .await
@@ -1012,6 +1087,7 @@ async fn build_local_status_response_inner(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -1028,6 +1104,7 @@ async fn build_local_status_response_inner(
             quote_counts_preload,
             poll_preload,
             viewer_state_preload,
+            application_preload,
             include_quote,
         )
         .await;
@@ -1052,6 +1129,7 @@ async fn build_local_status_response_inner(
         quote_counts_preload,
         poll_preload,
         viewer_state_preload,
+        application_preload,
         include_quote,
     )
     .await?;
@@ -1071,9 +1149,13 @@ async fn load_local_status_response_details(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<LocalStatusResponseDetails> {
-    let application = build_status_application(db, status.application_id).await?;
+    let application = match application_preload {
+        Some(preload) => preload.application(status.application_id),
+        None => build_status_application(db, status.application_id).await?,
+    };
     let card = build_status_card_value(&status._text_content);
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
     let mentions = build_status_mentions(db, config, &status._text_content).await?;
@@ -1665,6 +1747,7 @@ async fn build_remote_reblog_wrapper_response(
         None,
         None,
         None,
+        None,
         include_quote,
     )
     .await?;
@@ -1687,6 +1770,7 @@ async fn build_reblog_embedded_response(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
     if let Some(local_status) = find_local_status_by_object_uri(db, config, boost_of_uri).await? {
@@ -1700,6 +1784,7 @@ async fn build_reblog_embedded_response(
             quote_counts_preload,
             poll_preload,
             viewer_state_preload,
+            application_preload,
             include_quote,
         )
         .await;
@@ -1731,6 +1816,7 @@ async fn build_local_reblog_embedded_response(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
     let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
@@ -1763,6 +1849,7 @@ async fn build_local_reblog_embedded_response(
             quote_counts_preload,
             poll_preload,
             viewer_state_preload,
+            application_preload,
             include_quote,
         ))
         .await?,
@@ -2209,6 +2296,7 @@ async fn build_local_reblog_wrapper_response(
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = build_reblog_embedded_response(
@@ -2221,6 +2309,7 @@ async fn build_local_reblog_wrapper_response(
         quote_counts_preload,
         poll_preload,
         viewer_state_preload,
+        application_preload,
         include_quote,
     )
     .await?;

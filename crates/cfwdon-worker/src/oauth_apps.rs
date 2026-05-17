@@ -394,6 +394,33 @@ pub(crate) async fn find_oauth_app_by_id(db: &D1Database, id: i64) -> Result<Opt
     .await
 }
 
+pub(crate) async fn find_oauth_apps_by_ids(
+    db: &D1Database,
+    ids: &[i64],
+) -> Result<Vec<OAuthAppRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = crate::sql_placeholders(1, ids.len());
+    let sql = format!(
+        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+                client_id, client_secret, client_secret_expires_at
+         FROM oauth_apps
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Integer(i32::try_from(*id).unwrap_or(i32::MAX)))
+        .collect::<Vec<_>>();
+
+    db.prepare(&sql)
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+        .results::<OAuthAppRow>()
+}
+
 pub(crate) async fn find_oauth_app_id_by_bearer_token(
     db: &D1Database,
     token: &str,
