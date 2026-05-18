@@ -121,6 +121,13 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             continue;
         };
         let Some(account) = account_cache.get(&delivery.account_id) else {
+            console_error!(
+                "outbox delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
+                delivery.id,
+                target_inbox,
+                delivery.attempt_count.saturating_add(1),
+                delivery.account_id
+            );
             mark_outbox_delivery_terminal_failure(
                 db,
                 &delivery.id,
@@ -136,8 +143,16 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                 mark_outbox_delivery_delivered(db, &delivery.id).await?;
                 summary.delivered += 1;
             }
-            Err(_) => {
+            Err(error) => {
                 let next_attempt = delivery.attempt_count.saturating_add(1) as u32;
+                console_error!(
+                    "outbox delivery failed: id={} target={} attempt={} terminal={} error={}",
+                    delivery.id,
+                    target_inbox,
+                    next_attempt,
+                    next_attempt >= 5,
+                    error
+                );
                 if next_attempt >= 5 {
                     mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?;
                 } else {
@@ -150,6 +165,13 @@ pub(crate) async fn process_outbox_deliveries_for_config(
 
     for delivery in outbound_deliveries {
         let Some(account) = account_cache.get(&delivery.account_id) else {
+            console_error!(
+                "outbound delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
+                delivery.id,
+                delivery.target_inbox,
+                delivery.attempt_count.saturating_add(1),
+                delivery.account_id
+            );
             reconcile_outbound_activity_terminal_failure(
                 db,
                 &delivery,
@@ -172,8 +194,16 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                 mark_outbound_activity_delivered(db, &delivery.id).await?;
                 summary.delivered += 1;
             }
-            Err(_) => {
+            Err(error) => {
                 let next_attempt = delivery.attempt_count.saturating_add(1) as u32;
+                console_error!(
+                    "outbound delivery failed: id={} target={} attempt={} terminal={} error={}",
+                    delivery.id,
+                    delivery.target_inbox,
+                    next_attempt,
+                    next_attempt >= 5,
+                    error
+                );
                 if next_attempt >= 5 {
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
