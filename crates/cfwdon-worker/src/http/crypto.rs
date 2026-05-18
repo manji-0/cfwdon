@@ -1,4 +1,4 @@
-use crate::crypto_keys::{rsa_signing_algorithm, subtle_crypto};
+use crate::crypto_keys::subtle_crypto;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
@@ -117,7 +117,14 @@ async fn import_private_signing_key(
     let jwk_object = jwk_value
         .dyn_into::<Object>()
         .map_err(|_| Error::RustError("failed to convert private JWK to object".to_owned()))?;
-    let algorithm = rsa_signing_algorithm(2048)?;
+    let import_params = RsaHashedImportParams::new_with_str("SHA-256");
+    let import_algorithm: Object = import_params.into();
+    Reflect::set(
+        &import_algorithm,
+        &JsValue::from_str("name"),
+        &JsValue::from_str("RSASSA-PKCS1-v1_5"),
+    )
+    .map_err(Error::from)?;
 
     let key_usages = Array::new();
     key_usages.push(&JsValue::from_str("sign"));
@@ -125,7 +132,7 @@ async fn import_private_signing_key(
     JsFuture::from(subtle.import_key_with_object(
         "jwk",
         &jwk_object,
-        &algorithm,
+        &import_algorithm,
         false,
         &key_usages.into(),
     )?)

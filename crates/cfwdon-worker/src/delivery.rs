@@ -12,10 +12,12 @@ pub(crate) use outbox_enqueue::*;
 pub(crate) use store::*;
 pub(crate) use store_state::*;
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub(crate) const OUTBOX_PROCESS_QUEUE_BINDING: &str = "OUTBOX_PROCESS_QUEUE";
+const OUTBOX_DELIVERY_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct OutboxProcessQueueMessage {
@@ -116,8 +118,9 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     preload_outbox_delivery_accounts(db, &target_deliveries, &mut account_cache).await?;
     preload_outbound_activity_accounts(db, &outbound_deliveries, &mut account_cache).await?;
 
+    let mut target_send_jobs = Vec::new();
     for delivery in target_deliveries {
-        let Some(target_inbox) = delivery.target_inbox.as_deref() else {
+        let Some(target_inbox) = delivery.target_inbox.clone() else {
             continue;
         };
         let Some(account) = account_cache.get(&delivery.account_id) else {
@@ -137,8 +140,18 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
+        target_send_jobs.push((delivery, target_inbox, account.clone()));
+    }
 
-        match send_signed_activity(config, account, target_inbox, &delivery.payload_json).await {
+    let mut target_results = futures_util::stream::iter(target_send_jobs)
+        .map(|(delivery, target_inbox, account)| async move {
+            let result =
+                send_signed_activity(config, &account, &target_inbox, &delivery.payload_json).await;
+            (delivery, target_inbox, result)
+        })
+        .buffer_unordered(OUTBOX_DELIVERY_CONCURRENCY);
+    while let Some((delivery, target_inbox, result)) = target_results.next().await {
+        match result {
             Ok(()) => {
                 mark_outbox_delivery_delivered(db, &delivery.id).await?;
                 summary.delivered += 1;
@@ -163,6 +176,7 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         }
     }
 
+    let mut outbound_send_jobs = Vec::new();
     for delivery in outbound_deliveries {
         let Some(account) = account_cache.get(&delivery.account_id) else {
             console_error!(
@@ -181,15 +195,23 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
+        outbound_send_jobs.push((delivery, account.clone()));
+    }
 
-        match send_signed_activity(
-            config,
-            account,
-            &delivery.target_inbox,
-            &delivery.payload_json,
-        )
-        .await
-        {
+    let mut outbound_results = futures_util::stream::iter(outbound_send_jobs)
+        .map(|(delivery, account)| async move {
+            let result = send_signed_activity(
+                config,
+                &account,
+                &delivery.target_inbox,
+                &delivery.payload_json,
+            )
+            .await;
+            (delivery, result)
+        })
+        .buffer_unordered(OUTBOX_DELIVERY_CONCURRENCY);
+    while let Some((delivery, result)) = outbound_results.next().await {
+        match result {
             Ok(()) => {
                 mark_outbound_activity_delivered(db, &delivery.id).await?;
                 summary.delivered += 1;
