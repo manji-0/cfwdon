@@ -166,15 +166,21 @@ async fn queue(
         return Ok(());
     }
 
-    let summary = process_outbox_deliveries_for_config(&db, &config).await?;
-    console_log!(
-        "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
-        message_count,
-        summary.expanded,
-        summary.delivered,
-        summary.failed,
-        summary.completed_without_targets
-    );
+    match process_outbox_deliveries_for_config(&db, &config).await {
+        Ok(summary) => {
+            console_log!(
+                "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
+                message_count,
+                summary.expanded,
+                summary.delivered,
+                summary.failed,
+                summary.completed_without_targets
+            );
+        }
+        Err(error) => {
+            console_error!("outbox queue processing failed: {error}");
+        }
+    }
     Ok(())
 }
 
