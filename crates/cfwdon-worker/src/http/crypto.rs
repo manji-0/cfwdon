@@ -1,8 +1,7 @@
 use crate::crypto_keys::{rsa_signing_algorithm, subtle_crypto};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use js_sys::{Array, Object, Reflect, Uint8Array};
-use time::OffsetDateTime;
+use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Algorithm, CryptoKey, RsaHashedImportParams};
@@ -42,9 +41,10 @@ pub(crate) async fn verify_http_signature_bytes(
 }
 
 pub(crate) fn now_http_date_string() -> Result<String> {
-    OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc2822)
-        .map_err(|error| Error::RustError(format!("failed to format HTTP date: {error}")))
+    Date::new_0()
+        .to_utc_string()
+        .as_string()
+        .ok_or_else(|| Error::RustError("failed to format HTTP date".to_owned()))
 }
 
 pub(crate) async fn sha256_http_digest(payload: &[u8]) -> Result<String> {

@@ -159,11 +159,11 @@ async fn queue(
     _ctx: Context,
 ) -> Result<()> {
     let message_count = batch.raw_iter().count();
+    batch.ack_all();
     let config = load_config_from_env(&env);
     let db = env.d1(&config.database_binding)?;
     if !pending_outbox_work_exists(&db).await? {
         console_log!("outbox queue batch idle: messages={message_count}");
-        batch.ack_all();
         return Ok(());
     }
 
@@ -182,7 +182,6 @@ async fn queue(
             console_error!("outbox queue processing failed: {error}");
         }
     }
-    batch.ack_all();
     Ok(())
 }
 
