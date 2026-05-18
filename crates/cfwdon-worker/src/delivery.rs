@@ -107,6 +107,11 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         list_pending_target_outbox_deliveries(db, 32),
         list_pending_outbound_activities(db, 32),
     )?;
+    console_log!(
+        "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",
+        target_deliveries.len(),
+        outbound_deliveries.len()
+    );
     let mut account_cache = HashMap::new();
     preload_outbox_delivery_accounts(db, &target_deliveries, &mut account_cache).await?;
     preload_outbound_activity_accounts(db, &outbound_deliveries, &mut account_cache).await?;
@@ -198,15 +203,22 @@ async fn process_generic_outbox_deliveries(
         .collect::<Vec<_>>();
     let targets_by_account =
         list_follower_delivery_targets_by_account_ids(db, &account_ids).await?;
+    let target_count = targets_by_account
+        .values()
+        .map(std::vec::Vec::len)
+        .sum::<usize>();
 
-    let mut deliveries_with_targets = Vec::new();
-    let mut completed_without_targets = Vec::new();
-    for delivery in &deliveries {
-        match targets_by_account.get(&delivery.account_id) {
-            Some(targets) if !targets.is_empty() => deliveries_with_targets.push(delivery),
-            _ => completed_without_targets.push(delivery.id.clone()),
-        }
-    }
+    let (deliveries_with_targets, completed_without_targets) =
+        partition_generic_outbox_deliveries_by_targets(&deliveries, &targets_by_account);
+    console_log!(
+        "outbox generic delivery expansion: pending={} accounts={} accounts_with_targets={} targets={} with_targets={} without_targets={}",
+        deliveries.len(),
+        unique_ordered_refs(&account_ids).len(),
+        targets_by_account.len(),
+        target_count,
+        deliveries_with_targets.len(),
+        completed_without_targets.len()
+    );
 
     if !completed_without_targets.is_empty() {
         mark_outbox_deliveries_completed_without_targets(db, &completed_without_targets).await?;
@@ -217,18 +229,35 @@ async fn process_generic_outbox_deliveries(
         return Ok(());
     }
 
-    summary.expanded += expand_outbox_delivery_targets_for_deliveries(
+    let expanded_count = expand_outbox_delivery_targets_for_deliveries(
         db,
         &deliveries_with_targets,
         &targets_by_account,
     )
     .await? as u32;
+    console_log!("outbox generic delivery expanded target rows: expanded={expanded_count}");
+    summary.expanded += expanded_count;
     let expanded_ids = deliveries_with_targets
         .iter()
         .map(|delivery| delivery.id.clone())
         .collect::<Vec<_>>();
     mark_outbox_deliveries_expanded(db, &expanded_ids).await?;
     Ok(())
+}
+
+fn partition_generic_outbox_deliveries_by_targets<'a>(
+    deliveries: &'a [OutboxDeliveryRow],
+    targets_by_account: &HashMap<String, Vec<String>>,
+) -> (Vec<&'a OutboxDeliveryRow>, Vec<String>) {
+    let mut deliveries_with_targets = Vec::new();
+    let mut completed_without_targets = Vec::new();
+    for delivery in deliveries {
+        match targets_by_account.get(&delivery.account_id) {
+            Some(targets) if !targets.is_empty() => deliveries_with_targets.push(delivery),
+            _ => completed_without_targets.push(delivery.id.clone()),
+        }
+    }
+    (deliveries_with_targets, completed_without_targets)
 }
 
 async fn preload_outbox_delivery_accounts(
@@ -268,4 +297,50 @@ async fn preload_delivery_accounts(
         account_cache.insert(account_id, account);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outbox_delivery(id: &str, account_id: &str) -> OutboxDeliveryRow {
+        OutboxDeliveryRow {
+            id: id.to_owned(),
+            account_id: account_id.to_owned(),
+            status_id: format!("status-{id}"),
+            activity_id: format!("activity-{id}"),
+            activity_type: "Create".to_owned(),
+            target_inbox: None,
+            payload_json: "{}".to_owned(),
+            attempt_count: 0,
+        }
+    }
+
+    #[test]
+    fn partition_generic_outbox_deliveries_keeps_deliveries_with_targets() {
+        let deliveries = vec![
+            outbox_delivery("delivery-1", "account-1"),
+            outbox_delivery("delivery-2", "account-2"),
+            outbox_delivery("delivery-3", "account-3"),
+        ];
+        let targets_by_account = HashMap::from([
+            (
+                "account-1".to_owned(),
+                vec!["https://remote.example/inbox".to_owned()],
+            ),
+            ("account-2".to_owned(), Vec::new()),
+        ]);
+
+        let (with_targets, without_targets) =
+            partition_generic_outbox_deliveries_by_targets(&deliveries, &targets_by_account);
+
+        assert_eq!(
+            with_targets
+                .into_iter()
+                .map(|delivery| delivery.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["delivery-1"]
+        );
+        assert_eq!(without_targets, vec!["delivery-2", "delivery-3"]);
+    }
 }

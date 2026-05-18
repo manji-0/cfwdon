@@ -188,18 +188,7 @@ pub(crate) async fn expand_outbox_delivery_targets_for_deliveries(
     deliveries: &[&OutboxDeliveryRow],
     targets_by_account: &HashMap<String, Vec<String>>,
 ) -> Result<usize> {
-    let mut expansions = Vec::new();
-    for delivery in deliveries {
-        let Some(targets) = targets_by_account.get(&delivery.account_id) else {
-            continue;
-        };
-        let mut seen = HashSet::new();
-        for target in targets {
-            if seen.insert(target.as_str()) {
-                expansions.push((*delivery, target.as_str()));
-            }
-        }
-    }
+    let expansions = collect_outbox_delivery_expansions(deliveries, targets_by_account);
 
     for chunk in expansions.chunks(OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE) {
         let values = chunk
@@ -251,4 +240,79 @@ pub(crate) async fn expand_outbox_delivery_targets_for_deliveries(
     }
 
     Ok(expansions.len())
+}
+
+fn collect_outbox_delivery_expansions<'a>(
+    deliveries: &[&'a OutboxDeliveryRow],
+    targets_by_account: &'a HashMap<String, Vec<String>>,
+) -> Vec<(&'a OutboxDeliveryRow, &'a str)> {
+    let mut expansions = Vec::new();
+    for delivery in deliveries {
+        let Some(targets) = targets_by_account.get(&delivery.account_id) else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        for target in targets {
+            if seen.insert(target.as_str()) {
+                expansions.push((*delivery, target.as_str()));
+            }
+        }
+    }
+    expansions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outbox_delivery(id: &str, account_id: &str) -> OutboxDeliveryRow {
+        OutboxDeliveryRow {
+            id: id.to_owned(),
+            account_id: account_id.to_owned(),
+            status_id: format!("status-{id}"),
+            activity_id: format!("activity-{id}"),
+            activity_type: "Create".to_owned(),
+            target_inbox: None,
+            payload_json: "{}".to_owned(),
+            attempt_count: 0,
+        }
+    }
+
+    #[test]
+    fn collect_outbox_delivery_expansions_deduplicates_targets_per_delivery() {
+        let delivery = outbox_delivery("delivery-1", "account-1");
+        let deliveries = vec![&delivery];
+        let targets_by_account = HashMap::from([(
+            "account-1".to_owned(),
+            vec![
+                "https://shared.example/inbox".to_owned(),
+                "https://shared.example/inbox".to_owned(),
+                "https://remote.example/inbox".to_owned(),
+            ],
+        )]);
+
+        let expansions = collect_outbox_delivery_expansions(&deliveries, &targets_by_account);
+
+        assert_eq!(
+            expansions
+                .into_iter()
+                .map(|(delivery, target)| (delivery.id.as_str(), target))
+                .collect::<Vec<_>>(),
+            vec![
+                ("delivery-1", "https://shared.example/inbox"),
+                ("delivery-1", "https://remote.example/inbox"),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_outbox_delivery_expansions_skips_accounts_without_targets() {
+        let delivery = outbox_delivery("delivery-1", "account-1");
+        let deliveries = vec![&delivery];
+        let targets_by_account = HashMap::new();
+
+        let expansions = collect_outbox_delivery_expansions(&deliveries, &targets_by_account);
+
+        assert!(expansions.is_empty());
+    }
 }
