@@ -13,6 +13,7 @@ pub(crate) use store::*;
 pub(crate) use store_state::*;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub(crate) const OUTBOX_PROCESS_QUEUE_BINDING: &str = "OUTBOX_PROCESS_QUEUE";
 
@@ -100,23 +101,21 @@ pub(crate) async fn process_outbox_deliveries_for_config(
 ) -> Result<OutboxProcessResponse> {
     let mut summary = OutboxProcessResponse::default();
 
-    for delivery in list_pending_generic_outbox_deliveries(db, 16).await? {
-        let targets = list_follower_delivery_targets(db, &delivery.account_id).await?;
-        if targets.is_empty() {
-            mark_outbox_delivery_completed_without_targets(db, &delivery.id).await?;
-            summary.completed_without_targets += 1;
-            continue;
-        }
+    process_generic_outbox_deliveries(db, &mut summary).await?;
 
-        summary.expanded += expand_outbox_delivery_targets(db, &delivery, &targets).await? as u32;
-        mark_outbox_delivery_expanded(db, &delivery.id).await?;
-    }
+    let (target_deliveries, outbound_deliveries) = futures_util::try_join!(
+        list_pending_target_outbox_deliveries(db, 32),
+        list_pending_outbound_activities(db, 32),
+    )?;
+    let mut account_cache = HashMap::new();
+    preload_outbox_delivery_accounts(db, &target_deliveries, &mut account_cache).await?;
+    preload_outbound_activity_accounts(db, &outbound_deliveries, &mut account_cache).await?;
 
-    for delivery in list_pending_target_outbox_deliveries(db, 32).await? {
+    for delivery in target_deliveries {
         let Some(target_inbox) = delivery.target_inbox.as_deref() else {
             continue;
         };
-        let Some(account) = find_account_by_id(db, &delivery.account_id).await? else {
+        let Some(account) = account_cache.get(&delivery.account_id) else {
             mark_outbox_delivery_terminal_failure(
                 db,
                 &delivery.id,
@@ -126,9 +125,8 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
-        let account = ensure_account_keys(db, account).await?;
 
-        match send_signed_activity(config, &account, target_inbox, &delivery.payload_json).await {
+        match send_signed_activity(config, account, target_inbox, &delivery.payload_json).await {
             Ok(()) => {
                 mark_outbox_delivery_delivered(db, &delivery.id).await?;
                 summary.delivered += 1;
@@ -145,8 +143,8 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         }
     }
 
-    for delivery in list_pending_outbound_activities(db, 32).await? {
-        let Some(account) = find_account_by_id(db, &delivery.account_id).await? else {
+    for delivery in outbound_deliveries {
+        let Some(account) = account_cache.get(&delivery.account_id) else {
             reconcile_outbound_activity_terminal_failure(
                 db,
                 &delivery,
@@ -156,11 +154,10 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
-        let account = ensure_account_keys(db, account).await?;
 
         match send_signed_activity(
             config,
-            &account,
+            account,
             &delivery.target_inbox,
             &delivery.payload_json,
         )
@@ -184,4 +181,91 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     }
 
     Ok(summary)
+}
+
+async fn process_generic_outbox_deliveries(
+    db: &D1Database,
+    summary: &mut OutboxProcessResponse,
+) -> Result<()> {
+    let deliveries = list_pending_generic_outbox_deliveries(db, 16).await?;
+    if deliveries.is_empty() {
+        return Ok(());
+    }
+
+    let account_ids = deliveries
+        .iter()
+        .map(|delivery| delivery.account_id.clone())
+        .collect::<Vec<_>>();
+    let targets_by_account =
+        list_follower_delivery_targets_by_account_ids(db, &account_ids).await?;
+
+    let mut deliveries_with_targets = Vec::new();
+    let mut completed_without_targets = Vec::new();
+    for delivery in &deliveries {
+        match targets_by_account.get(&delivery.account_id) {
+            Some(targets) if !targets.is_empty() => deliveries_with_targets.push(delivery),
+            _ => completed_without_targets.push(delivery.id.clone()),
+        }
+    }
+
+    if !completed_without_targets.is_empty() {
+        mark_outbox_deliveries_completed_without_targets(db, &completed_without_targets).await?;
+        summary.completed_without_targets += completed_without_targets.len() as u32;
+    }
+
+    if deliveries_with_targets.is_empty() {
+        return Ok(());
+    }
+
+    summary.expanded += expand_outbox_delivery_targets_for_deliveries(
+        db,
+        &deliveries_with_targets,
+        &targets_by_account,
+    )
+    .await? as u32;
+    let expanded_ids = deliveries_with_targets
+        .iter()
+        .map(|delivery| delivery.id.clone())
+        .collect::<Vec<_>>();
+    mark_outbox_deliveries_expanded(db, &expanded_ids).await?;
+    Ok(())
+}
+
+async fn preload_outbox_delivery_accounts(
+    db: &D1Database,
+    deliveries: &[OutboxDeliveryRow],
+    account_cache: &mut HashMap<String, LocalAccount>,
+) -> Result<()> {
+    let missing_account_ids = deliveries
+        .iter()
+        .filter(|delivery| !account_cache.contains_key(&delivery.account_id))
+        .map(|delivery| delivery.account_id.clone())
+        .collect::<Vec<_>>();
+    preload_delivery_accounts(db, &missing_account_ids, account_cache).await
+}
+
+async fn preload_outbound_activity_accounts(
+    db: &D1Database,
+    deliveries: &[OutboundActivityRow],
+    account_cache: &mut HashMap<String, LocalAccount>,
+) -> Result<()> {
+    let missing_account_ids = deliveries
+        .iter()
+        .filter(|delivery| !account_cache.contains_key(&delivery.account_id))
+        .map(|delivery| delivery.account_id.clone())
+        .collect::<Vec<_>>();
+    preload_delivery_accounts(db, &missing_account_ids, account_cache).await
+}
+
+async fn preload_delivery_accounts(
+    db: &D1Database,
+    account_ids: &[String],
+    account_cache: &mut HashMap<String, LocalAccount>,
+) -> Result<()> {
+    let accounts = find_accounts_by_ids(db, account_ids).await?;
+    for (account_id, account) in accounts {
+        let account = ensure_account_keys(db, account).await?;
+        account_cache.insert(account_id, account);
+    }
+    Ok(())
 }

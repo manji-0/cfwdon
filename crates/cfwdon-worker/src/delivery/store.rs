@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{D1Database, FollowerTargetRow};
+use crate::{sql_placeholders, unique_ordered_refs};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
@@ -22,6 +23,12 @@ pub(crate) struct OutboxDeliveryRow {
 #[derive(Debug, Deserialize)]
 struct PendingOutboxWorkRow {
     has_pending: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct FollowerAccountTargetRow {
+    account_id: String,
+    target_inbox: String,
 }
 
 pub(crate) async fn pending_outbox_work_exists(db: &D1Database) -> Result<bool> {
@@ -116,6 +123,42 @@ pub(crate) async fn list_follower_delivery_targets(
         .collect())
 }
 
+pub(crate) async fn list_follower_delivery_targets_by_account_ids(
+    db: &D1Database,
+    account_ids: &[String],
+) -> Result<HashMap<String, Vec<String>>> {
+    let ids = unique_ordered_refs(account_ids);
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = sql_placeholders(1, ids.len());
+    let sql = format!(
+        "SELECT account_id,
+                COALESCE(NULLIF(shared_inbox_uri, ''), inbox_uri) AS target_inbox
+         FROM followers
+         WHERE account_id IN ({placeholders})
+         GROUP BY account_id, COALESCE(NULLIF(shared_inbox_uri, ''), inbox_uri)
+         ORDER BY account_id ASC, target_inbox ASC"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    let mut by_account = HashMap::<String, Vec<String>>::new();
+    for row in result.results::<FollowerAccountTargetRow>()? {
+        if !row.target_inbox.trim().is_empty() {
+            by_account
+                .entry(row.account_id)
+                .or_default()
+                .push(row.target_inbox);
+        }
+    }
+    Ok(by_account)
+}
+
 pub(crate) async fn list_follower_actor_uris(
     db: &D1Database,
     account_id: &str,
@@ -140,18 +183,25 @@ pub(crate) async fn list_follower_actor_uris(
         .collect())
 }
 
-pub(crate) async fn expand_outbox_delivery_targets(
+pub(crate) async fn expand_outbox_delivery_targets_for_deliveries(
     db: &D1Database,
-    delivery: &OutboxDeliveryRow,
-    targets: &[String],
+    deliveries: &[&OutboxDeliveryRow],
+    targets_by_account: &HashMap<String, Vec<String>>,
 ) -> Result<usize> {
-    let mut seen = HashSet::new();
-    let unique_targets = targets
-        .iter()
-        .filter(|target| seen.insert((*target).clone()))
-        .collect::<Vec<_>>();
+    let mut expansions = Vec::new();
+    for delivery in deliveries {
+        let Some(targets) = targets_by_account.get(&delivery.account_id) else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        for target in targets {
+            if seen.insert(target.as_str()) {
+                expansions.push((*delivery, target.as_str()));
+            }
+        }
+    }
 
-    for chunk in unique_targets.chunks(OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE) {
+    for chunk in expansions.chunks(OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE) {
         let values = chunk
             .iter()
             .enumerate()
@@ -187,18 +237,18 @@ pub(crate) async fn expand_outbox_delivery_targets(
             ) VALUES {values}"
         );
         let mut bindings = Vec::with_capacity(chunk.len() * 6);
-        for target in chunk {
+        for (delivery, target) in chunk {
             bindings.extend([
                 D1Type::Text(delivery.account_id.as_str()),
                 D1Type::Text(delivery.status_id.as_str()),
                 D1Type::Text(delivery.activity_id.as_str()),
                 D1Type::Text(delivery.activity_type.as_str()),
-                D1Type::Text(target.as_str()),
+                D1Type::Text(target),
                 D1Type::Text(delivery.payload_json.as_str()),
             ]);
         }
         db.prepare(&sql).bind_refs(bindings.iter())?.run().await?;
     }
 
-    Ok(unique_targets.len())
+    Ok(expansions.len())
 }

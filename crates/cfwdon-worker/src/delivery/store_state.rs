@@ -1,40 +1,53 @@
 use super::{D1Database, Result, delivery_retry_delay_modifier};
+use crate::sql_placeholders;
 use worker::d1::D1Type;
 
-pub(crate) async fn mark_outbox_delivery_expanded(
+pub(crate) async fn mark_outbox_deliveries_expanded(
     db: &D1Database,
-    delivery_id: &str,
+    delivery_ids: &[String],
 ) -> Result<()> {
-    let bindings = [D1Type::Text("expanded"), D1Type::Text(delivery_id)];
-    db.prepare(
+    if delivery_ids.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = sql_placeholders(1, delivery_ids.len());
+    let sql = format!(
         "UPDATE outbox_deliveries
-         SET state = ?1,
+         SET state = 'expanded',
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = delivery_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    db.prepare(&sql).bind_refs(bindings.iter())?.run().await?;
 
     Ok(())
 }
 
-pub(crate) async fn mark_outbox_delivery_completed_without_targets(
+pub(crate) async fn mark_outbox_deliveries_completed_without_targets(
     db: &D1Database,
-    delivery_id: &str,
+    delivery_ids: &[String],
 ) -> Result<()> {
-    let bindings = [D1Type::Text("delivered"), D1Type::Text(delivery_id)];
-    db.prepare(
+    if delivery_ids.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = sql_placeholders(1, delivery_ids.len());
+    let sql = format!(
         "UPDATE outbox_deliveries
-         SET state = ?1,
+         SET state = 'delivered',
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = delivery_ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    db.prepare(&sql).bind_refs(bindings.iter())?.run().await?;
 
     Ok(())
 }
