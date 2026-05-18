@@ -54,3 +54,14 @@ bucket_name = "cfwdon-media"
 # Configure the bucket behind a public custom domain and keep that domain
 # outside Cloudflare Access. Entity payloads will use MEDIA_PUBLIC_BASE_URL
 # directly; /media/:id remains as a fallback/redirect route.
+
+[[queues.producers]]
+binding = "OUTBOX_PROCESS_QUEUE"
+queue = "cfwdon-outbox-process"
+
+[[queues.consumers]]
+queue = "cfwdon-outbox-process"
+max_batch_size = 10
+max_batch_timeout = 0
+max_retries = 3
+max_concurrency = 1

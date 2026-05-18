@@ -217,18 +217,19 @@ async fn resolve_create_status_access(
     config: &cfwdon_core::AppConfig,
 ) -> Result<Option<CreateStatusAccess>> {
     if let Some(token) = app_bearer_token_from_request(req)? {
-        if let Some(access_token) = find_oauth_access_token_by_bearer_token(db, &token).await? {
-            if !oauth_access_token_has_any_scope(&access_token, &["write:statuses", "write"]) {
+        if let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
+        {
+            if !oauth_access_token_has_any_scope(&auth.token, &["write:statuses", "write"]) {
                 return Err(worker::Error::RustError(
                     "status token outside authorized scopes".to_owned(),
                 ));
             }
-            let Some(account) = find_account_by_id(db, &access_token.account_id).await? else {
+            let Some(account) = auth.account else {
                 return Ok(None);
             };
             return Ok(Some(CreateStatusAccess {
                 account,
-                application_id: Some(access_token.oauth_app_id),
+                application_id: Some(auth.token.oauth_app_id),
             }));
         }
         if let Some(app) = find_oauth_app_by_bearer_token(db, &token).await? {
@@ -345,6 +346,7 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     .await?;
     invalidate_account_dynamic_public_cache(&ctx, &access.account.id, &access.account.username)
         .await;
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_create").await;
 
     Response::from_json(&response)
 }
@@ -372,6 +374,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         let bucket = ctx.bucket(&config.media_binding)?;
         delete_media_attachments(&db, &bucket, &deleted.media).await?;
     }
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_delete").await;
 
     Response::from_json(&deleted.response)
 }
@@ -502,6 +505,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Err(error) => return Err(error),
     };
     invalidate_status_api_cache(&ctx, &updated.status_id).await;
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_update").await;
 
     Response::from_json(&updated.response)
 }

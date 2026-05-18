@@ -1,7 +1,8 @@
 use super::{
     Request, Response, Result, RouteContext, build_local_status_response,
-    enqueue_add_featured_status_activity, enqueue_remove_featured_status_activity,
-    find_owned_local_status_response_subject, load_config, require_authenticated_local_account,
+    enqueue_add_featured_status_activity, enqueue_outbox_process_queue_best_effort,
+    enqueue_remove_featured_status_activity, find_owned_local_status_response_subject, load_config,
+    require_authenticated_local_account,
 };
 use worker::d1::D1Type;
 
@@ -121,6 +122,7 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
 
     pin_local_status(&db, &viewer.id, &subject.status.id).await?;
     enqueue_add_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_pin").await;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
 }
 
@@ -143,5 +145,6 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
 
     unpin_local_status(&db, &viewer.id, &subject.status.id).await?;
     enqueue_remove_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_unpin").await;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
 }

@@ -2,10 +2,10 @@ use super::{
     Error, Request, Response, Result, RouteContext, build_announce_activity,
     build_local_action_status_response, build_remote_status_response, build_undo_announce_activity,
     delete_reblog_by_target_uri, delete_reblog_wrapper_status_by_target_uri,
-    find_reblog_activity_by_target_uri, invalidate_status_api_cache, local_status_target_uri,
-    queue_remote_actor_activity, resolve_authenticated_status_action_context,
-    resolve_visible_action_status, upsert_reblog_local_status, upsert_reblog_remote_status,
-    upsert_reblog_wrapper_status,
+    enqueue_outbox_process_queue_best_effort, find_reblog_activity_by_target_uri,
+    invalidate_status_api_cache, local_status_target_uri, queue_remote_actor_activity,
+    resolve_authenticated_status_action_context, resolve_visible_action_status,
+    upsert_reblog_local_status, upsert_reblog_remote_status, upsert_reblog_wrapper_status,
 };
 use serde::Deserialize;
 
@@ -76,6 +76,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 wrapper_subject,
             )
             .await?;
+            enqueue_outbox_process_queue_best_effort(&ctx.env, "status_reblog").await;
             Response::from_json(&response)
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
@@ -131,6 +132,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 wrapper_subject,
             )
             .await?;
+            enqueue_outbox_process_queue_best_effort(&ctx.env, "status_reblog").await;
             Response::from_json(&response)
         }
         None => Response::error("status not found", 404),
@@ -179,6 +181,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                 subject,
             )
             .await?;
+            enqueue_outbox_process_queue_best_effort(&ctx.env, "status_unreblog").await;
             Response::from_json(&response)
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
@@ -219,6 +222,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                 &actor,
             )
             .await?;
+            enqueue_outbox_process_queue_best_effort(&ctx.env, "status_unreblog").await;
             Response::from_json(&response)
         }
         None => Response::error("status not found", 404),

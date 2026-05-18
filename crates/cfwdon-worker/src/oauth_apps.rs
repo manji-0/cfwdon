@@ -5,6 +5,7 @@ use crate::runtime_config::load_config;
 use crate::time_html::{escape_html, now_unix_timestamp};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use cfwdon_domain::LocalAccount;
 use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -77,8 +78,13 @@ pub(crate) struct OAuthAppRow {
 pub(crate) struct OAuthAccessTokenRow {
     pub(crate) access_token: String,
     pub(crate) oauth_app_id: i64,
-    pub(crate) account_id: String,
     scopes_json: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OAuthAccessTokenWithAccount {
+    pub(crate) token: OAuthAccessTokenRow,
+    pub(crate) account: Option<LocalAccount>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -430,20 +436,66 @@ pub(crate) async fn find_oauth_app_id_by_bearer_token(
         .map(|row| row.id))
 }
 
-pub(crate) async fn find_oauth_access_token_by_bearer_token(
+pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
     db: &D1Database,
     token: &str,
-) -> Result<Option<OAuthAccessTokenRow>> {
+) -> Result<Option<OAuthAccessTokenWithAccount>> {
     let binding = D1Type::Text(token);
-    db.prepare(
-        "SELECT access_token, oauth_app_id, account_id, scopes_json
-         FROM oauth_access_tokens
-         WHERE access_token = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&[binding])?
-    .first::<OAuthAccessTokenRow>(None)
-    .await
+    let Some(row) = db
+        .prepare(
+            "SELECT t.access_token,
+                    t.oauth_app_id,
+                    t.scopes_json,
+                    a.id,
+                    a.username,
+                    a.access_email,
+                    a.display_name,
+                    a.bio_html,
+                    a.bio_text,
+                    a.fields_json,
+                    a.locked,
+                    a.bot,
+                    a.discoverable,
+                    a.default_post_visibility,
+                    a.default_quote_policy,
+                    a.default_sensitive,
+                    a.default_language,
+                    a.avatar_object_key,
+                    a.avatar_content_type,
+                    a.header_object_key,
+                    a.header_content_type,
+                    a.private_key_jwk,
+                    a.public_key_pem,
+                    a.created_at
+             FROM oauth_access_tokens t
+             LEFT JOIN accounts a ON a.id = t.account_id
+             WHERE t.access_token = ?1
+             LIMIT 1",
+        )
+        .bind_refs(&[binding])?
+        .first::<serde_json::Value>(None)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    let token = serde_json::from_value::<OAuthAccessTokenRow>(row.clone()).map_err(|error| {
+        worker::Error::RustError(format!("failed to decode OAuth access token row: {error}"))
+    })?;
+    let account = match row.get("id").and_then(serde_json::Value::as_str) {
+        Some(_) => Some(
+            serde_json::from_value::<crate::AccountRow>(row)
+                .map(LocalAccount::from)
+                .map_err(|error| {
+                    worker::Error::RustError(format!(
+                        "failed to decode OAuth access token account row: {error}"
+                    ))
+                })?,
+        ),
+        None => None,
+    };
+
+    Ok(Some(OAuthAccessTokenWithAccount { token, account }))
 }
 
 pub(crate) async fn issue_oauth_access_token(
@@ -483,7 +535,6 @@ pub(crate) async fn issue_oauth_access_token(
     Ok(OAuthAccessTokenRow {
         access_token,
         oauth_app_id,
-        account_id: account_id.to_owned(),
         scopes_json,
     })
 }

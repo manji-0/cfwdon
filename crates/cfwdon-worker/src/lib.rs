@@ -134,12 +134,50 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let config = scheduled_config(&env);
     let result = async {
         let db = env.d1(&config.database_binding)?;
-        revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
+        match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
+            Ok(true) => {}
+            Ok(false) => {}
+            Err(error) => console_error!("outbox delivery queue kick failed: {error}"),
+        }
+        if let Err(error) =
+            revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
+        {
+            console_error!("remote collection approval revalidation failed: {error}");
+        }
+        Ok::<(), Error>(())
     }
     .await;
     if let Err(error) = result {
-        console_error!("remote collection approval revalidation failed: {error}");
+        console_error!("scheduled maintenance failed: {error}");
     }
+}
+
+#[event(queue)]
+async fn queue(
+    batch: MessageBatch<OutboxProcessQueueMessage>,
+    env: Env,
+    _ctx: Context,
+) -> Result<()> {
+    let message_count = batch.raw_iter().count();
+    let config = load_config_from_env(&env);
+    let db = env.d1(&config.database_binding)?;
+    if !pending_outbox_work_exists(&db).await? {
+        batch.ack_all();
+        console_log!("outbox queue batch idle: messages={message_count}");
+        return Ok(());
+    }
+
+    let summary = process_outbox_deliveries_for_config(&db, &config).await?;
+    batch.ack_all();
+    console_log!(
+        "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
+        message_count,
+        summary.expanded,
+        summary.delivered,
+        summary.failed,
+        summary.completed_without_targets
+    );
+    Ok(())
 }
 
 #[cfg(test)]

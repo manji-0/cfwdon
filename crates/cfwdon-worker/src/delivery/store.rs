@@ -19,6 +19,35 @@ pub(crate) struct OutboxDeliveryRow {
     pub(crate) attempt_count: i32,
 }
 
+#[derive(Debug, Deserialize)]
+struct PendingOutboxWorkRow {
+    has_pending: i32,
+}
+
+pub(crate) async fn pending_outbox_work_exists(db: &D1Database) -> Result<bool> {
+    let row = db
+        .prepare(
+            "SELECT (
+                EXISTS (
+                    SELECT 1
+                    FROM outbox_deliveries
+                    WHERE state = 'queued'
+                      AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM outbound_activities
+                    WHERE state = 'queued'
+                      AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                )
+            ) AS has_pending",
+        )
+        .first::<PendingOutboxWorkRow>(None)
+        .await?;
+
+    Ok(row.is_some_and(|row| row.has_pending != 0))
+}
+
 pub(crate) async fn list_pending_generic_outbox_deliveries(
     db: &D1Database,
     limit: u32,

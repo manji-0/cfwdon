@@ -7,15 +7,17 @@ pub(crate) use request_parsing::*;
 pub(crate) use self::request_parsing::{UpdateCredentialsField, UpdateCredentialsRequest};
 use super::{
     AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
-    Result, RouteContext, apply_account_credentials_update, apply_remote_actor_social_counts,
-    cache_account_api_response, cached_account_api_response, count_pending_follow_requests,
-    enqueue_profile_update_activities, fetch_remote_actor_profile_with_document,
-    find_authenticated_local_account, find_remote_actor_by_actor_uri,
-    invalidate_account_public_cache, load_account_stats, load_config,
-    load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
-    media_object_url, normalize_hashtag, render_profile_field_value_html,
-    resolve_account_reference, resolve_lookup_account, upsert_remote_actor,
+    Result, RouteContext, app_bearer_token_from_request, apply_account_credentials_update,
+    apply_remote_actor_social_counts, cache_account_api_response, cached_account_api_response,
+    count_pending_follow_requests, enqueue_profile_update_activities, extract_authenticated_user,
+    fetch_remote_actor_profile_with_document, find_authenticated_local_account,
+    find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
+    load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
+    media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
+    render_profile_field_value_html, resolve_account_reference, resolve_lookup_account,
+    upsert_remote_actor,
 };
+use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Bucket, D1Database};
@@ -46,6 +48,35 @@ pub(crate) struct AccountLookupQuery {
 enum ProfileMediaField {
     Avatar,
     Header,
+}
+
+const ACCOUNT_PREFERENCES_SELECT_SQL: &str = "a.id, a.username, a.access_email,
+            a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable,
+            a.default_post_visibility, a.default_quote_policy, a.default_sensitive,
+            a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key,
+            a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at,
+            s.hide_collections, s.indexable, s.show_media, s.show_media_replies, s.show_featured,
+            s.avatar_description, s.header_description";
+const PREFERENCES_READ_SCOPES: &[&str] = &[
+    "read",
+    "read:accounts",
+    "read:blocks",
+    "read:bookmarks",
+    "read:collections",
+    "read:favourites",
+    "read:filters",
+    "read:follows",
+    "read:lists",
+    "read:mutes",
+    "read:notifications",
+    "read:search",
+    "read:statuses",
+];
+
+#[derive(Debug)]
+struct AccountPreferencesSubject {
+    account: LocalAccount,
+    settings: AccountProfileSettings,
 }
 
 pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -179,11 +210,12 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
 pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let account = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
+    let subject = match find_authenticated_preferences_subject(&req, &db, &config).await? {
+        Some(subject) => subject,
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
-    let settings = load_account_profile_settings(&db, &account.id).await?;
+    let account = &subject.account;
+    let settings = &subject.settings;
 
     Response::from_json(&serde_json::json!({
         "posting:default:visibility": account.default_post_visibility,
@@ -206,6 +238,96 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
         "notifications:poll": true,
         "web:theme": "default",
     }))
+}
+
+async fn find_authenticated_preferences_subject(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<Option<AccountPreferencesSubject>> {
+    if let Some(token) = app_bearer_token_from_request(req)? {
+        let Some((scopes_json, subject)) =
+            load_oauth_preferences_subject(db, token.as_str()).await?
+        else {
+            return Ok(None);
+        };
+        if !oauth_access_token_has_any_scope_json(&scopes_json, PREFERENCES_READ_SCOPES) {
+            return Ok(None);
+        }
+        return Ok(Some(subject));
+    }
+
+    let Some(user) = extract_authenticated_user(req, config).await? else {
+        return Ok(None);
+    };
+
+    load_access_preferences_subject(db, user.email.as_str()).await
+}
+
+async fn load_oauth_preferences_subject(
+    db: &D1Database,
+    token: &str,
+) -> Result<Option<(String, AccountPreferencesSubject)>> {
+    let token = D1Type::Text(token);
+    let sql = format!(
+        "SELECT t.scopes_json, {ACCOUNT_PREFERENCES_SELECT_SQL}
+         FROM oauth_access_tokens t
+         JOIN accounts a ON a.id = t.account_id
+         LEFT JOIN account_profile_settings s ON s.account_id = a.id
+         WHERE t.access_token = ?1
+         LIMIT 1"
+    );
+    let Some(row) = db
+        .prepare(&sql)
+        .bind_refs(&token)?
+        .first::<serde_json::Value>(None)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let scopes_json = row
+        .get("scopes_json")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(Some((
+        scopes_json,
+        account_preferences_subject_from_value(&row)?,
+    )))
+}
+
+async fn load_access_preferences_subject(
+    db: &D1Database,
+    email: &str,
+) -> Result<Option<AccountPreferencesSubject>> {
+    let email = D1Type::Text(email);
+    let sql = format!(
+        "SELECT {ACCOUNT_PREFERENCES_SELECT_SQL}
+         FROM accounts a
+         LEFT JOIN account_profile_settings s ON s.account_id = a.id
+         WHERE a.access_email = ?1
+         LIMIT 1"
+    );
+    db.prepare(&sql)
+        .bind_refs(&email)?
+        .first::<serde_json::Value>(None)
+        .await?
+        .map(|row| account_preferences_subject_from_value(&row))
+        .transpose()
+}
+
+fn account_preferences_subject_from_value(
+    row: &serde_json::Value,
+) -> Result<AccountPreferencesSubject> {
+    let account = serde_json::from_value::<crate::AccountRow>(row.clone())
+        .map(LocalAccount::from)
+        .map_err(|error| {
+            Error::RustError(format!("failed to decode account preferences row: {error}"))
+        })?;
+    Ok(AccountPreferencesSubject {
+        account,
+        settings: account_profile_settings_from_value(row),
+    })
 }
 
 pub(crate) async fn update_credentials(
@@ -312,6 +434,7 @@ async fn delete_profile_media_response(
     };
     enqueue_profile_update_activities(&db, &config, &account).await?;
     invalidate_account_public_cache(&ctx, &account.id, &account.username).await;
+    enqueue_outbox_process_queue_best_effort(&ctx.env, "profile_media_delete").await;
     let stats = load_account_stats(&db, &account.id).await?;
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
@@ -405,7 +528,11 @@ async fn load_account_profile_settings(
         return Ok(AccountProfileSettings::default());
     };
 
-    Ok(AccountProfileSettings {
+    Ok(account_profile_settings_from_value(&row))
+}
+
+fn account_profile_settings_from_value(row: &serde_json::Value) -> AccountProfileSettings {
+    AccountProfileSettings {
         hide_collections: value_as_option_bool(row.get("hide_collections")),
         indexable: value_as_bool(row.get("indexable"), true),
         show_media: value_as_bool(row.get("show_media"), true),
@@ -421,7 +548,7 @@ async fn load_account_profile_settings(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-    })
+    }
 }
 
 async fn save_account_profile_settings(

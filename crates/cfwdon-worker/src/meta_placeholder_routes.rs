@@ -19,7 +19,7 @@ use crate::{
     find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
     find_conversation_id_by_status_id, find_follower_follow_activity_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_access_token_by_bearer_token, find_oauth_app_by_bearer_token,
+    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
     find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
     find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
     generate_entity_id, insert_status_edit_snapshot, instance_base_url,
@@ -3214,18 +3214,18 @@ pub(crate) async fn streaming_placeholder_response(
                 .or(websocket_protocol_token.clone());
             match token {
                 Some(token) => {
-                    let Some(access_token) =
-                        find_oauth_access_token_by_bearer_token(&db, &token).await?
+                    let Some(auth) =
+                        find_oauth_access_token_with_account_by_bearer_token(&db, &token).await?
                     else {
                         return invalid_access_token_response();
                     };
                     if !oauth_access_token_has_any_scope(
-                        &access_token,
+                        &auth.token,
                         &["read", "read:statuses", "read:notifications"],
                     ) {
                         return invalid_access_token_response();
                     }
-                    find_account_by_id(&db, &access_token.account_id).await?
+                    auth.account
                 }
                 None => None,
             }
