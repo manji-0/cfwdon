@@ -357,8 +357,10 @@ async fn instance_v2_response_for_config(
     config: super::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
-    let summary = load_instance_summary(db, config.clone()).await?;
-    let active_month = load_active_month_users(db).await?;
+    let (summary, active_month) = futures_util::try_join!(
+        load_instance_summary(db, config.clone()),
+        load_active_month_users(db),
+    )?;
     let mut document = build_instance_v2_document(&summary, &config, active_month);
     set_instance_translation_enabled(&mut document, translation_enabled);
 
