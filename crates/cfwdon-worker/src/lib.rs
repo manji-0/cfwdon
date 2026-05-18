@@ -162,13 +162,11 @@ async fn queue(
     let config = load_config_from_env(&env);
     let db = env.d1(&config.database_binding)?;
     if !pending_outbox_work_exists(&db).await? {
-        batch.ack_all();
         console_log!("outbox queue batch idle: messages={message_count}");
         return Ok(());
     }
 
     let summary = process_outbox_deliveries_for_config(&db, &config).await?;
-    batch.ack_all();
     console_log!(
         "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
         message_count,
