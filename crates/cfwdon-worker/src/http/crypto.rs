@@ -109,12 +109,8 @@ async fn import_private_signing_key(
     subtle: &web_sys::SubtleCrypto,
     private_key_jwk: &str,
 ) -> Result<CryptoKey> {
-    let jwk: serde_json::Value = serde_json::from_str(private_key_jwk).map_err(|error| {
-        Error::RustError(format!("failed to parse account private key JWK: {error}"))
-    })?;
-    let jwk_value = worker::d1::serde_wasm_bindgen::to_value(&jwk)
-        .map_err(|error| Error::RustError(format!("failed to serialize private JWK: {error}")))?;
-    let jwk_object = jwk_value
+    let jwk_object = js_sys::JSON::parse(private_key_jwk)
+        .map_err(Error::from)?
         .dyn_into::<Object>()
         .map_err(|_| Error::RustError("failed to convert private JWK to object".to_owned()))?;
     let import_params = RsaHashedImportParams::new_with_str("SHA-256");
