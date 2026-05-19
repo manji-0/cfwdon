@@ -96,13 +96,101 @@ async fn import_public_verification_key(
 }
 
 fn decode_public_key_pem(public_key_pem: &str) -> Result<Vec<u8>> {
+    let is_rsa_public_key = public_key_pem
+        .lines()
+        .any(|line| line.trim() == "-----BEGIN RSA PUBLIC KEY-----");
     let encoded = public_key_pem
         .lines()
         .filter(|line| !line.starts_with("-----"))
         .collect::<String>();
-    STANDARD
+    let der = STANDARD
         .decode(encoded)
-        .map_err(|error| Error::RustError(format!("invalid public key PEM: {error}")))
+        .map_err(|error| Error::RustError(format!("invalid public key PEM: {error}")))?;
+    if is_rsa_public_key {
+        Ok(wrap_pkcs1_rsa_public_key_as_spki(&der))
+    } else {
+        Ok(der)
+    }
+}
+
+fn der_length_bytes(length: usize) -> Vec<u8> {
+    if length < 128 {
+        return vec![length as u8];
+    }
+
+    let length_bytes = length.to_be_bytes();
+    let first_non_zero = length_bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(length_bytes.len() - 1);
+    let trimmed = &length_bytes[first_non_zero..];
+    let mut encoded = Vec::with_capacity(trimmed.len() + 1);
+    encoded.push(0x80 | trimmed.len() as u8);
+    encoded.extend_from_slice(trimmed);
+    encoded
+}
+
+fn der_sequence(content: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(content.len() + 4);
+    encoded.push(0x30);
+    encoded.extend_from_slice(&der_length_bytes(content.len()));
+    encoded.extend_from_slice(content);
+    encoded
+}
+
+fn der_bit_string(content: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(content.len() + 5);
+    encoded.push(0x03);
+    encoded.extend_from_slice(&der_length_bytes(content.len() + 1));
+    encoded.push(0);
+    encoded.extend_from_slice(content);
+    encoded
+}
+
+fn wrap_pkcs1_rsa_public_key_as_spki(pkcs1_der: &[u8]) -> Vec<u8> {
+    let rsa_encryption_algorithm = [
+        0x30, 0x0d, // SEQUENCE
+        0x06, 0x09, // OBJECT IDENTIFIER
+        0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, // rsaEncryption
+        0x05, 0x00, // NULL
+    ];
+    let public_key = der_bit_string(pkcs1_der);
+    let mut spki_content = Vec::with_capacity(rsa_encryption_algorithm.len() + public_key.len());
+    spki_content.extend_from_slice(&rsa_encryption_algorithm);
+    spki_content.extend_from_slice(&public_key);
+    der_sequence(&spki_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_public_key_pem, wrap_pkcs1_rsa_public_key_as_spki};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    #[test]
+    fn decode_public_key_pem_keeps_spki_public_key_der() {
+        let der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
+        let pem = format!(
+            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
+            STANDARD.encode(&der)
+        );
+
+        assert_eq!(decode_public_key_pem(&pem).unwrap(), der);
+    }
+
+    #[test]
+    fn decode_public_key_pem_wraps_pkcs1_rsa_public_key_as_spki() {
+        let pkcs1 = vec![0x30, 0x06, 0x02, 0x01, 0x03, 0x02, 0x01, 0x11];
+        let pem = format!(
+            "-----BEGIN RSA PUBLIC KEY-----\n{}\n-----END RSA PUBLIC KEY-----\n",
+            STANDARD.encode(&pkcs1)
+        );
+
+        assert_eq!(
+            decode_public_key_pem(&pem).unwrap(),
+            wrap_pkcs1_rsa_public_key_as_spki(&pkcs1)
+        );
+    }
 }
 
 async fn import_private_signing_key(

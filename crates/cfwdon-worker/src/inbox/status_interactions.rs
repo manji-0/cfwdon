@@ -40,20 +40,21 @@ pub(crate) async fn handle_inbox_announce(
     account: &LocalAccount,
     config: &AppConfig,
 ) -> Result<()> {
-    if let Some(object) = extract_remote_note_object(activity) {
-        if !object_attributed_to_remote_actor(object, activity, &remote_actor.actor_uri) {
-            return Err(worker::Error::RustError(
-                "activitypub unauthorized: object attribution mismatch".to_owned(),
-            ));
-        }
+    let mut actor_upserted = false;
+    if let Some(object) = extract_remote_note_object(activity).filter(|object| {
+        object_attributed_to_remote_actor(object, activity, &remote_actor.actor_uri)
+    }) {
         upsert_remote_actor(db, remote_actor).await?;
-        return upsert_remote_status(db, config, remote_actor, object).await;
+        actor_upserted = true;
+        upsert_remote_status(db, config, remote_actor, object).await?;
     }
 
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
         return Ok(());
     };
-    upsert_remote_actor(db, remote_actor).await?;
+    if !actor_upserted {
+        upsert_remote_actor(db, remote_actor).await?;
+    }
     upsert_remote_reblog_status(db, config, remote_actor, activity).await?;
 
     if let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? {

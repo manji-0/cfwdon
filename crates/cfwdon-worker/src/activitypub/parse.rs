@@ -178,7 +178,7 @@ pub(crate) fn is_follow_undo(
     canonical_actor_uri: &str,
 ) -> bool {
     match object {
-        Some(serde_json::Value::String(_)) => true,
+        Some(serde_json::Value::String(_)) => false,
         Some(serde_json::Value::Object(map)) => {
             let is_follow = map
                 .get("type")

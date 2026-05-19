@@ -1,7 +1,8 @@
 use super::{
     build_signature_signing_string, cached_remote_actor_matches_key, extract_activity_actor_uri,
     now_http_date_string, parse_signature_header, sha256_http_digest, sign_http_signature,
-    validate_request_date, validate_request_digest, verify_http_signature_bytes,
+    validate_activitypub_signature_headers, validate_request_date, validate_request_digest,
+    verify_http_signature_bytes,
 };
 use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts};
 use crate::instance::public_key_id;
@@ -69,6 +70,7 @@ pub(crate) async fn verify_incoming_activitypub_request(
         .get("Signature")?
         .ok_or_else(|| Error::RustError("missing Signature header".to_owned()))?;
     let parsed_signature = parse_signature_header(&signature_header)?;
+    validate_activitypub_signature_headers(&parsed_signature)?;
     let signing_string = build_signature_signing_string(req, req.headers(), &parsed_signature)?;
 
     validate_request_date(req.headers())?;

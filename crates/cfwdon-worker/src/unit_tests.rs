@@ -51,13 +51,14 @@ use super::{
     notification_timestamp_sort_token, oauth_access_token_has_any_scope_json,
     oauth_authorize_url_from_form, object_attributed_to_remote_actor,
     optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
-    paginate_tag_search_matches, parse_basic_authorization_header,
-    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
-    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
-    parse_lookup_handle, parse_media_focus, parse_media_id_fields,
-    parse_remote_actor_profile_document, parse_status_search_query, parse_webfinger_resource,
-    peer_authority_from_uri, pending_quote_document, quote_document_with_state,
-    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
+    paginate_tag_search_matches, parse_activitypub_request_date_ms,
+    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
+    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
+    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
+    parse_media_id_fields, parse_remote_actor_profile_document, parse_signature_header,
+    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
+    pending_quote_document, quote_document_with_state, quote_placeholder_document,
+    quote_target_uri_from_object, redirect_uri_matches_registered,
     remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
     remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
     remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
@@ -75,9 +76,10 @@ use super::{
     translation_cache_source_fingerprint, translation_provider_language_code,
     translation_provider_language_matches, translation_provider_supported_target_language,
     translation_target_language, trim_context_ancestors, trim_context_descendants,
-    validate_account_registration_request, validate_poll_vote_submission,
-    validate_scheduled_at_minimum_offset, validate_streaming_channel_request,
-    verify_account_password_hash, visibility_from_activitypub_object,
+    validate_account_registration_request, validate_activitypub_signature_headers,
+    validate_poll_vote_submission, validate_scheduled_at_minimum_offset,
+    validate_streaming_channel_request, verify_account_password_hash,
+    visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -1853,6 +1855,13 @@ fn is_follow_undo_accepts_follow_object_for_same_actor() {
         "https://remote.example/@bob",
     ));
     assert!(!is_follow_undo(
+        Some(&serde_json::json!(
+            "https://remote.example/users/bob/statuses/like-1"
+        )),
+        "https://remote.example/users/bob",
+        "https://remote.example/@bob",
+    ));
+    assert!(!is_follow_undo(
         Some(&serde_json::json!({
             "type": "Like",
             "actor": "https://remote.example/users/bob",
@@ -1860,6 +1869,40 @@ fn is_follow_undo_accepts_follow_object_for_same_actor() {
         "https://remote.example/users/bob",
         "https://remote.example/@bob",
     ));
+}
+
+#[test]
+fn validate_activitypub_signature_headers_requires_body_integrity_headers() {
+    let missing_target = parse_signature_header(
+        "keyId=\"https://remote.example/users/bob#main-key\",headers=\"date digest\",signature=\"YQ==\"",
+    )
+    .unwrap();
+    let error = validate_activitypub_signature_headers(&missing_target).unwrap_err();
+    assert!(error.to_string().contains("(request-target)"));
+
+    let complete = parse_signature_header(
+        "keyId=\"https://remote.example/users/bob#main-key\",headers=\"(request-target) host date digest\",signature=\"YQ==\"",
+    )
+    .unwrap();
+    validate_activitypub_signature_headers(&complete).unwrap();
+}
+
+#[test]
+fn parse_activitypub_request_date_accepts_common_http_date_variants() {
+    let expected = 784_889_377_000.0;
+    for value in [
+        "Tue, 15 Nov 1994 08:49:37 GMT",
+        "Tue, 15 Nov 1994 08:49:37 +0000",
+        "1994-11-15T08:49:37Z",
+        "Tuesday, 15-Nov-94 08:49:37 GMT",
+        "Tue Nov 15 08:49:37 1994",
+    ] {
+        assert_eq!(
+            parse_activitypub_request_date_ms(value),
+            Some(expected),
+            "{value}"
+        );
+    }
 }
 
 #[test]
