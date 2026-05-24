@@ -16,6 +16,13 @@ use worker::{Request, Response, Result, RouteContext};
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
 const PASSWORD_HASH_ITERATIONS: u32 = 210_000;
+const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
+    "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+                client_id, client_secret, client_secret_expires_at
+         FROM oauth_apps
+         WHERE client_secret = ?1
+         ORDER BY id ASC
+         LIMIT 1";
 
 #[derive(Debug, Default, Deserialize)]
 struct CreateAppRequest {
@@ -370,18 +377,10 @@ pub(crate) async fn find_oauth_app_by_bearer_token(
     token: &str,
 ) -> Result<Option<OAuthAppRow>> {
     let binding = D1Type::Text(token);
-    db.prepare(
-        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
-                client_id, client_secret, client_secret_expires_at
-         FROM oauth_apps
-         WHERE client_secret = ?1
-            OR client_id = ?1
-         ORDER BY id ASC
-         LIMIT 1",
-    )
-    .bind_refs(&[binding])?
-    .first::<OAuthAppRow>(None)
-    .await
+    db.prepare(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL)
+        .bind_refs(&[binding])?
+        .first::<OAuthAppRow>(None)
+        .await
 }
 
 pub(crate) async fn find_oauth_app_by_client_id(
@@ -1869,6 +1868,12 @@ mod tests {
             client_secret: "secret".to_owned(),
             client_secret_expires_at: 0,
         }
+    }
+
+    #[test]
+    fn app_bearer_token_lookup_sql_only_matches_client_secret() {
+        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("WHERE client_secret = ?1"));
+        assert!(!FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("client_id = ?1"));
     }
 
     #[test]
