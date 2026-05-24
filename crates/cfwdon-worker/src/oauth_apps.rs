@@ -50,7 +50,22 @@ pub(crate) struct OAuthAuthorizeRequest {
 struct OAuthAuthorizeLoginRequest {
     username: Option<String>,
     password: Option<String>,
+    approve: bool,
     authorize: OAuthAuthorizeRequest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccessAuthorizeGetAction {
+    RedirectToLogin,
+    MissingLinkedAccount,
+    ShowConsent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccessAuthorizePostAction {
+    RedirectToLogin,
+    ShowConsent,
+    IssueCode,
 }
 
 #[derive(Debug)]
@@ -769,12 +784,6 @@ fn cloudflare_access_team_url(config: &cfwdon_core::AppConfig) -> std::result::R
         .map_err(|error| format!("invalid Cloudflare Access team domain: {error}"))
 }
 
-fn access_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
-    let login_url =
-        cloudflare_access_login_url(config, &req.url()?).map_err(worker::Error::RustError)?;
-    redirect_response(login_url.as_str())
-}
-
 pub(crate) fn oauth_authorize_url_from_form(
     base_url: &Url,
     request: &OAuthAuthorizeRequest,
@@ -804,15 +813,13 @@ pub(crate) fn oauth_authorize_url_from_form(
     Ok(authorize_url)
 }
 
-async fn access_login_redirect_from_authorize_form(
+fn access_login_redirect_from_authorize_request(
     config: &cfwdon_core::AppConfig,
-    req: &mut Request,
+    base_url: &Url,
+    authorize: &OAuthAuthorizeRequest,
 ) -> Result<Response> {
-    let login = parse_oauth_authorize_login_request(req)
-        .await
-        .map_err(worker::Error::RustError)?;
-    let authorize_url = oauth_authorize_url_from_form(&req.url()?, &login.authorize)
-        .map_err(worker::Error::RustError)?;
+    let authorize_url =
+        oauth_authorize_url_from_form(base_url, authorize).map_err(worker::Error::RustError)?;
     let login_url =
         cloudflare_access_login_url(config, &authorize_url).map_err(worker::Error::RustError)?;
     redirect_response(login_url.as_str())
@@ -869,11 +876,39 @@ fn oauth_authorize_error_response(message: &str, status: u16) -> Result<Response
     )
 }
 
-fn oauth_login_page(
+fn access_authorize_get_action(
+    has_authenticated_local_account: bool,
+    has_authenticated_access_user_without_account: bool,
+) -> AccessAuthorizeGetAction {
+    if has_authenticated_local_account {
+        AccessAuthorizeGetAction::ShowConsent
+    } else if has_authenticated_access_user_without_account {
+        AccessAuthorizeGetAction::MissingLinkedAccount
+    } else {
+        AccessAuthorizeGetAction::RedirectToLogin
+    }
+}
+
+fn access_authorize_post_action(
+    has_authenticated_local_account: bool,
+    approved: bool,
+    has_valid_credentials: bool,
+) -> AccessAuthorizePostAction {
+    if !has_authenticated_local_account {
+        AccessAuthorizePostAction::RedirectToLogin
+    } else if approved || has_valid_credentials {
+        AccessAuthorizePostAction::IssueCode
+    } else {
+        AccessAuthorizePostAction::ShowConsent
+    }
+}
+
+fn oauth_authorize_page_body(
     request: &OAuthAuthorizeRequest,
     app: &OAuthAppRow,
     error: Option<&str>,
-) -> Result<Response> {
+    require_login_credentials: bool,
+) -> String {
     let hidden = [
         ("response_type", request.response_type.as_deref()),
         ("client_id", request.client_id.as_deref()),
@@ -901,13 +936,30 @@ fn oauth_login_page(
     let error_html = error
         .map(|message| format!("<p role=\"alert\">{}</p>", escape_html(message)))
         .unwrap_or_default();
+    let form_body = if require_login_credentials {
+        format!(
+            "{hidden}<label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button type=\"submit\">Authorize</button>"
+        )
+    } else {
+        format!(
+            "<p>Approve access for this application.</p>{hidden}<input type=\"hidden\" name=\"approve\" value=\"true\"><button type=\"submit\">Authorize</button>"
+        )
+    };
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorize {app}</title></head><body><main><h1>Authorize {app}</h1>{error}<form method=\"post\" action=\"/oauth/authorize\">{form_body}</form></main></body></html>",
+        app = escape_html(&app.name),
+        error = error_html,
+        form_body = form_body,
+    )
+}
+
+fn oauth_login_page(
+    request: &OAuthAuthorizeRequest,
+    app: &OAuthAppRow,
+    error: Option<&str>,
+) -> Result<Response> {
     html_response(
-        &format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorize {app}</title></head><body><main><h1>Authorize {app}</h1>{error}<form method=\"post\" action=\"/oauth/authorize\">{hidden}<label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button type=\"submit\">Authorize</button></form></main></body></html>",
-            app = escape_html(&app.name),
-            error = error_html,
-            hidden = hidden,
-        ),
+        &oauth_authorize_page_body(request, app, error, true),
         error.map(|_| 401).unwrap_or(200),
     )
 }
@@ -1002,6 +1054,10 @@ async fn parse_oauth_authorize_login_request(
     Ok(OAuthAuthorizeLoginRequest {
         username: form.get_field("username"),
         password: form.get_field("password"),
+        approve: form
+            .get_field("approve")
+            .map(|value| value.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false),
         authorize: OAuthAuthorizeRequest {
             response_type: form.get_field("response_type"),
             client_id: form.get_field("client_id"),
@@ -1263,9 +1319,6 @@ pub(crate) async fn oauth_authorize_response(
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     if req.method().as_ref() == "POST" {
-        if access_login_configured(&config) {
-            return access_login_redirect_from_authorize_form(&config, &mut req).await;
-        }
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
             Err(message) => return Response::error(&message, 422),
@@ -1275,6 +1328,33 @@ pub(crate) async fn oauth_authorize_response(
             Ok(value) => value,
             Err(message) => return Response::error(&message, 400),
         };
+        if access_login_configured(&config) {
+            let base_url = req.url()?;
+            let authenticated_account =
+                crate::find_authenticated_local_account(&req, &db, &config).await?;
+            let password_account =
+                authorize_account_by_password(&db, login.username, login.password).await?;
+            return match access_authorize_post_action(
+                authenticated_account.is_some(),
+                login.approve,
+                password_account.is_some(),
+            ) {
+                AccessAuthorizePostAction::RedirectToLogin => {
+                    access_login_redirect_from_authorize_request(&config, &base_url, &authorize)
+                }
+                AccessAuthorizePostAction::ShowConsent => html_response(
+                    &oauth_authorize_page_body(&authorize, &app, None, false),
+                    200,
+                ),
+                AccessAuthorizePostAction::IssueCode => {
+                    let account = password_account
+                        .or(authenticated_account)
+                        .expect("account must exist when issuing authorization code");
+                    redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes)
+                        .await
+                }
+            };
+        }
         let Some(account) =
             authorize_account_by_password(&db, login.username, login.password).await?
         else {
@@ -1291,17 +1371,29 @@ pub(crate) async fn oauth_authorize_response(
         Ok(value) => value,
         Err(message) => return oauth_authorize_error_response(&message, 400),
     };
-    if let Some(account) = crate::find_authenticated_local_account(&req, &db, &config).await? {
-        return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
-    }
+    let authenticated_account = crate::find_authenticated_local_account(&req, &db, &config).await?;
     if access_login_configured(&config) {
-        if crate::extract_authenticated_user(&req, &config)
-            .await?
-            .is_some()
-        {
-            return access_authenticated_without_account_response(&config);
-        }
-        return access_login_redirect(&config, &req);
+        let action = access_authorize_get_action(
+            authenticated_account.is_some(),
+            crate::extract_authenticated_user(&req, &config)
+                .await?
+                .is_some(),
+        );
+        return match action {
+            AccessAuthorizeGetAction::RedirectToLogin => {
+                access_login_redirect_from_authorize_request(&config, &req.url()?, &authorize)
+            }
+            AccessAuthorizeGetAction::MissingLinkedAccount => {
+                access_authenticated_without_account_response(&config)
+            }
+            AccessAuthorizeGetAction::ShowConsent => html_response(
+                &oauth_authorize_page_body(&authorize, &app, None, false),
+                200,
+            ),
+        };
+    }
+    if let Some(account) = authenticated_account {
+        return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
     }
     oauth_login_page(&authorize, &app, None)
 }
@@ -1765,9 +1857,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn client_secret_and_code_binding_match_expected_app() {
-        let app = OAuthAppRow {
+    fn oauth_app_fixture() -> OAuthAppRow {
+        OAuthAppRow {
             id: 7,
             name: "Client".to_owned(),
             website: None,
@@ -1777,7 +1868,12 @@ mod tests {
             client_id: "client".to_owned(),
             client_secret: "secret".to_owned(),
             client_secret_expires_at: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn client_secret_and_code_binding_match_expected_app() {
+        let app = oauth_app_fixture();
         let code_row = OAuthAuthorizationCodeRow {
             code: "code-1".to_owned(),
             oauth_app_id: 7,
@@ -1802,5 +1898,87 @@ mod tests {
             &app,
             "https://other.example/callback"
         ));
+    }
+
+    #[test]
+    fn access_authorize_actions_match_expected_flow() {
+        assert_eq!(
+            access_authorize_get_action(false, false),
+            AccessAuthorizeGetAction::RedirectToLogin
+        );
+        assert_eq!(
+            access_authorize_get_action(false, true),
+            AccessAuthorizeGetAction::MissingLinkedAccount
+        );
+        assert_eq!(
+            access_authorize_get_action(true, false),
+            AccessAuthorizeGetAction::ShowConsent
+        );
+
+        assert_eq!(
+            access_authorize_post_action(false, false, false),
+            AccessAuthorizePostAction::RedirectToLogin
+        );
+        assert_eq!(
+            access_authorize_post_action(true, false, false),
+            AccessAuthorizePostAction::ShowConsent
+        );
+        assert_eq!(
+            access_authorize_post_action(true, true, false),
+            AccessAuthorizePostAction::IssueCode
+        );
+        assert_eq!(
+            access_authorize_post_action(true, false, true),
+            AccessAuthorizePostAction::IssueCode
+        );
+    }
+
+    #[test]
+    fn oauth_authorize_page_body_requires_credentials_for_login_flow() {
+        let body = oauth_authorize_page_body(
+            &OAuthAuthorizeRequest {
+                response_type: Some("code".to_owned()),
+                client_id: Some("client".to_owned()),
+                redirect_uri: Some("https://client.example/callback".to_owned()),
+                scope: Some("read".to_owned()),
+                state: Some("state-1".to_owned()),
+                code_challenge: None,
+                code_challenge_method: None,
+            },
+            &oauth_app_fixture(),
+            None,
+            true,
+        );
+
+        assert!(body.contains("name=\"username\""));
+        assert!(body.contains("type=\"password\""));
+        assert!(body.contains("<button type=\"submit\">Authorize</button>"));
+    }
+
+    #[test]
+    fn oauth_authorize_page_body_shows_authenticated_consent_without_credentials() {
+        let body = oauth_authorize_page_body(
+            &OAuthAuthorizeRequest {
+                response_type: Some("code".to_owned()),
+                client_id: Some("client".to_owned()),
+                redirect_uri: Some("https://client.example/callback".to_owned()),
+                scope: Some("read write".to_owned()),
+                state: Some("state-1".to_owned()),
+                code_challenge: Some("challenge-1".to_owned()),
+                code_challenge_method: Some("S256".to_owned()),
+            },
+            &oauth_app_fixture(),
+            None,
+            false,
+        );
+
+        assert!(!body.contains("name=\"username\""));
+        assert!(!body.contains("type=\"password\""));
+        assert!(body.contains("Authorize Client"));
+        assert!(body.contains("name=\"client_id\" value=\"client\""));
+        assert!(body.contains("name=\"scope\" value=\"read write\""));
+        assert!(body.contains("name=\"code_challenge_method\" value=\"S256\""));
+        assert!(body.contains("name=\"approve\" value=\"true\""));
+        assert!(body.contains("Approve access for this application"));
     }
 }
