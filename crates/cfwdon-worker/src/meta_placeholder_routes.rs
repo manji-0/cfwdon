@@ -39,7 +39,8 @@ use crate::{
     queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
     remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, status_has_active_quote,
-    store_account_password, streaming_batch_from_entries, update_remote_status_quote_state,
+    store_account_password, store_account_private_key, streaming_batch_from_entries,
+    update_remote_status_quote_state,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -826,7 +827,7 @@ async fn insert_registered_account(
         D1Type::Text(username),
         D1Type::Text(email),
         D1Type::Text(display_name.as_str()),
-        D1Type::Text(key_material.private_key_jwk.as_str()),
+        D1Type::Text(""),
         D1Type::Text(key_material.public_key_pem.as_str()),
     ];
     db.prepare(
@@ -859,6 +860,7 @@ async fn insert_registered_account(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    store_account_private_key(db, config, &id, &key_material.private_key_jwk).await?;
 
     for admin_email in &config.admin_emails {
         if let Some(admin) = find_account_by_email(db, admin_email).await? {

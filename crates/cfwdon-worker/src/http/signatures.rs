@@ -4,6 +4,7 @@ use super::{
     validate_activitypub_signature_headers, validate_request_date, validate_request_digest,
     verify_http_signature_bytes,
 };
+use crate::auth::load_account_private_key_jwk;
 use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts};
 use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
@@ -14,6 +15,7 @@ use worker::{D1Database, Error, Fetch, Headers, Method, Request, RequestInit, Re
 
 pub(crate) async fn send_signed_activity(
     config: &AppConfig,
+    db: &D1Database,
     account: &LocalAccount,
     inbox_url: &str,
     payload_json: &str,
@@ -24,8 +26,10 @@ pub(crate) async fn send_signed_activity(
     let signing_string = format!(
         "(request-target): post {path_and_query}\nhost: {host}\ndate: {date}\ndigest: {digest}"
     );
-    let signature =
-        sign_http_signature(&account.private_key_jwk, signing_string.as_bytes()).await?;
+    let private_key_jwk = load_account_private_key_jwk(db, config, &account.id)
+        .await?
+        .ok_or_else(|| Error::RustError("account private signing key is missing".to_owned()))?;
+    let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes()).await?;
 
     let headers = Headers::new();
     headers.set("Accept", "application/activity+json")?;

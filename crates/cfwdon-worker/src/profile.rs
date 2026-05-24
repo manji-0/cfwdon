@@ -14,8 +14,8 @@ use super::{
     find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
     load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
     media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
-    render_profile_field_value_html, resolve_account_reference, resolve_lookup_account,
-    upsert_remote_actor,
+    oauth_bearer_token_hash, render_profile_field_value_html, resolve_account_reference,
+    resolve_lookup_account, upsert_remote_actor,
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
@@ -54,7 +54,7 @@ const ACCOUNT_PREFERENCES_SELECT_SQL: &str = "a.id, a.username, a.access_email,
             a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable,
             a.default_post_visibility, a.default_quote_policy, a.default_sensitive,
             a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key,
-            a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at,
+            a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at,
             s.hide_collections, s.indexable, s.show_media, s.show_media_replies, s.show_featured,
             s.avatar_description, s.header_description";
 const PREFERENCES_READ_SCOPES: &[&str] = &[
@@ -268,18 +268,21 @@ async fn load_oauth_preferences_subject(
     db: &D1Database,
     token: &str,
 ) -> Result<Option<(String, AccountPreferencesSubject)>> {
+    let token_hash = oauth_bearer_token_hash(token);
+    let token_hash = D1Type::Text(token_hash.as_str());
     let token = D1Type::Text(token);
     let sql = format!(
         "SELECT t.scopes_json, {ACCOUNT_PREFERENCES_SELECT_SQL}
          FROM oauth_access_tokens t
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN account_profile_settings s ON s.account_id = a.id
-         WHERE t.access_token = ?1
+         WHERE t.access_token_hash = ?1
+            OR t.access_token = ?2
          LIMIT 1"
     );
     let Some(row) = db
         .prepare(&sql)
-        .bind_refs(&token)?
+        .bind_refs(&[token_hash, token])?
         .first::<serde_json::Value>(None)
         .await?
     else {

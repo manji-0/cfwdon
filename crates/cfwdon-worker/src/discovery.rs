@@ -120,7 +120,7 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
-    let account = ensure_account_keys(&db, account).await?;
+    let account = ensure_account_keys(&db, &config, account).await?;
 
     if wants_html {
         let stats = load_account_stats(&db, &account.id).await?;

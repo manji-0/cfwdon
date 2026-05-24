@@ -110,10 +110,13 @@ Keep JSON values compact enough for Worker vars. Prefer a future storage-backed 
 Use Cloudflare secrets for values that should not be committed.
 
 ```sh
+wrangler secret put ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY
 wrangler secret put RESEND_API_KEY
 wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
 wrangler secret put TRANSLATION_API_KEY
 ```
+
+`ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` protects local account ActivityPub private keys at rest. Set it before running security backfills or creating production accounts. Use a long random value and keep the same value across deployments; rotating it requires decrypting and re-encrypting `account_private_keys`.
 
 Keep machine-specific deployment copies in an ignored local file such as `wrangler.local.toml`, or in a private deployment environment. Do not commit real Access audience values, D1 database IDs, KV namespace IDs, API keys, or private key material into templates or docs.
 

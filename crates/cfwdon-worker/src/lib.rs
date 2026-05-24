@@ -52,6 +52,7 @@ mod routing;
 mod runtime_config;
 mod scheduled_statuses;
 mod search;
+mod secret_storage;
 mod statuses;
 mod streaming_types;
 mod suggestions;

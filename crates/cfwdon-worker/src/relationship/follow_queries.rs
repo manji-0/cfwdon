@@ -174,7 +174,7 @@ pub(crate) async fn first_local_follower_for_remote_actor(
     let bindings = [D1Type::Text(actor_uri)];
     let row = db
         .prepare(
-            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at
              FROM follows f
              JOIN accounts a
                ON a.id = f.follower_account_id
@@ -226,7 +226,7 @@ pub(crate) async fn list_familiar_local_accounts_for_local_target(
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at
              FROM follows viewer_follows
              JOIN follows familiar_follows
                ON familiar_follows.follower_account_id = viewer_follows.target_account_id
@@ -295,7 +295,7 @@ pub(crate) async fn list_familiar_local_accounts_for_remote_target(
     ];
     let result = db
         .prepare(
-            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at
+            "SELECT DISTINCT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at
              FROM follows viewer_follows
              JOIN follows familiar_follows
                ON familiar_follows.follower_account_id = viewer_follows.target_account_id

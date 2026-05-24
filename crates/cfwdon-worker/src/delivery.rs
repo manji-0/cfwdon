@@ -115,8 +115,9 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         outbound_deliveries.len()
     );
     let mut account_cache = HashMap::new();
-    preload_outbox_delivery_accounts(db, &target_deliveries, &mut account_cache).await?;
-    preload_outbound_activity_accounts(db, &outbound_deliveries, &mut account_cache).await?;
+    preload_outbox_delivery_accounts(db, config, &target_deliveries, &mut account_cache).await?;
+    preload_outbound_activity_accounts(db, config, &outbound_deliveries, &mut account_cache)
+        .await?;
 
     let mut target_send_jobs = Vec::new();
     for delivery in target_deliveries {
@@ -146,7 +147,8 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     let mut target_results = futures_util::stream::iter(target_send_jobs)
         .map(|(delivery, target_inbox, account)| async move {
             let result =
-                send_signed_activity(config, &account, &target_inbox, &delivery.payload_json).await;
+                send_signed_activity(config, db, &account, &target_inbox, &delivery.payload_json)
+                    .await;
             (delivery, target_inbox, result)
         })
         .buffer_unordered(OUTBOX_DELIVERY_CONCURRENCY);
@@ -202,6 +204,7 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         .map(|(delivery, account)| async move {
             let result = send_signed_activity(
                 config,
+                db,
                 &account,
                 &delivery.target_inbox,
                 &delivery.payload_json,
@@ -314,6 +317,7 @@ fn partition_generic_outbox_deliveries_by_targets<'a>(
 
 async fn preload_outbox_delivery_accounts(
     db: &D1Database,
+    config: &AppConfig,
     deliveries: &[OutboxDeliveryRow],
     account_cache: &mut HashMap<String, LocalAccount>,
 ) -> Result<()> {
@@ -322,11 +326,12 @@ async fn preload_outbox_delivery_accounts(
         .filter(|delivery| !account_cache.contains_key(&delivery.account_id))
         .map(|delivery| delivery.account_id.clone())
         .collect::<Vec<_>>();
-    preload_delivery_accounts(db, &missing_account_ids, account_cache).await
+    preload_delivery_accounts(db, config, &missing_account_ids, account_cache).await
 }
 
 async fn preload_outbound_activity_accounts(
     db: &D1Database,
+    config: &AppConfig,
     deliveries: &[OutboundActivityRow],
     account_cache: &mut HashMap<String, LocalAccount>,
 ) -> Result<()> {
@@ -335,17 +340,18 @@ async fn preload_outbound_activity_accounts(
         .filter(|delivery| !account_cache.contains_key(&delivery.account_id))
         .map(|delivery| delivery.account_id.clone())
         .collect::<Vec<_>>();
-    preload_delivery_accounts(db, &missing_account_ids, account_cache).await
+    preload_delivery_accounts(db, config, &missing_account_ids, account_cache).await
 }
 
 async fn preload_delivery_accounts(
     db: &D1Database,
+    config: &AppConfig,
     account_ids: &[String],
     account_cache: &mut HashMap<String, LocalAccount>,
 ) -> Result<()> {
     let accounts = find_accounts_by_ids(db, account_ids).await?;
     for (account_id, account) in accounts {
-        let account = ensure_account_keys(db, account).await?;
+        let account = ensure_account_keys(db, config, account).await?;
         account_cache.insert(account_id, account);
     }
     Ok(())

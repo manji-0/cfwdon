@@ -236,7 +236,7 @@ async fn resolve_create_status_access(
             let Some(user) = extract_authenticated_user(req, config).await? else {
                 return Ok(None);
             };
-            let account = resolve_local_account(db, &user).await?;
+            let account = resolve_local_account(db, config, &user).await?;
             return Ok(Some(CreateStatusAccess {
                 account,
                 application_id: Some(app.id),

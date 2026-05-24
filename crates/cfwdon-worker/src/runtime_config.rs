@@ -227,6 +227,7 @@ where
     // related defaults and tests.
     set_instance_metadata_config(&vars, &mut config);
     set_web_push_config(&vars, &mut config);
+    set_secret_storage_config(&vars, &mut config);
     set_instance_document_config(&vars, &mut config);
 
     set_timeline_access_config(&vars, &mut config);
@@ -235,6 +236,14 @@ where
     set_access_config(&vars, &mut config);
 
     config
+}
+
+fn set_secret_storage_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    set_trimmed_optional(
+        vars,
+        "ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY",
+        &mut config.account_private_key_encryption_key,
+    );
 }
 
 fn set_access_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {

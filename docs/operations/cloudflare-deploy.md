@@ -73,13 +73,24 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler d1 migrations apply DB --remote
    ```
 
-8. Run the full local gate.
+8. Backfill deployed secret storage after migrations.
+<!-- constrained-by ../reference/configuration.md#secret-handling -->
+
+   Set `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` in the shell running the backfill to the same secret value configured in Cloudflare, then hash existing OAuth tokens and move account private keys into encrypted storage.
+
+   ```sh
+   ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY=... devbox run -- node scripts/backfill_security_secrets.mjs --database DB --remote
+   ```
+
+   Use `--dry-run` first if you want to inspect the generated SQL.
+
+9. Run the full local gate.
 
    ```sh
    devbox run ci
    ```
 
-9. Deploy the Worker.
+10. Deploy the Worker.
 
    ```sh
    wrangler deploy

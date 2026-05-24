@@ -35,7 +35,7 @@ pub(crate) async fn resolve_inbox_target_account(
     };
 
     match account {
-        Some(account) => ensure_account_keys(db, account).await.map(Some),
+        Some(account) => ensure_account_keys(db, config, account).await.map(Some),
         None => Ok(None),
     }
 }

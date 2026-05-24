@@ -902,7 +902,7 @@ async fn load_mention_local_accounts(
 
     let placeholders = crate::sql_placeholders(1, usernames.len());
     let sql = format!(
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
          FROM accounts
          WHERE lower(username) IN ({placeholders})"
     );

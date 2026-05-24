@@ -23,7 +23,7 @@ const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
                 a.client_id, a.client_secret, a.client_secret_expires_at
          FROM oauth_app_access_tokens t
          INNER JOIN oauth_apps a ON a.id = t.oauth_app_id
-         WHERE t.access_token = ?1
+         WHERE t.access_token_hash = ?1
            AND t.expires_at > ?2
          ORDER BY a.id ASC
          LIMIT 1";
@@ -387,17 +387,49 @@ pub(crate) fn parse_basic_authorization_header(value: &str) -> Option<(String, S
     Some((client_id.to_owned(), client_secret.to_owned()))
 }
 
+pub(crate) fn oauth_bearer_token_hash(token: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(token.as_bytes()))
+}
+
 pub(crate) async fn find_oauth_app_by_bearer_token(
     db: &D1Database,
     token: &str,
 ) -> Result<Option<OAuthAppRow>> {
-    let binding = D1Type::Text(token);
+    let token_hash = oauth_bearer_token_hash(token);
+    let binding = D1Type::Text(token_hash.as_str());
     let expires_at_binding =
         D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
-    db.prepare(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL)
+    if let Some(app) = db
+        .prepare(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL)
         .bind_refs(&[binding, expires_at_binding])?
         .first::<OAuthAppRow>(None)
-        .await
+        .await?
+    {
+        return Ok(Some(app));
+    }
+
+    let legacy_binding = D1Type::Text(token);
+    let expires_at_binding =
+        D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
+    let Some(app) = db
+        .prepare(
+            "SELECT a.id, a.name, a.website, a.scopes_json, a.redirect_uri_legacy, a.redirect_uris_json,
+                    a.client_id, a.client_secret, a.client_secret_expires_at
+             FROM oauth_app_access_tokens t
+             INNER JOIN oauth_apps a ON a.id = t.oauth_app_id
+             WHERE t.access_token = ?1
+               AND t.expires_at > ?2
+             ORDER BY a.id ASC
+             LIMIT 1",
+        )
+        .bind_refs(&[legacy_binding, expires_at_binding])?
+        .first::<OAuthAppRow>(None)
+        .await?
+    else {
+        return Ok(None);
+    };
+    migrate_legacy_oauth_app_access_token_hash(db, token, &token_hash).await?;
+    Ok(Some(app))
 }
 
 pub(crate) async fn find_oauth_app_by_client_id(
@@ -471,10 +503,40 @@ pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
     db: &D1Database,
     token: &str,
 ) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    let binding = D1Type::Text(token);
-    let Some(row) = db
-        .prepare(
-            "SELECT t.access_token,
+    let token_hash = oauth_bearer_token_hash(token);
+    if let Some(auth) = find_oauth_access_token_with_account_by_token_hash(db, &token_hash).await? {
+        return Ok(Some(auth));
+    }
+    let Some(auth) = find_legacy_oauth_access_token_with_account_by_plaintext(db, token).await?
+    else {
+        return Ok(None);
+    };
+    migrate_legacy_oauth_access_token_hash(db, token, &token_hash).await?;
+    Ok(Some(auth))
+}
+
+async fn find_oauth_access_token_with_account_by_token_hash(
+    db: &D1Database,
+    token_hash: &str,
+) -> Result<Option<OAuthAccessTokenWithAccount>> {
+    find_oauth_access_token_with_account_by_column(db, "t.access_token_hash", token_hash).await
+}
+
+async fn find_legacy_oauth_access_token_with_account_by_plaintext(
+    db: &D1Database,
+    token: &str,
+) -> Result<Option<OAuthAccessTokenWithAccount>> {
+    find_oauth_access_token_with_account_by_column(db, "t.access_token", token).await
+}
+
+async fn find_oauth_access_token_with_account_by_column(
+    db: &D1Database,
+    column: &str,
+    value: &str,
+) -> Result<Option<OAuthAccessTokenWithAccount>> {
+    let binding = D1Type::Text(value);
+    let sql = format!(
+        "SELECT t.access_token_hash AS access_token,
                     t.oauth_app_id,
                     t.scopes_json,
                     a.id,
@@ -495,14 +557,16 @@ pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
                     a.avatar_content_type,
                     a.header_object_key,
                     a.header_content_type,
-                    a.private_key_jwk,
+                    '' AS private_key_jwk,
                     a.public_key_pem,
                     a.created_at
              FROM oauth_access_tokens t
              LEFT JOIN accounts a ON a.id = t.account_id
-             WHERE t.access_token = ?1
-             LIMIT 1",
-        )
+             WHERE {column} = ?1
+             LIMIT 1"
+    );
+    let Some(row) = db
+        .prepare(&sql)
         .bind_refs(&[binding])?
         .first::<serde_json::Value>(None)
         .await?
@@ -510,6 +574,12 @@ pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
         return Ok(None);
     };
 
+    oauth_access_token_auth_from_joined_row(row)
+}
+
+fn oauth_access_token_auth_from_joined_row(
+    row: serde_json::Value,
+) -> Result<Option<OAuthAccessTokenWithAccount>> {
     let token = serde_json::from_value::<OAuthAccessTokenRow>(row.clone()).map_err(|error| {
         worker::Error::RustError(format!("failed to decode OAuth access token row: {error}"))
     })?;
@@ -529,6 +599,50 @@ pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
     Ok(Some(OAuthAccessTokenWithAccount { token, account }))
 }
 
+async fn migrate_legacy_oauth_access_token_hash(
+    db: &D1Database,
+    token: &str,
+    token_hash: &str,
+) -> Result<()> {
+    let bindings = [
+        D1Type::Text(token_hash),
+        D1Type::Text(token_hash),
+        D1Type::Text(token),
+    ];
+    db.prepare(
+        "UPDATE oauth_access_tokens
+         SET access_token = ?1,
+             access_token_hash = ?2
+         WHERE access_token = ?3",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+async fn migrate_legacy_oauth_app_access_token_hash(
+    db: &D1Database,
+    token: &str,
+    token_hash: &str,
+) -> Result<()> {
+    let bindings = [
+        D1Type::Text(token_hash),
+        D1Type::Text(token_hash),
+        D1Type::Text(token),
+    ];
+    db.prepare(
+        "UPDATE oauth_app_access_tokens
+         SET access_token = ?1,
+             access_token_hash = ?2
+         WHERE access_token = ?3",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn issue_oauth_access_token(
     db: &D1Database,
     oauth_app_id: i64,
@@ -536,11 +650,13 @@ pub(crate) async fn issue_oauth_access_token(
     scopes: &[String],
 ) -> Result<OAuthAccessTokenRow> {
     let access_token = generate_entity_id(32)?;
+    let access_token_hash = oauth_bearer_token_hash(&access_token);
     let scopes_json = serde_json::to_string(scopes).map_err(|error| {
         worker::Error::RustError(format!("failed to serialize access token scopes: {error}"))
     })?;
     let bindings = [
-        D1Type::Text(access_token.as_str()),
+        D1Type::Text(access_token_hash.as_str()),
+        D1Type::Text(access_token_hash.as_str()),
         D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
         D1Type::Text(account_id),
         D1Type::Text(scopes_json.as_str()),
@@ -548,6 +664,7 @@ pub(crate) async fn issue_oauth_access_token(
     db.prepare(
         "INSERT INTO oauth_access_tokens (
             access_token,
+            access_token_hash,
             oauth_app_id,
             account_id,
             scopes_json,
@@ -557,6 +674,7 @@ pub(crate) async fn issue_oauth_access_token(
             ?2,
             ?3,
             ?4,
+            ?5,
             CURRENT_TIMESTAMP
         )",
     )
@@ -576,12 +694,14 @@ async fn issue_oauth_app_access_token(
     scopes: &[String],
 ) -> Result<String> {
     let access_token = generate_entity_id(32)?;
+    let access_token_hash = oauth_bearer_token_hash(&access_token);
     let scopes_json = serde_json::to_string(scopes).map_err(|error| {
         worker::Error::RustError(format!("failed to serialize app token scopes: {error}"))
     })?;
     let expires_at = now_unix_timestamp() + APP_ACCESS_TOKEN_TTL_SECONDS;
     let bindings = [
-        D1Type::Text(access_token.as_str()),
+        D1Type::Text(access_token_hash.as_str()),
+        D1Type::Text(access_token_hash.as_str()),
         D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
         D1Type::Text(scopes_json.as_str()),
         D1Type::Integer(i32::try_from(expires_at).unwrap_or(i32::MAX)),
@@ -589,6 +709,7 @@ async fn issue_oauth_app_access_token(
     db.prepare(
         "INSERT INTO oauth_app_access_tokens (
             access_token,
+            access_token_hash,
             oauth_app_id,
             scopes_json,
             expires_at,
@@ -598,6 +719,7 @@ async fn issue_oauth_app_access_token(
             ?2,
             ?3,
             ?4,
+            ?5,
             CURRENT_TIMESTAMP
         )",
     )
@@ -2011,10 +2133,21 @@ mod tests {
     #[test]
     fn app_bearer_token_lookup_sql_uses_app_access_tokens_only() {
         assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("oauth_app_access_tokens"));
-        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.access_token = ?1"));
+        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.access_token_hash = ?1"));
         assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.expires_at > ?2"));
         assert!(!FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("client_secret = ?1"));
         assert!(!FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("client_id = ?1"));
+    }
+
+    #[test]
+    fn oauth_bearer_token_hash_is_stable_and_non_plaintext() {
+        let hash = oauth_bearer_token_hash("plain-token");
+
+        assert_eq!(
+            hash,
+            "sha256:23fb79e20d37abf2418d78115eb0cc8c74b52f4ed8b91dda7fc03a1d41fc15e3"
+        );
+        assert!(!hash.contains("plain-token"));
     }
 
     #[test]

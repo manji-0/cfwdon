@@ -52,7 +52,6 @@ struct DiscoverableAccountRow {
     avatar_content_type: Option<String>,
     header_object_key: Option<String>,
     header_content_type: Option<String>,
-    private_key_jwk: String,
     public_key_pem: String,
     created_at: String,
     sort_key: String,
@@ -91,7 +90,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
 ) -> Result<Vec<(LocalAccount, String)>> {
     let sql = match order {
         DirectoryOrder::Active => {
-            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.private_key_jwk, a.public_key_pem, a.created_at,
+            "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.public_key_pem, a.created_at,
                     COALESCE(MAX(s.created_at), a.created_at) AS sort_key
              FROM accounts a
              LEFT JOIN statuses s
@@ -103,7 +102,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
              OFFSET ?2"
         }
         DirectoryOrder::New => {
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at,
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, public_key_pem, created_at,
                     created_at AS sort_key
              FROM accounts
              WHERE discoverable = 1
@@ -144,7 +143,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
                     avatar_content_type: row.avatar_content_type,
                     header_object_key: row.header_object_key,
                     header_content_type: row.header_content_type,
-                    private_key_jwk: row.private_key_jwk,
+                    private_key_jwk: String::new(),
                     public_key_pem: row.public_key_pem,
                     created_at: row.created_at,
                 }),
@@ -246,7 +245,7 @@ pub(crate) async fn find_accounts_by_ids(
 
     let placeholders = sql_placeholders(1, ids.len());
     let sql = format!(
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, private_key_jwk, public_key_pem, created_at
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
          FROM accounts
          WHERE id IN ({placeholders})"
     );
