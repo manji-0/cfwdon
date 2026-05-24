@@ -10,18 +10,21 @@ use crate::{
     StreamingPublicPlan, actor_url, app_bearer_token_from_request, authenticate_local_api_request,
     build_announcements_document, build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_delete_quote_authorization_activity,
-    build_local_status_response, build_oauth_token_document, build_reject_follow_activity,
-    build_relationship_for_target, build_remote_status_response, can_view_local_status,
-    clear_local_status_quote, collect_visible_notifications, delete_follow_by_target,
-    delete_follower_by_actor, delete_remote_follow_request_by_actor,
+    build_local_status_response, build_local_status_response_with_quote_count_preloads,
+    build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
+    build_remote_status_response, build_remote_status_response_with_timeline_preloads,
+    can_view_local_status, clear_local_status_quote, collect_visible_notifications,
+    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
     enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
     extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
-    find_conversation_id_by_status_id, find_follower_follow_activity_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_account_by_username, find_accounts_by_ids, find_authenticated_local_account,
+    find_conversation_for_account, find_conversation_id_by_status_id,
+    find_follower_follow_activity_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
     find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
     find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
+    find_remote_actor_by_actor_uri, find_remote_actors_by_actor_uris,
+    find_remote_status_attachments_by_status_ids, find_remote_status_by_id, find_status_by_id,
     generate_entity_id, insert_status_edit_snapshot, instance_base_url,
     is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
     issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
@@ -32,10 +35,14 @@ use crate::{
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
     load_announcement_reaction_state, load_config, load_config_from_env,
-    load_in_reply_to_account_id, load_latest_filter_updated_at, load_remote_status_updated_at,
-    load_status_updated_at, local_status_ap_id, local_status_target_uri, media_object_url,
-    normalize_status_history_entry, now_iso_string, oauth_access_token_has_any_scope,
-    oauth_app_has_any_scope, oauth_app_scopes, parse_optional_bool, parse_relationship_query_ids,
+    load_in_reply_to_account_id, load_in_reply_to_account_ids, load_latest_filter_updated_at,
+    load_remote_status_updated_at, load_status_updated_at, local_status_ap_id,
+    local_status_target_uri, media_object_url, normalize_status_history_entry, now_iso_string,
+    oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
+    parse_optional_bool, parse_relationship_query_ids, preload_local_status_viewer_state,
+    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
     queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
     remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, status_has_active_quote,
@@ -3449,47 +3456,147 @@ pub(crate) async fn status_quotes_response(
         }
     };
 
+    let local_quotes =
+        list_local_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await?;
+    let remote_quotes =
+        list_remote_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await?;
+    let local_status_ids = local_quotes
+        .iter()
+        .map(|quote| quote.id.clone())
+        .collect::<Vec<_>>();
+    let local_account_ids = local_quotes
+        .iter()
+        .map(|quote| quote.account_id.clone())
+        .collect::<Vec<_>>();
+    let remote_status_ids = remote_quotes
+        .iter()
+        .map(|quote| quote.id.clone())
+        .collect::<Vec<_>>();
+    let remote_actor_uris = remote_quotes
+        .iter()
+        .map(|quote| quote.actor_uri.clone())
+        .collect::<Vec<_>>();
+    let quote_uris = local_quotes
+        .iter()
+        .map(local_status_target_uri)
+        .chain(remote_quotes.iter().map(|quote| quote.object_uri.clone()))
+        .collect::<Vec<_>>();
+    let local_quote_refs = local_quotes.iter().collect::<Vec<_>>();
+
+    let (
+        local_accounts_by_id,
+        mut local_media_by_status_id,
+        local_in_reply_to_account_ids,
+        counts_preload,
+        quote_counts_preload,
+        local_poll_preload,
+        local_viewer_state_preload,
+        application_preload,
+        remote_actors_by_uri,
+        mut remote_attachments_by_status_id,
+        remote_poll_preload,
+        remote_edit_updated_at_preload,
+    ) = futures_util::try_join!(
+        find_accounts_by_ids(&db, &local_account_ids),
+        find_media_attachments_by_status_ids(&db, &local_status_ids),
+        load_in_reply_to_account_ids(&db, &local_quotes),
+        preload_status_counts(&db, &local_status_ids, &remote_status_ids),
+        preload_status_quote_counts(&db, &quote_uris),
+        preload_mastodon_poll_responses(&db, &local_status_ids, viewer.as_ref()),
+        async {
+            match viewer.as_ref() {
+                Some(viewer) => {
+                    preload_local_status_viewer_state(&db, &viewer.id, &local_quote_refs, None)
+                        .await
+                }
+                None => Ok(Default::default()),
+            }
+        },
+        preload_status_applications(&db, &config, &local_quote_refs),
+        find_remote_actors_by_actor_uris(&db, &remote_actor_uris),
+        find_remote_status_attachments_by_status_ids(&db, &remote_status_ids),
+        preload_remote_mastodon_poll_responses(&db, &remote_status_ids, viewer.as_ref()),
+        preload_remote_status_edit_updated_at(&db, &remote_status_ids),
+    )?;
+    let remote_quote_refs = remote_quotes
+        .iter()
+        .filter_map(|quote| {
+            remote_actors_by_uri
+                .get(&quote.actor_uri)
+                .map(|actor| (quote, actor))
+        })
+        .collect::<Vec<_>>();
+    let remote_viewer_state_preload = match viewer.as_ref() {
+        Some(viewer) => {
+            preload_remote_status_viewer_state(&db, &viewer.id, &remote_quote_refs).await?
+        }
+        None => Default::default(),
+    };
+
     let mut quotes: Vec<(String, String, serde_json::Value)> = Vec::new();
 
-    for quote in list_local_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await? {
-        let Some(account) = find_account_by_id(&db, &quote.account_id).await? else {
+    for quote in local_quotes {
+        let Some(account) = local_accounts_by_id.get(&quote.account_id) else {
             continue;
         };
-        if !can_view_local_status(&db, &quote, viewer.as_ref(), &account).await? {
+        if !can_view_local_status(&db, &quote, viewer.as_ref(), account).await? {
             continue;
         }
-        let media = find_media_attachments_by_status_id(&db, &quote.id).await?;
-        let in_reply_to_account_id = load_in_reply_to_account_id(&db, &quote).await?;
+        let media = local_media_by_status_id
+            .remove(&quote.id)
+            .unwrap_or_default();
         quotes.push((
             quote.created_at.clone(),
             quote.id.clone(),
             serde_json::to_value(
-                build_local_status_response(
+                build_local_status_response_with_quote_count_preloads(
                     &db,
                     &config,
                     viewer.as_ref(),
                     &quote,
-                    &account,
-                    in_reply_to_account_id,
+                    account,
+                    local_in_reply_to_account_ids.get(&quote.id).cloned(),
                     media,
+                    None,
+                    Some(&counts_preload),
+                    Some(&quote_counts_preload),
+                    Some(&local_poll_preload),
+                    Some(&local_viewer_state_preload),
+                    Some(&application_preload),
                 )
                 .await?,
             )?,
         ));
     }
 
-    for quote in list_remote_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await? {
+    for quote in remote_quotes {
         if !is_public_activitypub_visibility(&quote.visibility) {
             continue;
         }
-        let Some(actor) = find_remote_actor_by_actor_uri(&db, &quote.actor_uri).await? else {
+        let Some(actor) = remote_actors_by_uri.get(&quote.actor_uri) else {
             continue;
         };
         quotes.push((
             quote.published_at.clone(),
             quote.id.clone(),
             serde_json::to_value(
-                build_remote_status_response(&db, &config, viewer.as_ref(), &quote, &actor).await?,
+                build_remote_status_response_with_timeline_preloads(
+                    &db,
+                    &config,
+                    viewer.as_ref(),
+                    &quote,
+                    actor,
+                    None,
+                    Some(&counts_preload),
+                    Some(&quote_counts_preload),
+                    Some(&remote_viewer_state_preload),
+                    Some(&remote_poll_preload),
+                    Some(&remote_edit_updated_at_preload),
+                    remote_attachments_by_status_id
+                        .remove(&quote.id)
+                        .unwrap_or_default(),
+                )
+                .await?,
             )?,
         ));
     }

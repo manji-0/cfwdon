@@ -15,10 +15,11 @@ use super::{
     load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
     media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
     oauth_bearer_token_hash, render_profile_field_value_html, resolve_account_reference,
-    resolve_lookup_account, upsert_remote_actor,
+    resolve_lookup_account, sql_placeholders, upsert_remote_actor,
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
+use std::collections::HashMap;
 use worker::d1::D1Type;
 use worker::{Bucket, D1Database};
 
@@ -656,10 +657,22 @@ async fn featured_tags_payload(
         .await?;
 
     let rows = result.results::<FeaturedTagRow>()?;
+    let tag_names = rows
+        .iter()
+        .map(|row| row.tag_name.clone())
+        .collect::<Vec<_>>();
+    let metrics_by_tag = featured_tag_metrics_by_tag(db, &account.id, &tag_names).await?;
     let mut documents = Vec::with_capacity(rows.len());
     for row in rows {
-        let metrics = featured_tag_metrics(db, &account.id, &row.tag_name).await?;
         let normalized = normalize_hashtag(&row.tag_name);
+        let metrics = metrics_by_tag
+            .get(&normalized)
+            .cloned()
+            .unwrap_or(FeaturedTagMetricsRow {
+                tag_name: normalized.clone(),
+                statuses_count: 0,
+                last_status_at: None,
+            });
         documents.push(serde_json::json!({
             "id": normalized,
             "name": normalized,
@@ -671,36 +684,39 @@ async fn featured_tags_payload(
     Ok(documents)
 }
 
-async fn featured_tag_metrics(
+async fn featured_tag_metrics_by_tag(
     db: &D1Database,
     account_id: &str,
-    tag: &str,
-) -> Result<FeaturedTagMetricsRow> {
-    let normalized = normalize_hashtag(tag);
-    let pattern = format!("%#{}%", normalized);
-    let bindings = [
-        D1Type::Text(account_id),
-        D1Type::Text(pattern.as_str()),
-        D1Type::Text(pattern.as_str()),
-    ];
-    Ok(db
-        .prepare(
-            "SELECT COUNT(*) AS statuses_count,
-                    MAX(CASE
-                        WHEN lower(text_content) LIKE ?2 THEN created_at
-                        ELSE NULL
-                    END) AS last_status_at
-             FROM statuses
-             WHERE account_id = ?1
-               AND lower(text_content) LIKE ?3",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<FeaturedTagMetricsRow>(None)
-        .await?
-        .unwrap_or(FeaturedTagMetricsRow {
-            statuses_count: 0,
-            last_status_at: None,
-        }))
+    tags: &[String],
+) -> Result<HashMap<String, FeaturedTagMetricsRow>> {
+    if tags.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let normalized_tags = tags
+        .iter()
+        .map(|tag| normalize_hashtag(tag))
+        .collect::<Vec<_>>();
+    let placeholders = sql_placeholders(2, normalized_tags.len());
+    let sql = format!(
+        "SELECT tag AS tag_name,
+                COUNT(*) AS statuses_count,
+                MAX(created_at) AS last_status_at
+         FROM status_hashtags
+         WHERE account_id = ?1
+           AND tag IN ({placeholders})
+         GROUP BY tag"
+    );
+    let mut bindings = Vec::with_capacity(normalized_tags.len() + 1);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<FeaturedTagMetricsRow>()?
+        .into_iter()
+        .map(|row| (row.tag_name.clone(), row))
+        .collect())
 }
 
 fn build_credentials_document(
@@ -864,8 +880,10 @@ struct FeaturedTagRow {
     tag_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct FeaturedTagMetricsRow {
+    #[serde(default)]
+    tag_name: String,
     statuses_count: u64,
     last_status_at: Option<String>,
 }

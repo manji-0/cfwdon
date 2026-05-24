@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::auth::find_account_by_username;
-use crate::content_helpers::extract_hashtags_from_text;
 use crate::instance::{actor_url, instance_base_url};
 use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
-use crate::tags::normalize_hashtag;
+use crate::{normalize_hashtag, sql_placeholders};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -18,16 +17,17 @@ struct FeaturedTagRow {
     tag_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct FeaturedTagStatusMetricsRow {
+    #[serde(default)]
+    tag_name: String,
     statuses_count: u64,
     last_status_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OwnedStatusRow {
-    text_content: String,
-    created_at: String,
+struct SuggestedFeaturedTagRow {
+    tag_name: String,
 }
 
 fn featured_tag_profile_url(config: &cfwdon_core::AppConfig, username: &str, tag: &str) -> String {
@@ -99,30 +99,65 @@ async fn featured_tag_metrics(
     account_id: &str,
     tag: &str,
 ) -> Result<FeaturedTagStatusMetricsRow> {
-    let pattern = format!("%#{}%", normalize_hashtag(tag));
-    let bindings = [
-        D1Type::Text(account_id),
-        D1Type::Text(pattern.as_str()),
-        D1Type::Text(pattern.as_str()),
-    ];
+    let tag = normalize_hashtag(tag);
+    let bindings = [D1Type::Text(account_id), D1Type::Text(tag.as_str())];
     Ok(db
-        .prepare(
-            "SELECT COUNT(*) AS statuses_count,
-                    MAX(CASE
-                        WHEN lower(text_content) LIKE ?2 THEN created_at
-                        ELSE NULL
-                    END) AS last_status_at
-             FROM statuses
-             WHERE account_id = ?1
-               AND lower(text_content) LIKE ?3",
-        )
+        .prepare(featured_tag_metrics_sql())
         .bind_refs(bindings.iter())?
         .first::<FeaturedTagStatusMetricsRow>(None)
         .await?
         .unwrap_or(FeaturedTagStatusMetricsRow {
+            tag_name: tag,
             statuses_count: 0,
             last_status_at: None,
         }))
+}
+
+async fn featured_tag_metrics_by_tag(
+    db: &worker::D1Database,
+    account_id: &str,
+    tags: &[String],
+) -> Result<HashMap<String, FeaturedTagStatusMetricsRow>> {
+    if tags.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let normalized_tags = tags
+        .iter()
+        .map(|tag| normalize_hashtag(tag))
+        .collect::<Vec<_>>();
+    let sql = featured_tag_metrics_by_tag_sql(normalized_tags.len());
+    let mut bindings = Vec::with_capacity(normalized_tags.len() + 1);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<FeaturedTagStatusMetricsRow>()?
+        .into_iter()
+        .map(|row| (row.tag_name.clone(), row))
+        .collect())
+}
+
+fn featured_tag_metrics_sql() -> &'static str {
+    "SELECT COUNT(*) AS statuses_count,
+            MAX(created_at) AS last_status_at
+     FROM status_hashtags
+     WHERE account_id = ?1
+       AND tag = ?2"
+}
+
+fn featured_tag_metrics_by_tag_sql(tag_count: usize) -> String {
+    let placeholders = sql_placeholders(2, tag_count);
+    format!(
+        "SELECT tag AS tag_name,
+                COUNT(*) AS statuses_count,
+                MAX(created_at) AS last_status_at
+         FROM status_hashtags
+         WHERE account_id = ?1
+           AND tag IN ({placeholders})
+         GROUP BY tag"
+    )
 }
 
 fn featured_tag_api_document(
@@ -229,43 +264,39 @@ async fn suggested_featured_tag_names(
         .into_iter()
         .map(|row| row.tag_name)
         .collect::<HashSet<_>>();
-    let account_id = D1Type::Text(account_id);
-    let result = db
-        .prepare(
-            "SELECT text_content, created_at
-             FROM statuses
-             WHERE account_id = ?1
-             ORDER BY created_at DESC",
+    let featured_tags = featured.iter().collect::<Vec<_>>();
+    let sql = suggested_featured_tag_names_sql(featured_tags.len());
+    let mut bindings = Vec::with_capacity(featured_tags.len() + 2);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(featured_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
+    bindings.push(D1Type::Integer(MAX_FEATURED_TAGS as i32));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<SuggestedFeaturedTagRow>()?
+        .into_iter()
+        .map(|row| row.tag_name)
+        .collect())
+}
+
+fn suggested_featured_tag_names_sql(featured_tag_count: usize) -> String {
+    let exclusion_sql = if featured_tag_count == 0 {
+        String::new()
+    } else {
+        format!(
+            " AND tag NOT IN ({})",
+            sql_placeholders(2, featured_tag_count)
         )
-        .bind_refs(&account_id)?
-        .all()
-        .await?;
-
-    let mut tag_scores = HashMap::<String, (u64, String)>::new();
-    for row in result.results::<OwnedStatusRow>()? {
-        for tag in extract_hashtags_from_text(&row.text_content) {
-            if featured.contains(&tag) {
-                continue;
-            }
-            let entry = tag_scores.entry(tag).or_insert((0, row.created_at.clone()));
-            entry.0 += 1;
-            if row.created_at > entry.1 {
-                entry.1 = row.created_at.clone();
-            }
-        }
-    }
-
-    let mut tags = tag_scores.into_iter().collect::<Vec<_>>();
-    tags.sort_by(
-        |(left_tag, (left_count, left_last)), (right_tag, (right_count, right_last))| {
-            right_count
-                .cmp(left_count)
-                .then_with(|| right_last.cmp(left_last))
-                .then_with(|| left_tag.cmp(right_tag))
-        },
-    );
-    tags.truncate(MAX_FEATURED_TAGS);
-    Ok(tags.into_iter().map(|(tag, _)| tag).collect())
+    };
+    format!(
+        "SELECT tag AS tag_name
+         FROM status_hashtags
+         WHERE account_id = ?1{exclusion_sql}
+         GROUP BY tag
+         ORDER BY COUNT(*) DESC, MAX(created_at) DESC, tag ASC
+         LIMIT ?{}",
+        featured_tag_count + 2
+    )
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -312,9 +343,24 @@ pub(crate) async fn featured_tags_response(
         None => return Response::error("Cloudflare Access authentication required", 401),
     };
 
+    let rows = list_featured_tags_for_account(&db, &account.id).await?;
+    let tag_names = rows
+        .iter()
+        .map(|row| row.tag_name.clone())
+        .collect::<Vec<_>>();
+    let metrics_by_tag = featured_tag_metrics_by_tag(&db, &account.id, &tag_names).await?;
     let mut documents = Vec::new();
-    for row in list_featured_tags_for_account(&db, &account.id).await? {
-        let metrics = featured_tag_metrics(&db, &account.id, &row.tag_name).await?;
+    for row in rows {
+        let normalized = normalize_hashtag(&row.tag_name);
+        let metrics =
+            metrics_by_tag
+                .get(&normalized)
+                .cloned()
+                .unwrap_or(FeaturedTagStatusMetricsRow {
+                    tag_name: normalized,
+                    statuses_count: 0,
+                    last_status_at: None,
+                });
         documents.push(featured_tag_api_document(
             &config,
             &account.username,
@@ -338,9 +384,22 @@ pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Res
 
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
+            let rows = list_featured_tags_for_account(&db, &account.id).await?;
+            let tag_names = rows
+                .iter()
+                .map(|row| row.tag_name.clone())
+                .collect::<Vec<_>>();
+            let metrics_by_tag = featured_tag_metrics_by_tag(&db, &account.id, &tag_names).await?;
             let mut documents = Vec::new();
-            for row in list_featured_tags_for_account(&db, &account.id).await? {
-                let metrics = featured_tag_metrics(&db, &account.id, &row.tag_name).await?;
+            for row in rows {
+                let normalized = normalize_hashtag(&row.tag_name);
+                let metrics = metrics_by_tag.get(&normalized).cloned().unwrap_or(
+                    FeaturedTagStatusMetricsRow {
+                        tag_name: normalized,
+                        statuses_count: 0,
+                        last_status_at: None,
+                    },
+                );
                 documents.push(featured_tag_api_document(
                     &config,
                     &account.username,
@@ -475,4 +534,61 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
         &account.username,
         &pinned_status_uris,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        featured_tag_metrics_by_tag_sql, featured_tag_metrics_sql, suggested_featured_tag_names_sql,
+    };
+
+    #[test]
+    fn featured_tag_metrics_sql_uses_indexed_status_hashtags() {
+        let sql = featured_tag_metrics_sql();
+
+        assert!(sql.contains("FROM status_hashtags"));
+        assert!(sql.contains("account_id = ?1"));
+        assert!(sql.contains("tag = ?2"));
+        assert!(sql.contains("MAX(created_at) AS last_status_at"));
+        assert!(!sql.contains("FROM statuses"));
+        assert!(!sql.to_ascii_lowercase().contains("like"));
+        assert!(!sql.contains("text_content"));
+    }
+
+    #[test]
+    fn featured_tag_metrics_by_tag_sql_keeps_placeholder_slots_stable() {
+        let sql = featured_tag_metrics_by_tag_sql(3);
+
+        assert!(sql.contains("FROM status_hashtags"));
+        assert!(sql.contains("account_id = ?1"));
+        assert!(sql.contains("tag IN (?2, ?3, ?4)"));
+        assert!(sql.contains("GROUP BY tag"));
+        assert_eq!(sql.matches('?').count(), 4);
+        assert!(!sql.to_ascii_lowercase().contains("like"));
+        assert!(!sql.contains("text_content"));
+    }
+
+    #[test]
+    fn suggested_featured_tag_names_sql_excludes_featured_tags_before_limit() {
+        let sql = suggested_featured_tag_names_sql(2);
+
+        assert!(sql.contains("FROM status_hashtags"));
+        assert!(sql.contains("account_id = ?1"));
+        assert!(sql.contains("tag NOT IN (?2, ?3)"));
+        assert!(sql.contains("ORDER BY COUNT(*) DESC, MAX(created_at) DESC, tag ASC"));
+        assert!(sql.contains("LIMIT ?4"));
+        assert_eq!(sql.matches('?').count(), 4);
+        assert!(!sql.to_ascii_lowercase().contains("like"));
+        assert!(!sql.contains("text_content"));
+    }
+
+    #[test]
+    fn suggested_featured_tag_names_sql_omits_empty_exclusion_list() {
+        let sql = suggested_featured_tag_names_sql(0);
+
+        assert!(sql.contains("account_id = ?1"));
+        assert!(!sql.contains("NOT IN"));
+        assert!(sql.contains("LIMIT ?2"));
+        assert_eq!(sql.matches('?').count(), 2);
+    }
 }
