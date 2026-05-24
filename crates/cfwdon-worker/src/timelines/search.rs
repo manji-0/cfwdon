@@ -10,7 +10,7 @@ use crate::{
     resolve_search_status, search_cached_accounts, search_statuses_for_v2,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
 };
-use worker::{Request, Response, Result, RouteContext};
+use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let response = match search_impl(&req, &ctx).await {
@@ -194,7 +194,11 @@ fn unauthenticated_search_viewer_error_message(
 }
 
 fn search_error_response(message: impl ToString, status: u16) -> Response {
-    Response::error(message.to_string(), status).unwrap()
+    Response::error(message.to_string(), status).unwrap_or_else(|_| {
+        Response::from_body(ResponseBody::Body(Vec::new()))
+            .expect("empty response body must be constructible")
+            .with_status(status)
+    })
 }
 
 fn search_worker_result<T>(result: Result<T>) -> std::result::Result<T, Response> {

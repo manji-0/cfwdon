@@ -1222,11 +1222,10 @@ pub(crate) async fn translate_status_response(
         return Response::from_json(&document);
     }
 
-    Response::from_json(&build_translation_document_for_language(
-        &value,
-        &target_language,
-        translation_provider_display_name("cfwdon-placeholder"),
-    ))
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "Translation provider is not configured",
+    }))?
+    .with_status(503))
 }
 
 #[cfg(test)]

@@ -249,6 +249,14 @@ fn streaming_channel_requires_list(stream: &str) -> bool {
     stream == "list"
 }
 
+fn normalize_streaming_path_channel(value: &str) -> Option<String> {
+    let path = value.trim().trim_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    normalize_streaming_channel(Some(&path.replace('/', ":")))
+}
+
 pub(crate) fn streaming_channel_requires_auth(stream: &str) -> bool {
     matches!(stream, "user" | "user:notification" | "list" | "direct")
 }
@@ -259,14 +267,19 @@ pub(crate) fn validate_streaming_channel_request(
     list: Option<&str>,
     extra_path: Option<&str>,
 ) -> std::result::Result<String, StreamingChannelValidationError> {
-    if extra_path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some()
-    {
-        return Err(StreamingChannelValidationError::UnknownChannelRequested);
-    }
-    let Some(stream) = normalize_streaming_channel(stream) else {
+    let stream = match extra_path.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(_)
+            if stream
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some() =>
+        {
+            return Err(StreamingChannelValidationError::UnknownChannelRequested);
+        }
+        Some(path) => normalize_streaming_path_channel(path),
+        None => normalize_streaming_channel(stream),
+    };
+    let Some(stream) = stream else {
         return Err(StreamingChannelValidationError::UnknownChannelRequested);
     };
     if !matches!(
@@ -4091,6 +4104,35 @@ mod tests {
             streaming_websocket_stream_labels("list", None, Some("list-1")),
             vec!["list".to_owned(), "list-1".to_owned()]
         );
+    }
+
+    #[test]
+    fn streaming_channel_validation_accepts_query_and_path_channels() {
+        assert_eq!(
+            validate_streaming_channel_request(Some("public"), None, None, None).unwrap(),
+            "public"
+        );
+        assert_eq!(
+            validate_streaming_channel_request(None, None, None, Some("user")).unwrap(),
+            "user"
+        );
+        assert_eq!(
+            validate_streaming_channel_request(None, None, None, Some("public/local/media"))
+                .unwrap(),
+            "public:local:media"
+        );
+        assert_eq!(
+            validate_streaming_channel_request(None, Some("rust"), None, Some("hashtag")).unwrap(),
+            "hashtag"
+        );
+    }
+
+    #[test]
+    fn streaming_channel_validation_rejects_conflicting_query_and_path_channels() {
+        assert!(matches!(
+            validate_streaming_channel_request(Some("public"), None, None, Some("user")),
+            Err(StreamingChannelValidationError::UnknownChannelRequested)
+        ));
     }
 
     #[test]

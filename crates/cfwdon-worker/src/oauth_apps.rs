@@ -14,14 +14,18 @@ use worker::{D1Database, FormData, ResponseBody, d1::D1Type};
 use worker::{Request, Response, Result, RouteContext};
 
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
+const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
+const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
 const PASSWORD_HASH_ITERATIONS: u32 = 210_000;
 const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
-    "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
-                client_id, client_secret, client_secret_expires_at
-         FROM oauth_apps
-         WHERE client_secret = ?1
-         ORDER BY id ASC
+    "SELECT a.id, a.name, a.website, a.scopes_json, a.redirect_uri_legacy, a.redirect_uris_json,
+                a.client_id, a.client_secret, a.client_secret_expires_at
+         FROM oauth_app_access_tokens t
+         INNER JOIN oauth_apps a ON a.id = t.oauth_app_id
+         WHERE t.access_token = ?1
+           AND t.expires_at > ?2
+         ORDER BY a.id ASC
          LIMIT 1";
 
 #[derive(Debug, Default, Deserialize)]
@@ -58,6 +62,7 @@ struct OAuthAuthorizeLoginRequest {
     username: Option<String>,
     password: Option<String>,
     approve: bool,
+    csrf_token: Option<String>,
     authorize: OAuthAuthorizeRequest,
 }
 
@@ -129,6 +134,16 @@ pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> ser
         "scope": scope,
         "created_at": now_unix_timestamp(),
     })
+}
+
+fn build_oauth_token_document_with_expires_in(
+    access_token: &str,
+    scope: &str,
+    expires_in: i64,
+) -> serde_json::Value {
+    let mut document = build_oauth_token_document(access_token, scope);
+    document["expires_in"] = serde_json::json!(expires_in);
+    document
 }
 
 pub(crate) fn hash_account_password(password: &str, salt: &str) -> String {
@@ -377,8 +392,10 @@ pub(crate) async fn find_oauth_app_by_bearer_token(
     token: &str,
 ) -> Result<Option<OAuthAppRow>> {
     let binding = D1Type::Text(token);
+    let expires_at_binding =
+        D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
     db.prepare(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL)
-        .bind_refs(&[binding])?
+        .bind_refs(&[binding, expires_at_binding])?
         .first::<OAuthAppRow>(None)
         .await
 }
@@ -551,6 +568,43 @@ pub(crate) async fn issue_oauth_access_token(
         oauth_app_id,
         scopes_json,
     })
+}
+
+async fn issue_oauth_app_access_token(
+    db: &D1Database,
+    oauth_app_id: i64,
+    scopes: &[String],
+) -> Result<String> {
+    let access_token = generate_entity_id(32)?;
+    let scopes_json = serde_json::to_string(scopes).map_err(|error| {
+        worker::Error::RustError(format!("failed to serialize app token scopes: {error}"))
+    })?;
+    let expires_at = now_unix_timestamp() + APP_ACCESS_TOKEN_TTL_SECONDS;
+    let bindings = [
+        D1Type::Text(access_token.as_str()),
+        D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
+        D1Type::Text(scopes_json.as_str()),
+        D1Type::Integer(i32::try_from(expires_at).unwrap_or(i32::MAX)),
+    ];
+    db.prepare(
+        "INSERT INTO oauth_app_access_tokens (
+            access_token,
+            oauth_app_id,
+            scopes_json,
+            expires_at,
+            created_at
+        ) VALUES (
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            CURRENT_TIMESTAMP
+        )",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(access_token)
 }
 
 async fn issue_oauth_authorization_code(
@@ -865,6 +919,57 @@ fn html_response(body: &str, status: u16) -> Result<Response> {
     Ok(response.with_status(status))
 }
 
+fn oauth_authorize_csrf_cookie(req: &Request) -> Result<Option<String>> {
+    let Some(cookie_header) = req.headers().get("Cookie")? else {
+        return Ok(None);
+    };
+    Ok(cookie_header.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        (name == OAUTH_AUTHORIZE_CSRF_COOKIE && !value.trim().is_empty())
+            .then(|| value.trim().to_owned())
+    }))
+}
+
+fn oauth_authorize_csrf_matches(req: &Request, submitted_token: Option<&str>) -> Result<bool> {
+    let Some(submitted_token) = submitted_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+    Ok(oauth_authorize_csrf_cookie(req)?
+        .as_deref()
+        .is_some_and(|cookie_token| {
+            constant_time_eq(cookie_token.as_bytes(), submitted_token.as_bytes())
+        }))
+}
+
+fn set_oauth_authorize_csrf_cookie(response: &mut Response, token: &str) -> Result<()> {
+    response.headers_mut().set(
+        "Set-Cookie",
+        &format!(
+            "{OAUTH_AUTHORIZE_CSRF_COOKIE}={token}; Path=/oauth/authorize; HttpOnly; SameSite=Lax; Secure"
+        ),
+    )?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(())
+}
+
+fn oauth_authorize_consent_response(
+    request: &OAuthAuthorizeRequest,
+    app: &OAuthAppRow,
+    error: Option<&str>,
+    require_login_credentials: bool,
+    status: u16,
+) -> Result<Response> {
+    let csrf_token = generate_entity_id(32)?;
+    let body =
+        oauth_authorize_page_body(request, app, error, require_login_credentials, &csrf_token);
+    let mut response = html_response(&body, status)?;
+    set_oauth_authorize_csrf_cookie(&mut response, &csrf_token)?;
+    Ok(response)
+}
+
 fn oauth_authorize_error_response(message: &str, status: u16) -> Result<Response> {
     html_response(
         &format!(
@@ -907,6 +1012,7 @@ fn oauth_authorize_page_body(
     app: &OAuthAppRow,
     error: Option<&str>,
     require_login_credentials: bool,
+    csrf_token: &str,
 ) -> String {
     let hidden = [
         ("response_type", request.response_type.as_deref()),
@@ -932,16 +1038,34 @@ fn oauth_authorize_page_body(
     })
     .collect::<Vec<_>>()
     .join("\n");
+    let csrf_input = format!(
+        "<input type=\"hidden\" name=\"csrf_token\" value=\"{}\">",
+        escape_html(csrf_token)
+    );
     let error_html = error
         .map(|message| format!("<p role=\"alert\">{}</p>", escape_html(message)))
         .unwrap_or_default();
+    let scope_html = request
+        .scope
+        .as_deref()
+        .map(escape_html)
+        .unwrap_or_else(|| "read".to_owned());
+    let redirect_uri_html = request
+        .redirect_uri
+        .as_deref()
+        .map(escape_html)
+        .unwrap_or_default();
+    let app_details = format!(
+        "<dl><dt>Application</dt><dd>{}</dd><dt>Scopes</dt><dd>{scope_html}</dd><dt>Redirect URI</dt><dd>{redirect_uri_html}</dd></dl>",
+        escape_html(&app.name)
+    );
     let form_body = if require_login_credentials {
         format!(
-            "{hidden}<label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button type=\"submit\">Authorize</button>"
+            "{app_details}{hidden}{csrf_input}<label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button type=\"submit\">Authorize</button>"
         )
     } else {
         format!(
-            "<p>Approve access for this application.</p>{hidden}<input type=\"hidden\" name=\"approve\" value=\"true\"><button type=\"submit\">Authorize</button>"
+            "<p>Approve access for this application.</p>{app_details}{hidden}{csrf_input}<input type=\"hidden\" name=\"approve\" value=\"true\"><button type=\"submit\">Authorize</button>"
         )
     };
     format!(
@@ -957,10 +1081,7 @@ fn oauth_login_page(
     app: &OAuthAppRow,
     error: Option<&str>,
 ) -> Result<Response> {
-    html_response(
-        &oauth_authorize_page_body(request, app, error, true),
-        error.map(|_| 401).unwrap_or(200),
-    )
+    oauth_authorize_consent_response(request, app, error, true, error.map(|_| 401).unwrap_or(200))
 }
 
 fn normalize_authorize_request(
@@ -1015,7 +1136,10 @@ async fn validate_authorize_request(
     request: OAuthAuthorizeRequest,
 ) -> std::result::Result<(OAuthAuthorizeRequest, OAuthAppRow, Vec<String>), String> {
     let request = normalize_authorize_request(request)?;
-    let client_id = request.client_id.as_deref().expect("normalized client_id");
+    let client_id = request
+        .client_id
+        .as_deref()
+        .ok_or_else(|| "client_id is required".to_owned())?;
     let Some(app) = find_oauth_app_by_client_id(db, client_id)
         .await
         .map_err(|error| format!("failed to load OAuth app: {error}"))?
@@ -1025,7 +1149,7 @@ async fn validate_authorize_request(
     let redirect_uri = request
         .redirect_uri
         .as_deref()
-        .expect("normalized redirect_uri");
+        .ok_or_else(|| "redirect_uri is required".to_owned())?;
     if !oauth_app_redirect_uris(&app)
         .iter()
         .any(|value| redirect_uri_matches_registered(value, redirect_uri))
@@ -1057,6 +1181,7 @@ async fn parse_oauth_authorize_login_request(
             .get_field("approve")
             .map(|value| value.trim().eq_ignore_ascii_case("true"))
             .unwrap_or(false),
+        csrf_token: form.get_field("csrf_token"),
         authorize: OAuthAuthorizeRequest {
             response_type: form.get_field("response_type"),
             client_id: form.get_field("client_id"),
@@ -1290,10 +1415,9 @@ async fn redirect_with_authorization_code(
     account_id: &str,
     scopes: &[String],
 ) -> Result<Response> {
-    let redirect_uri = request
-        .redirect_uri
-        .as_deref()
-        .expect("validated redirect_uri");
+    let redirect_uri = request.redirect_uri.as_deref().ok_or_else(|| {
+        worker::Error::RustError("validated authorization request missing redirect_uri".to_owned())
+    })?;
     let code = issue_oauth_authorization_code(
         db,
         app.id,
@@ -1333,6 +1457,7 @@ pub(crate) async fn oauth_authorize_response(
                 crate::find_authenticated_local_account(&req, &db, &config).await?;
             let password_account =
                 authorize_account_by_password(&db, login.username, login.password).await?;
+            let csrf_valid = oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())?;
             return match access_authorize_post_action(
                 authenticated_account.is_some(),
                 login.approve,
@@ -1341,22 +1466,33 @@ pub(crate) async fn oauth_authorize_response(
                 AccessAuthorizePostAction::RedirectToLogin => {
                     access_login_redirect_from_authorize_request(&config, &base_url, &authorize)
                 }
-                AccessAuthorizePostAction::ShowConsent => html_response(
-                    &oauth_authorize_page_body(&authorize, &app, None, false),
-                    200,
-                ),
+                AccessAuthorizePostAction::ShowConsent => {
+                    oauth_authorize_consent_response(&authorize, &app, None, false, 200)
+                }
                 AccessAuthorizePostAction::IssueCode => {
-                    let account = password_account
-                        .or(authenticated_account)
-                        .expect("account must exist when issuing authorization code");
+                    if !csrf_valid {
+                        return Response::error("Invalid OAuth authorization CSRF token.", 403);
+                    }
+                    let Some(account) = password_account.or(authenticated_account) else {
+                        return Response::error("Authenticated account is required.", 401);
+                    };
                     redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes)
                         .await
                 }
             };
         }
-        let Some(account) =
-            authorize_account_by_password(&db, login.username, login.password).await?
-        else {
+        if !oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())? {
+            return Response::error("Invalid OAuth authorization CSRF token.", 403);
+        }
+        let authenticated_account =
+            crate::find_authenticated_local_account(&req, &db, &config).await?;
+        let account = if login.approve {
+            authenticated_account
+        } else {
+            None
+        }
+        .or(authorize_account_by_password(&db, login.username, login.password).await?);
+        let Some(account) = account else {
             return oauth_login_page(&authorize, &app, Some("Invalid username or password."));
         };
         return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
@@ -1366,7 +1502,7 @@ pub(crate) async fn oauth_authorize_response(
         Ok(query) => query,
         Err(_) => return oauth_authorize_error_response("Invalid authorization request", 400),
     };
-    let (authorize, app, scopes) = match validate_authorize_request(&db, authorize).await {
+    let (authorize, app, _scopes) = match validate_authorize_request(&db, authorize).await {
         Ok(value) => value,
         Err(message) => return oauth_authorize_error_response(&message, 400),
     };
@@ -1385,14 +1521,14 @@ pub(crate) async fn oauth_authorize_response(
             AccessAuthorizeGetAction::MissingLinkedAccount => {
                 access_authenticated_without_account_response(&config)
             }
-            AccessAuthorizeGetAction::ShowConsent => html_response(
-                &oauth_authorize_page_body(&authorize, &app, None, false),
-                200,
-            ),
+            AccessAuthorizeGetAction::ShowConsent => {
+                oauth_authorize_consent_response(&authorize, &app, None, false, 200)
+            }
         };
     }
     if let Some(account) = authenticated_account {
-        return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
+        let _ = account;
+        return oauth_authorize_consent_response(&authorize, &app, None, false, 200);
     }
     oauth_login_page(&authorize, &app, None)
 }
@@ -1676,9 +1812,11 @@ pub(crate) async fn oauth_token_response(
         return oauth_invalid_scope_response();
     }
 
-    Response::from_json(&build_oauth_token_document(
-        &app.client_secret,
+    let access_token = issue_oauth_app_access_token(&db, app.id, &requested_scopes).await?;
+    Response::from_json(&build_oauth_token_document_with_expires_in(
+        &access_token,
         &requested_scopes.join(" "),
+        APP_ACCESS_TOKEN_TTL_SECONDS,
     ))
 }
 
@@ -1871,9 +2009,22 @@ mod tests {
     }
 
     #[test]
-    fn app_bearer_token_lookup_sql_only_matches_client_secret() {
-        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("WHERE client_secret = ?1"));
+    fn app_bearer_token_lookup_sql_uses_app_access_tokens_only() {
+        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("oauth_app_access_tokens"));
+        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.access_token = ?1"));
+        assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.expires_at > ?2"));
+        assert!(!FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("client_secret = ?1"));
         assert!(!FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("client_id = ?1"));
+    }
+
+    #[test]
+    fn app_token_document_can_include_expiry_without_exposing_client_secret() {
+        let document = build_oauth_token_document_with_expires_in("issued-token", "read", 3600);
+
+        assert_eq!(document["access_token"], "issued-token");
+        assert_eq!(document["scope"], "read");
+        assert_eq!(document["expires_in"], 3600);
+        assert_ne!(document["access_token"], "secret");
     }
 
     #[test]
@@ -1953,10 +2104,13 @@ mod tests {
             &oauth_app_fixture(),
             None,
             true,
+            "csrf-1",
         );
 
         assert!(body.contains("name=\"username\""));
         assert!(body.contains("type=\"password\""));
+        assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
+        assert!(body.contains("<dt>Redirect URI</dt><dd>https://client.example/callback</dd>"));
         assert!(body.contains("<button type=\"submit\">Authorize</button>"));
     }
 
@@ -1975,6 +2129,7 @@ mod tests {
             &oauth_app_fixture(),
             None,
             false,
+            "csrf-1",
         );
 
         assert!(!body.contains("name=\"username\""));
@@ -1984,6 +2139,8 @@ mod tests {
         assert!(body.contains("name=\"scope\" value=\"read write\""));
         assert!(body.contains("name=\"code_challenge_method\" value=\"S256\""));
         assert!(body.contains("name=\"approve\" value=\"true\""));
+        assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
+        assert!(body.contains("<dt>Scopes</dt><dd>read write</dd>"));
         assert!(body.contains("Approve access for this application"));
     }
 }
