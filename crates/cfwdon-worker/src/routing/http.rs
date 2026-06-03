@@ -126,6 +126,7 @@ pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
         || path.starts_with("/oauth/")
         || path.starts_with("/media/")
         || path.starts_with("/profiles/")
+        || path.starts_with("/users/")
         || path == "/.well-known/oauth-authorization-server"
 }
 
