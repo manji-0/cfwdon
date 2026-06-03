@@ -1,3 +1,4 @@
+use super::activitypub::{ACTIVITYPUB_CONTENT_TYPE, static_head_response};
 use crate::{
     bookmark_status, create_status, delete_status, favourite_status, mute_status_response,
     pin_status_response, reblog_status, revoke_quote_response, status_api_response,
@@ -57,6 +58,9 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
         })
         .get_async("/users/:username/statuses/:id", |req, ctx| async move {
             status_object_response(req, ctx).await
+        })
+        .head_async("/users/:username/statuses/:id", |_req, _ctx| async move {
+            static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
         .post_async("/api/v1/statuses", |req, ctx| async move {
             create_status(req, ctx).await
