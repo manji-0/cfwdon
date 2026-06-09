@@ -156,7 +156,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     let db = ctx.d1(&config.database_binding)?;
     match find_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     }
 
     let query: AccountLookupQuery = req.query()?;
@@ -171,7 +171,7 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let (stats, settings, featured_tags, follow_requests_count) = futures_util::try_join!(
         load_account_stats(&db, &account.id),
@@ -195,7 +195,7 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let settings = load_account_profile_settings(&db, &account.id).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
@@ -213,7 +213,7 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
     let db = ctx.d1(&config.database_binding)?;
     let subject = match find_authenticated_preferences_subject(&req, &db, &config).await? {
         Some(subject) => subject,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let account = &subject.account;
     let settings = &subject.settings;
@@ -342,7 +342,7 @@ pub(crate) async fn update_credentials(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let (account, settings, stats, featured_tags) =
@@ -366,7 +366,7 @@ pub(crate) async fn update_profile_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let (account, settings, _stats, featured_tags) =
@@ -429,12 +429,12 @@ async fn delete_profile_media_response(
     let bucket = ctx.bucket(&config.media_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     clear_profile_media(&db, &bucket, &account, field).await?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     enqueue_profile_update_activities(&db, &config, &account).await?;
     invalidate_account_public_cache(&ctx, &account.id, &account.username).await;

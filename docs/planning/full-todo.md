@@ -17,7 +17,7 @@ The generated compatibility inventory currently maps all tracked upstream routes
 ## Completed Capability Areas
 
 - Rust workspace, `devbox` development environment, CI gate, and Worker dry-run validation.
-- Cloudflare Access authentication, JWT validation, local account provisioning, and protected route checks.
+- Auth0 authentication, JWT validation, local account provisioning, and protected route checks.
 - D1-backed local accounts, statuses, relationships, notifications, polls, reports, filters, featured tags, and instance metadata.
 - R2-backed media upload, media metadata update, profile avatar/header storage, and media delivery fallback.
 - WebFinger, ActivityPub actor documents, followers/following collections, outbox documents, and local status objects.
@@ -66,14 +66,14 @@ The generated compatibility inventory currently maps all tracked upstream routes
 - Add rate limiting and abuse controls for shared inbox and expensive remote resolution paths.
 - Make signature clock skew policy configurable.
 - Harden digest and signed-header canonicalization tests.
-- Audit all internal routes and document which must sit behind Cloudflare Access.
-- Keep public media domains outside Cloudflare Access while preserving cache behavior.
+- Audit all internal routes and document which must require Auth0 authentication.
+- Keep public media domains outside protected API authentication while preserving cache behavior.
 
 ## Media Delivery Notes
 
 - The fallback `/media/:id` route returns an R2 object through the Worker and should not be treated as guaranteed main-request edge cache coverage.
 - Prefer an R2 custom domain plus Cache Rules or a fetch-based public path for canonical media delivery.
-- Cloudflare Cache API behavior is constrained when a Worker is fronted by Cloudflare Access, so public media should remain outside Access.
+- Keep public media outside protected API authentication so media cache behavior stays predictable.
 - Entity payloads should continue to advertise `MEDIA_PUBLIC_BASE_URL` as the canonical media base.
 
 ## Ops / DX Follow-Up

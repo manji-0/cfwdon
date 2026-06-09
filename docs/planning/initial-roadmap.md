@@ -9,7 +9,7 @@ The first implementation slice aimed to prove that a Mastodon-compatible server 
 - Create a Cargo workspace and Worker entrypoint.
 - Establish reproducible development tooling through `devbox`.
 - Add D1 migrations and R2 media storage bindings.
-- Implement Cloudflare Access based local account authentication.
+- Implement Auth0 based local account authentication.
 - Serve basic instance, account, status, media, WebFinger, and actor surfaces.
 - Add ActivityPub inbox/outbox foundations, signed delivery, and follower state.
 - Start route-level Mastodon API compatibility tracking.
@@ -35,7 +35,7 @@ The initial compatibility slice covered:
 - `DELETE /api/v1/statuses/:id`
 - `POST /api/v1/statuses`
 - `POST /api/v2/media`
-- Cloudflare Access `me -> local account` resolution
+- Auth0 `me -> local account` resolution
 
 Those routes are no longer the whole project scope; they are kept here as the historical first slice.
 

@@ -2,7 +2,7 @@
 
 ## Summary
 
-`cfwdon` is a Rust implementation of a Mastodon-compatible server designed for Cloudflare Workers. It uses D1 for relational state, R2 for media storage, Cloudflare Access for protected API authentication, and Worker-compatible request lifetimes for federation and API work.
+`cfwdon` is a Rust implementation of a Mastodon-compatible server designed for Cloudflare Workers. It uses D1 for relational state, R2 for media storage, Auth0 for protected API authentication, and Worker-compatible request lifetimes for federation and API work.
 
 The project borrows responsibility boundaries from GoToSocial, but it does not port GoToSocial directly. The architecture is shaped around Workers, D1, R2, cron/internal routes, and retryable delivery queues.
 
@@ -19,7 +19,7 @@ The project borrows responsibility boundaries from GoToSocial, but it does not p
 - Directly port GoToSocial.
 - Claim full behavioral Mastodon compatibility only because route-level coverage exists.
 - Run long-lived background workers outside the primitives available to Cloudflare Workers.
-- Implement a first-party OAuth authorization server while Cloudflare Access is the authentication boundary.
+- Implement a first-party OAuth authorization server while Auth0 is the authentication boundary.
 
 ## Context
 
@@ -44,7 +44,7 @@ Future extraction candidates remain `cfwdon-application`, `cfwdon-federation`, `
 
 - `router.rs` owns top-level route registration and connects HTTP surfaces to capability modules.
 - `runtime_config.rs` reads Worker vars, build metadata, root document configuration, and upload limits.
-- `auth.rs` handles Cloudflare Access JWT verification, header normalization, local account provisioning, and authenticated account lookup.
+- `auth.rs` handles Auth0 JWT verification, local account provisioning, and authenticated account lookup.
 - `request_utils.rs`, `response_utils.rs`, `time_html.rs`, `db_utils.rs`, `id_utils.rs`, and `content_helpers.rs` provide shared request, response, time, query, ID, and content helpers.
 - `instance_identity.rs` centralizes instance domain, actor URL, WebFinger, shared inbox, remote ID, and authority normalization.
 
@@ -78,12 +78,13 @@ R2 stores media bodies and profile media. D1 stores object keys, MIME metadata, 
 The schema is migration-driven. Future work should add migration tests, seed data, and index reviews for large timelines, search, notifications, polls, and relationship queries.
 
 ## Authentication Model
+<!-- derived-from ../reference/configuration.md#auth0-authentication-vars -->
 
-Protected user-facing API routes rely on Cloudflare Access or an equivalent proxy. `cfwdon` validates the Access JWT, checks issuer/audience, reads the authenticated user e-mail, and maps that user to a local account.
+Protected user-facing API routes rely on Auth0-issued JWTs. `cfwdon` validates the Auth0 JWT, checks issuer/audience, reads the configured e-mail claim, and maps that user to a local account.
 
 Public routes and federation routes remain available without application login. ActivityPub routes perform HTTP signature and digest/date validation where required.
 
-Because Cloudflare Access is the authentication boundary, OAuth client registration and token issuance are compatibility surfaces rather than a full internal authorization-server implementation.
+Because Auth0 is the authentication boundary, OAuth client registration and token issuance are compatibility surfaces rather than a full internal authorization-server implementation.
 
 ## API And Federation Behavior
 
@@ -98,8 +99,8 @@ ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, 
 - Deploy as a single Cloudflare Worker.
 - Configure D1 and R2 bindings in `wrangler.toml`.
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
-- Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain outside Cloudflare Access.
-- Protect user and internal routes with Cloudflare Access settings where required.
+- Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.
+- Protect user and internal routes with Auth0 settings where required.
 - Use cron/internal routes for scheduled maintenance such as delivery processing, media pruning, and expired poll handling.
 
 ## Observability
@@ -118,8 +119,8 @@ The project should prefer structured JSON logs with request IDs, actor IDs, deli
 ## Security And Privacy
 
 - Store API keys and private material as Cloudflare secrets or D1 data as appropriate; do not commit secrets.
-- Keep public media outside Cloudflare Access while protecting private API and internal process routes.
-- Validate Access JWT issuer and audience fail-closed.
+- Keep public media outside the protected API surface.
+- Validate Auth0 JWT issuer and audience fail-closed.
 - Validate incoming ActivityPub signatures, dates, and digests fail-closed for signed inbox traffic.
 - Maintain DNS-based SSRF checks for remote resolution paths.
 - Treat private/direct status visibility as a cross-cutting data access concern.
@@ -141,14 +142,14 @@ The project is now past the bootstrap phases. The planning focus is behavioral c
 - Single crate for everything: quick to start, but it becomes harder to maintain as Mastodon API and ActivityPub coverage grows.
 - Many crates from day one: cleaner dependency boundaries, but high early maintenance cost.
 - Let Cloudflare-specific types leak into domain code: convenient initially, but weakens tests and portability.
-- Implement OAuth internally: improves Mastodon client compatibility, but conflicts with the current Cloudflare Access-first operating model.
+- Implement OAuth internally: improves Mastodon client compatibility, but conflicts with the current Auth0-first operating model.
 
 ## Open Questions
 
 - Which placeholder/meta routes should become real implementations first, and which should remain conservative empty responses?
 - Which delivery work should move from `waitUntil` or internal routes to Cloudflare Queues?
 - How should remote media caching and attachment persistence work long term?
-- How much Mastodon OAuth compatibility should be provided without weakening the Cloudflare Access model?
+- How much Mastodon OAuth compatibility should be provided without weakening the Auth0 model?
 - What operator-facing tooling is needed for retry dead-letter state, migrations, and moderation workflows?
 
 ## References

@@ -35,7 +35,7 @@ Run the Worker locally with:
 devbox run worker:dev
 ```
 
-This starts `wrangler dev`. Public, unauthenticated routes are the easiest first smoke test. Routes that need D1, R2, Cloudflare Access headers, or secrets require the configuration described below.
+This starts `wrangler dev`. Public, unauthenticated routes are the easiest first smoke test. Routes that need D1, R2, Auth0 tokens, or secrets require the configuration described below.
 
 ## Cloudflare Resource Template
 <!-- constrained-by ../operations/cloudflare-deploy.md#provisioning-steps -->
@@ -60,10 +60,12 @@ Copy the D1 `database_id` into `wrangler.toml`, then replace the instance vars u
 - `INSTANCE_DOMAIN`
 - `SOURCE_URL`
 - `MEDIA_PUBLIC_BASE_URL`
-- `ACCESS_TEAM_DOMAIN`
-- `ACCESS_AUD`
+- `AUTH0_DOMAIN`
+- `AUTH0_CLIENT_ID`
+- `AUTH0_AUDIENCE`
 
 Keep `DB` and `MEDIA` as the binding names unless you also update the Worker defaults.
+Configure the matching Auth0 application with allowed callback URL `https://<INSTANCE_DOMAIN>/oauth/auth0/callback` and allowed logout URL `https://<INSTANCE_DOMAIN>`.
 
 ## Secrets
 <!-- constrained-by ../reference/configuration.md#secret-handling -->
@@ -76,7 +78,7 @@ wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
 wrangler secret put TRANSLATION_API_KEY
 ```
 
-Do not commit private keys, API tokens, or production Access audience values into documentation or templates.
+Do not commit private keys, API tokens, or production Auth0 client/audience values into documentation or templates.
 
 ## Database Migrations
 <!-- constrained-by ../operations/cloudflare-deploy.md#provisioning-steps -->
@@ -104,7 +106,7 @@ Then deploy:
 wrangler deploy
 ```
 
-After deployment, verify that public instance endpoints return your configured domain, media URLs use `MEDIA_PUBLIC_BASE_URL`, and protected routes are reachable through Cloudflare Access.
+After deployment, verify that public instance endpoints return your configured domain, media URLs use `MEDIA_PUBLIC_BASE_URL`, protected routes accept Auth0-issued access tokens, and browser login returns through `/oauth/auth0/callback`.
 
 ## Contributor Loop
 <!-- derived-from ./development.md#common-commands -->
@@ -128,8 +130,9 @@ python3 scripts/generate_mastodon_api_compat.py
 <!-- derived-from ../reference/configuration.md -->
 
 - `wrangler deploy --dry-run` fails with D1 or R2 binding errors: confirm `wrangler.toml` has `[[d1_databases]]` binding `DB` and `[[r2_buckets]]` binding `MEDIA`.
-- Protected API routes reject requests: confirm Cloudflare Access sends `Cf-Access-Authenticated-User-Email` and `Cf-Access-Jwt-Assertion`, and that `ACCESS_TEAM_DOMAIN` plus `ACCESS_AUD` are real values.
-- Media URLs point at the wrong host: set `MEDIA_PUBLIC_BASE_URL` to the public R2 custom domain and keep that domain outside Cloudflare Access.
+- Protected API routes reject requests: confirm the request sends `Authorization: Bearer <Auth0 access token>`, and that `AUTH0_DOMAIN` plus `AUTH0_AUDIENCE` match the token `iss` and `aud` claims.
+- Browser login does not return from Auth0: confirm the Auth0 application allows `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`.
+- Media URLs point at the wrong host: set `MEDIA_PUBLIC_BASE_URL` to the public R2 custom domain.
 - `wasm-bindgen` version errors: leave and re-enter `devbox shell`; the init hook installs the pinned `wasm-bindgen-cli` version.
 
 ## Summary

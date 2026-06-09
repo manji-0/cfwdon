@@ -152,7 +152,7 @@ pub(crate) async fn conversations_response(
     let db = ctx.d1(&config.database_binding)?;
     let owner = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let rows = list_conversations_for_account(
         &db,
@@ -200,7 +200,7 @@ pub(crate) async fn delete_conversation_response(
     let db = ctx.d1(&config.database_binding)?;
     let owner = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if !delete_conversation_for_account(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
@@ -223,7 +223,7 @@ pub(crate) async fn read_conversation_response(
     let db = ctx.d1(&config.database_binding)?;
     let owner = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if !mark_conversation_read(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);
@@ -249,7 +249,7 @@ pub(crate) async fn unread_conversation_response(
     let db = ctx.d1(&config.database_binding)?;
     let owner = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if !mark_conversation_unread(&db, &owner.id, &conversation_id).await? {
         return Response::error("conversation not found", 404);

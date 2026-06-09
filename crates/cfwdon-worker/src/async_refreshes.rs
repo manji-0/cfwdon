@@ -121,7 +121,7 @@ pub(crate) async fn async_refresh_response(
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     let Some(_viewer) = require_authenticated_local_account(&req, &db, &config).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let refresh_id = match ctx.param("id") {
         Some(id) if !id.is_empty() => id,

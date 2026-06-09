@@ -4,7 +4,7 @@ use crate::{
     account_featured_tags_response, account_followers_response, account_following_response,
     account_lists_response, account_lookup, account_relationships, account_response,
     account_search, account_statuses_response, accounts_index_response, announcements_response,
-    authorize_follow_request_response, authorize_interaction_response,
+    auth0_callback_response, authorize_follow_request_response, authorize_interaction_response,
     authorize_interaction_submit_response, block_account, blocks_response, bookmark_status,
     bookmarks_response, create_account_placeholder_response, create_media_attachment,
     create_status, custom_emojis_response, delete_media_attachment, delete_status,
@@ -430,6 +430,9 @@ fn oauth_router() -> Router<'static, ()> {
         })
         .post_async("/oauth/authorize", |req, ctx| async move {
             oauth_authorize_response(req, ctx).await
+        })
+        .get_async("/oauth/auth0/callback", |req, ctx| async move {
+            auth0_callback_response(req, ctx).await
         })
         .post_async("/oauth/token", |req, ctx| async move {
             oauth_token_response(req, ctx).await

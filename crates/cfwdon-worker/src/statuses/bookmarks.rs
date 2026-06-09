@@ -25,7 +25,7 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
             return Response::error("missing status id route parameter", 400);
         }
         crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
-            return Response::error("Cloudflare Access authentication required", 401);
+            return Response::error("Auth0 authentication required", 401);
         }
     };
     let viewer = &action.auth.viewer;
@@ -73,7 +73,7 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
             return Response::error("missing status id route parameter", 400);
         }
         crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
-            return Response::error("Cloudflare Access authentication required", 401);
+            return Response::error("Auth0 authentication required", 401);
         }
     };
     let viewer = &action.auth.viewer;
@@ -123,7 +123,7 @@ pub(crate) async fn bookmarks_response(req: Request, ctx: RouteContext<()>) -> R
     let query: BookmarksQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
     let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let bookmark_entries =

@@ -55,7 +55,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
 5. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
 
-   At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `ACCESS_TEAM_DOMAIN`, and `ACCESS_AUD`.
+   At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`.
 
 6. Configure secrets that should not be committed.
 

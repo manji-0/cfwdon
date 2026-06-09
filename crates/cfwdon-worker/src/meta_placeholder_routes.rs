@@ -1180,7 +1180,7 @@ pub(crate) async fn oauth_userinfo_response(
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             return invalid_access_token_response();
         }
-        LocalApiAuthentication::Access(account) => account,
+        LocalApiAuthentication::Auth0(account) => account,
         LocalApiAuthentication::None => return invalid_access_token_response(),
     };
     Response::from_json(&build_oauth_userinfo_document(&config, &account))
@@ -1248,7 +1248,7 @@ pub(crate) async fn annual_reports_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let reports = list_generated_annual_reports(&db, &account.id, true).await?;
     let response = reports
@@ -1266,7 +1266,7 @@ pub(crate) async fn annual_report_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::error("annual report not found", 404);
@@ -1285,7 +1285,7 @@ pub(crate) async fn annual_report_action_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::empty();
@@ -1319,7 +1319,7 @@ pub(crate) async fn annual_report_state_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::from_json(&serde_json::json!({
@@ -1371,7 +1371,7 @@ pub(crate) async fn create_email_confirmation_response(
                 }
                 (auth.account, Some(auth.token.oauth_app_id))
             }
-            LocalApiAuthentication::Access(account) => (account, None),
+            LocalApiAuthentication::Auth0(account) => (account, None),
             LocalApiAuthentication::AppToken
             | LocalApiAuthentication::InvalidBearer
             | LocalApiAuthentication::None => {
@@ -3221,7 +3221,7 @@ pub(crate) async fn streaming_placeholder_response(
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     let authenticated = match authenticate_local_api_request(&req, &db, &config).await? {
-        LocalApiAuthentication::Access(viewer) => Some(viewer),
+        LocalApiAuthentication::Auth0(viewer) => Some(viewer),
         LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             return invalid_access_token_response();
@@ -3671,7 +3671,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
     let db = ctx.d1(&config.database_binding)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let Some(target_status_id) = ctx
@@ -3969,7 +3969,7 @@ pub(crate) async fn remove_from_followers_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let target_account_id = ctx
         .param("id")

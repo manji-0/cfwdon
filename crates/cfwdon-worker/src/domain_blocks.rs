@@ -217,7 +217,7 @@ pub(crate) async fn domain_blocks_preview_response(
             );
             Response::from_json(&candidates)
         }
-        None => Response::error("Cloudflare Access authentication required", 401),
+        None => Response::error("Auth0 authentication required", 401),
     }
 }
 
@@ -256,7 +256,7 @@ pub(crate) async fn domain_blocks_response(
 
             builder.from_json(&domains)
         }
-        None => Response::error("Cloudflare Access authentication required", 401),
+        None => Response::error("Auth0 authentication required", 401),
     }
 }
 
@@ -275,7 +275,7 @@ pub(crate) async fn create_domain_block_response(
             insert_account_domain_block(&db, &account.id, &domain).await?;
             Response::from_json(&serde_json::json!({}))
         }
-        None => Response::error("Cloudflare Access authentication required", 401),
+        None => Response::error("Auth0 authentication required", 401),
     }
 }
 
@@ -294,7 +294,7 @@ pub(crate) async fn delete_domain_block_response(
             delete_account_domain_block(&db, &account.id, &domain).await?;
             Response::from_json(&serde_json::json!({}))
         }
-        None => Response::error("Cloudflare Access authentication required", 401),
+        None => Response::error("Auth0 authentication required", 401),
     }
 }
 

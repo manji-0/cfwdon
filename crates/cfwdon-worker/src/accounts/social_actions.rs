@@ -52,7 +52,7 @@ async fn endorse_or_pin_account_response(
         }
         Err(SocialActionContextError::Worker(error)) => return Err(error),
     }) else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     social_action_usecase_response(
@@ -102,7 +102,7 @@ pub(crate) async fn note_account_response(
         }
         Err(SocialActionContextError::Worker(error)) => return Err(error),
     }) else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let note = match parse_note_request(&mut req).await {
@@ -169,7 +169,7 @@ pub(crate) async fn account_email_subscriptions_response(
         }
         Err(SocialActionContextError::Worker(error)) => return Err(error),
     }) else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let enabled = match parse_email_subscription_request(&mut req).await {

@@ -11,19 +11,19 @@ use web_sys::{Algorithm, RsaHashedImportParams};
 use worker::{Error, Fetch, Method, Request, Result};
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct AccessJwtHeader {
+pub(crate) struct Auth0JwtHeader {
     pub(crate) alg: String,
     pub(crate) kid: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum AccessAudClaim {
+pub(crate) enum Auth0AudClaim {
     Single(String),
     Multiple(Vec<String>),
 }
 
-impl AccessAudClaim {
+impl Auth0AudClaim {
     pub(crate) fn contains(&self, expected: &str) -> bool {
         match self {
             Self::Single(value) => value == expected,
@@ -33,16 +33,17 @@ impl AccessAudClaim {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct AccessJwtClaims {
+pub(crate) struct Auth0JwtClaims {
     pub(crate) iss: String,
-    pub(crate) aud: AccessAudClaim,
-    pub(crate) email: Option<String>,
+    pub(crate) aud: Auth0AudClaim,
+    #[serde(flatten)]
+    pub(crate) extra: serde_json::Map<String, serde_json::Value>,
     pub(crate) exp: Option<u64>,
     pub(crate) nbf: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct AccessJwk {
+pub(crate) struct Auth0Jwk {
     pub(crate) kid: String,
     pub(crate) kty: String,
     pub(crate) alg: String,
@@ -53,52 +54,50 @@ pub(crate) struct AccessJwk {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct AccessCertsResponse {
-    pub(crate) keys: Vec<AccessJwk>,
+pub(crate) struct Auth0JwksResponse {
+    pub(crate) keys: Vec<Auth0Jwk>,
 }
 
-pub(crate) async fn verify_access_jwt(token: &str, config: &AppConfig) -> Result<AccessJwtClaims> {
-    let (header_segment, payload_segment, signature_segment) = split_jwt(token)
-        .ok_or_else(|| Error::RustError("malformed Cloudflare Access JWT".to_owned()))?;
+impl Auth0JwtClaims {
+    pub(crate) fn string_claim(&self, name: &str) -> Option<&str> {
+        self.extra.get(name)?.as_str()
+    }
+}
 
-    let header: AccessJwtHeader = decode_jwt_segment(header_segment)?;
+pub(crate) async fn verify_auth0_jwt(token: &str, config: &AppConfig) -> Result<Auth0JwtClaims> {
+    let (header_segment, payload_segment, signature_segment) =
+        split_jwt(token).ok_or_else(|| Error::RustError("malformed Auth0 JWT".to_owned()))?;
+
+    let header: Auth0JwtHeader = decode_jwt_segment(header_segment)?;
     if header.alg != "RS256" {
         return Err(Error::RustError(format!(
-            "unsupported Cloudflare Access JWT algorithm: {}",
+            "unsupported Auth0 JWT algorithm: {}",
             header.alg
         )));
     }
 
-    let claims: AccessJwtClaims = decode_jwt_segment(payload_segment)?;
-    let expected_issuer = normalized_access_team_origin(&config.access_team_domain);
+    let claims: Auth0JwtClaims = decode_jwt_segment(payload_segment)?;
+    let expected_issuer = normalized_auth0_issuer(&config.auth0_domain);
     if claims.iss != expected_issuer {
-        return Err(Error::RustError(
-            "Cloudflare Access JWT issuer mismatch".to_owned(),
-        ));
+        return Err(Error::RustError("Auth0 JWT issuer mismatch".to_owned()));
     }
-    if !claims.aud.contains(&config.access_audience) {
-        return Err(Error::RustError(
-            "Cloudflare Access JWT audience mismatch".to_owned(),
-        ));
+    if !claims.aud.contains(&config.auth0_audience) {
+        return Err(Error::RustError("Auth0 JWT audience mismatch".to_owned()));
     }
 
     let now = current_unix_timestamp();
     if let Some(exp) = claims.exp
         && exp < now
     {
-        return Err(Error::RustError(
-            "Cloudflare Access JWT has expired".to_owned(),
-        ));
+        return Err(Error::RustError("Auth0 JWT has expired".to_owned()));
     }
     if let Some(nbf) = claims.nbf
         && nbf > now
     {
-        return Err(Error::RustError(
-            "Cloudflare Access JWT is not yet valid".to_owned(),
-        ));
+        return Err(Error::RustError("Auth0 JWT is not yet valid".to_owned()));
     }
 
-    let jwk = fetch_access_jwk(config, &header.kid).await?;
+    let jwk = fetch_auth0_jwk(config, &header.kid).await?;
     verify_rs256_signature(
         &jwk,
         format!("{header_segment}.{payload_segment}").as_bytes(),
@@ -127,9 +126,8 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let bytes = decode_base64url(segment)?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        Error::RustError(format!("invalid Cloudflare Access JWT payload: {error}"))
-    })
+    serde_json::from_slice(&bytes)
+        .map_err(|error| Error::RustError(format!("invalid Auth0 JWT payload: {error}")))
 }
 
 fn decode_base64url(value: &str) -> Result<Vec<u8>> {
@@ -138,34 +136,31 @@ fn decode_base64url(value: &str) -> Result<Vec<u8>> {
         .map_err(|error| Error::RustError(format!("invalid base64url data: {error}")))
 }
 
-async fn fetch_access_jwk(config: &AppConfig, expected_kid: &str) -> Result<AccessJwk> {
-    let certs_url = format!(
-        "{}/cdn-cgi/access/certs",
-        normalized_access_team_origin(&config.access_team_domain)
+async fn fetch_auth0_jwk(config: &AppConfig, expected_kid: &str) -> Result<Auth0Jwk> {
+    let jwks_url = format!(
+        "{}/.well-known/jwks.json",
+        normalized_auth0_issuer(&config.auth0_domain).trim_end_matches('/')
     );
-    let request = Request::new(&certs_url, Method::Get)?;
+    let request = Request::new(&jwks_url, Method::Get)?;
     let mut response = Fetch::Request(request).send().await?;
-    let certs: AccessCertsResponse = response.json().await?;
+    let jwks: Auth0JwksResponse = response.json().await?;
 
-    certs
-        .keys
+    jwks.keys
         .into_iter()
         .find(|jwk| jwk.kid == expected_kid)
-        .ok_or_else(|| {
-            Error::RustError("matching Cloudflare Access signing key was not found".to_owned())
-        })
+        .ok_or_else(|| Error::RustError("matching Auth0 signing key was not found".to_owned()))
 }
 
-fn normalized_access_team_origin(team_domain: &str) -> String {
-    let trimmed = team_domain.trim().trim_end_matches('/');
+fn normalized_auth0_issuer(domain: &str) -> String {
+    let trimmed = domain.trim().trim_end_matches('/');
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_owned()
+        format!("{trimmed}/")
     } else {
-        format!("https://{trimmed}")
+        format!("https://{trimmed}/")
     }
 }
 
-async fn verify_rs256_signature(jwk: &AccessJwk, data: &[u8], signature: &[u8]) -> Result<()> {
+async fn verify_rs256_signature(jwk: &Auth0Jwk, data: &[u8], signature: &[u8]) -> Result<()> {
     let subtle = subtle_crypto()?;
 
     let jwk_value = worker::d1::serde_wasm_bindgen::to_value(jwk)
@@ -195,7 +190,7 @@ async fn verify_rs256_signature(jwk: &AccessJwk, data: &[u8], signature: &[u8]) 
     )?)
     .await?
     .dyn_into::<web_sys::CryptoKey>()
-    .map_err(|_| Error::RustError("failed to import Cloudflare Access public key".to_owned()))?;
+    .map_err(|_| Error::RustError("failed to import Auth0 public key".to_owned()))?;
 
     let verify_algorithm = Algorithm::new("RSASSA-PKCS1-v1_5");
     let verify_algorithm: Object = verify_algorithm.into();
@@ -218,7 +213,7 @@ async fn verify_rs256_signature(jwk: &AccessJwk, data: &[u8], signature: &[u8]) 
         Ok(())
     } else {
         Err(Error::RustError(
-            "Cloudflare Access JWT signature verification failed".to_owned(),
+            "Auth0 JWT signature verification failed".to_owned(),
         ))
     }
 }
@@ -229,17 +224,17 @@ fn current_unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::normalized_access_team_origin;
+    use super::normalized_auth0_issuer;
 
     #[test]
-    fn normalized_access_team_origin_adds_https_for_bare_team_domain() {
+    fn normalized_auth0_issuer_adds_https_and_trailing_slash() {
         assert_eq!(
-            normalized_access_team_origin("team.example.cloudflareaccess.com/"),
-            "https://team.example.cloudflareaccess.com"
+            normalized_auth0_issuer("tenant.auth0.com/"),
+            "https://tenant.auth0.com/"
         );
         assert_eq!(
-            normalized_access_team_origin("https://team.example.cloudflareaccess.com/"),
-            "https://team.example.cloudflareaccess.com"
+            normalized_auth0_issuer("https://tenant.auth0.com/"),
+            "https://tenant.auth0.com/"
         );
     }
 }

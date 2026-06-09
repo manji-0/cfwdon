@@ -1004,7 +1004,7 @@ pub(crate) async fn status_source_response(
         return Response::error("missing status id route parameter", 400);
     };
     let Some(viewer) = detail.viewer else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let Some(status) =
         resolve_status_reference(&detail.base.db, &detail.base.config, &detail.base.status_id)

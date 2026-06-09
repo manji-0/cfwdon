@@ -124,7 +124,7 @@ pub(crate) async fn mute_status_response(req: Request, ctx: RouteContext<()>) ->
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(subject) =
         find_visible_local_status_response_subject(&db, Some(&viewer), &status_id).await?
@@ -149,7 +149,7 @@ pub(crate) async fn unmute_status_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(subject) =
         find_visible_local_status_response_subject(&db, Some(&viewer), &status_id).await?

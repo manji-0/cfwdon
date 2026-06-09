@@ -58,7 +58,7 @@ pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     }
 
     let bucket = ctx.bucket(&config.media_binding)?;
@@ -83,7 +83,7 @@ pub(crate) async fn create_media_attachment(
     let bucket = ctx.bucket(&config.media_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let media = store_media_attachment(&db, &bucket, &account, &draft).await?;
 
@@ -180,7 +180,7 @@ pub(crate) async fn update_media_attachment(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
         Some(media) if media.account_id == account.id => media,
@@ -208,7 +208,7 @@ pub(crate) async fn delete_media_attachment(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
         Some(media) if media.account_id == account.id => media,

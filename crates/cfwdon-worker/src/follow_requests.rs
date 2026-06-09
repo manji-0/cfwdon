@@ -714,7 +714,7 @@ pub(crate) async fn follow_requests_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let query: FollowRequestsQuery = req.query()?;
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
@@ -758,7 +758,7 @@ pub(crate) async fn follow_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")
@@ -786,7 +786,7 @@ pub(crate) async fn authorize_follow_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")
@@ -811,7 +811,7 @@ pub(crate) async fn reject_follow_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")
@@ -836,7 +836,7 @@ pub(crate) async fn notification_requests_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let query: NotificationRequestsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
@@ -881,7 +881,7 @@ pub(crate) async fn notification_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")
@@ -910,7 +910,7 @@ pub(crate) async fn notification_requests_merged_response(
         Some(_) => Response::from_json(&serde_json::json!({
             "merged": true,
         })),
-        None => Response::error("Cloudflare Access authentication required", 401),
+        None => Response::error("Auth0 authentication required", 401),
     }
 }
 
@@ -921,7 +921,7 @@ pub(crate) async fn accept_notification_requests_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let ids = parse_notification_request_ids(req).await?;
     for request_id in ids {
@@ -941,7 +941,7 @@ pub(crate) async fn dismiss_notification_requests_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let ids = parse_notification_request_ids(req).await?;
     for request_id in ids {
@@ -961,7 +961,7 @@ pub(crate) async fn accept_notification_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")
@@ -986,7 +986,7 @@ pub(crate) async fn dismiss_notification_request_response(
     let config = load_config(&ctx);
     let (db, viewer) = match authenticated_follow_request_viewer(&req, &ctx, &config).await? {
         Some(auth) => auth,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request_id = ctx
         .param("id")

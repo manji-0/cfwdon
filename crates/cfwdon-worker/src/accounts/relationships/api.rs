@@ -25,7 +25,7 @@ pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let relationships =
@@ -155,7 +155,7 @@ pub(crate) async fn identity_proofs_response(
 
     match find_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     }
 
     if resolve_account_reference(&db, &account_id).await?.is_none() {

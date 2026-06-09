@@ -1008,7 +1008,7 @@ pub(crate) async fn filters_v1_response(req: Request, ctx: RouteContext<()>) -> 
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let filters = list_v1_filters(&db, &viewer.id)
@@ -1024,7 +1024,7 @@ pub(crate) async fn filter_v1_response(req: Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1046,7 +1046,7 @@ pub(crate) async fn create_filter_v1_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request = parse_v1_filter_request(req).await?;
     let phrase = normalize_keyword(request.phrase.as_deref())?;
@@ -1087,7 +1087,7 @@ pub(crate) async fn update_filter_v1_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1164,7 +1164,7 @@ pub(crate) async fn delete_filter_v1_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1184,7 +1184,7 @@ pub(crate) async fn filters_v2_response(req: Request, ctx: RouteContext<()>) -> 
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let filters = list_filters(&db, &viewer.id).await?;
@@ -1216,7 +1216,7 @@ pub(crate) async fn filter_v2_response(req: Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1238,7 +1238,7 @@ pub(crate) async fn create_filter_v2_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request = parse_v2_filter_request(req).await?;
     let contexts = normalize_contexts(request.context.unwrap_or_default())?;
@@ -1299,7 +1299,7 @@ pub(crate) async fn update_filter_v2_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1370,7 +1370,7 @@ pub(crate) async fn delete_filter_v2_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1391,7 +1391,7 @@ pub(crate) async fn filter_keywords_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1417,7 +1417,7 @@ pub(crate) async fn create_filter_keyword_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1446,7 +1446,7 @@ pub(crate) async fn filter_keyword_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let keyword_id = ctx
         .param("id")
@@ -1467,7 +1467,7 @@ pub(crate) async fn update_filter_keyword_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let keyword_id = ctx
         .param("id")
@@ -1499,7 +1499,7 @@ pub(crate) async fn delete_filter_keyword_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let keyword_id = ctx
         .param("id")
@@ -1521,7 +1521,7 @@ pub(crate) async fn filter_statuses_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1547,7 +1547,7 @@ pub(crate) async fn create_filter_status_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let filter_id = ctx
         .param("id")
@@ -1574,7 +1574,7 @@ pub(crate) async fn filter_status_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let status_filter_id = ctx
         .param("id")
@@ -1595,7 +1595,7 @@ pub(crate) async fn delete_filter_status_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let status_filter_id = ctx
         .param("id")

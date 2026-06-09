@@ -115,7 +115,7 @@ pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Res
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let (wants_home, wants_notifications) = requested_marker_scopes(&req)?;
 
@@ -146,7 +146,7 @@ pub(crate) async fn save_markers_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     Response::from_json(&serde_json::json!({

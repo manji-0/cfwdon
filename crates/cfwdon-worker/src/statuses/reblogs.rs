@@ -21,7 +21,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             return Response::error("missing status id route parameter", 400);
         }
         crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
-            return Response::error("Cloudflare Access authentication required", 401);
+            return Response::error("Auth0 authentication required", 401);
         }
     };
     let request = parse_reblog_status_request(req)
@@ -146,7 +146,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
             return Response::error("missing status id route parameter", 400);
         }
         crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
-            return Response::error("Cloudflare Access authentication required", 401);
+            return Response::error("Auth0 authentication required", 401);
         }
     };
     let viewer = &action.auth.viewer;

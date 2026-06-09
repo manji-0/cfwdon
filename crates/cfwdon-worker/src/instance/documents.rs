@@ -177,7 +177,7 @@ fn instance_v2_registrations_document() -> serde_json::Value {
         "enabled": true,
         "approval_required": false,
         "reason_required": false,
-        "message": "Registration is handled by Cloudflare Access.",
+        "message": "Registration is handled by Auth0.",
         "min_age": serde_json::Value::Null,
         "url": serde_json::Value::Null,
     })

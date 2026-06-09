@@ -57,7 +57,7 @@ pub(crate) async fn suggestions_v1_response(
 ) -> Result<Response> {
     match suggested_accounts(&req, &ctx).await {
         Ok(Some(accounts)) => Response::from_json(&accounts),
-        Ok(None) => Response::error("Cloudflare Access authentication required", 401),
+        Ok(None) => Response::error("Auth0 authentication required", 401),
         Err(error) => Err(error),
     }
 }
@@ -72,7 +72,7 @@ pub(crate) async fn delete_suggestion_response(
         .await?
         .is_none()
     {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     }
 
     Response::from_json(&serde_json::json!({}))
@@ -95,7 +95,7 @@ pub(crate) async fn suggestions_v2_response(
                 .collect::<Vec<_>>();
             Response::from_json(&suggestions)
         }
-        Ok(None) => Response::error("Cloudflare Access authentication required", 401),
+        Ok(None) => Response::error("Auth0 authentication required", 401),
         Err(error) => Err(error),
     }
 }

@@ -1,6 +1,6 @@
 # cfwdon
 
-`cfwdon` is a Mastodon-compatible server for Cloudflare Workers. It is written in Rust and uses Cloudflare D1 for relational state, R2 for media storage, and Cloudflare Access as the authentication boundary for protected API routes.
+`cfwdon` is a Mastodon-compatible server for Cloudflare Workers. It is written in Rust and uses Cloudflare D1 for relational state, R2 for media storage, and Auth0 as the authentication boundary for protected API routes.
 
 The project is still early software. The current focus is making the Mastodon API surface, ActivityPub federation behavior, and Cloudflare deployment story explicit enough that contributors can work on compatibility without first reverse-engineering the whole Worker.
 
@@ -36,7 +36,7 @@ To run the Worker locally:
 devbox run worker:dev
 ```
 
-Local routes that depend on D1, R2, or Cloudflare Access need matching local or remote bindings. Start with [Clone And Run](docs/getting-started/clone-and-run.md), then use [Development Workflow](docs/getting-started/development.md) for the day-to-day loop and [Configuration Reference](docs/reference/configuration.md) for runtime values.
+Local routes that depend on D1, R2, or Auth0 need matching local or remote bindings. Start with [Clone And Run](docs/getting-started/clone-and-run.md), then use [Development Workflow](docs/getting-started/development.md) for the day-to-day loop and [Configuration Reference](docs/reference/configuration.md) for runtime values.
 
 ## Documentation
 <!-- derived-from ./docs/README.md -->

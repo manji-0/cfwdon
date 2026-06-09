@@ -14,24 +14,24 @@ use super::{
     account_search_non_exact_limit, account_search_rank, account_search_sort_key,
     account_search_term, account_search_terms, activitypub_media_attachment_type,
     activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
-    authorize_interaction_document, authorize_interaction_url_from_base,
-    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
-    build_add_featured_activity_with_id, build_announcements_document,
-    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
-    build_deepl_request_body, build_deepl_translation_languages_document,
-    build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
-    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    auth0_login_url, auth0_logout_url, authorize_interaction_document,
+    authorize_interaction_url_from_base, build_activitypub_actor_document,
+    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
+    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
+    build_donation_campaign_document, build_email_confirmation_html,
+    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
+    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_remote_status_card_value, build_remove_featured_activity_with_id,
     build_status_card_value, build_status_update_activity_with_id,
     build_timeline_link_header_for_url, build_translation_document,
     build_translation_document_for_language, build_translation_languages_document,
-    build_update_person_activity_with_id, classify_media_kind, cloudflare_access_login_url,
-    cloudflare_access_logout_url, cloudflare_access_team_logout_url, configured_html_document,
+    build_update_person_activity_with_id, classify_media_kind, configured_html_document,
     context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
     describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
     effective_remote_status_quote_state, effective_search_v2_following, effective_search_v2_offset,
@@ -472,33 +472,53 @@ fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
 }
 
 #[test]
-fn cloudflare_access_login_url_matches_access_plugin_shape() {
+fn auth0_login_url_uses_authorize_endpoint() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
-    config.access_audience = "aud-1".to_owned();
-    let redirect_url = Url::parse(
-        "https://social.example/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F",
-    )
-    .unwrap();
+    config.auth0_domain = "tenant.auth0.com".to_owned();
+    config.auth0_client_id = "client-id-1".to_owned();
+    config.auth0_audience = "https://social.example/api".to_owned();
+    let callback_url = Url::parse("https://social.example/oauth/auth0/callback").unwrap();
 
-    let login_url = cloudflare_access_login_url(&config, &redirect_url).unwrap();
+    let login_url = auth0_login_url(&config, &callback_url, "state-1", "challenge-1").unwrap();
 
     assert_eq!(login_url.scheme(), "https");
-    assert_eq!(login_url.host_str(), Some("example.cloudflareaccess.com"));
-    assert_eq!(login_url.path(), "/cdn-cgi/access/login/social.example");
+    assert_eq!(login_url.host_str(), Some("tenant.auth0.com"));
+    assert_eq!(login_url.path(), "/authorize");
     let params = login_url.query_pairs().collect::<HashMap<_, _>>();
-    assert_eq!(params.get("kid").map(|value| value.as_ref()), Some("aud-1"));
     assert_eq!(
-        params.get("redirect_url").map(|value| value.as_ref()),
-        Some("/oauth/authorize?client_id=client-1&redirect_uri=https%3A%2F%2Fphanpy.social%2F")
+        params.get("client_id").map(|value| value.as_ref()),
+        Some("client-id-1")
+    );
+    assert_eq!(
+        params.get("audience").map(|value| value.as_ref()),
+        Some("https://social.example/api")
+    );
+    assert_eq!(
+        params.get("redirect_uri").map(|value| value.as_ref()),
+        Some("https://social.example/oauth/auth0/callback")
+    );
+    assert_eq!(
+        params.get("state").map(|value| value.as_ref()),
+        Some("state-1")
+    );
+    assert_eq!(
+        params.get("code_challenge").map(|value| value.as_ref()),
+        Some("challenge-1")
+    );
+    assert_eq!(
+        params
+            .get("code_challenge_method")
+            .map(|value| value.as_ref()),
+        Some("S256")
     );
 }
 
 #[test]
-fn oauth_authorize_form_redirect_preserves_authorize_parameters_for_access() {
+fn oauth_authorize_form_redirect_preserves_authorize_parameters_for_auth0() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
-    config.access_audience = "aud-1".to_owned();
+    config.auth0_domain = "tenant.auth0.com".to_owned();
+    config.auth0_client_id = "client-id-1".to_owned();
+    config.auth0_audience = "https://social.example/api".to_owned();
     let base_url = Url::parse("https://social.example/oauth/authorize").unwrap();
     let authorize_url = oauth_authorize_url_from_form(
         &base_url,
@@ -514,13 +534,13 @@ fn oauth_authorize_form_redirect_preserves_authorize_parameters_for_access() {
     )
     .unwrap();
 
-    let login_url = cloudflare_access_login_url(&config, &authorize_url).unwrap();
+    let login_url = auth0_login_url(&config, &authorize_url, "state-1", "challenge-1").unwrap();
 
     let params = login_url.query_pairs().collect::<HashMap<_, _>>();
     assert_eq!(
-        params.get("redirect_url").map(|value| value.as_ref()),
+        params.get("redirect_uri").map(|value| value.as_ref()),
         Some(
-            "/oauth/authorize?response_type=code&client_id=client-1&redirect_uri=mastodon%3A%2F%2Fauthorize&scope=read+write&state=state-1&code_challenge=challenge-1&code_challenge_method=S256"
+            "https://social.example/oauth/authorize?response_type=code&client_id=client-1&redirect_uri=mastodon%3A%2F%2Fauthorize&scope=read+write&state=state-1&code_challenge=challenge-1&code_challenge_method=S256"
         )
     );
 }
@@ -542,17 +562,24 @@ fn mobile_custom_scheme_redirect_uri_allows_empty_path_slash_variants() {
 }
 
 #[test]
-fn cloudflare_access_logout_urls_match_access_session_management_shape() {
+fn auth0_logout_url_uses_v2_logout_with_return_to() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    config.access_team_domain = "example.cloudflareaccess.com".to_owned();
+    config.auth0_domain = "tenant.auth0.com".to_owned();
+    config.auth0_client_id = "client-id-1".to_owned();
 
+    let logout_url = auth0_logout_url(&config).unwrap();
+
+    assert_eq!(logout_url.scheme(), "https");
+    assert_eq!(logout_url.host_str(), Some("tenant.auth0.com"));
+    assert_eq!(logout_url.path(), "/v2/logout");
+    let params = logout_url.query_pairs().collect::<HashMap<_, _>>();
     assert_eq!(
-        cloudflare_access_logout_url(&config),
-        "https://social.example/cdn-cgi/access/logout"
+        params.get("client_id").map(|value| value.as_ref()),
+        Some("client-id-1")
     );
     assert_eq!(
-        cloudflare_access_team_logout_url(&config).unwrap().as_str(),
-        "https://example.cloudflareaccess.com/cdn-cgi/access/logout"
+        params.get("returnTo").map(|value| value.as_ref()),
+        Some("https://social.example")
     );
 }
 

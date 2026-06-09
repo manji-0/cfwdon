@@ -14,7 +14,7 @@ pub(crate) async fn notifications_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(list) = resolve_notification_list_route_context(&req, &ctx, 20, 40).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let limited_entries = list_notifications_usecase(
         &list.auth.db,
@@ -46,7 +46,7 @@ pub(crate) async fn notifications_v2_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(list) = resolve_notification_list_route_context(&req, &ctx, 20, 40).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let limited_entries = list_notifications_usecase(
         &list.auth.db,
@@ -65,7 +65,7 @@ pub(crate) async fn notification_group_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(group) = resolve_notification_group_route_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let entries = list_notification_group_entries_usecase(
         &group.auth.db,
@@ -89,7 +89,7 @@ pub(crate) async fn notification_group_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(group) = resolve_notification_group_route_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let entries = list_notification_group_entries_usecase(
         &group.auth.db,
@@ -119,7 +119,7 @@ pub(crate) async fn notification_group_dismiss_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(group) = resolve_notification_group_route_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     if !dismiss_notification_group_usecase(
         &group.auth.db,
@@ -138,7 +138,7 @@ pub(crate) async fn notification_group_dismiss_response(
 
 pub(crate) async fn notification_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(entry_context) = resolve_notification_entry_route_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let Some(entry) = load_notification_entry_usecase(
         &entry_context.auth.db,
@@ -159,7 +159,7 @@ pub(crate) async fn notification_dismiss_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(entry_context) = resolve_notification_entry_route_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     if !dismiss_notification_entry_usecase(
         &entry_context.auth.db,
@@ -179,7 +179,7 @@ pub(crate) async fn notifications_clear_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(list) = resolve_notification_list_route_context(&req, &ctx, 100, 1000).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     clear_notifications_usecase(&list.auth.db, &list.auth.viewer).await?;
     Response::from_json(&serde_json::json!({}))
@@ -190,7 +190,7 @@ pub(crate) async fn notifications_unread_count_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(list) = resolve_notification_list_route_context(&req, &ctx, 100, 1000).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     Response::from_json(&serde_json::json!({

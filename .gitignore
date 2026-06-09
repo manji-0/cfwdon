@@ -5,6 +5,7 @@
 /dist
 /.devbox
 /.direnv
+/.dev.vars
 /wrangler.local.toml
 # Added by code-review-graph
 .code-review-graph/

@@ -33,7 +33,7 @@ pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     let reporter = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request = match parse_create_report_request(req).await {
         Ok(request) => request,

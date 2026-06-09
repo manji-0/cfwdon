@@ -34,11 +34,14 @@ MEDIA_PUBLIC_BASE_URL = "https://media.fedi.manji.app"
 # Optional e-mail confirmation dispatch via Resend.
 # RESEND_API_KEY should normally be configured as a secret, not here.
 EMAIL_FROM = "cfwdon <noreply@fedi.manji.app>"
-# Protected routes are expected to sit behind Cloudflare Auth / Access.
-ACCESS_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email"
-ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
-ACCESS_TEAM_DOMAIN = "manji0.cloudflareaccess.com"
-ACCESS_AUD = "d7680c2b52911c0feec79055d780e432a7b8a4665b2e9f33118fa24b88c421fb"
+# Protected routes validate Auth0-issued RS256 JWTs.
+# Set real values outside git, for example with `wrangler secret put` or
+# Cloudflare dashboard environment variables.
+AUTH0_JWT_HEADER = "Authorization"
+AUTH0_DOMAIN = "replace-with-auth0-domain"
+AUTH0_CLIENT_ID = "replace-with-auth0-application-client-id"
+AUTH0_AUDIENCE = "replace-with-auth0-api-identifier"
+AUTH0_EMAIL_CLAIM = "email"
 
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.
@@ -52,7 +55,7 @@ binding = "MEDIA"
 bucket_name = "cfwdon-media"
 
 # Configure the bucket behind a public custom domain and keep that domain
-# outside Cloudflare Access. Entity payloads will use MEDIA_PUBLIC_BASE_URL
+# outside protected API authentication. Entity payloads will use MEDIA_PUBLIC_BASE_URL
 # directly; /media/:id remains as a fallback/redirect route.
 
 [[queues.producers]]

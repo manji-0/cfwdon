@@ -96,7 +96,7 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let choices = match parse_poll_vote_request(req).await {
         Ok(choices) => choices,
@@ -182,7 +182,7 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
     let config = load_config(&ctx);
     match extract_authenticated_user(&req, &config).await? {
         Some(_) => {}
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     }
 
     let db = ctx.d1(&config.database_binding)?;

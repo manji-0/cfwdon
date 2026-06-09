@@ -233,7 +233,7 @@ where
     set_timeline_access_config(&vars, &mut config);
 
     set_content_config(&vars, &mut config);
-    set_access_config(&vars, &mut config);
+    set_auth0_config(&vars, &mut config);
 
     config
 }
@@ -246,11 +246,12 @@ fn set_secret_storage_config(vars: &impl Fn(&str) -> Option<String>, config: &mu
     );
 }
 
-fn set_access_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
-    set_raw_string(vars, "ACCESS_EMAIL_HEADER", &mut config.access_email_header);
-    set_raw_string(vars, "ACCESS_JWT_HEADER", &mut config.access_jwt_header);
-    set_raw_string(vars, "ACCESS_TEAM_DOMAIN", &mut config.access_team_domain);
-    set_raw_string(vars, "ACCESS_AUD", &mut config.access_audience);
+fn set_auth0_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    set_raw_string(vars, "AUTH0_JWT_HEADER", &mut config.auth0_jwt_header);
+    set_raw_string(vars, "AUTH0_DOMAIN", &mut config.auth0_domain);
+    set_raw_string(vars, "AUTH0_CLIENT_ID", &mut config.auth0_client_id);
+    set_raw_string(vars, "AUTH0_AUDIENCE", &mut config.auth0_audience);
+    set_raw_string(vars, "AUTH0_EMAIL_CLAIM", &mut config.auth0_email_claim);
 }
 
 fn set_content_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {

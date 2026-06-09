@@ -50,10 +50,11 @@ pub struct AppConfig {
     pub timeline_hashtag_feeds_remote: TimelineAccessLevel,
     pub timeline_trending_link_feeds_local: TimelineAccessLevel,
     pub timeline_trending_link_feeds_remote: TimelineAccessLevel,
-    pub access_email_header: String,
-    pub access_jwt_header: String,
-    pub access_team_domain: String,
-    pub access_audience: String,
+    pub auth0_jwt_header: String,
+    pub auth0_domain: String,
+    pub auth0_client_id: String,
+    pub auth0_audience: String,
+    pub auth0_email_claim: String,
 }
 
 impl AppConfig {
@@ -92,10 +93,11 @@ impl AppConfig {
             timeline_hashtag_feeds_remote: TimelineAccessLevel::Public,
             timeline_trending_link_feeds_local: TimelineAccessLevel::Public,
             timeline_trending_link_feeds_remote: TimelineAccessLevel::Public,
-            access_email_header: "Cf-Access-Authenticated-User-Email".to_owned(),
-            access_jwt_header: "Cf-Access-Jwt-Assertion".to_owned(),
-            access_team_domain: String::new(),
-            access_audience: String::new(),
+            auth0_jwt_header: "Authorization".to_owned(),
+            auth0_domain: String::new(),
+            auth0_client_id: String::new(),
+            auth0_audience: String::new(),
+            auth0_email_claim: "email".to_owned(),
         }
     }
 }

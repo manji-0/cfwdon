@@ -202,7 +202,7 @@ async fn resolve_authenticated_account(
 
 pub(crate) async fn follow_tag_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some((db, config, account)) = resolve_authenticated_account(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
     follow_tag(&db, &account.id, &tag).await?;
@@ -211,7 +211,7 @@ pub(crate) async fn follow_tag_response(req: Request, ctx: RouteContext<()>) -> 
 
 pub(crate) async fn unfollow_tag_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some((db, config, account)) = resolve_authenticated_account(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
     unfollow_tag(&db, &account.id, &tag).await?;
@@ -223,7 +223,7 @@ pub(crate) async fn feature_tag_v1_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some((db, config, account)) = resolve_authenticated_account(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
     match feature_tag(&db, &account.id, &tag).await {
@@ -241,7 +241,7 @@ pub(crate) async fn unfeature_tag_v1_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some((db, config, account)) = resolve_authenticated_account(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
     unfeature_tag(&db, &account.id, &tag).await?;
@@ -253,7 +253,7 @@ pub(crate) async fn followed_tags_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some((db, config, account)) = resolve_authenticated_account(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let query = req.query::<TagCollectionQuery>()?;

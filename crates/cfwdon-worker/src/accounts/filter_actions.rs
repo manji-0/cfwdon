@@ -16,7 +16,7 @@ pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result
     let db = ctx.d1(&config.database_binding)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match block_account_usecase(&db, &config, &blocker, &target_account_id).await {
         Ok(relationship) => Response::from_json(&relationship),
@@ -39,7 +39,7 @@ pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Resu
     let db = ctx.d1(&config.database_binding)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match unblock_account_usecase(&db, &config, &blocker, &target_account_id).await {
         Ok(relationship) => Response::from_json(&relationship),
@@ -65,7 +65,7 @@ pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Re
     let db = ctx.d1(&config.database_binding)?;
     let muter = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let notifications = request.notifications.unwrap_or(true);
     let expires_at = request
@@ -103,7 +103,7 @@ pub(crate) async fn unmute_account(req: Request, ctx: RouteContext<()>) -> Resul
     let db = ctx.d1(&config.database_binding)?;
     let muter = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match unmute_account_usecase(&db, &config, &muter, &target_account_id).await {
         Ok(relationship) => Response::from_json(&relationship),

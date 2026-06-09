@@ -251,7 +251,7 @@ async fn optional_collection_viewer(
             LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
                 return Ok(Err(invalid_access_token_response()?));
             }
-            LocalApiAuthentication::Access(account) => {
+            LocalApiAuthentication::Auth0(account) => {
                 return Ok(Ok(CollectionViewer {
                     account: Some(account),
                 }));
@@ -261,7 +261,7 @@ async fn optional_collection_viewer(
     }
 
     let account = match authenticate_local_api_request(req, db, config).await? {
-        LocalApiAuthentication::Access(account) => Some(account),
+        LocalApiAuthentication::Auth0(account) => Some(account),
         LocalApiAuthentication::None => None,
         LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
@@ -277,7 +277,7 @@ async fn require_collection_reader(
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
-        LocalApiAuthentication::Access(account) => Ok(Ok(account)),
+        LocalApiAuthentication::Auth0(account) => Ok(Ok(account)),
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["read:collections", "read"]) {
                 return Ok(Err(outside_authorized_scopes_response()?));
@@ -296,7 +296,7 @@ async fn require_collection_writer(
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
-        LocalApiAuthentication::Access(account) => Ok(Ok(account)),
+        LocalApiAuthentication::Auth0(account) => Ok(Ok(account)),
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["write:collections", "write"]) {
                 return Ok(Err(outside_authorized_scopes_response()?));

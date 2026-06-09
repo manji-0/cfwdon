@@ -1,8 +1,9 @@
-use crate::auth::find_account_by_email;
+use crate::auth::{AUTH0_SESSION_COOKIE, find_account_by_email};
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::id_utils::generate_entity_id;
 use crate::runtime_config::load_config;
 use crate::time_html::{escape_html, now_unix_timestamp};
+use crate::verify_auth0_jwt;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use cfwdon_domain::LocalAccount;
@@ -10,12 +11,13 @@ use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use worker::{D1Database, FormData, ResponseBody, d1::D1Type};
+use worker::{D1Database, Fetch, FormData, Headers, Method, RequestInit, ResponseBody, d1::D1Type};
 use worker::{Request, Response, Result, RouteContext};
 
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
 const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
+const AUTH0_AUTHORIZE_STATE_COOKIE: &str = "cfwdon_auth0_authorize";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
 const PASSWORD_HASH_ITERATIONS: u32 = 210_000;
 const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
@@ -66,15 +68,35 @@ struct OAuthAuthorizeLoginRequest {
     authorize: OAuthAuthorizeRequest,
 }
 
+#[derive(Debug, Deserialize)]
+struct Auth0CallbackRequest {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Auth0TokenResponse {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Auth0AuthorizeStateCookie {
+    state: String,
+    code_verifier: String,
+    return_url: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AccessAuthorizeGetAction {
+enum Auth0AuthorizeGetAction {
     RedirectToLogin,
     MissingLinkedAccount,
     ShowConsent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AccessAuthorizePostAction {
+enum Auth0AuthorizePostAction {
     RedirectToLogin,
     ShowConsent,
     IssueCode,
@@ -909,54 +931,53 @@ fn authorization_redirect_with_params(
     redirect_response(url.as_str())
 }
 
-pub(crate) fn access_login_configured(config: &cfwdon_core::AppConfig) -> bool {
-    !config.access_team_domain.trim().is_empty() && !config.access_audience.trim().is_empty()
+pub(crate) fn auth0_login_configured(config: &cfwdon_core::AppConfig) -> bool {
+    !config.auth0_domain.trim().is_empty()
+        && !config.auth0_client_id.trim().is_empty()
+        && !config.auth0_audience.trim().is_empty()
 }
 
-pub(crate) fn cloudflare_access_login_url(
+pub(crate) fn auth0_login_url(
     config: &cfwdon_core::AppConfig,
-    redirect_url: &Url,
+    callback_url: &Url,
+    state: &str,
+    code_challenge: &str,
 ) -> std::result::Result<Url, String> {
-    let team_url = cloudflare_access_team_url(config)?;
-    let hostname = redirect_url
-        .host_str()
-        .ok_or_else(|| "OAuth authorize redirect URL did not include a host".to_owned())?;
-    let mut login_url = team_url
-        .join(&format!("/cdn-cgi/access/login/{hostname}"))
-        .map_err(|error| format!("failed to build Cloudflare Access login URL: {error}"))?;
-    let redirect_path = match redirect_url.query() {
-        Some(query) => format!("{}?{query}", redirect_url.path()),
-        None => redirect_url.path().to_owned(),
-    };
+    let mut login_url = auth0_domain_url(config)?;
+    login_url.set_path("/authorize");
+    login_url.set_query(None);
     login_url
         .query_pairs_mut()
-        .append_pair("kid", config.access_audience.trim())
-        .append_pair("redirect_url", &redirect_path);
+        .append_pair("response_type", "code")
+        .append_pair("client_id", config.auth0_client_id.trim())
+        .append_pair("redirect_uri", callback_url.as_str())
+        .append_pair("audience", config.auth0_audience.trim())
+        .append_pair("scope", "openid profile email")
+        .append_pair("state", state)
+        .append_pair("code_challenge", code_challenge)
+        .append_pair("code_challenge_method", "S256");
     Ok(login_url)
 }
 
-pub(crate) fn cloudflare_access_logout_url(config: &cfwdon_core::AppConfig) -> String {
-    format!(
-        "{}/cdn-cgi/access/logout",
-        crate::instance_base_url(config).trim_end_matches('/')
-    )
-}
-
-pub(crate) fn cloudflare_access_team_logout_url(
+pub(crate) fn auth0_logout_url(
     config: &cfwdon_core::AppConfig,
 ) -> std::result::Result<Url, String> {
-    cloudflare_access_team_url(config)?
-        .join("/cdn-cgi/access/logout")
-        .map_err(|error| format!("failed to build Cloudflare Access logout URL: {error}"))
+    let mut logout_url = auth0_domain_url(config)?;
+    logout_url.set_path("/v2/logout");
+    logout_url.set_query(None);
+    logout_url
+        .query_pairs_mut()
+        .append_pair("client_id", config.auth0_client_id.trim())
+        .append_pair("returnTo", crate::instance_base_url(config).as_str());
+    Ok(logout_url)
 }
 
-fn cloudflare_access_team_url(config: &cfwdon_core::AppConfig) -> std::result::Result<Url, String> {
-    let mut team_domain = config.access_team_domain.trim().to_owned();
-    if !team_domain.starts_with("http://") && !team_domain.starts_with("https://") {
-        team_domain = format!("https://{team_domain}");
+fn auth0_domain_url(config: &cfwdon_core::AppConfig) -> std::result::Result<Url, String> {
+    let mut domain = config.auth0_domain.trim().trim_end_matches('/').to_owned();
+    if !domain.starts_with("http://") && !domain.starts_with("https://") {
+        domain = format!("https://{domain}");
     }
-    Url::parse(team_domain.trim_end_matches('/'))
-        .map_err(|error| format!("invalid Cloudflare Access team domain: {error}"))
+    Url::parse(&domain).map_err(|error| format!("invalid Auth0 domain: {error}"))
 }
 
 pub(crate) fn oauth_authorize_url_from_form(
@@ -993,11 +1014,33 @@ fn access_login_redirect_from_authorize_request(
     base_url: &Url,
     authorize: &OAuthAuthorizeRequest,
 ) -> Result<Response> {
-    let authorize_url =
+    let return_url =
         oauth_authorize_url_from_form(base_url, authorize).map_err(worker::Error::RustError)?;
-    let login_url =
-        cloudflare_access_login_url(config, &authorize_url).map_err(worker::Error::RustError)?;
-    redirect_response(login_url.as_str())
+    auth0_login_redirect_response(config, base_url, &return_url)
+}
+
+pub(crate) fn auth0_login_redirect_response(
+    config: &cfwdon_core::AppConfig,
+    base_url: &Url,
+    return_url: &Url,
+) -> Result<Response> {
+    let mut callback_url = base_url.clone();
+    callback_url.set_path("/oauth/auth0/callback");
+    callback_url.set_query(None);
+
+    let state = generate_entity_id(32)?;
+    let code_verifier = generate_entity_id(48)?;
+    let code_challenge = pkce_code_challenge(&code_verifier, Some("S256"));
+    let login_url = auth0_login_url(config, &callback_url, &state, &code_challenge)
+        .map_err(worker::Error::RustError)?;
+    let session = Auth0AuthorizeStateCookie {
+        state,
+        code_verifier,
+        return_url: return_url.to_string(),
+    };
+    let mut response = redirect_response(login_url.as_str())?;
+    set_auth0_authorize_state_cookie(&mut response, &session)?;
+    Ok(response)
 }
 
 fn redirect_response(location: &str) -> Result<Response> {
@@ -1021,14 +1064,13 @@ fn redirect_fallback_body(location: &str) -> String {
 fn access_authenticated_without_account_response(
     config: &cfwdon_core::AppConfig,
 ) -> Result<Response> {
-    let team_logout_url = cloudflare_access_team_logout_url(config)
+    let logout_url = auth0_logout_url(config)
         .map(|url| url.to_string())
         .unwrap_or_default();
     Ok(Response::from_json(&serde_json::json!({
-        "error": "Cloudflare Access authentication succeeded, but no local account is registered for this email.",
+        "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
         "registration_url": format!("{}/auth/sign_up", crate::instance_base_url(config)),
-        "logout_url": cloudflare_access_logout_url(config),
-        "team_logout_url": team_logout_url,
+        "logout_url": logout_url,
     }))?
     .with_status(403))
 }
@@ -1042,13 +1084,28 @@ fn html_response(body: &str, status: u16) -> Result<Response> {
 }
 
 fn oauth_authorize_csrf_cookie(req: &Request) -> Result<Option<String>> {
+    request_cookie_value(req, OAUTH_AUTHORIZE_CSRF_COOKIE)
+}
+
+fn auth0_authorize_state_cookie(req: &Request) -> Result<Option<Auth0AuthorizeStateCookie>> {
+    let Some(value) = request_cookie_value(req, AUTH0_AUTHORIZE_STATE_COOKIE)? else {
+        return Ok(None);
+    };
+    let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|error| {
+        worker::Error::RustError(format!("invalid Auth0 state cookie: {error}"))
+    })?;
+    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+        worker::Error::RustError(format!("invalid Auth0 state cookie payload: {error}"))
+    })
+}
+
+fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
     let Some(cookie_header) = req.headers().get("Cookie")? else {
         return Ok(None);
     };
     Ok(cookie_header.split(';').find_map(|part| {
-        let (name, value) = part.trim().split_once('=')?;
-        (name == OAUTH_AUTHORIZE_CSRF_COOKIE && !value.trim().is_empty())
-            .then(|| value.trim().to_owned())
+        let (cookie_name, value) = part.trim().split_once('=')?;
+        (cookie_name == name && !value.trim().is_empty()).then(|| value.trim().to_owned())
     }))
 }
 
@@ -1067,10 +1124,50 @@ fn oauth_authorize_csrf_matches(req: &Request, submitted_token: Option<&str>) ->
 }
 
 fn set_oauth_authorize_csrf_cookie(response: &mut Response, token: &str) -> Result<()> {
-    response.headers_mut().set(
+    response.headers_mut().append(
         "Set-Cookie",
         &format!(
             "{OAUTH_AUTHORIZE_CSRF_COOKIE}={token}; Path=/oauth/authorize; HttpOnly; SameSite=Lax; Secure"
+        ),
+    )?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(())
+}
+
+fn set_auth0_authorize_state_cookie(
+    response: &mut Response,
+    session: &Auth0AuthorizeStateCookie,
+) -> Result<()> {
+    let payload = serde_json::to_vec(session).map_err(|error| {
+        worker::Error::RustError(format!("failed to encode Auth0 state cookie: {error}"))
+    })?;
+    response.headers_mut().append(
+        "Set-Cookie",
+        &format!(
+            "{AUTH0_AUTHORIZE_STATE_COOKIE}={}; Path=/oauth/auth0/callback; HttpOnly; SameSite=Lax; Secure; Max-Age=600",
+            URL_SAFE_NO_PAD.encode(payload)
+        ),
+    )?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(())
+}
+
+fn set_auth0_session_cookie(response: &mut Response, access_token: &str) -> Result<()> {
+    response.headers_mut().append(
+        "Set-Cookie",
+        &format!(
+            "{AUTH0_SESSION_COOKIE}={access_token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=3600"
+        ),
+    )?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(())
+}
+
+fn clear_auth0_authorize_state_cookie(response: &mut Response) -> Result<()> {
+    response.headers_mut().append(
+        "Set-Cookie",
+        &format!(
+            "{AUTH0_AUTHORIZE_STATE_COOKIE}=; Path=/oauth/auth0/callback; HttpOnly; SameSite=Lax; Secure; Max-Age=0"
         ),
     )?;
     response.headers_mut().set("Cache-Control", "no-store")?;
@@ -1105,13 +1202,13 @@ fn oauth_authorize_error_response(message: &str, status: u16) -> Result<Response
 fn access_authorize_get_action(
     has_authenticated_local_account: bool,
     has_authenticated_access_user_without_account: bool,
-) -> AccessAuthorizeGetAction {
+) -> Auth0AuthorizeGetAction {
     if has_authenticated_local_account {
-        AccessAuthorizeGetAction::ShowConsent
+        Auth0AuthorizeGetAction::ShowConsent
     } else if has_authenticated_access_user_without_account {
-        AccessAuthorizeGetAction::MissingLinkedAccount
+        Auth0AuthorizeGetAction::MissingLinkedAccount
     } else {
-        AccessAuthorizeGetAction::RedirectToLogin
+        Auth0AuthorizeGetAction::RedirectToLogin
     }
 }
 
@@ -1119,13 +1216,13 @@ fn access_authorize_post_action(
     has_authenticated_local_account: bool,
     approved: bool,
     has_valid_credentials: bool,
-) -> AccessAuthorizePostAction {
+) -> Auth0AuthorizePostAction {
     if !has_authenticated_local_account {
-        AccessAuthorizePostAction::RedirectToLogin
+        Auth0AuthorizePostAction::RedirectToLogin
     } else if approved || has_valid_credentials {
-        AccessAuthorizePostAction::IssueCode
+        Auth0AuthorizePostAction::IssueCode
     } else {
-        AccessAuthorizePostAction::ShowConsent
+        Auth0AuthorizePostAction::ShowConsent
     }
 }
 
@@ -1557,6 +1654,117 @@ async fn redirect_with_authorization_code(
     authorization_redirect_with_params(redirect_uri, &params)
 }
 
+pub(crate) async fn auth0_callback_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let callback = match req.query::<Auth0CallbackRequest>() {
+        Ok(query) => query,
+        Err(_) => return oauth_authorize_error_response("Invalid Auth0 callback request", 400),
+    };
+    if let Some(error) = callback.error.as_deref() {
+        let description = callback
+            .error_description
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(error);
+        return oauth_authorize_error_response(description, 400);
+    }
+    let code = match callback
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(code) => code,
+        None => {
+            return oauth_authorize_error_response("Auth0 callback did not include a code", 400);
+        }
+    };
+    let state = match callback
+        .state
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(state) => state,
+        None => return oauth_authorize_error_response("Auth0 callback did not include state", 400),
+    };
+    let Some(session) = auth0_authorize_state_cookie(&req)? else {
+        return oauth_authorize_error_response("Missing Auth0 authorization state cookie", 400);
+    };
+    if !constant_time_eq(session.state.as_bytes(), state.as_bytes()) {
+        return oauth_authorize_error_response("Auth0 authorization state mismatch", 400);
+    }
+
+    let mut callback_url = req.url()?;
+    callback_url.set_path("/oauth/auth0/callback");
+    callback_url.set_query(None);
+    let token = exchange_auth0_authorization_code(
+        &config,
+        code,
+        callback_url.as_str(),
+        &session.code_verifier,
+    )
+    .await?;
+    let claims = verify_auth0_jwt(&token.access_token, &config).await?;
+    let email = claims
+        .string_claim(&config.auth0_email_claim)
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            worker::Error::RustError(format!(
+                "validated Auth0 JWT did not include a string {} claim",
+                config.auth0_email_claim
+            ))
+        })?;
+    if find_account_by_email(&db, &email).await?.is_none() {
+        let mut response = access_authenticated_without_account_response(&config)?;
+        clear_auth0_authorize_state_cookie(&mut response)?;
+        return Ok(response);
+    }
+
+    let mut response = redirect_response(&session.return_url)?;
+    set_auth0_session_cookie(&mut response, &token.access_token)?;
+    clear_auth0_authorize_state_cookie(&mut response)?;
+    Ok(response)
+}
+
+async fn exchange_auth0_authorization_code(
+    config: &cfwdon_core::AppConfig,
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> Result<Auth0TokenResponse> {
+    let mut token_url = auth0_domain_url(config).map_err(worker::Error::RustError)?;
+    token_url.set_path("/oauth/token");
+    token_url.set_query(None);
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", "authorization_code")
+        .append_pair("client_id", config.auth0_client_id.trim())
+        .append_pair("code", code)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("code_verifier", code_verifier)
+        .finish();
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/x-www-form-urlencoded")?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&body)));
+    let request = Request::new_with_init(token_url.as_str(), &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+    if response.status_code() / 100 != 2 {
+        return Err(worker::Error::RustError(format!(
+            "Auth0 token endpoint rejected authorization code with HTTP {}",
+            response.status_code()
+        )));
+    }
+    response.json::<Auth0TokenResponse>().await
+}
+
 pub(crate) async fn oauth_authorize_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -1573,7 +1781,7 @@ pub(crate) async fn oauth_authorize_response(
             Ok(value) => value,
             Err(message) => return Response::error(&message, 400),
         };
-        if access_login_configured(&config) {
+        if auth0_login_configured(&config) {
             let base_url = req.url()?;
             let authenticated_account =
                 crate::find_authenticated_local_account(&req, &db, &config).await?;
@@ -1585,13 +1793,13 @@ pub(crate) async fn oauth_authorize_response(
                 login.approve,
                 password_account.is_some(),
             ) {
-                AccessAuthorizePostAction::RedirectToLogin => {
+                Auth0AuthorizePostAction::RedirectToLogin => {
                     access_login_redirect_from_authorize_request(&config, &base_url, &authorize)
                 }
-                AccessAuthorizePostAction::ShowConsent => {
+                Auth0AuthorizePostAction::ShowConsent => {
                     oauth_authorize_consent_response(&authorize, &app, None, false, 200)
                 }
-                AccessAuthorizePostAction::IssueCode => {
+                Auth0AuthorizePostAction::IssueCode => {
                     if !csrf_valid {
                         return Response::error("Invalid OAuth authorization CSRF token.", 403);
                     }
@@ -1629,7 +1837,7 @@ pub(crate) async fn oauth_authorize_response(
         Err(message) => return oauth_authorize_error_response(&message, 400),
     };
     let authenticated_account = crate::find_authenticated_local_account(&req, &db, &config).await?;
-    if access_login_configured(&config) {
+    if auth0_login_configured(&config) {
         let action = access_authorize_get_action(
             authenticated_account.is_some(),
             crate::extract_authenticated_user(&req, &config)
@@ -1637,13 +1845,13 @@ pub(crate) async fn oauth_authorize_response(
                 .is_some(),
         );
         return match action {
-            AccessAuthorizeGetAction::RedirectToLogin => {
+            Auth0AuthorizeGetAction::RedirectToLogin => {
                 access_login_redirect_from_authorize_request(&config, &req.url()?, &authorize)
             }
-            AccessAuthorizeGetAction::MissingLinkedAccount => {
+            Auth0AuthorizeGetAction::MissingLinkedAccount => {
                 access_authenticated_without_account_response(&config)
             }
-            AccessAuthorizeGetAction::ShowConsent => {
+            Auth0AuthorizeGetAction::ShowConsent => {
                 oauth_authorize_consent_response(&authorize, &app, None, false, 200)
             }
         };
@@ -2193,32 +2401,32 @@ mod tests {
     fn access_authorize_actions_match_expected_flow() {
         assert_eq!(
             access_authorize_get_action(false, false),
-            AccessAuthorizeGetAction::RedirectToLogin
+            Auth0AuthorizeGetAction::RedirectToLogin
         );
         assert_eq!(
             access_authorize_get_action(false, true),
-            AccessAuthorizeGetAction::MissingLinkedAccount
+            Auth0AuthorizeGetAction::MissingLinkedAccount
         );
         assert_eq!(
             access_authorize_get_action(true, false),
-            AccessAuthorizeGetAction::ShowConsent
+            Auth0AuthorizeGetAction::ShowConsent
         );
 
         assert_eq!(
             access_authorize_post_action(false, false, false),
-            AccessAuthorizePostAction::RedirectToLogin
+            Auth0AuthorizePostAction::RedirectToLogin
         );
         assert_eq!(
             access_authorize_post_action(true, false, false),
-            AccessAuthorizePostAction::ShowConsent
+            Auth0AuthorizePostAction::ShowConsent
         );
         assert_eq!(
             access_authorize_post_action(true, true, false),
-            AccessAuthorizePostAction::IssueCode
+            Auth0AuthorizePostAction::IssueCode
         );
         assert_eq!(
             access_authorize_post_action(true, false, true),
-            AccessAuthorizePostAction::IssueCode
+            Auth0AuthorizePostAction::IssueCode
         );
     }
 

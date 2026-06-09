@@ -1,5 +1,5 @@
 use crate::{
-    app_verify_credentials_response, authorize_interaction_response,
+    app_verify_credentials_response, auth0_callback_response, authorize_interaction_response,
     authorize_interaction_submit_response, create_app_response,
     oauth_authorization_server_response, oauth_authorize_response, oauth_token_response,
     oauth_userinfo_response,
@@ -29,6 +29,9 @@ pub(crate) fn add_oauth_routes(router: Router<'static, ()>) -> Router<'static, (
         })
         .post_async("/oauth/authorize", |req, ctx| async move {
             oauth_authorize_response(req, ctx).await
+        })
+        .get_async("/oauth/auth0/callback", |req, ctx| async move {
+            auth0_callback_response(req, ctx).await
         })
         .post_async("/oauth/token", |req, ctx| async move {
             oauth_token_response(req, ctx).await

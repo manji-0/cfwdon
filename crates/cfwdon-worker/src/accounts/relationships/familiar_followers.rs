@@ -75,7 +75,7 @@ pub(crate) async fn familiar_followers_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let mut response = Vec::new();

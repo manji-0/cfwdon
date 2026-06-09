@@ -19,7 +19,7 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let blocks = list_blocks_for_account(&db, &viewer.id, limit, max_id, since_id).await?;
@@ -48,7 +48,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let mutes = list_mutes_for_account(&db, &viewer.id, limit, max_id, since_id).await?;

@@ -53,7 +53,7 @@ pub(crate) async fn process_outbox_deliveries(
     let config = load_config(&ctx);
     match extract_authenticated_user(&req, &config).await? {
         Some(_) => {}
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     }
 
     let db = ctx.d1(&config.database_binding)?;

@@ -9,11 +9,11 @@ pub(crate) use account_store::*;
 pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;
-use self::jwt::verify_access_jwt;
+pub(crate) use self::jwt::verify_auth0_jwt;
 use super::oauth_apps::{
     OAuthAccessTokenRow, app_bearer_token_from_request,
     find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    oauth_access_token_has_any_scope,
+    oauth_access_token_has_any_scope, parse_bearer_authorization_header,
 };
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
@@ -23,6 +23,8 @@ pub(crate) use self::account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
 };
 
+pub(crate) const AUTH0_SESSION_COOKIE: &str = "cfwdon_auth0_access_token";
+
 #[derive(Clone, Debug)]
 pub(crate) struct OAuthAuthenticatedLocalAccount {
     pub(crate) account: LocalAccount,
@@ -31,7 +33,7 @@ pub(crate) struct OAuthAuthenticatedLocalAccount {
 
 #[derive(Clone, Debug)]
 pub(crate) enum LocalApiAuthentication {
-    Access(LocalAccount),
+    Auth0(LocalAccount),
     OAuthToken(OAuthAuthenticatedLocalAccount),
     AppToken,
     InvalidBearer,
@@ -42,43 +44,54 @@ pub(crate) async fn extract_authenticated_user(
     req: &Request,
     config: &AppConfig,
 ) -> Result<Option<AuthenticatedUser>> {
-    let token = match req.headers().get(&config.access_jwt_header)? {
-        Some(value) if !value.trim().is_empty() => value.trim().to_owned(),
-        _ => return Ok(None),
+    let Some(token) = auth0_token_from_request(req, config)? else {
+        return Ok(None);
     };
 
-    if config.access_team_domain.is_empty() || config.access_audience.is_empty() {
+    if config.auth0_domain.is_empty() || config.auth0_audience.is_empty() {
         return Err(Error::RustError(
-            "missing Cloudflare Access configuration: ACCESS_TEAM_DOMAIN and ACCESS_AUD are required"
-                .to_owned(),
+            "missing Auth0 configuration: AUTH0_DOMAIN and AUTH0_AUDIENCE are required".to_owned(),
         ));
     }
 
-    let claims = verify_access_jwt(&token, config).await?;
-    let header_email = req
-        .headers()
-        .get(&config.access_email_header)?
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty());
-
+    let claims = verify_auth0_jwt(&token, config).await?;
     let email = claims
-        .email
+        .string_claim(&config.auth0_email_claim)
         .map(|value| value.trim().to_ascii_lowercase())
-        .or(header_email.clone())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            Error::RustError("validated Access JWT did not include an email".to_owned())
+            Error::RustError(format!(
+                "validated Auth0 JWT did not include a string {} claim",
+                config.auth0_email_claim
+            ))
         })?;
 
-    if let Some(header_email) = header_email
-        && header_email != email
-    {
-        return Err(Error::RustError(
-            "Cloudflare Access email header did not match JWT email claim".to_owned(),
-        ));
-    }
+    Ok(Some(AuthenticatedUser::auth0(email, true)))
+}
 
-    Ok(Some(AuthenticatedUser::cloudflare_access(email, true)))
+fn auth0_token_from_request(req: &Request, config: &AppConfig) -> Result<Option<String>> {
+    if let Some(value) = req.headers().get(&config.auth0_jwt_header)?
+        && !value.trim().is_empty()
+    {
+        if config
+            .auth0_jwt_header
+            .eq_ignore_ascii_case("authorization")
+        {
+            return Ok(parse_bearer_authorization_header(&value));
+        }
+        return Ok(Some(value.trim().to_owned()));
+    }
+    request_cookie_value(req, AUTH0_SESSION_COOKIE)
+}
+
+fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
+    let Some(cookie_header) = req.headers().get("Cookie")? else {
+        return Ok(None);
+    };
+    Ok(cookie_header.split(';').find_map(|part| {
+        let (cookie_name, value) = part.trim().split_once('=')?;
+        (cookie_name == name && !value.trim().is_empty()).then(|| value.trim().to_owned())
+    }))
 }
 
 pub(crate) async fn find_authenticated_local_account(
@@ -86,21 +99,26 @@ pub(crate) async fn find_authenticated_local_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<LocalAccount>> {
-    if let Some(token) = app_bearer_token_from_request(req)? {
-        let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
-        else {
-            return Ok(None);
-        };
-        if !oauth_access_token_allows_request(req, &auth.token) {
-            return Ok(None);
+    if let Some(token) = app_bearer_token_from_request(req)?
+        && let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
+    {
+        if oauth_access_token_allows_request(req, &auth.token) {
+            return Ok(auth.account);
         }
-        return Ok(auth.account);
+        return Ok(None);
     }
 
+    find_auth0_local_account(req, db, config).await
+}
+
+async fn find_auth0_local_account(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<Option<LocalAccount>> {
     let Some(user) = extract_authenticated_user(req, config).await? else {
         return Ok(None);
     };
-
     find_account_by_email(db, &user.email).await
 }
 
@@ -193,11 +211,14 @@ pub(crate) async fn authenticate_local_api_request(
         if find_oauth_app_by_bearer_token(db, &token).await?.is_some() {
             return Ok(LocalApiAuthentication::AppToken);
         }
-        return Ok(LocalApiAuthentication::InvalidBearer);
+        return match find_auth0_local_account(req, db, config).await {
+            Ok(Some(account)) => Ok(LocalApiAuthentication::Auth0(account)),
+            Ok(None) | Err(_) => Ok(LocalApiAuthentication::InvalidBearer),
+        };
     }
 
     Ok(find_authenticated_local_account(req, db, config)
         .await?
-        .map(LocalApiAuthentication::Access)
+        .map(LocalApiAuthentication::Auth0)
         .unwrap_or(LocalApiAuthentication::None))
 }

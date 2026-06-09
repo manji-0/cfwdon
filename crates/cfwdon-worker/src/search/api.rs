@@ -88,7 +88,7 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let offset = query.offset.unwrap_or(0);

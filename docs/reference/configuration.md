@@ -27,20 +27,30 @@ If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaul
 | `ADMIN_EMAILS` | Optional | empty | Comma-separated admin e-mail list for admin notifications. |
 | `MEDIA_PUBLIC_BASE_URL` | Required for production media URLs | unset | R2 custom domain base URL. A trailing slash is trimmed. |
 
-Keep the `MEDIA_PUBLIC_BASE_URL` domain outside Cloudflare Access. Mastodon entity payloads use this value as the canonical media URL.
+Keep the `MEDIA_PUBLIC_BASE_URL` domain publicly reachable. Mastodon entity payloads use this value as the canonical media URL.
 
-## Access Authentication Vars
+## Auth0 Authentication Vars
+<!-- derived-from ../../wrangler.toml.example -->
 
-Protected API routes expect Cloudflare Access, or an equivalent proxy, to provide authenticated user context.
+Protected API routes validate Auth0-issued RS256 JWTs. By default, the Worker reads a Bearer token from `Authorization`, validates `iss` against `AUTH0_DOMAIN`, validates `aud` against `AUTH0_AUDIENCE`, fetches signing keys from `/.well-known/jwks.json`, and maps `AUTH0_EMAIL_CLAIM` to a local account e-mail. Browser login redirects use Auth0 Authorization Code with PKCE, return through `/oauth/auth0/callback`, set an HttpOnly local session cookie, and then continue the Mastodon OAuth consent flow.
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `ACCESS_EMAIL_HEADER` | Required for protected API | `Cf-Access-Authenticated-User-Email` in sample config | Header containing the authenticated user e-mail. |
-| `ACCESS_JWT_HEADER` | Required for JWT validation | `Cf-Access-Jwt-Assertion` in sample config | Header containing the Cloudflare Access JWT. |
-| `ACCESS_TEAM_DOMAIN` | Required for protected API | unset | Access issuer / team domain. Missing with `ACCESS_AUD` blocks protected API access. |
-| `ACCESS_AUD` | Required for protected API | unset | Cloudflare Access audience. Missing with `ACCESS_TEAM_DOMAIN` blocks protected API access. |
+| `AUTH0_JWT_HEADER` | Optional | `Authorization` | Header containing the Auth0 JWT. When this is `Authorization`, the Worker accepts standard `Bearer <token>` values. |
+| `AUTH0_DOMAIN` | Required for protected API | unset | Auth0 tenant domain or issuer URL, for example `example.us.auth0.com`. |
+| `AUTH0_CLIENT_ID` | Required for browser login redirects | unset | Auth0 application client ID used when redirecting `/oauth/authorize` flows to Auth0. |
+| `AUTH0_AUDIENCE` | Required for protected API | unset | Auth0 API identifier expected in the JWT `aud` claim. |
+| `AUTH0_EMAIL_CLAIM` | Required for protected API | `email` | String claim used to map the Auth0 user to `accounts.access_email`. |
 
-Set real values for `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`. Do not deploy production with placeholders.
+Set real values for `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`. Do not deploy production with placeholders.
+Because `wrangler.toml` is tracked in this repository, keep instance-specific Auth0 values out of git. Store real production values as Cloudflare dashboard environment variables or with `wrangler secret put`; keep local-only values in ignored files such as `wrangler.local.toml` or `.dev.vars`.
+
+In the Auth0 application settings, include:
+
+- Allowed Callback URLs: `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`
+- Allowed Logout URLs: `https://<INSTANCE_DOMAIN>`
+- Allowed Web Origins: `https://<INSTANCE_DOMAIN>`
+- Allowed Origins (CORS): `https://<INSTANCE_DOMAIN>`
 
 ## Policy And Instance Content Vars
 

@@ -458,7 +458,7 @@ pub(crate) async fn account_lists_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(target_refs) =
         requested_account_membership_variants(&db, &config, &account_ref).await?
@@ -494,7 +494,7 @@ pub(crate) async fn list_timeline_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(list) = list_row_by_id(&db, &account.id, &list_id).await? else {
         return Response::error("list not found", 404);
@@ -586,7 +586,7 @@ pub(crate) async fn lists_response(req: Request, ctx: RouteContext<()>) -> Resul
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let documents = list_rows_for_account(&db, &account.id)
         .await?
@@ -607,7 +607,7 @@ pub(crate) async fn create_list_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let row = create_list_row(&db, &account.id, &request).await?;
     Response::from_json(&list_document(&row))
@@ -618,7 +618,7 @@ pub(crate) async fn list_response(req: Request, ctx: RouteContext<()>) -> Result
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let list_id = list_id_from_context(&ctx)?;
     match list_row_by_id(&db, &account.id, &list_id).await? {
@@ -639,7 +639,7 @@ pub(crate) async fn update_list_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match update_list_row(&db, &account.id, &list_id, &request).await? {
         Some(row) => Response::from_json(&list_document(&row)),
@@ -653,7 +653,7 @@ pub(crate) async fn delete_list_response(req: Request, ctx: RouteContext<()>) ->
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if !delete_list_row(&db, &account.id, &list_id).await? {
         return Response::error("list not found", 404);
@@ -669,7 +669,7 @@ pub(crate) async fn list_accounts_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let list_id = list_id_from_context(&ctx)?;
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
@@ -713,7 +713,7 @@ pub(crate) async fn add_list_accounts_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
         return Response::error("list not found", 404);
@@ -735,7 +735,7 @@ pub(crate) async fn delete_list_accounts_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
         return Response::error("list not found", 404);

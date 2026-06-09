@@ -362,7 +362,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
     let db = ctx.d1(&config.database_binding)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(deleted) = delete_owned_local_status(&db, &config, &requester, &status_id).await?
     else {
@@ -392,7 +392,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let db = ctx.d1(&config.database_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(status) = find_owned_local_status(&db, &status_id, &account.id).await? else {
         return Response::error("status not found", 404);

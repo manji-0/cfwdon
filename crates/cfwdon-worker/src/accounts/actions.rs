@@ -24,7 +24,7 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
     let db = ctx.d1(&config.database_binding)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match follow_account_usecase(&db, &config, &follower, &target_account_id, &request).await {
         Ok(relationship) => Response::from_json(&relationship),
@@ -47,7 +47,7 @@ pub(crate) async fn unfollow_account(req: Request, ctx: RouteContext<()>) -> Res
     let db = ctx.d1(&config.database_binding)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     match unfollow_account_usecase(&db, &config, &follower, &target_account_id).await {
         Ok(relationship) => Response::from_json(&relationship),

@@ -676,7 +676,7 @@ pub(crate) async fn home_timeline_response(
             }
             auth.account
         }
-        LocalApiAuthentication::Access(viewer) => viewer,
+        LocalApiAuthentication::Auth0(viewer) => viewer,
         LocalApiAuthentication::AppToken
         | LocalApiAuthentication::InvalidBearer
         | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
@@ -1314,7 +1314,7 @@ pub(crate) async fn direct_timeline_response(
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
     let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;

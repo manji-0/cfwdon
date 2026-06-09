@@ -340,7 +340,7 @@ pub(crate) async fn featured_tags_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let rows = list_featured_tags_for_account(&db, &account.id).await?;
@@ -423,7 +423,7 @@ pub(crate) async fn featured_tag_suggestions_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     let documents = suggested_featured_tag_names(&db, &account.id)
@@ -445,7 +445,7 @@ pub(crate) async fn feature_tag_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     if count_featured_tags(&db, &account.id).await? >= MAX_FEATURED_TAGS as u64
@@ -478,7 +478,7 @@ pub(crate) async fn unfeature_tag_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
 
     if !delete_featured_tag(&db, &account.id, &tag).await? {

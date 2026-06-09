@@ -120,7 +120,7 @@ pub(crate) async fn notifications_policy_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(auth) = resolve_authenticated_notification_context(&req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let row = load_notification_policy_row(&auth.db, &auth.viewer.id).await?;
@@ -132,7 +132,7 @@ pub(crate) async fn update_notifications_policy_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let Some(auth) = resolve_authenticated_notification_context(req, &ctx).await? else {
-        return Response::error("Cloudflare Access authentication required", 401);
+        return Response::error("Auth0 authentication required", 401);
     };
 
     let update = parse_update_notification_policy_request(req).await?;

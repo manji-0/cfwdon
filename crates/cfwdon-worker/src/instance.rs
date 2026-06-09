@@ -562,7 +562,7 @@ pub(crate) async fn announcement_reaction_mutation_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(announcement_id) = ctx.param("announcement_id") else {
         return Response::error("announcement not found", 404);
@@ -592,7 +592,7 @@ pub(crate) async fn dismiss_announcement_mutation_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(announcement_id) = ctx.param("id") else {
         return Response::error("announcement not found", 404);

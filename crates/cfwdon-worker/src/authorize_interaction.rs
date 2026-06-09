@@ -1,8 +1,8 @@
 use super::{
     AccountReference, FollowAccountRequest, Request, Response, Result, RouteContext,
-    build_relationship_for_target, cloudflare_access_login_url, escape_html, follow_remote_account,
-    load_config, require_authenticated_local_account, resolve_account_reference,
-    resolve_search_account, upsert_local_follow,
+    auth0_login_redirect_response, build_relationship_for_target, escape_html,
+    follow_remote_account, load_config, require_authenticated_local_account,
+    resolve_account_reference, resolve_search_account, upsert_local_follow,
 };
 use worker::ResponseBody;
 
@@ -191,18 +191,5 @@ pub(crate) fn authorize_interaction_url_from_base(
 
 fn access_login_redirect(config: &super::AppConfig, req: &Request, uri: &str) -> Result<Response> {
     let authorize_url = authorize_interaction_url_for_uri(req, uri)?;
-    let login_url =
-        cloudflare_access_login_url(config, &authorize_url).map_err(worker::Error::RustError)?;
-    let location = login_url.as_str();
-    let escaped = escape_html(location);
-    let body = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url={escaped}\"><title>Redirecting</title></head><body><main><p>Redirecting to <a href=\"{escaped}\">{escaped}</a>.</p></main></body></html>"
-    );
-    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
-    response.headers_mut().set("Location", location)?;
-    response
-        .headers_mut()
-        .set("Content-Type", "text/html; charset=utf-8")?;
-    response.headers_mut().set("Cache-Control", "no-store")?;
-    Ok(response)
+    auth0_login_redirect_response(config, &authorize_url, &authorize_url)
 }

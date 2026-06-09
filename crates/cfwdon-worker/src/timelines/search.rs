@@ -157,7 +157,7 @@ async fn authenticate_search_viewer(
         .await
         .map_err(|error| search_error_response(error.to_string(), 500))?
     {
-        LocalApiAuthentication::Access(account) => Ok(Some(account)),
+        LocalApiAuthentication::Auth0(account) => Ok(Some(account)),
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["read:search", "read"]) {
                 return Err(search_error_response(
@@ -188,8 +188,7 @@ fn unauthenticated_search_viewer_error_message(
     plan: &SearchV2ExecutionPlan,
 ) -> Option<&'static str> {
     plan.requires_auth.then(|| {
-        search_v2_unauthenticated_error(&plan.query)
-            .unwrap_or("Cloudflare Access authentication required")
+        search_v2_unauthenticated_error(&plan.query).unwrap_or("Auth0 authentication required")
     })
 }
 

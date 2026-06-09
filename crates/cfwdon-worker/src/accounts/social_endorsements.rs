@@ -11,7 +11,7 @@ pub(crate) async fn endorsements_response(req: Request, ctx: RouteContext<()>) -
     let db = ctx.d1(&config.database_binding)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let query: AccountCollectionQuery = req.query().unwrap_or_default();
     let AccountCollectionPage {

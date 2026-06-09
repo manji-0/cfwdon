@@ -586,7 +586,7 @@ pub(crate) async fn push_subscription_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let Some(subscription) = find_push_subscription(&db, &account.id).await? else {
         return Response::error("Record not found", 404);
@@ -602,7 +602,7 @@ pub(crate) async fn create_push_subscription_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     let request = match parse_create_push_subscription_request(&mut req).await {
         Ok(request) => request,
@@ -623,7 +623,7 @@ pub(crate) async fn update_push_subscription_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     if find_push_subscription(&db, &account.id).await?.is_none() {
         return Response::error("Record not found", 404);
@@ -647,7 +647,7 @@ pub(crate) async fn delete_push_subscription_response(
     let db = ctx.d1(&config.database_binding)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
-        None => return Response::error("Cloudflare Access authentication required", 401),
+        None => return Response::error("Auth0 authentication required", 401),
     };
     delete_push_subscription(&db, &account.id).await?;
     Response::from_json(&serde_json::json!({}))

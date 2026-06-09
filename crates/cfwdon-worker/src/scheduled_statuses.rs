@@ -779,7 +779,7 @@ async fn resolve_scheduled_status_request_access(
             }))
         }
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => Ok(None),
-        LocalApiAuthentication::Access(viewer) => {
+        LocalApiAuthentication::Auth0(viewer) => {
             let application_id = match request_scheduled_status_application_id(req, db).await {
                 Ok(value) => value,
                 Err(Error::RustError(message))
