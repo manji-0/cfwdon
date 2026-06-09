@@ -110,6 +110,172 @@ struct ParsedCreateAppRequest {
     redirect_uris: Vec<String>,
 }
 
+const AUTHORIZE_PAGE_STYLE: &str = r#"
+:root {
+    color-scheme: light;
+    --bg: #f6f8fb;
+    --panel: #ffffff;
+    --text: #172033;
+    --muted: #5f6b7a;
+    --border: #d9e0ea;
+    --accent: #2f6fed;
+    --accent-hover: #1f5fd4;
+    --danger-bg: #fff1f2;
+    --danger-text: #9f1239;
+    --danger-border: #fecdd3;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+main {
+    width: min(100%, 560px);
+    margin: 0 auto;
+    padding: 56px 20px;
+}
+.authorize-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgba(23, 32, 51, 0.10);
+    overflow: hidden;
+}
+.authorize-header {
+    padding: 32px 32px 24px;
+    border-bottom: 1px solid var(--border);
+}
+.eyebrow {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+h1 {
+    margin: 0;
+    font-size: clamp(1.55rem, 4vw, 2.15rem);
+    line-height: 1.12;
+}
+.summary {
+    margin: 12px 0 0;
+    color: var(--muted);
+    line-height: 1.55;
+}
+form { padding: 28px 32px 32px; }
+.error {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border: 1px solid var(--danger-border);
+    border-radius: 8px;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+}
+dl {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 14px 18px;
+    margin: 0 0 24px;
+}
+dt {
+    color: var(--muted);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.scope-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.scope-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: #eef4ff;
+    color: #1f4e9d;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+.redirect-uri {
+    display: block;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #25324a;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.88rem;
+}
+.field-stack {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 22px;
+}
+label {
+    display: grid;
+    gap: 7px;
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+input:not([type="hidden"]) {
+    width: 100%;
+    min-height: 42px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+}
+input:not([type="hidden"]):focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.16);
+    outline: none;
+}
+.actions {
+    display: flex;
+    justify-content: flex-end;
+}
+button {
+    min-height: 44px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 800;
+}
+button:hover { background: var(--accent-hover); }
+@media (max-width: 560px) {
+    main { padding: 20px 12px; }
+    .authorize-header,
+    form {
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    dl {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+    dt { margin-top: 8px; }
+    .actions,
+    button { width: 100%; }
+}
+"#;
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct OAuthAppRow {
     pub(crate) id: i64,
@@ -1262,34 +1428,50 @@ fn oauth_authorize_page_body(
         escape_html(csrf_token)
     );
     let error_html = error
-        .map(|message| format!("<p role=\"alert\">{}</p>", escape_html(message)))
+        .map(|message| {
+            format!(
+                "<p class=\"error\" role=\"alert\">{}</p>",
+                escape_html(message)
+            )
+        })
         .unwrap_or_default();
-    let scope_html = request
+    let scope_text = request
         .scope
         .as_deref()
         .map(escape_html)
         .unwrap_or_else(|| "read".to_owned());
+    let scope_pills = scope_text
+        .split_whitespace()
+        .map(|scope| format!("<span class=\"scope-pill\">{scope}</span>"))
+        .collect::<Vec<_>>()
+        .join("");
+    let scope_html = if scope_pills.is_empty() {
+        scope_text
+    } else {
+        format!("<span class=\"scope-list\">{scope_pills}</span>")
+    };
     let redirect_uri_html = request
         .redirect_uri
         .as_deref()
         .map(escape_html)
         .unwrap_or_default();
     let app_details = format!(
-        "<dl><dt>Application</dt><dd>{}</dd><dt>Scopes</dt><dd>{scope_html}</dd><dt>Redirect URI</dt><dd>{redirect_uri_html}</dd></dl>",
+        "<dl><dt>Application</dt><dd>{}</dd><dt>Scopes</dt><dd>{scope_html}</dd><dt>Redirect URI</dt><dd><span class=\"redirect-uri\">{redirect_uri_html}</span></dd></dl>",
         escape_html(&app.name)
     );
     let form_body = if require_login_credentials {
         format!(
-            "{app_details}{hidden}{csrf_input}<label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button type=\"submit\">Authorize</button>"
+            "{app_details}{hidden}{csrf_input}<div class=\"field-stack\"><label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label></div><div class=\"actions\"><button type=\"submit\">Authorize</button></div>"
         )
     } else {
         format!(
-            "<p>Approve access for this application.</p>{app_details}{hidden}{csrf_input}<input type=\"hidden\" name=\"approve\" value=\"true\"><button type=\"submit\">Authorize</button>"
+            "{app_details}<p class=\"summary\">Approve access for this application.</p>{hidden}{csrf_input}<input type=\"hidden\" name=\"approve\" value=\"true\"><div class=\"actions\"><button type=\"submit\">Authorize</button></div>"
         )
     };
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorize {app}</title></head><body><main><h1>Authorize {app}</h1>{error}<form method=\"post\" action=\"/oauth/authorize\">{form_body}</form></main></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorize {app}</title><style>{style}</style></head><body><main><section class=\"authorize-panel\"><header class=\"authorize-header\"><p class=\"eyebrow\">cfwdon authorization</p><h1>Authorize {app}</h1><p class=\"summary\">Review the permissions requested by this application before continuing.</p></header><form method=\"post\" action=\"/oauth/authorize\">{error}{form_body}</form></section></main></body></html>",
         app = escape_html(&app.name),
+        style = AUTHORIZE_PAGE_STYLE,
         error = error_html,
         form_body = form_body,
     )
@@ -2451,7 +2633,10 @@ mod tests {
         assert!(body.contains("name=\"username\""));
         assert!(body.contains("type=\"password\""));
         assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
-        assert!(body.contains("<dt>Redirect URI</dt><dd>https://client.example/callback</dd>"));
+        assert!(body.contains("<dt>Redirect URI</dt>"));
+        assert!(
+            body.contains("<span class=\"redirect-uri\">https://client.example/callback</span>")
+        );
         assert!(body.contains("<button type=\"submit\">Authorize</button>"));
     }
 
@@ -2481,7 +2666,9 @@ mod tests {
         assert!(body.contains("name=\"code_challenge_method\" value=\"S256\""));
         assert!(body.contains("name=\"approve\" value=\"true\""));
         assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
-        assert!(body.contains("<dt>Scopes</dt><dd>read write</dd>"));
+        assert!(body.contains("<dt>Scopes</dt>"));
+        assert!(body.contains("<span class=\"scope-pill\">read</span>"));
+        assert!(body.contains("<span class=\"scope-pill\">write</span>"));
         assert!(body.contains("Approve access for this application"));
     }
 }
