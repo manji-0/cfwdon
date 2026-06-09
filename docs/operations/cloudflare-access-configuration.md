@@ -5,8 +5,8 @@ This guide configures Cloudflare Access in front of a deployed `cfwdon` Worker. 
 Use this guide when you want one of these deployment shapes:
 
 - protect a staging or private `cfwdon` hostname with Cloudflare Access
-- require Cloudflare Access before the Auth0-backed Mastodon OAuth flow
 - allow automation through Access with service tokens while still using `cfwdon` auth for protected API routes
+- keep operational or preview entry points private without changing the public Auth0 login flow
 
 Do not put a public federated production hostname behind a blanket Access policy unless you intentionally want WebFinger, ActivityPub, public timelines, media fallback routes, and Mastodon client discovery to be private.
 
@@ -58,6 +58,8 @@ For normal public federation, avoid protecting these surfaces with Access:
 - `/media/*` when using Worker media fallback routes
 
 Prefer a separate staging hostname for full Access protection. It avoids trying to maintain a long list of path exceptions for federation and client compatibility.
+
+For the normal public Auth0 login flow, do not put Access in front of `/oauth/auth0/callback`. Auth0 should return directly to the public Worker origin configured in `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and the Auth0 application callback settings.
 
 ## Create the Access Application
 <!-- derived-from #choose-what-access-protects -->
@@ -114,14 +116,14 @@ AUTH0_EMAIL_CLAIM = "https://<INSTANCE_DOMAIN>/claims/email"
 
 Do not set `AUTH0_DOMAIN` to a Cloudflare Access team domain, and do not set `AUTH0_AUDIENCE` to an Access AUD tag. Access application tokens and Auth0 API access tokens have different issuers, audiences, and identity claims.
 
-When Access protects the same hostname as Auth0 browser login, update the Auth0 application URLs to match the protected origin:
+Keep the Auth0 application URLs on the public `cfwdon` origin, not on an Access-only operations hostname:
 
 - Allowed Callback URLs: `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`
 - Allowed Logout URLs: `https://<INSTANCE_DOMAIN>`
 - Allowed Web Origins: `https://<INSTANCE_DOMAIN>`
 - Allowed Origins (CORS): `https://<INSTANCE_DOMAIN>`
 
-The browser will pass Access first, then Auth0, then the local `cfwdon` OAuth consent flow.
+The browser login path should be Auth0, then the local `cfwdon` OAuth consent flow. Access should only appear first when the entire hostname is intentionally private, such as a staging instance.
 
 ## Add Service Tokens for Automation
 <!-- derived-from #configure-access-policies -->
@@ -162,9 +164,9 @@ Store service token secrets in the CI secret manager. Do not commit them to `wra
 For a browser user:
 
 1. Open `https://<INSTANCE_DOMAIN>`.
-2. Confirm Cloudflare Access prompts for the configured identity provider or accepts the existing Access session.
+2. Confirm public discovery and OAuth entry points are reachable without an Access prompt unless this is an intentionally private hostname.
 3. Start a Mastodon OAuth authorization flow.
-4. Confirm the browser redirects to Auth0 and returns to `/oauth/auth0/callback`.
+4. Confirm the browser redirects to Auth0 and returns directly to `/oauth/auth0/callback`.
 5. Confirm `cfwdon` maps the Auth0 e-mail claim to a local account and continues the local OAuth flow.
 
 For a direct request:
@@ -197,7 +199,7 @@ Until that support exists, Cloudflare Access remains an edge gate for `cfwdon`, 
 | --- | --- |
 | Federation or WebFinger stops working | The production hostname is likely covered by a blanket Access policy. Move Access to staging or narrow the protected paths. |
 | Mastodon clients cannot start OAuth | `/oauth/*` may be behind Access, or the client cannot follow the Access browser login flow. |
-| Auth0 callback is blocked | The browser must pass Access on `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`, and Auth0 must allow that callback URL. |
+| Auth0 callback is blocked | Remove Access from `/oauth/auth0/callback` for public login, and confirm Auth0 allows that callback URL. |
 | Protected API still returns unauthorized after Access login | Add a valid Auth0 access token or local OAuth token. Access alone is not `cfwdon` user auth. |
 | Service token works for public routes but not protected routes | The service token only satisfies Cloudflare Access. Send `cfwdon` auth credentials too. |
 | Worker needs to trust Access identity | Implement Worker-side Access JWT validation first; do not trust `Cf-Access-Jwt-Assertion` without signature, issuer, and audience checks. |
@@ -208,4 +210,4 @@ Until that support exists, Cloudflare Access remains an edge gate for `cfwdon`, 
 <!-- derived-from #keep-auth0-configured -->
 <!-- derived-from #validate-the-flow -->
 
-Cloudflare Access is useful for staging, private deployments, and an extra edge gate in front of `cfwdon`. For current code, keep Auth0 configured for local user authentication, avoid blanket Access protection on public federated hostnames, and use service tokens only as Access credentials for automation.
+Cloudflare Access is useful for staging, private deployments, operations entry points, and automation gates. For current code, keep Auth0 configured for local user authentication, keep the public Auth0 callback outside Access, avoid blanket Access protection on public federated hostnames, and use service tokens only as Access credentials for automation.

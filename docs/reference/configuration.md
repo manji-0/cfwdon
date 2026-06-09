@@ -53,7 +53,7 @@ In the Auth0 application settings, include:
 
 For the complete Auth0 Dashboard setup, API audience selection, PKCE application requirements, and e-mail claim mapping, see [Auth0 Configuration Guide](../operations/auth0-configuration.md).
 
-Cloudflare Access can be placed in front of a Worker hostname as an edge access gate, but the current Worker does not treat Access JWTs as local user authentication. For the supported deployment boundary and policy setup, see [Cloudflare Access Configuration Guide](../operations/cloudflare-access-configuration.md).
+Cloudflare Access can protect private or operational Worker hostnames as an edge access gate, but it should not sit in front of the normal public Auth0 callback path. The current Worker does not treat Access JWTs as local user authentication. For the supported deployment boundary and policy setup, see [Cloudflare Access Configuration Guide](../operations/cloudflare-access-configuration.md).
 
 ## Policy And Instance Content Vars
 
