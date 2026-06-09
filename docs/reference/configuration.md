@@ -42,8 +42,7 @@ Protected API routes validate Auth0-issued RS256 JWTs. By default, the Worker re
 | `AUTH0_AUDIENCE` | Required for protected API | unset | Auth0 API identifier expected in the JWT `aud` claim. |
 | `AUTH0_EMAIL_CLAIM` | Required for protected API | `email` | String claim used to map the Auth0 user to `accounts.access_email`. |
 
-Set real values for `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`. Do not deploy production with placeholders.
-Because `wrangler.toml` is tracked in this repository, keep instance-specific Auth0 values out of git. Store real production values as Cloudflare dashboard environment variables or with `wrangler secret put`; keep local-only values in ignored files such as `wrangler.local.toml` or `.dev.vars`.
+Set real values for `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`. Do not deploy production with placeholders. Auth0 domain, client ID, audience, and claim names are configuration values rather than secrets, so keep the canonical deployment values in `wrangler.toml`.
 
 In the Auth0 application settings, include:
 
@@ -128,7 +127,7 @@ wrangler secret put TRANSLATION_API_KEY
 
 `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` protects local account ActivityPub private keys at rest. Set it before running security backfills or creating production accounts. Use a long random value and keep the same value across deployments; rotating it requires decrypting and re-encrypting `account_private_keys`.
 
-Keep machine-specific deployment copies in an ignored local file such as `wrangler.local.toml`, or in a private deployment environment. Do not commit real Access audience values, D1 database IDs, KV namespace IDs, API keys, or private key material into templates or docs.
+Keep machine-specific deployment copies in an ignored local file such as `wrangler.local.toml`, or in a private deployment environment. Do not commit API keys, private key material, or other secret values into templates or docs.
 
 Run a dry-run before deployment.
 

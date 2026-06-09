@@ -78,7 +78,7 @@ wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
 wrangler secret put TRANSLATION_API_KEY
 ```
 
-Do not commit private keys, API tokens, or production Auth0 client/audience values into documentation or templates.
+Do not commit private keys, API tokens, or other secret values into documentation or templates. Auth0 domain, client ID, audience, and claim names can live in `wrangler.toml`.
 
 ## Database Migrations
 <!-- constrained-by ../operations/cloudflare-deploy.md#provisioning-steps -->
