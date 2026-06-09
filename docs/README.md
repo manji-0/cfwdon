@@ -13,6 +13,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
   Cloudflare bindings, `wrangler.toml` vars, secrets, and runtime configuration behavior.
 - [Cloudflare Deploy Checklist](operations/cloudflare-deploy.md)
   D1, R2, Worker deploy, and pre-deploy verification steps.
+- [Auth0 Configuration Guide](operations/auth0-configuration.md)
+  Auth0 API, public PKCE application, e-mail claim, Worker vars, and login validation steps.
 - [Architecture](architecture/cfwdon-architecture.md)
   Worker, D1, R2, Mastodon API, and ActivityPub design boundaries.
 - [Mastodon API Compatibility](mastodon-api-compat/README.md)
@@ -25,7 +27,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 | --- | --- |
 | `getting-started/` | Fresh clone setup, contributor setup, and day-to-day development workflow. |
 | `reference/` | Stable reference material for configuration and runtime behavior. |
-| `operations/` | Deployment and production-operation checklists. |
+| `operations/` | Deployment, Auth0, and production-operation checklists. |
 | `architecture/` | Design documents and architecture decisions. |
 | `planning/` | Roadmaps, TODOs, and evolving implementation trackers. |
 | `mastodon-api-compat/` | Generated Mastodon API compatibility reports. |

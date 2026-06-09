@@ -51,6 +51,8 @@ In the Auth0 application settings, include:
 - Allowed Web Origins: `https://<INSTANCE_DOMAIN>`
 - Allowed Origins (CORS): `https://<INSTANCE_DOMAIN>`
 
+For the complete Auth0 Dashboard setup, API audience selection, PKCE application requirements, and e-mail claim mapping, see [Auth0 Configuration Guide](../operations/auth0-configuration.md).
+
 ## Policy And Instance Content Vars
 
 | Var | Required | Notes |
