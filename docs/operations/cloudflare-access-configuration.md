@@ -197,6 +197,7 @@ Until that support exists, Cloudflare Access remains an edge gate for `cfwdon`, 
 
 | Symptom | Check |
 | --- | --- |
+| New devices are sent to GitHub login to continue to Cloudflare | A Cloudflare Access application is covering the public hostname or `/oauth/*`. Remove that hostname/path from Access, or move Access protection to a staging, preview, or operations hostname. |
 | Federation or WebFinger stops working | The production hostname is likely covered by a blanket Access policy. Move Access to staging or narrow the protected paths. |
 | Mastodon clients cannot start OAuth | `/oauth/*` may be behind Access, or the client cannot follow the Access browser login flow. |
 | Auth0 callback is blocked | Remove Access from `/oauth/auth0/callback` for public login, and confirm Auth0 allows that callback URL. |
