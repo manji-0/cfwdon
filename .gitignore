@@ -7,5 +7,7 @@
 /.direnv
 /.dev.vars
 /wrangler.local.toml
+__pycache__/
+*.py[cod]
 # Added by code-review-graph
 .code-review-graph/
