@@ -24,13 +24,13 @@ pub(crate) async fn collect_reblog_notification_entries(
         return Ok(());
     }
 
-    for reblog in list_reblog_notifications_for_account(db, &viewer.id, per_type_limit).await? {
+    for reblog in list_reblog_notifications_for_account(db, viewer.id(), per_type_limit).await? {
         let Some(actor) = find_account_by_id(db, &reblog.account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
@@ -51,9 +51,9 @@ pub(crate) async fn collect_reblog_notification_entries(
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("reblog-local-{}-{}", actor.id, status.id),
+                id: format!("reblog-local-{}-{}", actor.id(), status.id),
                 notification_type: "reblog".to_owned(),
-                group_key: format!("reblog-local-{}-{}", actor.id, status.id),
+                group_key: format!("reblog-local-{}-{}", actor.id(), status.id),
                 created_at: reblog.created_at,
                 account: MastodonAccountResponse::from_account(&actor, config),
                 status: Some(status_response),
@@ -63,13 +63,13 @@ pub(crate) async fn collect_reblog_notification_entries(
     }
 
     for reblog in
-        list_remote_reblog_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_remote_reblog_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &reblog.remote_actor_uri).await?
         else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);

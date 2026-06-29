@@ -77,7 +77,9 @@ pub(crate) async fn list_pinned_statuses_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result.results::<crate::StatusRow>()
+    result
+        .results::<crate::StatusRecord>()
+        .map(|rows| rows.into_iter().map(crate::status_from_record).collect())
 }
 
 async fn pinned_status_response(
@@ -120,7 +122,7 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
         return Response::error("status not found", 404);
     };
 
-    pin_local_status(&db, &viewer.id, &subject.status.id).await?;
+    pin_local_status(&db, viewer.id(), &subject.status.id).await?;
     enqueue_add_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
     enqueue_outbox_process_queue_best_effort(&ctx.env, "status_pin").await;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
@@ -143,7 +145,7 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
         return Response::error("status not found", 404);
     };
 
-    unpin_local_status(&db, &viewer.id, &subject.status.id).await?;
+    unpin_local_status(&db, viewer.id(), &subject.status.id).await?;
     enqueue_remove_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
     enqueue_outbox_process_queue_best_effort(&ctx.env, "status_unpin").await;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)

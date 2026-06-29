@@ -187,7 +187,7 @@ pub(crate) async fn first_local_follower_for_remote_actor(
         .first::<AccountRow>(None)
         .await?;
 
-    Ok(row.map(LocalAccount::from))
+    Ok(row.map(LocalAccount::from_record))
 }
 
 pub(crate) async fn is_local_follower_authorized(
@@ -246,7 +246,7 @@ pub(crate) async fn list_familiar_local_accounts_for_local_target(
     Ok(result
         .results::<AccountRow>()?
         .into_iter()
-        .map(LocalAccount::from)
+        .map(LocalAccount::from_record)
         .collect())
 }
 
@@ -315,7 +315,7 @@ pub(crate) async fn list_familiar_local_accounts_for_remote_target(
     Ok(result
         .results::<AccountRow>()?
         .into_iter()
-        .map(LocalAccount::from)
+        .map(LocalAccount::from_record)
         .collect())
 }
 

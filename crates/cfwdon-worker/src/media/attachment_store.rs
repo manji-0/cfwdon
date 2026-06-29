@@ -376,7 +376,7 @@ pub(crate) async fn resolve_attachable_media(
             .map_err(|error| format!("failed to load media attachment {media_id}: {error}"))?
             .ok_or_else(|| format!("media attachment {media_id} was not found"))?;
 
-        if row.account_id != account.id {
+        if row.account_id != account.id() {
             return Err(format!(
                 "media attachment {media_id} does not belong to the authenticated account"
             ));
@@ -446,7 +446,7 @@ pub(crate) async fn resolve_editable_media(
             .map_err(|error| format!("failed to load media attachment {media_id}: {error}"))?
             .ok_or_else(|| format!("media attachment {media_id} was not found"))?;
 
-        if row.account_id != account.id {
+        if row.account_id != account.id() {
             return Err(format!(
                 "media attachment {media_id} does not belong to the authenticated account"
             ));

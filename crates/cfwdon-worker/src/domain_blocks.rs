@@ -208,7 +208,7 @@ pub(crate) async fn domain_blocks_preview_response(
                 .limit
                 .unwrap_or(DEFAULT_PREVIEW_LIMIT)
                 .clamp(1, MAX_PREVIEW_LIMIT);
-            let blocked_domains = list_all_account_domain_blocks(&db, &account.id).await?;
+            let blocked_domains = list_all_account_domain_blocks(&db, account.id()).await?;
             let candidates = domain_block_preview_candidates(
                 load_known_peer_domains(&db, &config).await?,
                 blocked_domains,
@@ -236,7 +236,7 @@ pub(crate) async fn domain_blocks_response(
             let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
             let since_id = since_id.or(min_id);
             let blocks =
-                list_account_domain_blocks(&db, &account.id, limit, max_id, since_id).await?;
+                list_account_domain_blocks(&db, account.id(), limit, max_id, since_id).await?;
             let domains = blocks
                 .iter()
                 .map(|entry| entry.domain.clone())
@@ -272,7 +272,7 @@ pub(crate) async fn create_domain_block_response(
                 Ok(domain) => domain,
                 Err(message) => return Response::error(&message, 422),
             };
-            insert_account_domain_block(&db, &account.id, &domain).await?;
+            insert_account_domain_block(&db, account.id(), &domain).await?;
             Response::from_json(&serde_json::json!({}))
         }
         None => Response::error("Auth0 authentication required", 401),
@@ -291,7 +291,7 @@ pub(crate) async fn delete_domain_block_response(
                 Ok(domain) => domain,
                 Err(message) => return Response::error(&message, 422),
             };
-            delete_account_domain_block(&db, &account.id, &domain).await?;
+            delete_account_domain_block(&db, account.id(), &domain).await?;
             Response::from_json(&serde_json::json!({}))
         }
         None => Response::error("Auth0 authentication required", 401),

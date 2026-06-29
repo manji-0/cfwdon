@@ -33,7 +33,7 @@ pub(crate) async fn build_outbox_activities(
         items.push(serde_json::json!({
             "type": "Create",
             "id": format!("{note_id}/activity"),
-            "actor": actor_url(config, &account.username),
+            "actor": actor_url(config, account.username()),
             "published": published,
             "to": to,
             "cc": cc,

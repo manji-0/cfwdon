@@ -31,7 +31,7 @@ pub(crate) async fn endorse_relationship_target(
     endorsed: bool,
 ) -> std::result::Result<crate::RelationshipResponse, SocialActionError> {
     let Some(follow) =
-        find_follow_by_target(db, &target.viewer.id, target.target_actor_uri).await?
+        find_follow_by_target(db, target.viewer.id(), target.target_actor_uri).await?
     else {
         return Err(SocialActionError::FollowRequired);
     };
@@ -41,7 +41,7 @@ pub(crate) async fn endorse_relationship_target(
 
     set_relationship_endorsement(
         db,
-        &target.viewer.id,
+        target.viewer.id(),
         target.target_account_id,
         target.target_actor_uri,
         endorsed,
@@ -66,7 +66,7 @@ pub(crate) async fn note_relationship_target(
 ) -> std::result::Result<crate::RelationshipResponse, SocialActionError> {
     set_relationship_note(
         db,
-        &target.viewer.id,
+        target.viewer.id(),
         target.target_account_id,
         target.target_actor_uri,
         note,
@@ -90,7 +90,7 @@ pub(crate) async fn set_relationship_email_subscription_usecase(
 ) -> std::result::Result<serde_json::Value, SocialActionError> {
     set_relationship_email_subscription(
         db,
-        &target.viewer.id,
+        target.viewer.id(),
         target.target_account_id,
         target.target_actor_uri,
         enabled,

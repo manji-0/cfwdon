@@ -28,7 +28,7 @@ pub(crate) async fn enqueue_outbox_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
     }
 
@@ -42,7 +42,7 @@ pub(crate) async fn enqueue_outbox_activity(
         "@context": create_activity_context(status),
         "type": "Create",
         "id": activity_id,
-        "actor": actor_url(config, &account.username),
+        "actor": actor_url(config, account.username()),
         "published": status.created_at.clone(),
         "to": note.get("to").cloned().unwrap_or_else(|| serde_json::json!([])),
         "cc": note.get("cc").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -53,7 +53,7 @@ pub(crate) async fn enqueue_outbox_activity(
     })?;
 
     let bindings = [
-        D1Type::Text(account.id.as_str()),
+        D1Type::Text(account.id()),
         D1Type::Text(status.id.as_str()),
         D1Type::Text(activity_id.as_str()),
         D1Type::Text(payload_json.as_str()),
@@ -102,7 +102,7 @@ pub(crate) async fn enqueue_outbox_delete(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
     }
 
@@ -116,7 +116,7 @@ pub(crate) async fn enqueue_outbox_delete(
     })?;
 
     let bindings = [
-        D1Type::Text(account.id.as_str()),
+        D1Type::Text(account.id()),
         D1Type::Text(status.id.as_str()),
         D1Type::Text(activity_id),
         D1Type::Text(payload_json.as_str()),

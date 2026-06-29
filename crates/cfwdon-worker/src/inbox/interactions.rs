@@ -14,7 +14,7 @@ async fn string_undo_matches_known_follow(
     canonical_actor_uri: &str,
 ) -> Result<bool> {
     if let Some(follow_activity_id) =
-        find_follower_follow_activity_id(db, &account.id, actor_uri, canonical_actor_uri).await?
+        find_follower_follow_activity_id(db, account.id(), actor_uri, canonical_actor_uri).await?
         && follow_activity_id == object_id
     {
         return Ok(true);
@@ -22,7 +22,7 @@ async fn string_undo_matches_known_follow(
 
     for requester_actor_uri in [actor_uri, canonical_actor_uri] {
         let Some(request) =
-            find_pending_remote_follow_request_by_actor(db, &account.id, requester_actor_uri)
+            find_pending_remote_follow_request_by_actor(db, account.id(), requester_actor_uri)
                 .await?
         else {
             continue;
@@ -58,7 +58,7 @@ async fn activity_is_follow_undo(
         .await;
     }
 
-    let local_actor_uri = actor_url(config, &account.username);
+    let local_actor_uri = actor_url(config, account.username());
     Ok(
         is_follow_undo(Some(object), actor_uri, &remote_actor.actor_uri)
             && follow_targets_local_actor(object.get("object"), &local_actor_uri),
@@ -82,6 +82,7 @@ pub(crate) async fn handle_inbox_undo(
         return handle_inbox_interaction_undo(db, activity, remote_actor).await;
     }
 
-    delete_follower_by_actor(db, &account.id, actor_uri, &remote_actor.actor_uri).await?;
-    delete_remote_follow_request_by_actor(db, &account.id, actor_uri, &remote_actor.actor_uri).await
+    delete_follower_by_actor(db, account.id(), actor_uri, &remote_actor.actor_uri).await?;
+    delete_remote_follow_request_by_actor(db, account.id(), actor_uri, &remote_actor.actor_uri)
+        .await
 }

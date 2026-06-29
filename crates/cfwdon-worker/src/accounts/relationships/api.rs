@@ -41,8 +41,8 @@ pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -
                                 db,
                                 config,
                                 viewer,
-                                &target.id,
-                                &actor_url(config, &target.username),
+                                target.id(),
+                                &actor_url(config, target.username()),
                             )
                             .await?,
                         )),
@@ -91,10 +91,10 @@ async fn account_follow_collection_response(
     let entries = match resolve_requested_account_reference(&db, &config, &account_id).await? {
         Some(AccountReference::Local(account)) => match kind {
             AccountFollowCollectionKind::Followers => {
-                local_account_follower_entries(&db, &config, &account.id).await?
+                local_account_follower_entries(&db, &config, account.id()).await?
             }
             AccountFollowCollectionKind::Following => {
-                local_account_following_entries(&db, &config, &account.id).await?
+                local_account_following_entries(&db, &config, account.id()).await?
             }
         },
         Some(AccountReference::Remote(actor)) => match kind {

@@ -8,7 +8,7 @@ pub(crate) fn build_accept_activity(
     follow_activity: &serde_json::Value,
     remote_actor_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/accepts/{}", generate_entity_id(12)?),
@@ -31,7 +31,7 @@ fn build_follow_response_object(
         "id": follow_activity_id,
         "type": "Follow",
         "actor": remote_actor_uri,
-        "object": actor_url(config, &account.username),
+        "object": actor_url(config, account.username()),
     })
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn build_stored_accept_follow_activity(
     follow_activity_id: &str,
     remote_actor_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/accepts/{}", generate_entity_id(12)?),
@@ -60,7 +60,7 @@ pub(crate) fn build_reject_follow_activity(
     follow_activity_id: &str,
     remote_actor_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/rejects/{}", generate_entity_id(12)?),
@@ -78,7 +78,7 @@ pub(crate) fn build_follow_activity(
     account: &LocalAccount,
     remote_actor_uri: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let follow_activity_id = format!("{actor}/follows/{}", generate_entity_id(12)?);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -102,7 +102,7 @@ pub(crate) fn build_undo_follow_activity(
     follow_activity_id: &str,
     remote_actor_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/undo/{}", generate_entity_id(12)?),
@@ -126,7 +126,7 @@ pub(crate) fn build_like_activity(
     remote_actor_uri: &str,
     object_uri: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity_id = format!("{actor}/likes/{}", generate_entity_id(12)?);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -151,7 +151,7 @@ pub(crate) fn build_undo_like_activity(
     remote_actor_uri: &str,
     object_uri: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/undo/{}", generate_entity_id(12)?),
@@ -179,8 +179,8 @@ pub(crate) fn build_announce_activity(
     object_uri: &str,
     visibility: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
-    let audiences = activitypub_audiences(config, &account.username, visibility);
+    let actor = actor_url(config, account.username());
+    let audiences = activitypub_audiences(config, account.username(), visibility);
     let activity_id = format!("{actor}/announces/{}", generate_entity_id(12)?);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -208,8 +208,8 @@ pub(crate) fn build_undo_announce_activity(
     object_uri: &str,
     visibility: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
-    let audiences = activitypub_audiences(config, &account.username, visibility);
+    let actor = actor_url(config, account.username());
+    let audiences = activitypub_audiences(config, account.username(), visibility);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/undo/{}", generate_entity_id(12)?),
@@ -253,7 +253,7 @@ pub(crate) fn build_delete_quote_authorization_activity(
     interaction_target_uri: &str,
     authorization_key: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let approval_id = format!(
         "{}/quote_authorizations/{}",
         interaction_target_uri.trim_end_matches('/'),
@@ -285,7 +285,7 @@ pub(crate) fn build_add_featured_activity(
     account: &LocalAccount,
     status_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let target = format!("{actor}/collections/featured");
     build_add_featured_activity_with_id(
         config,
@@ -301,7 +301,7 @@ pub(crate) fn build_add_featured_activity_with_id(
     status_uri: &str,
     activity_id: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let target = format!("{actor}/collections/featured");
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -310,7 +310,7 @@ pub(crate) fn build_add_featured_activity_with_id(
         "actor": actor,
         "object": status_uri,
         "target": target,
-        "to": [format!("{}/followers", actor_url(config, &account.username))],
+        "to": [format!("{}/followers", actor_url(config, account.username()))],
     });
     serde_json::to_string(&activity)
         .map_err(|error| Error::RustError(format!("failed to serialize Add activity: {error}")))
@@ -321,7 +321,7 @@ pub(crate) fn build_remove_featured_activity(
     account: &LocalAccount,
     status_uri: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let target = format!("{actor}/collections/featured");
     build_remove_featured_activity_with_id(
         config,
@@ -337,7 +337,7 @@ pub(crate) fn build_remove_featured_activity_with_id(
     status_uri: &str,
     activity_id: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let target = format!("{actor}/collections/featured");
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -346,7 +346,7 @@ pub(crate) fn build_remove_featured_activity_with_id(
         "actor": actor,
         "object": status_uri,
         "target": target,
-        "to": [format!("{}/followers", actor_url(config, &account.username))],
+        "to": [format!("{}/followers", actor_url(config, account.username()))],
     });
     serde_json::to_string(&activity)
         .map_err(|error| Error::RustError(format!("failed to serialize Remove activity: {error}")))

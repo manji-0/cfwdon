@@ -23,13 +23,13 @@ pub(crate) async fn collect_poll_notification_entries(
         return Ok(());
     }
 
-    for poll in list_poll_notifications_for_account(db, &viewer.id, per_type_limit).await? {
+    for poll in list_poll_notifications_for_account(db, viewer.id(), per_type_limit).await? {
         let Some(actor) = find_account_by_id(db, &poll.account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }

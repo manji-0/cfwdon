@@ -54,7 +54,7 @@ pub(crate) async fn handle_inbox_poll_vote_undo(
         return Ok(false);
     };
 
-    if status.account_id != account.id {
+    if status.account_id != account.id() {
         return Ok(false);
     }
 
@@ -89,7 +89,7 @@ pub(crate) async fn handle_inbox_poll_vote(
     let Some(status) = find_local_status_by_object_uri(db, config, in_reply_to).await? else {
         return Ok(false);
     };
-    if status.account_id != account.id {
+    if status.account_id != account.id() {
         return Ok(false);
     }
     let Some(poll) = find_status_poll_by_status_id(db, &status.id).await? else {

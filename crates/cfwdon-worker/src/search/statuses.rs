@@ -523,7 +523,7 @@ pub(crate) async fn resolve_search_status(
     }
 
     if let Some((status, actor)) = resolve_remote_status_by_url(db, config, query).await? {
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             return Ok(None);
         }
         return Ok(Some(

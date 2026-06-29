@@ -53,7 +53,7 @@ impl MastodonStatusResponse {
         let uri = row.ap_id.clone().unwrap_or_else(|| {
             format!(
                 "{}/statuses/{}",
-                actor_url(config, &account.username),
+                actor_url(config, account.username()),
                 row.id
             )
         });
@@ -63,9 +63,9 @@ impl MastodonStatusResponse {
             created_at: row.created_at.clone(),
             in_reply_to_id: row.in_reply_to_id.clone(),
             in_reply_to_account_id,
-            sensitive: row.sensitive != 0,
+            sensitive: row.sensitive,
             spoiler_text: row.spoiler_text.clone(),
-            visibility: row.visibility.clone(),
+            visibility: row.visibility.as_str().to_owned(),
             language: row.language.clone(),
             uri: uri.clone(),
             url: uri,
@@ -79,7 +79,7 @@ impl MastodonStatusResponse {
             bookmarked: false,
             pinned: false,
             content: row.content_html.clone(),
-            text: Some(row._text_content.clone()),
+            text: Some(row.text.clone()),
             reblog: None,
             application: None,
             account: crate::MastodonAccountResponse::from_account(account, config),
@@ -91,7 +91,7 @@ impl MastodonStatusResponse {
                 })
                 .collect(),
             mentions: Vec::new(),
-            tags: extract_hashtags_from_text(&row._text_content)
+            tags: extract_hashtags_from_text(&row.text)
                 .into_iter()
                 .map(|tag| {
                     serde_json::to_value(MastodonTagResponse {
@@ -129,7 +129,7 @@ impl MastodonStatusResponse {
             in_reply_to_account_id,
             media_attachments,
         );
-        response.text = Some(row._text_content.clone());
+        response.text = Some(row.text.clone());
         response
     }
 
@@ -146,9 +146,9 @@ impl MastodonStatusResponse {
             created_at: row.published_at.clone(),
             in_reply_to_id: row.in_reply_to_uri.clone(),
             in_reply_to_account_id: None,
-            sensitive: row.sensitive != 0,
+            sensitive: row.sensitive,
             spoiler_text: row.spoiler_text.clone(),
-            visibility: row.visibility.clone(),
+            visibility: row.visibility.as_str().to_owned(),
             language: row.language.clone(),
             uri,
             url,

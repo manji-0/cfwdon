@@ -27,7 +27,7 @@ pub(crate) async fn handle_inbox_actor_update(
 
     let is_relevant = match account {
         Some(account) => {
-            is_local_account_following_remote_actor(db, &account.id, &remote_actor.actor_uri)
+            is_local_account_following_remote_actor(db, account.id(), &remote_actor.actor_uri)
                 .await?
         }
         None => has_any_local_followers_for_remote_actor(db, &remote_actor.actor_uri).await?,

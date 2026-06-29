@@ -92,12 +92,15 @@ pub(crate) fn normalize_status_poll(
         .filter(|value| *value >= 300)
         .ok_or_else(|| "poll[expires_in] must be at least 300 seconds".to_owned())?;
 
-    Ok(Some(PollDraft {
-        options,
-        expires_in_seconds,
-        multiple: poll.multiple.unwrap_or(false),
-        hide_totals: poll.hide_totals.unwrap_or(false),
-    }))
+    Ok(Some(
+        PollDraft::try_new(
+            options,
+            expires_in_seconds,
+            poll.multiple.unwrap_or(false),
+            poll.hide_totals.unwrap_or(false),
+        )
+        .map_err(|error| error.to_string())?,
+    ))
 }
 
 pub(crate) async fn preload_mastodon_poll_responses(
@@ -241,7 +244,7 @@ async fn preload_own_votes_by_poll_id(
              ORDER BY poll_id ASC, option_position ASC"
         );
         let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-        vote_bindings.push(D1Type::Text(viewer.id.as_str()));
+        vote_bindings.push(D1Type::Text(viewer.id()));
         vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
         let vote_result = db
             .prepare(&vote_sql)
@@ -351,7 +354,7 @@ pub(crate) async fn build_mastodon_poll_response(
     let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
     let reveal_totals = expired || poll.hide_totals == 0;
     let own_votes = match viewer {
-        Some(viewer) => list_poll_vote_positions_for_account(db, &poll.id, &viewer.id).await?,
+        Some(viewer) => list_poll_vote_positions_for_account(db, &poll.id, viewer.id()).await?,
         None => Vec::new(),
     };
     let multiple_voters_count = if poll.multiple != 0 {

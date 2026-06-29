@@ -20,7 +20,7 @@ enum LocalFollowState {
 
 impl LocalFollowState {
     fn for_target(target: &LocalAccount) -> Self {
-        if target.locked {
+        if target.is_locked() {
             Self::Pending
         } else {
             Self::Accepted
@@ -61,8 +61,8 @@ impl LocalFollowUpsertDraft {
         request: &FollowAccountRequest,
     ) -> Result<Self> {
         Ok(Self {
-            follower_account_id: follower.id.clone(),
-            target_account_id: target.id.clone(),
+            follower_account_id: follower.id().to_owned(),
+            target_account_id: target.id().to_owned(),
             target_actor_uri,
             state: LocalFollowState::for_target(target),
             show_reblogs: request.reblogs.unwrap_or(true),
@@ -202,7 +202,7 @@ pub(crate) async fn upsert_local_follow(
     target: &LocalAccount,
     request: &FollowAccountRequest,
 ) -> Result<()> {
-    let target_actor_uri = actor_url(config, &target.username);
+    let target_actor_uri = actor_url(config, target.username());
     let draft = LocalFollowUpsertDraft::new(follower, target, target_actor_uri, request)?;
     upsert_local_follow_row(db, &draft).await?;
 
@@ -290,9 +290,9 @@ pub(crate) async fn resolve_social_action_context(
     let (target_account_id, target_id, target_actor_uri) =
         match resolve_account_reference(&db, &target_account_id).await? {
             Some(AccountReference::Local(target)) => (
-                Some(target.id.clone()),
-                target.id,
-                actor_url(&config, &target.username),
+                Some(target.id().to_owned()),
+                target.id().to_owned(),
+                actor_url(&config, target.username()),
             ),
             Some(AccountReference::Remote(actor)) => (
                 None,
@@ -350,31 +350,12 @@ fn local_follow_notification_payload(draft: &LocalFollowUpsertDraft) -> serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfwdon_domain::LocalAccountRecord;
 
     fn local_account(id: &str, username: &str, locked: bool) -> LocalAccount {
-        LocalAccount {
-            id: id.to_owned(),
-            username: username.to_owned(),
-            access_email: format!("{username}@example.test"),
-            display_name: username.to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "private".to_owned(),
-            public_key_pem: "public".to_owned(),
-            created_at: "2026-01-01T00:00:00Z".to_owned(),
-        }
+        let mut record = LocalAccountRecord::test_fixture(id, username);
+        record.locked = i32::from(locked);
+        LocalAccount::from_record(record)
     }
 
     #[test]

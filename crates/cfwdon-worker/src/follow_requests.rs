@@ -367,7 +367,7 @@ async fn build_follow_request_account_response(
             let Some(account) = find_account_by_id(db, requester_account_id).await? else {
                 return Ok(None);
             };
-            let stats = load_account_stats(db, &account.id).await?;
+            let stats = load_account_stats(db, account.id()).await?;
             Ok(Some(MastodonAccountResponse::from_account_with_stats(
                 &account, config, &stats,
             )))
@@ -422,14 +422,14 @@ async fn pending_request_matches_identity(
             let Some(account) = find_account_by_id(db, requester_account_id).await? else {
                 return Ok(false);
             };
-            if account.username.eq_ignore_ascii_case(identity)
-                || account.username.eq_ignore_ascii_case(&decoded)
+            if account.username().eq_ignore_ascii_case(identity)
+                || account.username().eq_ignore_ascii_case(&decoded)
             {
                 return Ok(true);
             }
             if let Ok(handle) = parse_lookup_handle(identity, config) {
                 return Ok(handle.is_local_to(&config.instance_domain)
-                    && handle.username.eq_ignore_ascii_case(&account.username));
+                    && handle.username.eq_ignore_ascii_case(account.username()));
             }
             Ok(false)
         }
@@ -490,7 +490,7 @@ async fn authorize_pending_follow_request(
             ..
         } => {
             let bindings = [
-                D1Type::Text(viewer.id.as_str()),
+                D1Type::Text(viewer.id()),
                 D1Type::Text(requester_account_id.as_str()),
             ];
             db.prepare(
@@ -512,8 +512,8 @@ async fn authorize_pending_follow_request(
                     db,
                     config,
                     viewer,
-                    &requester.id,
-                    &crate::actor_url(config, &requester.username),
+                    requester.id(),
+                    &crate::actor_url(config, requester.username()),
                 )
                 .await?,
             )?)
@@ -521,7 +521,7 @@ async fn authorize_pending_follow_request(
         PendingFollowRequest::Remote { request, .. } => {
             upsert_follower_by_inbox(
                 db,
-                &viewer.id,
+                viewer.id(),
                 &request.requester_actor_uri,
                 &request.requester_inbox_uri,
                 request.requester_shared_inbox_uri.as_deref(),
@@ -530,7 +530,7 @@ async fn authorize_pending_follow_request(
             .await?;
             delete_remote_follow_request_by_actor(
                 db,
-                &viewer.id,
+                viewer.id(),
                 &request.requester_actor_uri,
                 &request.requester_actor_uri,
             )
@@ -544,7 +544,7 @@ async fn authorize_pending_follow_request(
                 )?;
                 let _ = crate::queue_remote_actor_activity_required(
                     db,
-                    &viewer.id,
+                    viewer.id(),
                     &request.requester_actor_uri,
                     &payload,
                 )
@@ -576,7 +576,7 @@ async fn reject_pending_follow_request(
             ..
         } => {
             let bindings = [
-                D1Type::Text(viewer.id.as_str()),
+                D1Type::Text(viewer.id()),
                 D1Type::Text(requester_account_id.as_str()),
             ];
             db.prepare(
@@ -596,8 +596,8 @@ async fn reject_pending_follow_request(
                     db,
                     config,
                     viewer,
-                    &requester.id,
-                    &crate::actor_url(config, &requester.username),
+                    requester.id(),
+                    &crate::actor_url(config, requester.username()),
                 )
                 .await?,
             )?)
@@ -605,7 +605,7 @@ async fn reject_pending_follow_request(
         PendingFollowRequest::Remote { request, .. } => {
             delete_remote_follow_request_by_actor(
                 db,
-                &viewer.id,
+                viewer.id(),
                 &request.requester_actor_uri,
                 &request.requester_actor_uri,
             )
@@ -619,7 +619,7 @@ async fn reject_pending_follow_request(
                 )?;
                 let _ = crate::queue_remote_actor_activity_required(
                     db,
-                    &viewer.id,
+                    viewer.id(),
                     &request.requester_actor_uri,
                     &payload,
                 )
@@ -721,7 +721,7 @@ pub(crate) async fn follow_requests_response(
     let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
     let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
 
-    let mut requests = list_pending_follow_requests(&db, &viewer.id).await?;
+    let mut requests = list_pending_follow_requests(&db, viewer.id()).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
     if requests.len() > limit as usize {
@@ -769,7 +769,7 @@ pub(crate) async fn follow_request_response(
         })?;
 
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("follow request not found", 404);
     };
@@ -797,7 +797,7 @@ pub(crate) async fn authorize_follow_request_response(
         })?;
 
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("follow request not found", 404);
     };
@@ -822,7 +822,7 @@ pub(crate) async fn reject_follow_request_response(
         })?;
 
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("follow request not found", 404);
     };
@@ -843,7 +843,7 @@ pub(crate) async fn notification_requests_response(
     let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
     let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
     let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
-    let mut requests = list_pending_follow_requests(&db, &viewer.id).await?;
+    let mut requests = list_pending_follow_requests(&db, viewer.id()).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
     requests.retain(|entry| min_id.is_none_or(|value| entry.cursor_id() > value));
@@ -891,7 +891,7 @@ pub(crate) async fn notification_request_response(
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("notification request not found", 404);
     };
@@ -926,7 +926,7 @@ pub(crate) async fn accept_notification_requests_response(
     let ids = parse_notification_request_ids(req).await?;
     for request_id in ids {
         if let Some(request) =
-            resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+            resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
         {
             let _ = authorize_pending_follow_request(&db, &config, &viewer, &request).await?;
         }
@@ -946,7 +946,7 @@ pub(crate) async fn dismiss_notification_requests_response(
     let ids = parse_notification_request_ids(req).await?;
     for request_id in ids {
         if let Some(request) =
-            resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+            resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
         {
             let _ = reject_pending_follow_request(&db, &config, &viewer, &request).await?;
         }
@@ -971,7 +971,7 @@ pub(crate) async fn accept_notification_request_response(
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("notification request not found", 404);
     };
@@ -996,7 +996,7 @@ pub(crate) async fn dismiss_notification_request_response(
             worker::Error::RustError("missing notification request id route parameter".to_owned())
         })?;
     let Some(request) =
-        resolve_pending_follow_request(&db, &config, &viewer.id, &request_id).await?
+        resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
     else {
         return Response::error("notification request not found", 404);
     };

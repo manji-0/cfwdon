@@ -3,6 +3,7 @@ pub(crate) use crate::*;
 
 mod actor_profile_store;
 mod actor_store;
+mod adapters;
 mod poll_activity;
 mod poll_mutations;
 mod poll_parsing;

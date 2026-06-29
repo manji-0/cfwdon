@@ -72,7 +72,7 @@ async fn collect_ancestors_for_remote_root(
                 let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
                     break;
                 };
-                if !is_public_activitypub_visibility(&status.visibility) {
+                if !is_public_activitypub_visibility(status.visibility.as_str()) {
                     break;
                 }
                 ancestors.push(
@@ -101,7 +101,7 @@ async fn collect_ancestors_for_remote_root(
         if !seen_remote_ids.insert(status.id.clone()) {
             break;
         }
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             break;
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
@@ -167,7 +167,7 @@ async fn append_remote_context_child_descendants(
         let Some(child_depth) = next_remote_context_child_depth(max_depth, node.depth) else {
             continue;
         };
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
         descendants.push((

@@ -9,7 +9,7 @@ pub(crate) fn status_contains_tag(status: &StatusRow, tag: &str) -> bool {
     }
 
     let needle = format!("#{normalized_tag}");
-    status._text_content.to_ascii_lowercase().contains(&needle)
+    status.text.to_ascii_lowercase().contains(&needle)
 }
 
 pub(crate) fn extract_hashtags_from_text(text: &str) -> Vec<String> {

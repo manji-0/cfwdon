@@ -17,7 +17,7 @@ pub(super) fn remote_reblog_wrapper_response_from_embedded(
     response.created_at = wrapper_status.published_at.clone();
     response.in_reply_to_id = wrapper_status.in_reply_to_uri.clone();
     response.in_reply_to_account_id = None;
-    response.visibility = wrapper_status.visibility.clone();
+    response.visibility = wrapper_status.visibility.as_str().to_owned();
     response.uri = wrapper_status.object_uri.clone();
     response.url = wrapper_status
         .url
@@ -50,11 +50,11 @@ pub(super) fn local_reblog_wrapper_response_from_embedded(
     response.created_at = wrapper_status.created_at.clone();
     response.in_reply_to_id = wrapper_status.in_reply_to_id.clone();
     response.in_reply_to_account_id = in_reply_to_account_id;
-    response.visibility = wrapper_status.visibility.clone();
+    response.visibility = wrapper_status.visibility.as_str().to_owned();
     response.uri = wrapper_status.ap_id.clone().unwrap_or_else(|| {
         format!(
             "{}/statuses/{}",
-            actor_url(config, &wrapper_account.username),
+            actor_url(config, wrapper_account.username()),
             wrapper_status.id
         )
     });

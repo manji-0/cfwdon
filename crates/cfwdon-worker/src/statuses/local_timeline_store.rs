@@ -1,4 +1,7 @@
-use super::{D1Database, ResolvedTimelineCursor, Result, StatusRow, normalize_hashtag};
+use super::{
+    D1Database, ResolvedTimelineCursor, Result, StatusRecord, StatusRow, normalize_hashtag,
+    status_from_record,
+};
 use std::collections::HashSet;
 use worker::d1::D1Type;
 
@@ -67,7 +70,9 @@ pub(crate) async fn list_local_home_timeline_statuses(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 async fn list_local_home_timeline_statuses_since(
@@ -112,7 +117,9 @@ async fn list_local_home_timeline_statuses_since(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 fn local_home_timeline_bindings<'a>(
@@ -180,7 +187,9 @@ pub(crate) async fn list_local_public_timeline_statuses(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 fn local_public_timeline_bindings<'a>(
@@ -256,7 +265,14 @@ async fn list_local_public_statuses_by_tags_indexed(
     let bindings = local_public_statuses_by_tags_indexed_bindings(&tags, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok((result.results::<StatusRow>()?, tags))
+    Ok((
+        result
+            .results::<StatusRecord>()?
+            .into_iter()
+            .map(status_from_record)
+            .collect(),
+        tags,
+    ))
 }
 
 fn normalize_unique_tags(tags: &[String]) -> Vec<String> {
@@ -337,7 +353,9 @@ async fn list_local_public_statuses_by_tags_legacy(
     let bindings = local_public_statuses_by_tags_legacy_bindings(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
@@ -416,7 +434,9 @@ pub(crate) async fn list_local_public_statuses_by_link(
     let bindings = local_public_statuses_by_link_bindings(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 fn local_public_statuses_by_link_patterns(urls: &[String]) -> Vec<String> {
@@ -520,7 +540,9 @@ pub(crate) async fn list_local_direct_timeline_statuses(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 fn local_direct_timeline_bindings<'a>(

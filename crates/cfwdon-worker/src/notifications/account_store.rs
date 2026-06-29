@@ -131,7 +131,7 @@ pub(crate) async fn list_admin_sign_up_notifications(
     Ok(result
         .results::<AccountRow>()?
         .into_iter()
-        .map(LocalAccount::from)
+        .map(LocalAccount::from_record)
         .collect())
 }
 

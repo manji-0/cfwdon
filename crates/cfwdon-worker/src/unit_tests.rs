@@ -40,33 +40,32 @@ use super::{
     extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
     extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
     follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
-    image_dimensions, include_local_source, include_remote_source,
-    initial_local_quote_approval_policy, instance_base_url, is_activitypub_actor_type,
-    is_admin_account, is_follow_undo, local_quote_policy_allows, local_username_from_actor_uri,
-    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
-    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
-    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
-    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
-    normalized_account_search_query, normalized_action_uri, notification_sort_key,
-    notification_timestamp_sort_token, oauth_access_token_has_any_scope_json,
-    oauth_authorize_url_from_form, object_attributed_to_remote_actor,
-    optimistic_remote_poll_vote_deltas, outbound_terminal_failure_follow_state,
-    paginate_tag_search_matches, parse_activitypub_request_date_ms,
-    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
-    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
-    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
-    parse_media_id_fields, parse_remote_actor_profile_document, parse_signature_header,
-    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
-    pending_quote_document, quote_document_with_state, quote_placeholder_document,
-    quote_target_uri_from_object, redirect_uri_matches_registered,
-    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
-    remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
-    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_quote_state_for_local_target, remote_status_has_active_quote,
-    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
-    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
-    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    image_dimensions, include_local_source, include_remote_source, instance_base_url,
+    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
+    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
+    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
+    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
+    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
+    notification_sort_key, notification_timestamp_sort_token,
+    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
+    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
+    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
+    parse_activitypub_request_date_ms, parse_basic_authorization_header,
+    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
+    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
+    parse_lookup_handle, parse_media_focus, parse_media_id_fields,
+    parse_remote_actor_profile_document, parse_signature_header, parse_status_search_query,
+    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
+    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
+    redirect_uri_matches_registered, remap_remote_poll_vote_positions, remote_account_rest_id,
+    remote_actor_uri_from_rest_id, remote_follow_base_url,
+    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
+    remote_poll_should_refresh, remote_quote_state_for_local_target,
+    remote_status_has_active_quote, remote_status_targets_local_viewer,
+    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
+    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
+    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -83,40 +82,43 @@ use super::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo, StatusDraft,
-    Visibility,
+    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, ProfileField,
+    QuoteState, SoftwareInfo, StatusDraft, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use url::Url;
 use worker::FormEntry;
 
 fn actor_fixture_account() -> LocalAccount {
-    LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: "<p>Hello</p>".to_owned(),
-        bio_text: "Hello".to_owned(),
-        fields: vec![ProfileField {
-            name: "Website".to_owned(),
-            value: "https://example.com".to_owned(),
-        }],
-        locked: false,
-        bot: false,
-        discoverable: true,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("ja".to_owned()),
-        avatar_object_key: Some("media/account/avatar/alice".to_owned()),
-        avatar_content_type: Some("image/png".to_owned()),
-        header_object_key: Some("media/account/header/alice".to_owned()),
-        header_content_type: Some("image/jpeg".to_owned()),
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    }
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.bio_html = "<p>Hello</p>".to_owned();
+    record.bio_text = "Hello".to_owned();
+    record.discoverable = 1;
+    record.fields_json = r#"[{"name":"Website","value":"https://example.com"}]"#.to_owned();
+    record.default_quote_policy = "public".to_owned();
+    record.default_language = Some("ja".to_owned());
+    record.avatar_object_key = Some("media/account/avatar/alice".to_owned());
+    record.avatar_content_type = Some("image/png".to_owned());
+    record.header_object_key = Some("media/account/header/alice".to_owned());
+    record.header_content_type = Some("image/jpeg".to_owned());
+    LocalAccount::from_record(record)
+}
+
+fn actor_fixture_account_locked_bot() -> LocalAccount {
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.bio_html = "<p>Hello</p>".to_owned();
+    record.bio_text = "Hello".to_owned();
+    record.discoverable = 1;
+    record.fields_json = r#"[{"name":"Website","value":"https://example.com"}]"#.to_owned();
+    record.locked = 1;
+    record.bot = 1;
+    record.default_quote_policy = "public".to_owned();
+    record.default_language = Some("ja".to_owned());
+    record.avatar_object_key = Some("media/account/avatar/alice".to_owned());
+    record.avatar_content_type = Some("image/png".to_owned());
+    record.header_object_key = Some("media/account/header/alice".to_owned());
+    record.header_content_type = Some("image/jpeg".to_owned());
+    LocalAccount::from_record(record)
 }
 
 #[test]
@@ -1026,7 +1028,7 @@ fn translation_cache_source_fingerprint_tracks_translatable_fields() {
 fn normalize_quote_approval_policy_accepts_supported_values() {
     assert_eq!(
         normalize_quote_approval_policy(Some(" followers ".to_owned())).unwrap(),
-        Some("followers".to_owned())
+        Some(cfwdon_domain::QuoteApprovalPolicy::Followers)
     );
     assert_eq!(normalize_quote_approval_policy(None).unwrap(), None);
 }
@@ -1544,29 +1546,7 @@ fn remote_poll_draft_acknowledges_local_snapshot_rejects_stale_option_totals() {
 #[test]
 fn build_poll_vote_activity_uses_question_reply_shape() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
 
     let (activity_id, payload) = build_poll_vote_activity_with_ids(
         &config,
@@ -1595,29 +1575,7 @@ fn build_poll_vote_activity_uses_question_reply_shape() {
 #[test]
 fn build_status_update_activity_wraps_question_object() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
     let object = serde_json::json!({
         "id": "https://social.example/users/alice/statuses/status-1",
         "type": "Question",
@@ -1649,29 +1607,7 @@ fn build_status_update_activity_wraps_question_object() {
 #[test]
 fn build_featured_collection_activities_target_followers_collection() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: true,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: None,
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
 
     let add = serde_json::from_str::<serde_json::Value>(
         &build_add_featured_activity_with_id(
@@ -3851,44 +3787,22 @@ fn extract_account_handles_from_text_keeps_remote_mentions() {
 #[test]
 fn build_activitypub_delete_uses_status_audience_and_object_id() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
     let status = StatusRow {
         id: "status-1".to_owned(),
-        account_id: account.id.clone(),
+        account_id: account.id().to_owned(),
         ap_id: None,
         in_reply_to_id: None,
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
         quote_approval_policy: None,
-        quote_state: "accepted".to_owned(),
+        quote_state: cfwdon_domain::QuoteState::Accepted,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -3936,13 +3850,13 @@ fn effective_local_quote_approval_defaults_to_public() {
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
         quote_approval_policy: None,
-        quote_state: "accepted".to_owned(),
+        quote_state: cfwdon_domain::QuoteState::Accepted,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -3961,13 +3875,13 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "private".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::FollowersOnly,
+        sensitive: false,
         language: Some("en".to_owned()),
-        quote_approval_policy: Some("public".to_owned()),
-        quote_state: "accepted".to_owned(),
+        quote_approval_policy: Some(cfwdon_domain::QuoteApprovalPolicy::Public),
+        quote_state: cfwdon_domain::QuoteState::Accepted,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -3978,36 +3892,14 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
 
 #[test]
 fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "followers".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
     let private_draft = cfwdon_domain::StatusDraft {
         text: "hello".to_owned(),
         visibility: cfwdon_domain::Visibility::FollowersOnly,
         spoiler_text: String::new(),
         sensitive: false,
         language: Some("en".to_owned()),
-        quote_approval_policy: Some("public".to_owned()),
+        quote_approval_policy: Some(cfwdon_domain::QuoteApprovalPolicy::Public),
         in_reply_to_id: None,
         media_ids: Vec::new(),
         poll: None,
@@ -4018,40 +3910,21 @@ fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
     };
 
     assert_eq!(
-        initial_local_quote_approval_policy(&account, &private_draft),
+        private_draft.effective_quote_policy(&account).as_str(),
         "nobody"
     );
     assert_eq!(
-        initial_local_quote_approval_policy(&account, &direct_draft),
+        direct_draft.effective_quote_policy(&account).as_str(),
         "nobody"
     );
 }
 
 #[test]
 fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_it() {
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "followers".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.default_quote_policy = "followers".to_owned();
+    record.default_language = Some("en".to_owned());
+    let account = LocalAccount::from_record(record);
     let draft = cfwdon_domain::StatusDraft {
         text: "hello".to_owned(),
         visibility: cfwdon_domain::Visibility::Public,
@@ -4064,10 +3937,7 @@ fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_i
         poll: None,
     };
 
-    assert_eq!(
-        initial_local_quote_approval_policy(&account, &draft),
-        "followers"
-    );
+    assert_eq!(draft.effective_quote_policy(&account).as_str(), "followers");
 }
 
 #[test]
@@ -4089,13 +3959,13 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
-        quote_approval_policy: Some("public".to_owned()),
-        quote_state: "accepted".to_owned(),
+        quote_approval_policy: Some(cfwdon_domain::QuoteApprovalPolicy::Public),
+        quote_state: cfwdon_domain::QuoteState::Accepted,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -4106,7 +3976,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         "accepted"
     );
 
-    status.quote_approval_policy = Some("followers".to_owned());
+    status.quote_approval_policy = Some(cfwdon_domain::QuoteApprovalPolicy::Followers);
     assert_eq!(
         remote_quote_state_for_local_target(&status, true, false),
         "accepted"
@@ -4116,14 +3986,14 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         "pending"
     );
 
-    status.quote_approval_policy = Some("nobody".to_owned());
+    status.quote_approval_policy = Some(cfwdon_domain::QuoteApprovalPolicy::Nobody);
     assert_eq!(
         remote_quote_state_for_local_target(&status, true, false),
         "pending"
     );
 
-    status.visibility = "private".to_owned();
-    status.quote_approval_policy = Some("public".to_owned());
+    status.visibility = cfwdon_domain::Visibility::FollowersOnly;
+    status.quote_approval_policy = Some(cfwdon_domain::QuoteApprovalPolicy::Public);
     assert_eq!(
         remote_quote_state_for_local_target(&status, true, false),
         "pending"
@@ -4144,13 +4014,13 @@ fn effective_status_quote_state_defaults_to_accepted_without_quote() {
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
         quote_approval_policy: None,
-        quote_state: "revoked".to_owned(),
+        quote_state: cfwdon_domain::QuoteState::Revoked,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -4170,13 +4040,13 @@ fn status_has_active_quote_depends_on_quote_state() {
         boost_of_uri: None,
         quote_of_uri: Some("https://remote.example/@bob/1".to_owned()),
         content_html: "<p>hello</p>".to_owned(),
-        _text_content: "hello".to_owned(),
+        text: "hello".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
         quote_approval_policy: None,
-        quote_state: "pending".to_owned(),
+        quote_state: cfwdon_domain::QuoteState::Pending,
         application_id: None,
         created_at: "2026-01-01T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -4185,7 +4055,7 @@ fn status_has_active_quote_depends_on_quote_state() {
     assert_eq!(effective_status_quote_state(&status), "pending");
     assert!(status_has_active_quote(&status));
 
-    status.quote_state = "revoked".to_owned();
+    status.quote_state = cfwdon_domain::QuoteState::Revoked;
     assert_eq!(effective_status_quote_state(&status), "revoked");
     assert!(!status_has_active_quote(&status));
 }
@@ -4202,17 +4072,17 @@ fn remote_status_quote_helpers_follow_quote_state() {
         quote_of_uri: Some("https://social.example/users/alice/statuses/1".to_owned()),
         content_html: "<p>hello</p>".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: Visibility::Public,
+        sensitive: false,
         language: Some("en".to_owned()),
-        quote_state: "accepted".to_owned(),
+        quote_state: QuoteState::Accepted,
         published_at: "2026-01-01T00:00:00.000Z".to_owned(),
     };
 
     assert_eq!(effective_remote_status_quote_state(&status), "accepted");
     assert!(remote_status_has_active_quote(&status));
 
-    status.quote_state = "revoked".to_owned();
+    status.quote_state = QuoteState::Revoked;
     assert_eq!(effective_remote_status_quote_state(&status), "revoked");
     assert!(!remote_status_has_active_quote(&status));
 }
@@ -4252,29 +4122,7 @@ fn quote_placeholder_document_preserves_requested_state() {
 #[test]
 fn build_status_update_activity_includes_quote_context_when_present() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
     let object = serde_json::json!({
         "id": "https://social.example/users/alice/statuses/status-1",
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
@@ -4309,29 +4157,7 @@ fn build_status_update_activity_includes_quote_context_when_present() {
 #[test]
 fn build_delete_quote_authorization_activity_uses_fep_044f_shape() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
 
     let activity = serde_json::from_str::<serde_json::Value>(
         &build_delete_quote_authorization_activity(
@@ -4927,22 +4753,18 @@ fn activitypub_profile_attachments_use_property_value_shape() {
 #[test]
 fn mastodon_account_response_reflects_locked_and_bot_flags() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    let mut account = actor_fixture_account();
-    account.locked = true;
-    account.bot = true;
+    let account = actor_fixture_account_locked_bot();
 
     let response = MastodonAccountResponse::from_account(&account, &config);
     assert!(response.locked);
     assert!(response.bot);
-    assert_eq!(response.discoverable, account.discoverable);
+    assert_eq!(response.discoverable, account.is_discoverable());
 }
 
 #[test]
 fn activitypub_actor_document_reflects_locked_and_bot_flags() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    let mut account = actor_fixture_account();
-    account.locked = true;
-    account.bot = true;
+    let account = actor_fixture_account_locked_bot();
 
     let actor = build_activitypub_actor_document(&config, &account);
     assert_eq!(actor.actor_type, "Service");
@@ -4963,32 +4785,7 @@ fn activitypub_media_attachment_type_matches_media_kind() {
 #[test]
 fn build_update_person_activity_wraps_actor_document() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-    let account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: "<p>hello</p>".to_owned(),
-        bio_text: "hello".to_owned(),
-        fields: vec![ProfileField {
-            name: "Website".to_owned(),
-            value: "https://example.com".to_owned(),
-        }],
-        locked: false,
-        bot: false,
-        discoverable: true,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("en".to_owned()),
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let account = actor_fixture_account();
 
     let activity = serde_json::from_str::<serde_json::Value>(
         &build_update_person_activity_with_id(
@@ -5125,10 +4922,10 @@ fn normalize_status_poll_accepts_minimal_valid_poll() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(poll.options, vec!["One".to_owned(), "Two".to_owned()]);
-    assert_eq!(poll.expires_in_seconds, 600);
-    assert!(poll.multiple);
-    assert!(poll.hide_totals);
+    assert_eq!(poll.options(), &["One".to_owned(), "Two".to_owned()]);
+    assert_eq!(poll.expires_in_seconds(), 600);
+    assert!(poll.multiple());
+    assert!(poll.hide_totals());
 }
 
 #[test]
@@ -5363,32 +5160,14 @@ fn apply_html_preview_metadata_overwrites_basic_card_fields() {
 fn is_admin_account_matches_configured_emails() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     config.admin_emails = vec!["admin@example.com".to_owned()];
-    let mut account = LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "admin@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: String::new(),
-        bio_text: String::new(),
-        fields: Vec::new(),
-        locked: false,
-        bot: false,
-        discoverable: false,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: None,
-        avatar_object_key: None,
-        avatar_content_type: None,
-        header_object_key: None,
-        header_content_type: None,
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    };
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.access_email = "admin@example.com".to_owned();
+    let account = LocalAccount::from_record(record);
     assert!(is_admin_account(&config, &account));
 
-    account.access_email = "user@example.com".to_owned();
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.access_email = "user@example.com".to_owned();
+    let account = LocalAccount::from_record(record);
     assert!(!is_admin_account(&config, &account));
 }
 

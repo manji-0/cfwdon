@@ -55,78 +55,31 @@ pub(crate) use store_remote::*;
 pub(crate) use thread_mutes::*;
 pub(crate) use usecases::*;
 
-use cfwdon_domain::{LocalAccount, StatusDraft, Visibility};
+use cfwdon_domain::{LocalAccount, QuoteApprovalPolicy, QuoteState, StatusDraft, Visibility};
 
 struct CreateStatusAccess {
     account: LocalAccount,
     application_id: Option<i64>,
 }
 
-pub(crate) fn initial_local_quote_approval_policy<'a>(
-    account: &'a LocalAccount,
-    draft: &'a StatusDraft,
-) -> &'a str {
-    if matches!(
-        draft.visibility,
-        Visibility::FollowersOnly | Visibility::Direct
-    ) {
-        "nobody"
-    } else {
-        draft
-            .quote_approval_policy
-            .as_deref()
-            .unwrap_or(account.default_quote_policy.as_str())
-    }
-}
-
 pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_follower: bool) -> bool {
-    if is_owner {
-        return true;
-    }
-
-    match policy {
-        "public" => true,
-        "followers" => is_follower,
-        _ => false,
-    }
+    QuoteApprovalPolicy::parse(policy)
+        .map(|policy| policy.allows_quote(is_owner, is_follower))
+        .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 pub(crate) fn remote_quote_state_for_local_target(
     status: &StatusRow,
     remote_actor_follows_owner: bool,
     blocked_by_owner: bool,
 ) -> &'static str {
-    if blocked_by_owner {
-        return "rejected";
-    }
-    if local_quote_policy_allows(
-        effective_local_quote_approval_policy(status),
-        false,
-        remote_actor_follows_owner,
-    ) {
-        "accepted"
-    } else {
-        "pending"
-    }
-}
-
-pub(crate) async fn initial_local_quote_state(
-    db: &worker::D1Database,
-    config: &cfwdon_core::AppConfig,
-    quote_of_uri: Option<&str>,
-) -> Result<&'static str> {
-    let Some(quote_of_uri) = quote_of_uri else {
-        return Ok("accepted");
-    };
-
-    if find_local_status_by_object_uri(db, config, quote_of_uri)
-        .await?
-        .is_some()
-    {
-        Ok("accepted")
-    } else {
-        Ok("pending")
-    }
+    let policy = status.effective_quote_approval_policy();
+    QuoteState::remote_for_target(
+        blocked_by_owner,
+        policy.allows_quote(false, remote_actor_follows_owner),
+    )
+    .as_str()
 }
 
 async fn validate_local_quote_creation(
@@ -145,25 +98,27 @@ async fn validate_local_quote_creation(
     if !can_view_local_status(db, &status, Some(requester), &owner).await? {
         return Ok(Some("quoted_status_id references unknown status"));
     }
-    if status.visibility == "direct" {
+    if status.visibility == Visibility::Direct {
         return Ok(Some("private mentions cannot be quoted"));
     }
-    if status.visibility == "private" && draft.visibility.as_str() != "private" {
+    if status.visibility == Visibility::FollowersOnly
+        && draft.visibility != Visibility::FollowersOnly
+    {
         return Ok(Some("private posts can only be quoted in private posts"));
     }
-    let owner_actor_uri = actor_url(config, &owner.username);
-    let requester_actor_uri = actor_url(config, &requester.username);
-    if is_blocking_actor(db, &owner.id, &requester_actor_uri).await?
-        || is_blocking_actor(db, &requester.id, &owner_actor_uri).await?
+    let owner_actor_uri = actor_url(config, owner.username());
+    let requester_actor_uri = actor_url(config, requester.username());
+    if is_blocking_actor(db, owner.id(), &requester_actor_uri).await?
+        || is_blocking_actor(db, requester.id(), &owner_actor_uri).await?
     {
         return Ok(Some("current user is not allowed to quote this status"));
     }
 
-    let is_owner = requester.id == owner.id;
+    let is_owner = requester.id() == owner.id();
     let is_follower = if is_owner {
         false
     } else {
-        is_local_follower_authorized(db, &requester.id, &owner.id).await?
+        is_local_follower_authorized(db, requester.id(), owner.id()).await?
     };
     if !local_quote_policy_allows(
         effective_local_quote_approval_policy(&status),
@@ -320,7 +275,7 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
             &crate::create_scheduled_status(
                 &db,
                 &config,
-                &access.account.id,
+                access.account.id(),
                 &draft,
                 idempotency_key.as_deref(),
                 access.application_id,
@@ -344,7 +299,7 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         },
     )
     .await?;
-    invalidate_account_dynamic_public_cache(&ctx, &access.account.id, &access.account.username)
+    invalidate_account_dynamic_public_cache(&ctx, access.account.id(), access.account.username())
         .await;
     enqueue_outbox_process_queue_best_effort(&ctx.env, "status_create").await;
 
@@ -369,7 +324,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         return Response::error("status not found", 404);
     };
     invalidate_status_api_cache(&ctx, &deleted.status_id).await;
-    invalidate_account_dynamic_public_cache(&ctx, &requester.id, &requester.username).await;
+    invalidate_account_dynamic_public_cache(&ctx, requester.id(), requester.username()).await;
     if query.delete_media.unwrap_or(false) {
         let bucket = ctx.bucket(&config.media_binding)?;
         delete_media_attachments(&db, &bucket, &deleted.media).await?;
@@ -394,7 +349,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let Some(status) = find_owned_local_status(&db, &status_id, &account.id).await? else {
+    let Some(status) = find_owned_local_status(&db, &status_id, account.id()).await? else {
         return Response::error("status not found", 404);
     };
     let LocalStatusResponsePreload {
@@ -402,13 +357,11 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         in_reply_to_account_id: current_in_reply_to_account_id,
     } = load_local_status_response_preload(&db, &status).await?;
 
-    let next_text = request
-        .status
-        .unwrap_or_else(|| status._text_content.clone());
+    let next_text = request.status.unwrap_or_else(|| status.text.clone());
     let next_spoiler_text = request
         .spoiler_text
         .unwrap_or_else(|| status.spoiler_text.clone());
-    let next_sensitive = request.sensitive.unwrap_or(status.sensitive != 0);
+    let next_sensitive = request.sensitive.unwrap_or(status.sensitive);
     let next_language = request.language.or(status.language.clone());
     let next_poll = match request.poll {
         Some(poll) => match normalize_status_poll(Some(poll)) {
@@ -446,9 +399,9 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
             );
         }
     }
-    let changed = next_text != status._text_content
+    let changed = next_text != status.text
         || next_spoiler_text != status.spoiler_text
-        || next_sensitive != (status.sensitive != 0)
+        || next_sensitive != (status.sensitive)
         || next_language != status.language
         || next_poll.is_some()
         || requested_media.is_some()

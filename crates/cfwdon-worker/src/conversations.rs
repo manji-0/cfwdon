@@ -36,11 +36,11 @@ pub(crate) async fn participant_account_documents(
     let mut accounts = Vec::new();
     let refs = list_conversation_participants(db, conversation_id).await?;
     for participant_ref in refs {
-        if participant_ref == owner.id {
+        if participant_ref == owner.id() {
             continue;
         }
         if let Some(account) = find_account_by_id(db, &participant_ref).await? {
-            let stats = load_account_stats(db, &account.id).await?;
+            let stats = load_account_stats(db, account.id()).await?;
             accounts.push(serde_json::to_value(
                 MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
             )?);
@@ -69,7 +69,7 @@ pub(crate) async fn participant_account_documents(
     }
 
     if accounts.is_empty() {
-        let stats = load_account_stats(db, &owner.id).await?;
+        let stats = load_account_stats(db, owner.id()).await?;
         accounts.push(serde_json::to_value(
             MastodonAccountResponse::from_account_with_stats(owner, config, &stats),
         )?);
@@ -156,7 +156,7 @@ pub(crate) async fn conversations_response(
     };
     let rows = list_conversations_for_account(
         &db,
-        &owner.id,
+        owner.id(),
         conversations_limit(query.limit),
         query.max_id.as_deref(),
         query.min_id.as_deref().or(query.since_id.as_deref()),
@@ -202,7 +202,7 @@ pub(crate) async fn delete_conversation_response(
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if !delete_conversation_for_account(&db, &owner.id, &conversation_id).await? {
+    if !delete_conversation_for_account(&db, owner.id(), &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
     Response::from_json(&serde_json::json!({}))
@@ -225,10 +225,10 @@ pub(crate) async fn read_conversation_response(
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if !mark_conversation_read(&db, &owner.id, &conversation_id).await? {
+    if !mark_conversation_read(&db, owner.id(), &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
-    let Some(row) = find_conversation_for_account(&db, &owner.id, &conversation_id).await? else {
+    let Some(row) = find_conversation_for_account(&db, owner.id(), &conversation_id).await? else {
         return Response::error("conversation not found", 404);
     };
     Response::from_json(&conversation_document(&db, &config, &owner, &row).await?)
@@ -251,10 +251,10 @@ pub(crate) async fn unread_conversation_response(
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if !mark_conversation_unread(&db, &owner.id, &conversation_id).await? {
+    if !mark_conversation_unread(&db, owner.id(), &conversation_id).await? {
         return Response::error("conversation not found", 404);
     }
-    let Some(row) = find_conversation_for_account(&db, &owner.id, &conversation_id).await? else {
+    let Some(row) = find_conversation_for_account(&db, owner.id(), &conversation_id).await? else {
         return Response::error("conversation not found", 404);
     };
     Response::from_json(&conversation_document(&db, &config, &owner, &row).await?)

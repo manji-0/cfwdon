@@ -146,7 +146,7 @@ pub(crate) async fn build_relationship_for_target(
     target_id: &str,
     target_actor_uri: &str,
 ) -> Result<RelationshipResponse> {
-    let viewer_actor_uri = actor_url(config, &viewer.username);
+    let viewer_actor_uri = actor_url(config, viewer.username());
     let state_row =
         load_relationship_state(db, viewer, target_id, target_actor_uri, &viewer_actor_uri).await?;
     Ok(relationship_response_from_state(target_id, state_row))
@@ -213,7 +213,7 @@ fn relationship_state_bindings<'a>(
 ) -> [D1Type<'a>; 5] {
     let target_kind = RelationshipTargetKind::from_target_id(target_id);
     [
-        D1Type::Text(viewer.id.as_str()),
+        D1Type::Text(viewer.id()),
         D1Type::Text(viewer_actor_uri),
         D1Type::Text(target_id),
         D1Type::Text(target_actor_uri),
@@ -238,8 +238,33 @@ pub(crate) async fn follow_remote_account(
 ) -> Result<RelationshipResponse> {
     let (_, payload) = build_follow_activity(config, follower, &actor.actor_uri)?;
     let follow_activity_id =
-        queue_remote_actor_activity_required(db, &follower.id, &actor.actor_uri, &payload).await?;
+        queue_remote_actor_activity_required(db, follower.id(), &actor.actor_uri, &payload).await?;
     upsert_remote_follow(db, follower, actor, request, &follow_activity_id).await?;
+    build_relationship_for_target(
+        db,
+        config,
+        follower,
+        &remote_account_rest_id(&actor.actor_uri),
+        &actor.actor_uri,
+    )
+    .await
+}
+
+pub(crate) async fn unfollow_remote_account(
+    db: &D1Database,
+    config: &AppConfig,
+    follower: &LocalAccount,
+    actor: &RemoteActorRow,
+) -> Result<RelationshipResponse> {
+    if let Some(follow_activity_id) =
+        load_follow_activity_id(db, follower.id(), &actor.actor_uri).await?
+    {
+        let payload =
+            build_undo_follow_activity(config, follower, &follow_activity_id, &actor.actor_uri)?;
+        let _ = queue_remote_actor_activity(db, follower.id(), &actor.actor_uri, &payload).await?;
+    }
+
+    delete_follow_by_target(db, follower.id(), &actor.actor_uri).await?;
     build_relationship_for_target(
         db,
         config,
@@ -253,31 +278,10 @@ pub(crate) async fn follow_remote_account(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfwdon_domain::LocalAccountRecord;
 
     fn local_account() -> LocalAccount {
-        LocalAccount {
-            id: "viewer".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.test".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: Some("en".to_owned()),
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "private".to_owned(),
-            public_key_pem: "public".to_owned(),
-            created_at: "2026-01-01T00:00:00Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("viewer", "alice"))
     }
 
     fn empty_state_row() -> RelationshipStateRow {
@@ -368,29 +372,4 @@ mod tests {
         assert!(response.endorsed);
         assert_eq!(response.note, "trusted");
     }
-}
-
-pub(crate) async fn unfollow_remote_account(
-    db: &D1Database,
-    config: &AppConfig,
-    follower: &LocalAccount,
-    actor: &RemoteActorRow,
-) -> Result<RelationshipResponse> {
-    if let Some(follow_activity_id) =
-        load_follow_activity_id(db, &follower.id, &actor.actor_uri).await?
-    {
-        let payload =
-            build_undo_follow_activity(config, follower, &follow_activity_id, &actor.actor_uri)?;
-        let _ = queue_remote_actor_activity(db, &follower.id, &actor.actor_uri, &payload).await?;
-    }
-
-    delete_follow_by_target(db, &follower.id, &actor.actor_uri).await?;
-    build_relationship_for_target(
-        db,
-        config,
-        follower,
-        &remote_account_rest_id(&actor.actor_uri),
-        &actor.actor_uri,
-    )
-    .await
 }

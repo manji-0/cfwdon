@@ -14,38 +14,23 @@ use crate::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, ProfileField, SoftwareInfo,
+    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, QuoteState,
+    SoftwareInfo, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
 
 fn fixture_account() -> LocalAccount {
-    LocalAccount {
-        id: "acct-1".to_owned(),
-        username: "alice".to_owned(),
-        access_email: "alice@example.com".to_owned(),
-        display_name: "Alice".to_owned(),
-        bio_html: "<p>Hello</p>".to_owned(),
-        bio_text: "Hello".to_owned(),
-        fields: vec![ProfileField {
-            name: "Website".to_owned(),
-            value: "https://example.com".to_owned(),
-        }],
-        locked: false,
-        bot: false,
-        discoverable: true,
-        default_post_visibility: "public".to_owned(),
-        default_quote_policy: "public".to_owned(),
-        default_sensitive: false,
-        default_language: Some("ja".to_owned()),
-        avatar_object_key: Some("media/account/avatar/alice".to_owned()),
-        avatar_content_type: Some("image/png".to_owned()),
-        header_object_key: Some("media/account/header/alice".to_owned()),
-        header_content_type: Some("image/jpeg".to_owned()),
-        private_key_jwk: "{}".to_owned(),
-        public_key_pem: "pem".to_owned(),
-        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-    }
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.bio_html = "<p>Hello</p>".to_owned();
+    record.bio_text = "Hello".to_owned();
+    record.fields_json = r#"[{"name":"Website","value":"https://example.com"}]"#.to_owned();
+    record.default_language = Some("ja".to_owned());
+    record.avatar_object_key = Some("media/account/avatar/alice".to_owned());
+    record.avatar_content_type = Some("image/png".to_owned());
+    record.header_object_key = Some("media/account/header/alice".to_owned());
+    record.header_content_type = Some("image/jpeg".to_owned());
+    LocalAccount::from_record(record)
 }
 
 fn fixture_config() -> AppConfig {
@@ -78,13 +63,13 @@ fn fixture_status() -> StatusRow {
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>Hello <span class=\"h-card\"><a href=\"https://social.example/@bob\" class=\"u-url mention\">@<span>bob</span></a></span> #Workers</p>".to_owned(),
-        _text_content: "Hello @bob #Workers".to_owned(),
+        text: "Hello @bob #Workers".to_owned(),
         spoiler_text: String::new(),
-        visibility: "public".to_owned(),
-        sensitive: 0,
+        visibility: Visibility::Public,
+        sensitive: false,
         language: Some("ja".to_owned()),
         quote_approval_policy: None,
-        quote_state: "accepted".to_owned(),
+        quote_state: QuoteState::Accepted,
         application_id: None,
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
         updated_at: None,
@@ -310,8 +295,9 @@ fn compatibility_preferences_shape_is_stable() {
 
 #[test]
 fn compatibility_quote_policy_reflects_account_default() {
-    let mut account = fixture_account();
-    account.default_quote_policy = "followers".to_owned();
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.default_quote_policy = "followers".to_owned();
+    let account = LocalAccount::from_record(record);
 
     let preferences = build_preferences_document(&account);
     assert_eq!(

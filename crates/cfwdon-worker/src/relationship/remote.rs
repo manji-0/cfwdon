@@ -47,7 +47,7 @@ impl RemoteFollowUpsertDraft {
         inbox_uris: (Option<String>, Option<String>),
     ) -> Result<Self> {
         Ok(Self {
-            follower_account_id: follower.id.clone(),
+            follower_account_id: follower.id().to_owned(),
             target_actor_uri: actor.actor_uri.clone(),
             target_inbox_uri: inbox_uris.0,
             target_shared_inbox_uri: inbox_uris.1,
@@ -275,31 +275,10 @@ pub(crate) async fn load_follow_activity_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfwdon_domain::LocalAccountRecord;
 
     fn local_account(id: &str) -> LocalAccount {
-        LocalAccount {
-            id: id.to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.test".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "private".to_owned(),
-            public_key_pem: "public".to_owned(),
-            created_at: "2026-01-01T00:00:00Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture(id, "alice"))
     }
 
     fn remote_actor(actor_uri: &str, locked: bool) -> RemoteActorRow {

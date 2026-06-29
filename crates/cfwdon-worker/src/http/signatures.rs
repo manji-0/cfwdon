@@ -26,7 +26,7 @@ pub(crate) async fn send_signed_activity(
     let signing_string = format!(
         "(request-target): post {path_and_query}\nhost: {host}\ndate: {date}\ndigest: {digest}"
     );
-    let private_key_jwk = load_account_private_key_jwk(db, config, &account.id)
+    let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
         .await?
         .ok_or_else(|| Error::RustError("account private signing key is missing".to_owned()))?;
     let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes()).await?;
@@ -40,7 +40,7 @@ pub(crate) async fn send_signed_activity(
         "Signature",
         &format!(
             "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest\",signature=\"{}\"",
-            public_key_id(config, &account.username),
+            public_key_id(config, account.username()),
             signature
         ),
     )?;

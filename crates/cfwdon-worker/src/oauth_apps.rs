@@ -774,7 +774,7 @@ fn oauth_access_token_auth_from_joined_row(
     let account = match row.get("id").and_then(serde_json::Value::as_str) {
         Some(_) => Some(
             serde_json::from_value::<crate::AccountRow>(row)
-                .map(LocalAccount::from)
+                .map(LocalAccount::from_record)
                 .map_err(|error| {
                     worker::Error::RustError(format!(
                         "failed to decode OAuth access token account row: {error}"
@@ -1799,7 +1799,7 @@ async fn authorize_account_by_password(
     let Some(account) = account else {
         return Ok(None);
     };
-    let Some(password_hash) = load_account_password_hash(db, &account.id).await? else {
+    let Some(password_hash) = load_account_password_hash(db, account.id()).await? else {
         return Ok(None);
     };
     if verify_account_password_hash(&password, &password_hash) {
@@ -1988,7 +1988,7 @@ pub(crate) async fn oauth_authorize_response(
                     let Some(account) = password_account.or(authenticated_account) else {
                         return Response::error("Authenticated account is required.", 401);
                     };
-                    redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes)
+                    redirect_with_authorization_code(&db, &authorize, &app, account.id(), &scopes)
                         .await
                 }
             };
@@ -2007,7 +2007,8 @@ pub(crate) async fn oauth_authorize_response(
         let Some(account) = account else {
             return oauth_login_page(&authorize, &app, Some("Invalid username or password."));
         };
-        return redirect_with_authorization_code(&db, &authorize, &app, &account.id, &scopes).await;
+        return redirect_with_authorization_code(&db, &authorize, &app, account.id(), &scopes)
+            .await;
     }
 
     let authorize = match req.query::<OAuthAuthorizeRequest>() {

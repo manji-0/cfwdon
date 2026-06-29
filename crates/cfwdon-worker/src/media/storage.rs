@@ -3,6 +3,7 @@ use crate::{
     Result, delete_media_attachment_row, generate_entity_id, log_observed_operation,
     observability_started_at_ms, require_media_attachment_by_id,
 };
+use cfwdon_domain::StoredMediaAttachmentIntent;
 use serde::Deserialize;
 use worker::{Bucket, HttpMetadata, d1::D1Type};
 
@@ -11,29 +12,21 @@ struct QueuedMediaDeletionRow {
     object_key: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct MediaAttachmentInsertDraft {
+fn stored_media_attachment_intent(
+    account: &LocalAccount,
+    draft: &MediaUploadDraft,
     media_id: String,
-    account_id: String,
-    object_key: String,
-    content_type: String,
-    description: String,
-    width: Option<u32>,
-    height: Option<u32>,
-}
-
-impl MediaAttachmentInsertDraft {
-    fn from_upload(account: &LocalAccount, draft: &MediaUploadDraft, media_id: String) -> Self {
-        Self {
-            object_key: media_attachment_object_key(&account.id, draft.kind, &media_id),
-            media_id,
-            account_id: account.id.clone(),
-            content_type: draft.content_type.clone(),
-            description: draft.description.clone(),
-            width: draft.width,
-            height: draft.height,
-        }
-    }
+) -> StoredMediaAttachmentIntent {
+    let object_key = media_attachment_object_key(account.id(), draft.kind, &media_id);
+    StoredMediaAttachmentIntent::new(
+        media_id,
+        account.id(),
+        object_key,
+        draft.content_type.clone(),
+        draft.description.clone(),
+        draft.width,
+        draft.height,
+    )
 }
 
 pub(crate) async fn store_media_attachment(
@@ -43,11 +36,11 @@ pub(crate) async fn store_media_attachment(
     draft: &MediaUploadDraft,
 ) -> Result<MediaAttachmentRow> {
     let media_id = generate_entity_id(16)?;
-    let insert_draft = MediaAttachmentInsertDraft::from_upload(account, draft, media_id);
+    let intent = stored_media_attachment_intent(account, draft, media_id);
 
     let put_started_at_ms = observability_started_at_ms();
     let put_result = bucket
-        .put(&insert_draft.object_key, draft.bytes.clone())
+        .put(&intent.object_key, draft.bytes.clone())
         .http_metadata(HttpMetadata {
             content_type: Some(draft.content_type.clone()),
             content_disposition: Some("inline".to_owned()),
@@ -60,24 +53,24 @@ pub(crate) async fn store_media_attachment(
         "put",
         put_outcome,
         put_started_at_ms,
-        &insert_draft.object_key,
+        &intent.object_key,
         Some(draft.bytes.len()),
     );
     put_result?;
 
-    if let Err(error) = insert_media_attachment_row(db, &insert_draft).await {
-        let _ = delete_r2_object(bucket, &insert_draft.object_key, "rollback_delete").await;
+    if let Err(error) = insert_media_attachment_row(db, &intent).await {
+        let _ = delete_r2_object(bucket, &intent.object_key, "rollback_delete").await;
         return Err(error);
     }
 
-    require_media_attachment_by_id(db, &insert_draft.media_id).await
+    require_media_attachment_by_id(db, &intent.media_id).await
 }
 
 async fn insert_media_attachment_row(
     db: &D1Database,
-    draft: &MediaAttachmentInsertDraft,
+    intent: &StoredMediaAttachmentIntent,
 ) -> Result<()> {
-    let bindings = media_attachment_insert_bindings(draft);
+    let bindings = media_attachment_insert_bindings(intent);
     db.prepare(
         "INSERT INTO media_attachments (
             id,
@@ -116,18 +109,18 @@ fn media_attachment_object_key(account_id: &str, kind: MediaKind, media_id: &str
     )
 }
 
-fn media_attachment_insert_bindings(draft: &MediaAttachmentInsertDraft) -> [D1Type<'_>; 7] {
+fn media_attachment_insert_bindings(intent: &StoredMediaAttachmentIntent) -> [D1Type<'_>; 7] {
     [
-        D1Type::Text(draft.media_id.as_str()),
-        D1Type::Text(draft.account_id.as_str()),
-        D1Type::Text(draft.object_key.as_str()),
-        D1Type::Text(draft.content_type.as_str()),
-        D1Type::Text(draft.description.as_str()),
-        draft
+        D1Type::Text(intent.media_id.as_str()),
+        D1Type::Text(intent.account_id.as_str()),
+        D1Type::Text(intent.object_key.as_str()),
+        D1Type::Text(intent.content_type.as_str()),
+        D1Type::Text(intent.description.as_str()),
+        intent
             .width
             .map(|value| D1Type::Integer(value as i32))
             .unwrap_or(D1Type::Null),
-        draft
+        intent
             .height
             .map(|value| D1Type::Integer(value as i32))
             .unwrap_or(D1Type::Null),

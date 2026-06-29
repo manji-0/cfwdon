@@ -152,12 +152,12 @@ pub(crate) fn render_profile_field_value_html(value: &str) -> String {
 #[allow(dead_code)]
 pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::Value {
     serde_json::json!({
-        "posting:default:visibility": account.default_post_visibility,
-        "posting:default:sensitive": account.default_sensitive,
-        "posting:default:language": account.default_language,
-        "posting:default:quote_policy": account.default_quote_policy,
-        "posting:default:privacy": account.default_post_visibility,
-        "posting:default:media_sensitive": account.default_sensitive,
+        "posting:default:visibility": account.default_visibility().as_str(),
+        "posting:default:sensitive": account.default_sensitive(),
+        "posting:default:language": account.default_language(),
+        "posting:default:quote_policy": account.default_quote_policy().as_str(),
+        "posting:default:privacy": account.default_visibility().as_str(),
+        "posting:default:media_sensitive": account.default_sensitive(),
         "posting:default:content_type": "text/plain",
         "reading:expand:media": "default",
         "reading:expand:spoilers": false,
@@ -176,16 +176,14 @@ pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::
 
 fn account_avatar_url(config: &AppConfig, account: &LocalAccount) -> String {
     account
-        .avatar_object_key
-        .as_deref()
+        .avatar_object_key()
         .map(|object_key| media_object_url(config, object_key))
         .unwrap_or_default()
 }
 
 fn account_header_url(config: &AppConfig, account: &LocalAccount) -> String {
     account
-        .header_object_key
-        .as_deref()
+        .header_object_key()
         .map(|object_key| media_object_url(config, object_key))
         .unwrap_or_default()
 }
@@ -225,18 +223,18 @@ impl MastodonAccountResponse {
         config: &AppConfig,
         stats: &AccountStats,
     ) -> Self {
-        let profile_url = actor_url(config, &account.username);
+        let profile_url = actor_url(config, account.username());
 
         Self {
-            id: account.id.clone(),
-            username: account.username.clone(),
+            id: account.id().to_owned(),
+            username: account.username().to_owned(),
             acct: account.acct().to_owned(),
-            uri: actor_url(config, &account.username),
-            display_name: account.display_name.clone(),
-            locked: account.locked,
-            bot: account.bot,
+            uri: actor_url(config, account.username()),
+            display_name: account.display_name().to_owned(),
+            locked: account.is_locked(),
+            bot: account.is_bot(),
             group: false,
-            discoverable: account.discoverable,
+            discoverable: account.is_discoverable(),
             indexable: true,
             noindex: None,
             hide_collections: None,
@@ -244,15 +242,15 @@ impl MastodonAccountResponse {
             show_media_replies: Some(true),
             show_featured: Some(true),
             last_status_at: stats.last_status_at.clone(),
-            created_at: timestamp_to_mastodon_iso8601(&account.created_at),
-            note: account.bio_html.clone(),
+            created_at: timestamp_to_mastodon_iso8601(account.created_at()),
+            note: account.bio_html().to_owned(),
             url: profile_url,
             avatar: account_avatar_url(config, account),
             avatar_static: account_avatar_url(config, account),
             header: account_header_url(config, account),
             header_static: account_header_url(config, account),
             emojis: Vec::new(),
-            fields: mastodon_account_fields(&account.fields),
+            fields: mastodon_account_fields(account.fields()),
             roles: Vec::new(),
             followers_count: stats.followers_count,
             following_count: stats.following_count,
@@ -268,17 +266,17 @@ impl MastodonAccountResponse {
     ) -> Self {
         let mut value = Self::from_account_with_stats(account, config, stats);
         value.source = Some(MastodonAccountSource {
-            note: account.bio_text.clone(),
-            fields: mastodon_account_fields(&account.fields),
+            note: account.bio_text().to_owned(),
+            fields: mastodon_account_fields(account.fields()),
             attribution_domains: Vec::new(),
-            privacy: account.default_post_visibility.clone(),
-            sensitive: account.default_sensitive,
-            language: account.default_language.clone().unwrap_or_default(),
+            privacy: account.default_visibility().as_str().to_owned(),
+            sensitive: account.default_sensitive(),
+            language: account.default_language().unwrap_or("").to_owned(),
             follow_requests_count: 0,
             hide_collections: None,
-            discoverable: Some(account.discoverable),
+            discoverable: Some(account.is_discoverable()),
             indexable: true,
-            quote_policy: account.default_quote_policy.clone(),
+            quote_policy: account.default_quote_policy().as_str().to_owned(),
         });
         value
     }

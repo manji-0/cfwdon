@@ -22,7 +22,7 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let blocks = list_blocks_for_account(&db, &viewer.id, limit, max_id, since_id).await?;
+    let blocks = list_blocks_for_account(&db, viewer.id(), limit, max_id, since_id).await?;
     let collection = build_moderation_account_collection(
         &db,
         &config,
@@ -51,7 +51,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let mutes = list_mutes_for_account(&db, &viewer.id, limit, max_id, since_id).await?;
+    let mutes = list_mutes_for_account(&db, viewer.id(), limit, max_id, since_id).await?;
     let collection = build_moderation_account_collection(
         &db,
         &config,

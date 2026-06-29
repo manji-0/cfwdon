@@ -1,35 +1,11 @@
-use crate::{parse_profile_fields_json, sql_placeholders, unique_ordered_refs};
-use cfwdon_domain::LocalAccount;
+use crate::{sql_placeholders, unique_ordered_refs};
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashMap;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct AccountRow {
-    pub(crate) id: String,
-    pub(crate) username: String,
-    pub(crate) access_email: String,
-    pub(crate) display_name: String,
-    pub(crate) bio_html: String,
-    pub(crate) bio_text: String,
-    pub(crate) fields_json: String,
-    pub(crate) locked: i32,
-    pub(crate) bot: i32,
-    pub(crate) discoverable: i32,
-    pub(crate) default_post_visibility: String,
-    #[serde(default = "default_quote_policy")]
-    pub(crate) default_quote_policy: String,
-    pub(crate) default_sensitive: i32,
-    pub(crate) default_language: Option<String>,
-    pub(crate) avatar_object_key: Option<String>,
-    pub(crate) avatar_content_type: Option<String>,
-    pub(crate) header_object_key: Option<String>,
-    pub(crate) header_content_type: Option<String>,
-    pub(crate) private_key_jwk: String,
-    pub(crate) public_key_pem: String,
-    pub(crate) created_at: String,
-}
+pub(crate) type AccountRow = LocalAccountRecord;
 
 #[derive(Debug, Deserialize)]
 struct DiscoverableAccountRow {
@@ -124,7 +100,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
         .map(|row| {
             let sort_key = row.sort_key.clone();
             (
-                LocalAccount::from(AccountRow {
+                LocalAccount::from_record(AccountRow {
                     id: row.id,
                     username: row.username,
                     access_email: row.access_email,
@@ -260,35 +236,7 @@ pub(crate) async fn find_accounts_by_ids(
         .into_iter()
         .map(|row| {
             let id = row.id.clone();
-            (id, LocalAccount::from(row))
+            (id, LocalAccount::from_record(row))
         })
         .collect())
-}
-
-impl From<AccountRow> for LocalAccount {
-    fn from(value: AccountRow) -> Self {
-        Self {
-            id: value.id,
-            username: value.username,
-            access_email: value.access_email,
-            display_name: value.display_name,
-            bio_html: value.bio_html,
-            bio_text: value.bio_text,
-            fields: parse_profile_fields_json(&value.fields_json),
-            locked: value.locked != 0,
-            bot: value.bot != 0,
-            discoverable: value.discoverable != 0,
-            default_post_visibility: value.default_post_visibility,
-            default_quote_policy: value.default_quote_policy,
-            default_sensitive: value.default_sensitive != 0,
-            default_language: value.default_language,
-            avatar_object_key: value.avatar_object_key,
-            avatar_content_type: value.avatar_content_type,
-            header_object_key: value.header_object_key,
-            header_content_type: value.header_content_type,
-            private_key_jwk: value.private_key_jwk,
-            public_key_pem: value.public_key_pem,
-            created_at: value.created_at,
-        }
-    }
 }

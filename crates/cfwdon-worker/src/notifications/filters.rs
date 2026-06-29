@@ -67,5 +67,5 @@ pub(crate) fn is_admin_account(config: &AppConfig, account: &LocalAccount) -> bo
     config
         .admin_emails
         .iter()
-        .any(|email| email == &account.access_email.to_ascii_lowercase())
+        .any(|email| email == &account.access_email().to_ascii_lowercase())
 }

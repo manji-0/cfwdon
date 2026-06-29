@@ -3,17 +3,18 @@ use super::html::{account_statuses_html_response, remote_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::{
     AccountStatusesQuery, AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow,
-    RemoteStatusRow, Request, Response, Result, apply_remote_actor_social_counts,
-    build_remote_status_response_with_timeline_preloads, escape_html, extract_remote_note_object,
-    fetch_remote_activitypub_document, fetch_remote_actor_profile_with_document,
-    find_follow_by_target, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
-    is_public_activitypub_visibility, list_public_remote_statuses_by_actor_uri,
-    list_remote_statuses_by_actor_uri, load_account_filter_matcher,
-    load_remote_actor_social_counts_from_document, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
-    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
+    RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
+    apply_remote_actor_social_counts, build_remote_status_response_with_timeline_preloads,
+    escape_html, extract_remote_note_object, fetch_remote_activitypub_document,
+    fetch_remote_actor_profile_with_document, find_follow_by_target,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
+    find_remote_status_ids_with_media, is_public_activitypub_visibility,
+    list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
+    load_account_filter_matcher, load_remote_actor_social_counts_from_document,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
+    remote_account_rest_id, remote_status_from_record, upsert_remote_actor, upsert_remote_status,
+    visibility_from_activitypub_object,
 };
 use worker::D1Database;
 
@@ -97,7 +98,7 @@ async fn load_remote_account_status_page(
     let is_pinned_page = query.pinned.unwrap_or(false);
     let html_fetch_limit = limit.saturating_add(1);
     let is_following_remote_actor = match viewer {
-        Some(viewer) => find_follow_by_target(db, &viewer.id, &actor.actor_uri)
+        Some(viewer) => find_follow_by_target(db, viewer.id(), &actor.actor_uri)
             .await?
             .is_some_and(|follow| follow.state == "accepted"),
         None => false,
@@ -184,7 +185,7 @@ async fn remote_account_statuses_html_response(
     let mut html_statuses = Vec::new();
 
     for status in statuses {
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
         let media = remote_attachments_by_status_id
@@ -249,7 +250,7 @@ async fn remote_account_statuses_json_response(
         async {
             match viewer {
                 Some(viewer) => {
-                    preload_remote_status_viewer_state(db, &viewer.id, &remote_status_refs).await
+                    preload_remote_status_viewer_state(db, viewer.id(), &remote_status_refs).await
                 }
                 None => Ok(Default::default()),
             }
@@ -260,7 +261,7 @@ async fn remote_account_statuses_json_response(
         find_remote_status_ids_with_media(db, status_ids),
     )?;
     let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(db, &viewer.id).await?),
+        Some(viewer) => Some(load_account_filter_matcher(db, viewer.id()).await?),
         None => None,
     };
     let mut response = Vec::new();
@@ -399,7 +400,7 @@ async fn load_transient_remote_actor_statuses(
             continue;
         }
         let status = remote_status_row_from_activitypub_object(actor, object);
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
         if !remote_status_matches_account_filters(&status, query, false) {
@@ -477,7 +478,7 @@ fn remote_status_row_from_activitypub_object(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    RemoteStatusRow {
+    remote_status_from_record(RemoteStatusRecord {
         id: remote_account_rest_id(&object_uri),
         actor_uri: actor.actor_uri.clone(),
         object_uri,
@@ -510,7 +511,7 @@ fn remote_status_row_from_activitypub_object(
             .and_then(|map| map.keys().next().cloned()),
         quote_state: "accepted".to_owned(),
         published_at: remote_status_published_at(object),
-    }
+    })
 }
 
 fn remote_status_content_html(object: &serde_json::Value) -> String {
@@ -537,6 +538,6 @@ fn remote_status_published_at(object: &serde_json::Value) -> String {
 }
 
 fn remote_account_status_visible(status: &RemoteStatusRow, is_following_actor: bool) -> bool {
-    is_public_activitypub_visibility(&status.visibility)
-        || (is_following_actor && status.visibility == "private")
+    is_public_activitypub_visibility(status.visibility.as_str())
+        || (is_following_actor && status.visibility == cfwdon_domain::Visibility::FollowersOnly)
 }

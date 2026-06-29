@@ -29,7 +29,7 @@ pub(crate) async fn follow_account_usecase(
 ) -> std::result::Result<crate::RelationshipResponse, FollowActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
-            if follower.id == target.id {
+            if follower.id() == target.id() {
                 return Err(FollowActionError::CannotFollowSelf);
             }
             follow_local_account(db, config, follower, &target, request)

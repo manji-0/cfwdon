@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::{RemoteActorRow, RemoteStatusRow, Result, StatusRow};
+use crate::{
+    RemoteActorRow, RemoteStatusRecord, RemoteStatusRow, Result, StatusRecord, StatusRow,
+    remote_status_from_record, status_from_record,
+};
 use worker::D1Database;
 use worker::d1::D1Type;
 
@@ -165,7 +168,7 @@ fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> 
 }
 
 fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatusRow {
-    RemoteStatusRow {
+    remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
         object_uri: json_string(value, "object_uri"),
@@ -187,7 +190,7 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatu
             .unwrap_or("accepted")
             .to_owned(),
         published_at: json_string(value, "published_at"),
-    }
+    })
 }
 
 fn remote_search_rows_from_values(
@@ -280,7 +283,9 @@ pub(crate) async fn search_local_status_rows(
         .await?
     };
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn search_remote_status_rows(
@@ -441,7 +446,7 @@ mod tests {
         let row = remote_status_row_from_search_value(&value);
 
         assert_eq!(row.id, "rs1");
-        assert_eq!(row.quote_state, "accepted");
+        assert_eq!(row.quote_state, cfwdon_domain::QuoteState::Accepted);
         assert_eq!(row.url, None);
         assert_eq!(row.in_reply_to_uri, None);
         assert_eq!(row.boost_of_uri, None);

@@ -1,6 +1,7 @@
 use super::{
-    AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRow,
-    ResolvedTimelineCursor, Result, normalize_hashtag, sql_placeholders, unique_ordered_refs,
+    AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
+    ResolvedTimelineCursor, Result, normalize_hashtag, remote_status_from_record, sql_placeholders,
+    unique_ordered_refs,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -820,11 +821,13 @@ async fn query_remote_status_rows(
     bindings: &[D1Type<'_>],
 ) -> Result<Vec<RemoteStatusRow>> {
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
-    result.results::<RemoteStatusRow>()
+    result
+        .results::<RemoteStatusRecord>()
+        .map(|rows| rows.into_iter().map(remote_status_from_record).collect())
 }
 
 fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
-    RemoteStatusRow {
+    remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
         object_uri: json_string(value, "object_uri"),
@@ -839,7 +842,7 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
         language: optional_json_string(value, "language"),
         quote_state: json_string_or(value, "quote_state", "accepted"),
         published_at: json_string(value, "published_at"),
-    }
+    })
 }
 
 fn json_string(value: &serde_json::Value, key: &str) -> String {
@@ -1210,10 +1213,10 @@ mod tests {
         );
         assert_eq!(row.content_html, "<p>Hello</p>");
         assert_eq!(row.spoiler_text, "CW");
-        assert_eq!(row.visibility, "unlisted");
-        assert_eq!(row.sensitive, 1);
+        assert_eq!(row.visibility, cfwdon_domain::Visibility::Unlisted);
+        assert!(row.sensitive);
         assert_eq!(row.language.as_deref(), Some("ja"));
-        assert_eq!(row.quote_state, "pending");
+        assert_eq!(row.quote_state, cfwdon_domain::QuoteState::Pending);
         assert_eq!(row.published_at, "2026-01-01T00:00:00Z");
     }
 
@@ -1230,10 +1233,10 @@ mod tests {
         assert!(row.quote_of_uri.is_none());
         assert_eq!(row.content_html, "");
         assert_eq!(row.spoiler_text, "");
-        assert_eq!(row.visibility, "");
-        assert_eq!(row.sensitive, 0);
+        assert_eq!(row.visibility, cfwdon_domain::Visibility::Public);
+        assert!(!row.sensitive);
         assert!(row.language.is_none());
-        assert_eq!(row.quote_state, "accepted");
+        assert_eq!(row.quote_state, cfwdon_domain::QuoteState::Accepted);
         assert_eq!(row.published_at, "");
     }
 }

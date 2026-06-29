@@ -40,13 +40,13 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
     .await?
     {
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
-            if viewer.id == subject.account.id {
+            if viewer.id() == subject.account.id() {
                 return Response::error("cannot reblog your own status", 422);
             }
             upsert_reblog_local_status(
                 &action.auth.db,
                 &action.auth.config,
-                &viewer.id,
+                viewer.id(),
                 &subject.status,
                 &visibility,
             )
@@ -80,9 +80,12 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             Response::from_json(&response)
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
-            let existing =
-                find_reblog_activity_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri)
-                    .await?;
+            let existing = find_reblog_activity_by_target_uri(
+                &action.auth.db,
+                viewer.id(),
+                &status.object_uri,
+            )
+            .await?;
             let mut outbound_activity_id = existing.and_then(|row| row.ap_activity_id);
             if outbound_activity_id.is_none() {
                 let (_, payload_json) = build_announce_activity(
@@ -93,7 +96,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 )?;
                 outbound_activity_id = queue_remote_actor_activity(
                     &action.auth.db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &payload_json,
                 )
@@ -101,7 +104,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             }
             upsert_reblog_remote_status(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &status,
                 &visibility,
                 outbound_activity_id.as_deref(),
@@ -163,14 +166,14 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_reblog_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &local_status_target_uri(&subject.status),
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
             delete_reblog_wrapper_status_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &local_status_target_uri(&subject.status),
             )
             .await?;
@@ -186,7 +189,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             if let Some(row) =
-                find_reblog_activity_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri)
+                find_reblog_activity_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri)
                     .await?
                 && let Some(announce_activity_id) = row.ap_activity_id.as_deref()
             {
@@ -200,17 +203,17 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                 )?;
                 let _ = queue_remote_actor_activity(
                     &action.auth.db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &payload_json,
                 )
                 .await?;
             }
-            delete_reblog_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri).await?;
+            delete_reblog_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri).await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
             delete_reblog_wrapper_status_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &status.object_uri,
             )
             .await?;
@@ -259,7 +262,7 @@ async fn parse_reblog_status_request(
         *visibility = visibility.trim().to_ascii_lowercase();
         if visibility.is_empty() {
             request.visibility = None;
-        } else if super::Visibility::parse(visibility).is_none() {
+        } else if super::Visibility::parse(visibility).is_err() {
             return Err("visibility must be one of: public, unlisted, private, direct".to_owned());
         }
     }

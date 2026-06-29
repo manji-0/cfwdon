@@ -28,23 +28,23 @@ pub(crate) async fn collect_follow_request_notification_entries(
     }
 
     for follow in
-        list_local_follow_request_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_local_follow_request_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(account) = find_account_by_id(db, &follow.follower_account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &account.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, account.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &account.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None)
         {
             continue;
         }
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("follow-request-local-{}", account.id),
+                id: format!("follow-request-local-{}", account.id()),
                 notification_type: "follow_request".to_owned(),
-                group_key: format!("follow-request-local-{}", account.id),
+                group_key: format!("follow-request-local-{}", account.id()),
                 created_at: follow.created_at,
                 account: MastodonAccountResponse::from_account(&account, config),
                 status: None,
@@ -54,12 +54,13 @@ pub(crate) async fn collect_follow_request_notification_entries(
     }
 
     for follow in
-        list_remote_follow_request_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_remote_follow_request_notifications_for_account(db, viewer.id(), per_type_limit)
+            .await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &follow.actor_uri).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);
@@ -100,23 +101,23 @@ pub(crate) async fn collect_follow_notification_entries(
     }
 
     for follow in
-        list_local_follow_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_local_follow_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(account) = find_account_by_id(db, &follow.follower_account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &account.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, account.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &account.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None)
         {
             continue;
         }
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("follow-local-{}", account.id),
+                id: format!("follow-local-{}", account.id()),
                 notification_type: "follow".to_owned(),
-                group_key: format!("follow-local-{}", account.id),
+                group_key: format!("follow-local-{}", account.id()),
                 created_at: follow.created_at,
                 account: MastodonAccountResponse::from_account(&account, config),
                 status: None,
@@ -126,12 +127,12 @@ pub(crate) async fn collect_follow_notification_entries(
     }
 
     for follow in
-        list_remote_follow_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_remote_follow_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &follow.actor_uri).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);
@@ -173,7 +174,7 @@ pub(crate) async fn collect_favourite_notification_entries(
 
     for favourite in list_favourite_notifications_for_account(
         db,
-        &viewer.id,
+        viewer.id(),
         per_type_limit,
         query.min_created_at.as_deref(),
     )
@@ -182,9 +183,9 @@ pub(crate) async fn collect_favourite_notification_entries(
         let Some(actor) = find_account_by_id(db, &favourite.account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
@@ -205,9 +206,9 @@ pub(crate) async fn collect_favourite_notification_entries(
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("favourite-local-{}-{}", actor.id, status.id),
+                id: format!("favourite-local-{}-{}", actor.id(), status.id),
                 notification_type: "favourite".to_owned(),
-                group_key: format!("favourite-local-{}-{}", actor.id, status.id),
+                group_key: format!("favourite-local-{}-{}", actor.id(), status.id),
                 created_at: favourite.created_at,
                 account: MastodonAccountResponse::from_account(&actor, config),
                 status: Some(status_response),
@@ -218,7 +219,7 @@ pub(crate) async fn collect_favourite_notification_entries(
 
     for favourite in list_remote_favourite_notifications_for_account(
         db,
-        &viewer.id,
+        viewer.id(),
         per_type_limit,
         query.min_created_at.as_deref(),
     )
@@ -228,7 +229,7 @@ pub(crate) async fn collect_favourite_notification_entries(
         else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);

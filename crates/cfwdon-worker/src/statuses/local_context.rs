@@ -16,7 +16,7 @@ fn local_context_object_uri(
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
             "{}/statuses/{}",
-            actor_url(config, &owner.username),
+            actor_url(config, owner.username()),
             status.id
         )
     })
@@ -211,7 +211,7 @@ async fn append_remote_child_descendants(
         let Some(child_depth) = next_context_child_depth(max_depth, depth) else {
             continue;
         };
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
         descendants.push((

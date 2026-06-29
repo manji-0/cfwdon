@@ -250,7 +250,7 @@ async fn scan_tags_for_v2(
 
     let cursor = ResolvedTimelineCursor::default();
     for status in list_local_public_timeline_statuses(db, &cursor, fetch_limit).await? {
-        for tag in extract_hashtags_from_text(&status._text_content) {
+        for tag in extract_hashtags_from_text(&status.text) {
             if tag_matches_search_query(needle, &tag) && seen.insert(tag.clone()) {
                 matches.push(tag);
             }

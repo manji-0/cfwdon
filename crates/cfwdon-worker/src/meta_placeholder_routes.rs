@@ -202,43 +202,76 @@ fn normalized_registration_email(value: Option<String>) -> Option<String> {
 pub(crate) fn validate_account_registration_request(
     validation: &AccountRegistrationValidation,
 ) -> BTreeMap<&'static str, Vec<String>> {
+    let composing = cfwdon_domain::ComposingRegistration {
+        username: validation.username.clone(),
+        email: validation.email.clone(),
+        password_present: validation.password_present,
+        agreement: validation.agreement,
+    };
+    match composing.validate() {
+        Ok(_) => BTreeMap::new(),
+        Err(errors) => registration_validation_errors_to_details(errors),
+    }
+}
+
+fn registration_validation_errors_to_details(
+    errors: cfwdon_domain::RegistrationValidationErrors,
+) -> BTreeMap<&'static str, Vec<String>> {
     let mut details = BTreeMap::new();
-
-    match validation.username.as_deref() {
-        None => {
-            details.insert("username", vec!["can't be blank".to_owned()]);
-        }
-        Some(username)
-            if !username
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_') =>
-        {
-            details.insert(
-                "username",
-                vec!["must contain only letters, numbers and underscores".to_owned()],
-            );
-        }
-        _ => {}
+    if let Some(issue) = errors.username {
+        details.insert(
+            "username",
+            vec![
+                match issue {
+                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
+                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => {
+                        "must contain only letters, numbers and underscores"
+                    }
+                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
+                }
+                .to_owned(),
+            ],
+        );
     }
-
-    match validation.email.as_deref() {
-        None => {
-            details.insert("email", vec!["can't be blank".to_owned()]);
-        }
-        Some(email) if !email.contains('@') => {
-            details.insert("email", vec!["is invalid".to_owned()]);
-        }
-        _ => {}
+    if let Some(issue) = errors.email {
+        details.insert(
+            "email",
+            vec![
+                match issue {
+                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
+                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
+                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
+                }
+                .to_owned(),
+            ],
+        );
     }
-
-    if !validation.password_present {
-        details.insert("password", vec!["can't be blank".to_owned()]);
+    if let Some(issue) = errors.password {
+        details.insert(
+            "password",
+            vec![
+                match issue {
+                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
+                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
+                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
+                }
+                .to_owned(),
+            ],
+        );
     }
-
-    if validation.agreement != Some(true) {
-        details.insert("agreement", vec!["must be accepted".to_owned()]);
+    if let Some(issue) = errors.agreement {
+        details.insert(
+            "agreement",
+            vec![
+                match issue {
+                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
+                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
+                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
+                }
+                .to_owned(),
+            ],
+        );
     }
-
     details
 }
 
@@ -404,18 +437,17 @@ pub(crate) fn build_oauth_userinfo_document(
 ) -> serde_json::Value {
     let base_url = oauth_base_url(config);
     let issuer = format!("{}/", base_url.trim_end_matches('/'));
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let picture = account
-        .avatar_object_key
-        .as_deref()
+        .avatar_object_key()
         .map(|object_key| serde_json::json!(media_object_url(config, object_key)))
         .unwrap_or(serde_json::Value::Null);
     serde_json::json!({
         "iss": issuer,
         "sub": actor,
-        "preferred_username": account.username,
-        "name": account.display_name,
-        "profile": format!("{base_url}/@{}", account.username),
+        "preferred_username": account.username(),
+        "name": account.display_name(),
+        "profile": format!("{base_url}/@{}", account.username()),
         "picture": picture,
     })
 }
@@ -461,7 +493,7 @@ fn build_oembed_html(
             "</blockquote>"
         ),
         content_html = content_html,
-        username = account.username,
+        username = account.username(),
         status_url = status_url,
     )
 }
@@ -615,19 +647,19 @@ async fn create_generated_annual_report(
     year: i32,
 ) -> Result<AnnualReportRow> {
     let (start, end) = annual_report_bounds(year);
-    let stats = load_account_stats(db, &account.id).await?;
-    let posts_count = count_account_statuses_between(db, &account.id, &start, &end).await?;
+    let stats = load_account_stats(db, account.id()).await?;
+    let posts_count = count_account_statuses_between(db, account.id(), &start, &end).await?;
     let top_statuses =
-        list_recent_public_status_ids_between(db, &account.id, &start, &end, 3).await?;
+        list_recent_public_status_ids_between(db, account.id(), &start, &end, 3).await?;
     let share_key = generate_entity_id(12)?;
     let data_json = serde_json::json!({
-        "display_name": if account.display_name.trim().is_empty() {
-            account.username.clone()
+        "display_name": if account.display_name().trim().is_empty() {
+            account.username().to_owned()
         } else {
-            account.display_name.clone()
+            account.display_name().to_owned()
         },
-        "username": account.username,
-        "joined_at": account.created_at,
+        "username": account.username(),
+        "joined_at": account.created_at(),
         "posts_count": posts_count,
         "followers_count": stats.followers_count,
         "following_count": stats.following_count,
@@ -642,7 +674,7 @@ async fn create_generated_annual_report(
     })?;
     let now = now_iso_string()?;
     let bindings = [
-        D1Type::Text(account.id.as_str()),
+        D1Type::Text(account.id()),
         D1Type::Integer(year),
         D1Type::Text(data_json_string.as_str()),
         D1Type::Text(share_key.as_str()),
@@ -665,7 +697,7 @@ async fn create_generated_annual_report(
     .run()
     .await?;
 
-    find_generated_annual_report(db, &account.id, year)
+    find_generated_annual_report(db, account.id(), year)
         .await?
         .ok_or_else(|| {
             worker::Error::RustError("generated annual report was not persisted".to_owned())
@@ -874,7 +906,7 @@ async fn insert_registered_account(
             let _ = send_push_notification(
                 db,
                 config,
-                &admin.id,
+                admin.id(),
                 "admin.sign_up",
                 serde_json::json!({
                     "account_id": id,
@@ -1193,7 +1225,7 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
     let Some(status) = find_local_status_by_object_uri(&db, &config, &query.url).await? else {
         return Response::error("Record not found", 404);
     };
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Response::error("Record not found", 404);
     }
     let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
@@ -1201,18 +1233,18 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
     };
 
     let status_url = local_status_ap_id(&config, &account, &status);
-    let author_name = if account.display_name.trim().is_empty() {
-        account.username.clone()
+    let author_name = if account.display_name().trim().is_empty() {
+        account.username().to_owned()
     } else {
-        account.display_name.clone()
+        account.display_name().to_owned()
     };
 
     Response::from_json(&serde_json::json!({
         "type": "rich",
         "version": "1.0",
-        "title": format!("New status by {}", account.username),
+        "title": format!("New status by {}", account.username()),
         "author_name": author_name,
-        "author_url": actor_url(&config, &account.username),
+        "author_url": actor_url(&config, account.username()),
         "provider_name": config.instance_domain,
         "provider_url": format!("{}/", oauth_base_url(&config)),
         "cache_age": 86400,
@@ -1250,7 +1282,7 @@ pub(crate) async fn annual_reports_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let reports = list_generated_annual_reports(&db, &account.id, true).await?;
+    let reports = list_generated_annual_reports(&db, account.id(), true).await?;
     let response = reports
         .iter()
         .map(annual_report_document)
@@ -1271,7 +1303,7 @@ pub(crate) async fn annual_report_response(
     let Some(year) = ctx.param("id").and_then(|value| value.parse::<i32>().ok()) else {
         return Response::error("annual report not found", 404);
     };
-    let Some(report) = find_generated_annual_report(&db, &account.id, year).await? else {
+    let Some(report) = find_generated_annual_report(&db, account.id(), year).await? else {
         return Response::error("annual report not found", 404);
     };
     Response::from_json(&annual_report_document(&report))
@@ -1293,14 +1325,14 @@ pub(crate) async fn annual_report_action_response(
     let url = req.url()?;
 
     if url.path().ends_with("/read") {
-        mark_generated_annual_report_viewed(&db, &account.id, year).await?;
+        mark_generated_annual_report_viewed(&db, account.id(), year).await?;
         return Response::empty();
     }
 
     if year != current_campaign_year() {
         return Response::empty();
     }
-    if find_generated_annual_report(&db, &account.id, year)
+    if find_generated_annual_report(&db, account.id(), year)
         .await?
         .is_some()
     {
@@ -1327,7 +1359,7 @@ pub(crate) async fn annual_report_state_response(
             "available": false,
         }));
     };
-    if let Some(report) = find_generated_annual_report(&db, &account.id, year).await? {
+    if let Some(report) = find_generated_annual_report(&db, account.id(), year).await? {
         return Response::from_json(&serde_json::json!({
             "state": if report.viewed_at.is_some() { "viewed" } else { "ready" },
             "available": true,
@@ -1378,7 +1410,7 @@ pub(crate) async fn create_email_confirmation_response(
                 return invalid_access_token_response();
             }
         };
-    let Some(pending) = find_pending_email_confirmation(&db, &account.id).await? else {
+    let Some(pending) = find_pending_email_confirmation(&db, account.id()).await? else {
         return email_confirmation_unavailable_response();
     };
     if request_oauth_app_id.is_some_and(|oauth_app_id| oauth_app_id != pending.oauth_app_id) {
@@ -1391,7 +1423,7 @@ pub(crate) async fn create_email_confirmation_response(
     let confirmation_token = generate_entity_id(32)?;
     let pending_email = request.email.as_deref().unwrap_or(&pending.pending_email);
     if let Some(existing) = find_account_by_email(&db, pending_email).await?
-        && existing.id != account.id
+        && existing.id() != account.id()
     {
         let mut details = BTreeMap::new();
         details.insert("email", vec!["has already been taken".to_owned()]);
@@ -1399,14 +1431,14 @@ pub(crate) async fn create_email_confirmation_response(
     }
     upsert_pending_email_confirmation(
         &db,
-        &account.id,
+        account.id(),
         pending.oauth_app_id,
         pending_email,
         &confirmation_token,
     )
     .await?;
     if send_email_confirmation_message(&ctx, &config, pending_email, &confirmation_token).await? {
-        update_pending_email_confirmation_sent_at(&db, &account.id, &confirmation_token).await?;
+        update_pending_email_confirmation_sent_at(&db, account.id(), &confirmation_token).await?;
     }
     Response::from_json(&serde_json::json!({}))
 }
@@ -1438,7 +1470,7 @@ pub(crate) async fn email_confirmation_page_response(
         );
     };
     if let Some(existing) = find_account_by_email(&db, &pending.pending_email).await?
-        && existing.id != pending.account_id
+        && existing.id() != pending.account_id
     {
         return email_confirmation_html_response(
             "Email is already taken",
@@ -1463,10 +1495,10 @@ pub(crate) async fn check_email_confirmation_response(
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return invalid_access_token_response();
     };
-    let confirmed = find_pending_email_confirmation(&db, &account.id)
+    let confirmed = find_pending_email_confirmation(&db, account.id())
         .await?
         .is_none()
-        && !account.access_email.trim().is_empty();
+        && !account.access_email().trim().is_empty();
     Response::from_json(&confirmed)
 }
 
@@ -1694,7 +1726,7 @@ async fn append_streaming_local_status_entry(
     tracked_status_ids: &mut Vec<String>,
 ) -> Result<()> {
     if let Some(tag) = tag_filter {
-        let status_tags = extract_hashtags_from_text(&status._text_content);
+        let status_tags = extract_hashtags_from_text(&status.text);
         if !matches_tag_timeline_filters(&status_tags, tag, &crate::TagTimelineQuery::default()) {
             return Ok(());
         }
@@ -1704,12 +1736,12 @@ async fn append_streaming_local_status_entry(
     };
     if mute_local_actor
         && let Some(viewer) = viewer
-        && is_muted_actor(db, &viewer.id, &actor_url(config, &account.username)).await?
+        && is_muted_actor(db, viewer.id(), &actor_url(config, account.username())).await?
     {
         return Ok(());
     }
     if let Some(viewer) = viewer
-        && is_local_status_thread_muted_by(db, &viewer.id, &status).await?
+        && is_local_status_thread_muted_by(db, viewer.id(), &status).await?
     {
         return Ok(());
     }
@@ -1769,7 +1801,7 @@ async fn append_streaming_remote_status_entry(
         return Ok(());
     }
     if let Some(viewer) = viewer
-        && is_muted_actor(db, &viewer.id, &actor.actor_uri).await?
+        && is_muted_actor(db, viewer.id(), &actor.actor_uri).await?
     {
         return Ok(());
     }
@@ -1968,7 +2000,7 @@ async fn streaming_home_batch(
     let mut tracked_status_ids = Vec::new();
     let mut seen_status_ids = HashSet::new();
 
-    for status in list_local_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await? {
+    for status in list_local_home_timeline_statuses(db, viewer.id(), &cursor, query_limit).await? {
         append_streaming_home_local_status_entry(
             db,
             config,
@@ -1982,7 +2014,7 @@ async fn streaming_home_batch(
     }
 
     for (status, actor) in
-        list_remote_home_timeline_statuses(db, &viewer.id, &cursor, query_limit).await?
+        list_remote_home_timeline_statuses(db, viewer.id(), &cursor, query_limit).await?
     {
         append_streaming_home_remote_status_entry(
             db,
@@ -1997,7 +2029,7 @@ async fn streaming_home_batch(
         .await?;
     }
 
-    for tag in list_followed_tag_names(db, &viewer.id).await? {
+    for tag in list_followed_tag_names(db, viewer.id()).await? {
         for status in list_local_public_statuses_by_tag(db, &tag, &cursor, query_limit).await? {
             append_streaming_home_local_status_entry(
                 db,
@@ -2111,7 +2143,8 @@ async fn streaming_direct_batch(
     let mut tracked_conversation_ids = Vec::new();
     let mut seen_conversation_ids = HashSet::new();
 
-    for status in list_local_direct_timeline_statuses(db, &viewer.id, &cursor, query_limit).await? {
+    for status in list_local_direct_timeline_statuses(db, viewer.id(), &cursor, query_limit).await?
+    {
         let Some(conversation_id) = find_conversation_id_by_status_id(db, &status.id).await? else {
             continue;
         };
@@ -2119,7 +2152,7 @@ async fn streaming_direct_batch(
             continue;
         }
         let Some(conversation) =
-            find_conversation_for_account(db, &viewer.id, &conversation_id).await?
+            find_conversation_for_account(db, viewer.id(), &conversation_id).await?
         else {
             continue;
         };
@@ -2222,7 +2255,7 @@ async fn streaming_list_batch_context(
     )
     .await?;
     let query_limit = timeline_fetch_limit(40);
-    let Some(list) = list_row_by_id(db, &viewer.id, list_id).await? else {
+    let Some(list) = list_row_by_id(db, viewer.id(), list_id).await? else {
         return Ok(None);
     };
     let membership_refs = list_membership_refs(db, list_id)
@@ -2256,7 +2289,7 @@ async fn append_streaming_list_local_status_entry(
     ) {
         return Ok(());
     }
-    if is_local_status_thread_muted_by(db, &viewer.id, &status).await? {
+    if is_local_status_thread_muted_by(db, viewer.id(), &status).await? {
         return Ok(());
     }
     let media = find_media_attachments_by_status_id(db, &status.id).await?;
@@ -2299,7 +2332,7 @@ async fn append_streaming_list_remote_status_entry(
     ) {
         return Ok(());
     }
-    if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+    if is_muted_actor(db, viewer.id(), &actor.actor_uri).await? {
         return Ok(());
     }
     entries.push(StreamingEntry::new(
@@ -2440,7 +2473,7 @@ async fn streaming_local_status_update_event(
         return Ok(None);
     };
     if let Some(viewer) = viewer
-        && is_local_status_thread_muted_by(db, &viewer.id, status).await?
+        && is_local_status_thread_muted_by(db, viewer.id(), status).await?
     {
         return Ok(None);
     }
@@ -2482,7 +2515,7 @@ async fn streaming_remote_status_update_event(
         return Ok(None);
     }
     if let Some(viewer) = viewer
-        && is_muted_actor(db, &viewer.id, &status.actor_uri).await?
+        && is_muted_actor(db, viewer.id(), &status.actor_uri).await?
     {
         return Ok(None);
     }
@@ -2570,7 +2603,7 @@ async fn append_user_filter_state_events(
     is_initial_poll: bool,
     events: &mut Vec<StreamingEvent>,
 ) -> Result<()> {
-    let current_filter_updated_at = load_latest_filter_updated_at(db, &viewer.id).await?;
+    let current_filter_updated_at = load_latest_filter_updated_at(db, viewer.id()).await?;
     if let Some(current_filter_updated_at) = current_filter_updated_at {
         let changed = streaming_filter_update_changed(
             state.last_filter_updated_at.as_deref(),
@@ -2630,8 +2663,8 @@ async fn load_current_announcement_stream_state(
     db: &D1Database,
     viewer: &crate::LocalAccount,
 ) -> Result<CurrentAnnouncementStreamState> {
-    let read_ids = list_announcement_read_ids(db, &viewer.id).await?;
-    let reactions = load_announcement_reaction_state(db, &viewer.id).await?;
+    let read_ids = list_announcement_read_ids(db, viewer.id()).await?;
+    let reactions = load_announcement_reaction_state(db, viewer.id()).await?;
     let announcements = build_announcements_document(config, &read_ids, &reactions);
 
     Ok(CurrentAnnouncementStreamState {
@@ -3395,7 +3428,7 @@ pub(crate) async fn statuses_index_placeholder_response(
                 );
             }
             crate::ResolvedStatus::Remote(status) => {
-                if !is_public_activitypub_visibility(&status.visibility) {
+                if !is_public_activitypub_visibility(status.visibility.as_str()) {
                     continue;
                 }
                 let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await?
@@ -3449,7 +3482,7 @@ pub(crate) async fn status_quotes_response(
             local_status_target_uri(&status)
         }
         crate::ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
             status.object_uri
@@ -3506,7 +3539,7 @@ pub(crate) async fn status_quotes_response(
         async {
             match viewer.as_ref() {
                 Some(viewer) => {
-                    preload_local_status_viewer_state(&db, &viewer.id, &local_quote_refs, None)
+                    preload_local_status_viewer_state(&db, viewer.id(), &local_quote_refs, None)
                         .await
                 }
                 None => Ok(Default::default()),
@@ -3528,7 +3561,7 @@ pub(crate) async fn status_quotes_response(
         .collect::<Vec<_>>();
     let remote_viewer_state_preload = match viewer.as_ref() {
         Some(viewer) => {
-            preload_remote_status_viewer_state(&db, &viewer.id, &remote_quote_refs).await?
+            preload_remote_status_viewer_state(&db, viewer.id(), &remote_quote_refs).await?
         }
         None => Default::default(),
     };
@@ -3570,7 +3603,7 @@ pub(crate) async fn status_quotes_response(
     }
 
     for quote in remote_quotes {
-        if !is_public_activitypub_visibility(&quote.visibility) {
+        if !is_public_activitypub_visibility(quote.visibility.as_str()) {
             continue;
         }
         let Some(actor) = remote_actors_by_uri.get(&quote.actor_uri) else {
@@ -3652,7 +3685,7 @@ async fn enqueue_quote_revocation_federation(
     if !unique_follower_inboxes.is_empty() {
         enqueue_targeted_outbox_activity(
             db,
-            &requester.id,
+            requester.id(),
             target_status_id,
             &payload,
             &unique_follower_inboxes,
@@ -3660,7 +3693,7 @@ async fn enqueue_quote_revocation_federation(
         .await?;
     }
     if let Some(actor_uri) = remote_quote_author_actor_uri {
-        let _ = queue_remote_actor_activity(db, &requester.id, actor_uri, &payload).await?;
+        let _ = queue_remote_actor_activity(db, requester.id(), actor_uri, &payload).await?;
     }
 
     Ok(())
@@ -3698,7 +3731,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
             let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                 return Response::error("status not found", 404);
             };
-            if status.account_id != requester.id
+            if status.account_id != requester.id()
                 || !can_view_local_status(&db, status, Some(&requester), &account).await?
             {
                 return Response::error("status not found", 404);
@@ -3710,7 +3743,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
             return Response::error("status not found", 404);
         }
     };
-    let mut quote_revocation_targets = list_follower_delivery_targets(&db, &requester.id).await?;
+    let mut quote_revocation_targets = list_follower_delivery_targets(&db, requester.id()).await?;
 
     match resolve_status_reference(&db, &config, &quote_status_id).await? {
         Some(crate::ResolvedStatus::Local(quote_status)) => {
@@ -3759,7 +3792,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
             let updated_status = clear_local_status_quote(&db, &quote_status, &revision_at).await?;
             enqueue_status_update_activity(&db, &config, &quote_author, &updated_status).await?;
             quote_revocation_targets
-                .extend(list_follower_delivery_targets(&db, &quote_author.id).await?);
+                .extend(list_follower_delivery_targets(&db, quote_author.id()).await?);
             enqueue_quote_revocation_federation(
                 &db,
                 &config,
@@ -3837,7 +3870,7 @@ pub(crate) async fn accounts_index_response(
     for account_id in parse_relationship_query_ids(&req)? {
         match resolve_account_reference(&db, &account_id).await? {
             Some(AccountReference::Local(account)) => {
-                let stats = load_account_stats(&db, &account.id).await?;
+                let stats = load_account_stats(&db, account.id()).await?;
                 response.push(crate::MastodonAccountResponse::from_account_with_stats(
                     &account, &config, &stats,
                 ));
@@ -3979,28 +4012,34 @@ pub(crate) async fn remove_from_followers_response(
 
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(target)) => {
-            let target_actor_uri = actor_url(&config, &target.username);
-            delete_follow_by_target(&db, &target.id, &actor_url(&config, &viewer.username)).await?;
-            let relationship =
-                build_relationship_for_target(&db, &config, &viewer, &target.id, &target_actor_uri)
-                    .await?;
+            let target_actor_uri = actor_url(&config, target.username());
+            delete_follow_by_target(&db, target.id(), &actor_url(&config, viewer.username()))
+                .await?;
+            let relationship = build_relationship_for_target(
+                &db,
+                &config,
+                &viewer,
+                target.id(),
+                &target_actor_uri,
+            )
+            .await?;
             Response::from_json(&relationship)
         }
         Some(AccountReference::Remote(actor)) => {
             let accepted_follow_activity_id = find_follower_follow_activity_id(
                 &db,
-                &viewer.id,
+                viewer.id(),
                 &actor.actor_uri,
                 &actor.actor_uri,
             )
             .await?;
             if let Some(request) =
-                find_pending_remote_follow_request_by_actor(&db, &viewer.id, &actor.actor_uri)
+                find_pending_remote_follow_request_by_actor(&db, viewer.id(), &actor.actor_uri)
                     .await?
             {
                 delete_remote_follow_request_by_actor(
                     &db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &actor.actor_uri,
                 )
@@ -4014,7 +4053,7 @@ pub(crate) async fn remove_from_followers_response(
                     )?;
                     let _ = queue_remote_actor_activity_required(
                         &db,
-                        &viewer.id,
+                        viewer.id(),
                         &actor.actor_uri,
                         &payload,
                     )
@@ -4030,13 +4069,13 @@ pub(crate) async fn remove_from_followers_response(
                 )?;
                 let _ = queue_remote_actor_activity_required(
                     &db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &payload,
                 )
                 .await;
             }
-            delete_follower_by_actor(&db, &viewer.id, &actor.actor_uri, &actor.actor_uri).await?;
+            delete_follower_by_actor(&db, viewer.id(), &actor.actor_uri, &actor.actor_uri).await?;
             let relationship = build_relationship_for_target(
                 &db,
                 &config,
@@ -4080,7 +4119,9 @@ async fn list_local_status_quotes_by_uri(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<crate::StatusRow>()
+    result
+        .results::<crate::StatusRecord>()
+        .map(|rows| rows.into_iter().map(crate::status_from_record).collect())
 }
 
 async fn list_remote_status_quotes_by_uri(
@@ -4112,7 +4153,11 @@ async fn list_remote_status_quotes_by_uri(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<crate::RemoteStatusRow>()
+    result.results::<crate::RemoteStatusRecord>().map(|rows| {
+        rows.into_iter()
+            .map(crate::remote_status_from_record)
+            .collect()
+    })
 }
 
 fn quote_cursor_bindings<'a>(

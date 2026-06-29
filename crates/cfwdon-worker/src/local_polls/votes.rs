@@ -4,35 +4,9 @@ use super::store::{
     list_poll_vote_positions_for_account, list_status_poll_options,
 };
 use crate::{generate_entity_id, validate_poll_vote_submission};
+use cfwdon_domain::StoredLocalPollVoteIntent;
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
-
-#[derive(Debug, PartialEq, Eq)]
-struct LocalPollVoteInsertDraft {
-    vote_id: String,
-    poll_id: String,
-    account_id: String,
-    option_position: u32,
-    activity_uri: Option<String>,
-}
-
-impl LocalPollVoteInsertDraft {
-    fn from_parts(
-        vote_id: String,
-        poll_id: &str,
-        account_id: &str,
-        option_position: u32,
-        activity_uri: Option<&str>,
-    ) -> Self {
-        Self {
-            vote_id,
-            poll_id: poll_id.to_owned(),
-            account_id: account_id.to_owned(),
-            option_position,
-            activity_uri: activity_uri.map(str::to_owned),
-        }
-    }
-}
 
 fn validate_local_poll_vote_choices(
     option_count: usize,
@@ -169,15 +143,15 @@ async fn insert_account_poll_vote(
     choice: u32,
 ) -> Result<()> {
     let vote_id = generate_entity_id(16)?;
-    let draft = LocalPollVoteInsertDraft::from_parts(vote_id, poll_id, account_id, choice, None);
-    insert_account_poll_vote_row(db, &draft).await
+    let intent = StoredLocalPollVoteIntent::new(vote_id, poll_id, account_id, choice, None);
+    insert_account_poll_vote_row(db, &intent).await
 }
 
 async fn insert_account_poll_vote_row(
     db: &D1Database,
-    draft: &LocalPollVoteInsertDraft,
+    intent: &StoredLocalPollVoteIntent,
 ) -> Result<()> {
-    let bindings = local_poll_vote_insert_bindings(draft);
+    let bindings = local_poll_vote_insert_bindings(intent);
     db.prepare(
         "INSERT INTO status_poll_votes (
                 id,
@@ -199,12 +173,12 @@ async fn insert_account_poll_vote_row(
     Ok(())
 }
 
-fn local_poll_vote_insert_bindings(draft: &LocalPollVoteInsertDraft) -> [D1Type<'_>; 4] {
+fn local_poll_vote_insert_bindings(intent: &StoredLocalPollVoteIntent) -> [D1Type<'_>; 4] {
     [
-        D1Type::Text(draft.vote_id.as_str()),
-        D1Type::Text(draft.poll_id.as_str()),
-        D1Type::Text(draft.account_id.as_str()),
-        D1Type::Integer(draft.option_position as i32),
+        D1Type::Text(intent.vote_id.as_str()),
+        D1Type::Text(intent.poll_id.as_str()),
+        D1Type::Text(intent.account_id.as_str()),
+        D1Type::Integer(intent.option_position as i32),
     ]
 }
 
@@ -246,16 +220,21 @@ pub(crate) async fn apply_incoming_poll_vote(
     }
 
     let vote_id = generate_entity_id(16)?;
-    let draft =
-        LocalPollVoteInsertDraft::from_parts(vote_id, &poll.id, account_id, choice, activity_uri);
-    insert_incoming_poll_vote_row(db, &draft).await
+    let intent = StoredLocalPollVoteIntent::new(
+        vote_id,
+        &poll.id,
+        account_id,
+        choice,
+        activity_uri.map(str::to_owned),
+    );
+    insert_incoming_poll_vote_row(db, &intent).await
 }
 
 async fn insert_incoming_poll_vote_row(
     db: &D1Database,
-    draft: &LocalPollVoteInsertDraft,
+    intent: &StoredLocalPollVoteIntent,
 ) -> Result<()> {
-    let bindings = incoming_poll_vote_insert_bindings(draft);
+    let bindings = incoming_poll_vote_insert_bindings(intent);
     db.prepare(
         "INSERT OR IGNORE INTO status_poll_votes (
             id,
@@ -279,13 +258,13 @@ async fn insert_incoming_poll_vote_row(
     Ok(())
 }
 
-fn incoming_poll_vote_insert_bindings(draft: &LocalPollVoteInsertDraft) -> [D1Type<'_>; 5] {
+fn incoming_poll_vote_insert_bindings(intent: &StoredLocalPollVoteIntent) -> [D1Type<'_>; 5] {
     [
-        D1Type::Text(draft.vote_id.as_str()),
-        D1Type::Text(draft.poll_id.as_str()),
-        D1Type::Text(draft.account_id.as_str()),
-        D1Type::Integer(draft.option_position as i32),
-        match draft.activity_uri.as_deref() {
+        D1Type::Text(intent.vote_id.as_str()),
+        D1Type::Text(intent.poll_id.as_str()),
+        D1Type::Text(intent.account_id.as_str()),
+        D1Type::Integer(intent.option_position as i32),
+        match intent.activity_uri.as_deref() {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
@@ -485,30 +464,29 @@ mod tests {
     }
 
     #[test]
-    fn local_poll_vote_insert_draft_maps_storage_fields() {
-        let draft = LocalPollVoteInsertDraft::from_parts(
-            "vote-1".to_owned(),
+    fn stored_local_poll_vote_intent_maps_storage_fields() {
+        let intent = StoredLocalPollVoteIntent::new(
+            "vote-1",
             "poll-1",
             "acct-1",
             2,
-            Some("https://remote.example/votes/1"),
+            Some("https://remote.example/votes/1".to_owned()),
         );
 
-        assert_eq!(draft.vote_id, "vote-1");
-        assert_eq!(draft.poll_id, "poll-1");
-        assert_eq!(draft.account_id, "acct-1");
-        assert_eq!(draft.option_position, 2);
+        assert_eq!(intent.vote_id, "vote-1");
+        assert_eq!(intent.poll_id, "poll-1");
+        assert_eq!(intent.account_id, "acct-1");
+        assert_eq!(intent.option_position, 2);
         assert_eq!(
-            draft.activity_uri.as_deref(),
+            intent.activity_uri.as_deref(),
             Some("https://remote.example/votes/1")
         );
     }
 
     #[test]
     fn local_poll_vote_insert_bindings_keep_sql_slot_order_stable() {
-        let draft =
-            LocalPollVoteInsertDraft::from_parts("vote-1".to_owned(), "poll-1", "acct-1", 2, None);
-        let bindings = local_poll_vote_insert_bindings(&draft);
+        let intent = StoredLocalPollVoteIntent::new("vote-1", "poll-1", "acct-1", 2, None);
+        let bindings = local_poll_vote_insert_bindings(&intent);
 
         assert!(matches!(bindings[0], D1Type::Text("vote-1")));
         assert!(matches!(bindings[1], D1Type::Text("poll-1")));
@@ -534,14 +512,14 @@ mod tests {
 
     #[test]
     fn incoming_poll_vote_insert_bindings_keep_sql_slot_order_stable() {
-        let draft = LocalPollVoteInsertDraft::from_parts(
-            "vote-1".to_owned(),
+        let intent = StoredLocalPollVoteIntent::new(
+            "vote-1",
             "poll-1",
             "acct-1",
             2,
-            Some("https://remote.example/votes/1"),
+            Some("https://remote.example/votes/1".to_owned()),
         );
-        let bindings = incoming_poll_vote_insert_bindings(&draft);
+        let bindings = incoming_poll_vote_insert_bindings(&intent);
 
         assert!(matches!(bindings[0], D1Type::Text("vote-1")));
         assert!(matches!(bindings[1], D1Type::Text("poll-1")));

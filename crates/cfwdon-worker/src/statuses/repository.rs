@@ -101,7 +101,7 @@ pub(crate) async fn find_owned_local_status_response_subject(
     status_id: &str,
     owner: &LocalAccount,
 ) -> Result<Option<LoadedLocalStatusResponseSubject>> {
-    let Some(status) = find_owned_local_status(db, status_id, &owner.id).await? else {
+    let Some(status) = find_owned_local_status(db, status_id, owner.id()).await? else {
         return Ok(None);
     };
     load_visible_local_status_response_subject(db, Some(owner), status).await

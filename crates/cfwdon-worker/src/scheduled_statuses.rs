@@ -7,7 +7,7 @@ use crate::{
     now_iso_string, oauth_access_token_has_any_scope, parse_internal_pagination_id,
     require_authenticated_local_account, validate_scheduled_at_minimum_offset,
 };
-use cfwdon_domain::Visibility;
+use cfwdon_domain::{QuoteApprovalPolicy, Visibility};
 use serde::Deserialize;
 use worker::{Error, d1::D1Type};
 
@@ -166,7 +166,9 @@ fn scheduled_status_draft_from_value(value: &serde_json::Value) -> StatusDraft {
         spoiler_text: json_string(value, "spoiler_text").unwrap_or_default(),
         sensitive: json_boolish(value, "sensitive").unwrap_or(false),
         language: json_string(value, "language"),
-        quote_approval_policy: json_string(value, "quote_approval_policy"),
+        quote_approval_policy: json_string(value, "quote_approval_policy")
+            .as_deref()
+            .and_then(|value| QuoteApprovalPolicy::parse(value).ok()),
         in_reply_to_id: json_string(value, "in_reply_to_id"),
         media_ids: scheduled_status_media_ids(value),
         poll: scheduled_status_poll(value),
@@ -177,7 +179,7 @@ fn scheduled_status_visibility(value: &serde_json::Value) -> Visibility {
     value
         .get("visibility")
         .and_then(serde_json::Value::as_str)
-        .and_then(Visibility::parse)
+        .and_then(|value| Visibility::parse(value).ok())
         .unwrap_or(Visibility::Public)
 }
 
@@ -219,13 +221,14 @@ mod tests {
 
     #[test]
     fn scheduled_status_from_value_maps_stored_fields() {
-        let poll_json = serde_json::to_string(&cfwdon_domain::PollDraft {
-            options: vec!["yes".to_owned(), "no".to_owned()],
-            expires_in_seconds: 3600,
-            multiple: false,
-            hide_totals: true,
-        })
-        .expect("poll draft JSON");
+        let poll = cfwdon_domain::PollDraft::try_new(
+            vec!["yes".to_owned(), "no".to_owned()],
+            3600,
+            false,
+            true,
+        )
+        .expect("poll draft");
+        let poll_json = serde_json::to_string(&poll).expect("poll draft JSON");
         let value = serde_json::json!({
             "cursor_id": 42,
             "id": "sched-1",
@@ -253,16 +256,16 @@ mod tests {
         assert!(status.draft.sensitive);
         assert_eq!(status.draft.language.as_deref(), Some("ja"));
         assert_eq!(
-            status.draft.quote_approval_policy.as_deref(),
-            Some("followers")
+            status.draft.quote_approval_policy,
+            Some(QuoteApprovalPolicy::Followers)
         );
         assert_eq!(status.draft.in_reply_to_id.as_deref(), Some("status-1"));
         assert_eq!(status.draft.media_ids, vec!["media-1", "media-2"]);
         let poll = status.draft.poll.expect("poll draft");
-        assert_eq!(poll.options, vec!["yes", "no"]);
-        assert_eq!(poll.expires_in_seconds, 3600);
-        assert!(!poll.multiple);
-        assert!(poll.hide_totals);
+        assert_eq!(poll.options(), &["yes", "no"]);
+        assert_eq!(poll.expires_in_seconds(), 3600);
+        assert!(!poll.multiple());
+        assert!(poll.hide_totals());
         assert_eq!(status.idempotency_key.as_deref(), Some("idem-1"));
         assert_eq!(status.application_id, Some(7));
         assert_eq!(status.scheduled_at, "2099-02-03T04:05:06.000Z");
@@ -303,15 +306,18 @@ mod tests {
             spoiler_text: "cw".to_owned(),
             sensitive: true,
             language: Some("ja".to_owned()),
-            quote_approval_policy: Some("followers".to_owned()),
+            quote_approval_policy: Some(QuoteApprovalPolicy::Followers),
             in_reply_to_id: Some("reply-1".to_owned()),
             media_ids: vec!["media-1".to_owned()],
-            poll: Some(cfwdon_domain::PollDraft {
-                options: vec!["yes".to_owned(), "no".to_owned()],
-                expires_in_seconds: 600,
-                multiple: true,
-                hide_totals: false,
-            }),
+            poll: Some(
+                cfwdon_domain::PollDraft::try_new(
+                    vec!["yes".to_owned(), "no".to_owned()],
+                    600,
+                    true,
+                    false,
+                )
+                .expect("poll draft"),
+            ),
         };
 
         let row = ScheduledStatusInsertRow::new("sched-1".to_owned(), "now".to_owned(), &draft)
@@ -320,10 +326,10 @@ mod tests {
         assert_eq!(row.media_ids_json, "[\"media-1\"]");
         let poll: cfwdon_domain::PollDraft =
             serde_json::from_str(row.poll_json.as_deref().expect("poll JSON")).unwrap();
-        assert_eq!(poll.options, vec!["yes", "no"]);
-        assert_eq!(poll.expires_in_seconds, 600);
-        assert!(poll.multiple);
-        assert!(!poll.hide_totals);
+        assert_eq!(poll.options(), &["yes", "no"]);
+        assert_eq!(poll.expires_in_seconds(), 600);
+        assert!(poll.multiple());
+        assert!(!poll.hide_totals());
     }
 }
 
@@ -394,8 +400,8 @@ async fn insert_scheduled_status(
         draft.language.as_deref().map_or(D1Type::Null, D1Type::Text),
         draft
             .quote_approval_policy
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
+            .map(|policy| D1Type::Text(policy.as_str()))
+            .unwrap_or(D1Type::Null),
         draft
             .in_reply_to_id
             .as_deref()
@@ -874,7 +880,7 @@ pub(crate) async fn scheduled_statuses_response(
     let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
     let mut statuses = list_scheduled_statuses_for_account(
         &db,
-        &access.viewer.id,
+        access.viewer.id(),
         access.application_id,
         limit.saturating_add(1),
         max_id,
@@ -928,7 +934,7 @@ pub(crate) async fn scheduled_status_response(
     };
     let id = require_scheduled_status_id(&ctx).await?;
     let Some(status) =
-        find_scheduled_status_for_account(&db, &access.viewer.id, access.application_id, &id)
+        find_scheduled_status_for_account(&db, access.viewer.id(), access.application_id, &id)
             .await?
     else {
         return scheduled_statuses_not_found_response();
@@ -961,7 +967,7 @@ pub(crate) async fn update_scheduled_status_response(
     };
     let id = require_scheduled_status_id(&ctx).await?;
     let Some(current) =
-        find_scheduled_status_for_account(&db, &access.viewer.id, access.application_id, &id)
+        find_scheduled_status_for_account(&db, access.viewer.id(), access.application_id, &id)
             .await?
     else {
         return scheduled_statuses_not_found_response();
@@ -980,14 +986,14 @@ pub(crate) async fn update_scheduled_status_response(
     }
     update_scheduled_status_time(
         &db,
-        &access.viewer.id,
+        access.viewer.id(),
         access.application_id,
         &id,
         &scheduled_at,
     )
     .await?;
     let Some(updated) =
-        find_scheduled_status_for_account(&db, &access.viewer.id, access.application_id, &id)
+        find_scheduled_status_for_account(&db, access.viewer.id(), access.application_id, &id)
             .await?
     else {
         return scheduled_statuses_not_found_response();
@@ -1042,7 +1048,7 @@ pub(crate) async fn delete_scheduled_status_response(
         Err(error) => return Err(error),
     };
     let id = require_scheduled_status_id(&ctx).await?;
-    if !delete_scheduled_status(&db, &access.viewer.id, access.application_id, &id).await? {
+    if !delete_scheduled_status(&db, access.viewer.id(), access.application_id, &id).await? {
         return scheduled_statuses_not_found_response();
     }
     Response::from_json(&serde_json::json!({}))

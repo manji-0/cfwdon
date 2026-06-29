@@ -39,7 +39,7 @@ pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> R
         Ok(request) => request,
         Err(message) => return Response::error(message, 422),
     };
-    if request.account_id == reporter.id {
+    if request.account_id == reporter.id() {
         return Response::error("cannot report your own account", 422);
     }
 
@@ -56,18 +56,18 @@ pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> R
         };
         return Response::error(message, status);
     }
-    let report = insert_report(&db, &reporter.id, &request, &target, &status_ids).await?;
+    let report = insert_report(&db, reporter.id(), &request, &target, &status_ids).await?;
 
     for admin_email in &config.admin_emails {
         if let Some(admin) = find_account_by_email(&db, admin_email).await? {
             let _ = send_push_notification(
                 &db,
                 &config,
-                &admin.id,
+                admin.id(),
                 "admin.report",
                 serde_json::json!({
                     "report_id": report.id,
-                    "reporter_account_id": reporter.id,
+                    "reporter_account_id": reporter.id(),
                     "target_account_id": request.account_id,
                 }),
             )

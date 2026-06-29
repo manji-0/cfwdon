@@ -25,14 +25,14 @@ pub(crate) fn build_update_person_activity_with_id(
     account: &LocalAccount,
     activity_id: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": activity_id,
         "type": "Update",
         "actor": actor,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "cc": [format!("{}/followers", actor_url(config, &account.username))],
+        "cc": [format!("{}/followers", actor_url(config, account.username()))],
         "object": build_activitypub_actor_document(config, account),
     });
 
@@ -44,7 +44,7 @@ pub(crate) fn build_update_person_activity(
     config: &AppConfig,
     account: &LocalAccount,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     build_update_person_activity_with_id(
         config,
         account,
@@ -80,7 +80,7 @@ pub(crate) fn build_status_update_activity_with_id(
     activity_id: &str,
     published_at: &str,
 ) -> Result<String> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let to = object
         .get("to")
         .cloned()

@@ -4,14 +4,14 @@ use super::notifications::{
 };
 use super::{
     AppConfig, MastodonAccountResponse, MentionNotificationRow, NotificationsQuery,
-    RemoteMentionNotificationRow, RemoteStatusRow, StatusRow, actor_url,
+    RemoteMentionNotificationRow, RemoteStatusRecord, RemoteStatusRow, StatusRow, actor_url,
     build_local_status_response, build_remote_status_response, can_view_local_status,
     find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
     is_public_activitypub_visibility, list_local_mention_notifications_for_account,
     list_remote_mention_notifications_for_account, load_in_reply_to_account_id,
-    muted_notifications_for_actor, remote_account_rest_id,
+    muted_notifications_for_actor, remote_account_rest_id, remote_status_from_record,
 };
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
 use worker::{D1Database, Result};
 
 fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
@@ -23,13 +23,13 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
         boost_of_uri: None,
         quote_of_uri: mention.quote_of_uri,
         content_html: mention.content_html,
-        _text_content: mention.text_content,
+        text: mention.text_content,
         spoiler_text: mention.spoiler_text,
-        visibility: mention.visibility,
-        sensitive: mention.sensitive,
+        visibility: Visibility::parse(&mention.visibility).unwrap_or(Visibility::Public),
+        sensitive: mention.sensitive != 0,
         language: mention.language,
         quote_approval_policy: None,
-        quote_state: mention.quote_state.clone(),
+        quote_state: QuoteState::parse(&mention.quote_state).unwrap_or(QuoteState::Accepted),
         application_id: None,
         created_at: mention.created_at.clone(),
         updated_at: None,
@@ -37,7 +37,7 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
 }
 
 fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteStatusRow {
-    RemoteStatusRow {
+    remote_status_from_record(RemoteStatusRecord {
         id: mention.id,
         actor_uri: mention.actor_uri.clone(),
         object_uri: mention.object_uri,
@@ -52,7 +52,7 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteSta
         language: mention.language,
         quote_state: mention.quote_state,
         published_at: mention.published_at.clone(),
-    }
+    })
 }
 
 pub(crate) async fn collect_mention_notification_entries(
@@ -81,9 +81,9 @@ pub(crate) async fn collect_mention_notification_entries(
         };
         let status = local_mention_status_row(mention);
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?
-            || muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+            || muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
                 .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
@@ -101,9 +101,9 @@ pub(crate) async fn collect_mention_notification_entries(
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("mention-local-{}-{}", actor.id, status.id),
+                id: format!("mention-local-{}-{}", actor.id(), status.id),
                 notification_type: "mention".to_owned(),
-                group_key: format!("mention-local-{}-{}", actor.id, status.id),
+                group_key: format!("mention-local-{}-{}", actor.id(), status.id),
                 created_at: status.created_at,
                 account: MastodonAccountResponse::from_account(&actor, config),
                 status: Some(status_response),
@@ -127,7 +127,7 @@ pub(crate) async fn collect_mention_notification_entries(
         let Some(actor) = find_remote_actor_by_actor_uri(db, &mention.actor_uri).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);

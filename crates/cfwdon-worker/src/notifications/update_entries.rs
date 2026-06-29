@@ -22,11 +22,11 @@ pub(crate) async fn collect_update_notification_entries(
         return Ok(());
     }
 
-    for update in list_update_notifications_for_account(db, &viewer.id, per_type_limit).await? {
+    for update in list_update_notifications_for_account(db, viewer.id(), per_type_limit).await? {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &update.actor_uri).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);

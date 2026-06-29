@@ -72,7 +72,7 @@ async fn resolve_status_search_from_reference(
 
 fn account_reference_identity(reference: &AccountReference) -> &str {
     match reference {
-        AccountReference::Local(account) => &account.id,
+        AccountReference::Local(account) => account.id(),
         AccountReference::Remote(actor) => &actor.actor_uri,
     }
 }
@@ -100,7 +100,7 @@ fn account_reference_matches_owner(
     remote_actor_uri: Option<&str>,
 ) -> bool {
     match reference {
-        AccountReference::Local(account) => Some(account.id.as_str()) == local_account_id,
+        AccountReference::Local(account) => Some(account.id()) == local_account_id,
         AccountReference::Remote(actor) => Some(actor.actor_uri.as_str()) == remote_actor_uri,
     }
 }
@@ -135,19 +135,19 @@ async fn local_status_is_in_search_library(
     viewer: &LocalAccount,
     status: &crate::StatusRow,
 ) -> Result<bool> {
-    if status.account_id == viewer.id {
+    if status.account_id == viewer.id() {
         return Ok(true);
     }
-    if is_local_status_favourited_by(db, &viewer.id, status).await? {
+    if is_local_status_favourited_by(db, viewer.id(), status).await? {
         return Ok(true);
     }
-    if is_local_status_bookmarked_by(db, &viewer.id, status).await? {
+    if is_local_status_bookmarked_by(db, viewer.id(), status).await? {
         return Ok(true);
     }
-    if is_local_status_reblogged_by(db, &viewer.id, status).await? {
+    if is_local_status_reblogged_by(db, viewer.id(), status).await? {
         return Ok(true);
     }
-    if text_mentions_search_library_viewer(config, &status._text_content, &viewer.username) {
+    if text_mentions_search_library_viewer(config, &status.text, viewer.username()) {
         return Ok(true);
     }
     Ok(false)
@@ -159,19 +159,19 @@ async fn remote_status_is_in_search_library(
     viewer: &LocalAccount,
     status: &crate::RemoteStatusRow,
 ) -> Result<bool> {
-    if is_remote_status_favourited_by(db, &viewer.id, &status.id).await? {
+    if is_remote_status_favourited_by(db, viewer.id(), &status.id).await? {
         return Ok(true);
     }
-    if is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await? {
+    if is_remote_status_bookmarked_by(db, viewer.id(), &status.id).await? {
         return Ok(true);
     }
-    if is_remote_status_reblogged_by(db, &viewer.id, &status.id).await? {
+    if is_remote_status_reblogged_by(db, viewer.id(), &status.id).await? {
         return Ok(true);
     }
     if text_mentions_search_library_viewer(
         config,
         &strip_html_tags(&status.content_html),
-        &viewer.username,
+        viewer.username(),
     ) {
         return Ok(true);
     }
@@ -193,7 +193,7 @@ async fn collect_local_search_status_entries(
     min_timestamp: Option<&str>,
 ) -> Result<Vec<SearchStatusEntry>> {
     let local_account_filter = match account_reference {
-        Some(AccountReference::Local(account)) => Some(account.id.as_str()),
+        Some(AccountReference::Local(account)) => Some(account.id()),
         _ => None,
     };
     let mut entries = Vec::new();
@@ -214,24 +214,24 @@ async fn collect_local_search_status_entries(
             continue;
         };
         if excluded_account_reference.is_some_and(|reference| {
-            account_reference_matches_owner(reference, Some(&owner.id), None)
+            account_reference_matches_owner(reference, Some(owner.id()), None)
         }) {
             continue;
         }
         if !can_view_local_status(db, &status, Some(viewer), &owner).await? {
             continue;
         }
-        let is_public = status.visibility == "public";
+        let is_public = status.visibility == cfwdon_domain::Visibility::Public;
         let is_library = local_status_is_in_search_library(db, config, viewer, &status).await?;
         if !status_is_searchable_by_scope(parsed_query, is_public, is_library) {
             continue;
         }
         if !status_matches_search_syntax(
             parsed_query,
-            &status._text_content,
+            &status.text,
             &status.spoiler_text,
             status.in_reply_to_id.is_some(),
-            status.sensitive != 0,
+            status.sensitive,
             status.boost_of_uri.is_some(),
             status.quote_of_uri.is_some(),
             status.language.as_deref(),
@@ -248,14 +248,14 @@ async fn collect_local_search_status_entries(
             find_status_poll_by_status_id(db, &status.id)
                 .await?
                 .is_some(),
-            build_status_card_value(&status._text_content).is_some(),
+            build_status_card_value(&status.text).is_some(),
         ) {
             continue;
         }
         let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
         entries.push((
             (
-                status_search_rank(parsed_query, &status._text_content, &status.spoiler_text),
+                status_search_rank(parsed_query, &status.text, &status.spoiler_text),
                 Reverse(status.created_at.clone()),
                 Reverse(status.id.clone()),
             ),
@@ -307,7 +307,7 @@ async fn collect_remote_search_status_entries(
     )
     .await?
     {
-        let is_public = is_public_activitypub_visibility(&status.visibility);
+        let is_public = is_public_activitypub_visibility(status.visibility.as_str());
         if excluded_account_reference.is_some_and(|reference| {
             account_reference_matches_owner(reference, None, Some(&status.actor_uri))
         }) {
@@ -323,7 +323,7 @@ async fn collect_remote_search_status_entries(
             &text_content,
             &status.spoiler_text,
             status.in_reply_to_uri.is_some(),
-            status.sensitive != 0,
+            status.sensitive,
             status.boost_of_uri.is_some(),
             status.quote_of_uri.is_some(),
             status.language.as_deref(),

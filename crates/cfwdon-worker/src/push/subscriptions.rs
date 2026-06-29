@@ -588,7 +588,7 @@ pub(crate) async fn push_subscription_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let Some(subscription) = find_push_subscription(&db, &account.id).await? else {
+    let Some(subscription) = find_push_subscription(&db, account.id()).await? else {
         return Response::error("Record not found", 404);
     };
     Response::from_json(&push_subscription_document(&subscription, &config))
@@ -608,8 +608,8 @@ pub(crate) async fn create_push_subscription_response(
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
     };
-    save_push_subscription(&db, &account.id, &request).await?;
-    let subscription = find_push_subscription(&db, &account.id)
+    save_push_subscription(&db, account.id(), &request).await?;
+    let subscription = find_push_subscription(&db, account.id())
         .await?
         .ok_or_else(|| Error::RustError("push subscription missing after save".to_owned()))?;
     Response::from_json(&push_subscription_document(&subscription, &config))
@@ -625,15 +625,15 @@ pub(crate) async fn update_push_subscription_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if find_push_subscription(&db, &account.id).await?.is_none() {
+    if find_push_subscription(&db, account.id()).await?.is_none() {
         return Response::error("Record not found", 404);
     }
     let request = match parse_update_push_subscription_request(&mut req).await {
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
     };
-    update_push_subscription(&db, &account.id, &request).await?;
-    let subscription = find_push_subscription(&db, &account.id)
+    update_push_subscription(&db, account.id(), &request).await?;
+    let subscription = find_push_subscription(&db, account.id())
         .await?
         .ok_or_else(|| Error::RustError("push subscription missing after update".to_owned()))?;
     Response::from_json(&push_subscription_document(&subscription, &config))
@@ -649,7 +649,7 @@ pub(crate) async fn delete_push_subscription_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    delete_push_subscription(&db, &account.id).await?;
+    delete_push_subscription(&db, account.id()).await?;
     Response::from_json(&serde_json::json!({}))
 }
 

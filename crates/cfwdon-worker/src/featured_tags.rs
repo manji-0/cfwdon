@@ -343,12 +343,12 @@ pub(crate) async fn featured_tags_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let rows = list_featured_tags_for_account(&db, &account.id).await?;
+    let rows = list_featured_tags_for_account(&db, account.id()).await?;
     let tag_names = rows
         .iter()
         .map(|row| row.tag_name.clone())
         .collect::<Vec<_>>();
-    let metrics_by_tag = featured_tag_metrics_by_tag(&db, &account.id, &tag_names).await?;
+    let metrics_by_tag = featured_tag_metrics_by_tag(&db, account.id(), &tag_names).await?;
     let mut documents = Vec::new();
     for row in rows {
         let normalized = normalize_hashtag(&row.tag_name);
@@ -363,7 +363,7 @@ pub(crate) async fn featured_tags_response(
                 });
         documents.push(featured_tag_api_document(
             &config,
-            &account.username,
+            account.username(),
             &row.tag_name,
             metrics.statuses_count,
             metrics.last_status_at,
@@ -384,12 +384,12 @@ pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Res
 
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let rows = list_featured_tags_for_account(&db, &account.id).await?;
+            let rows = list_featured_tags_for_account(&db, account.id()).await?;
             let tag_names = rows
                 .iter()
                 .map(|row| row.tag_name.clone())
                 .collect::<Vec<_>>();
-            let metrics_by_tag = featured_tag_metrics_by_tag(&db, &account.id, &tag_names).await?;
+            let metrics_by_tag = featured_tag_metrics_by_tag(&db, account.id(), &tag_names).await?;
             let mut documents = Vec::new();
             for row in rows {
                 let normalized = normalize_hashtag(&row.tag_name);
@@ -402,7 +402,7 @@ pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Res
                 );
                 documents.push(featured_tag_api_document(
                     &config,
-                    &account.username,
+                    account.username(),
                     &row.tag_name,
                     metrics.statuses_count,
                     metrics.last_status_at,
@@ -426,7 +426,7 @@ pub(crate) async fn featured_tag_suggestions_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let documents = suggested_featured_tag_names(&db, &account.id)
+    let documents = suggested_featured_tag_names(&db, account.id())
         .await?
         .into_iter()
         .map(|tag| featured_tag_suggestion_document(&config, &tag))
@@ -448,17 +448,17 @@ pub(crate) async fn feature_tag_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    if count_featured_tags(&db, &account.id).await? >= MAX_FEATURED_TAGS as u64
-        && !is_featured_tag_present(&db, &account.id, &tag).await?
+    if count_featured_tags(&db, account.id()).await? >= MAX_FEATURED_TAGS as u64
+        && !is_featured_tag_present(&db, account.id(), &tag).await?
     {
         return Response::error("featured tags limit reached", 422);
     }
 
-    insert_featured_tag(&db, &account.id, &tag).await?;
-    let metrics = featured_tag_metrics(&db, &account.id, &tag).await?;
+    insert_featured_tag(&db, account.id(), &tag).await?;
+    let metrics = featured_tag_metrics(&db, account.id(), &tag).await?;
     Response::from_json(&featured_tag_api_document(
         &config,
-        &account.username,
+        account.username(),
         &tag,
         metrics.statuses_count,
         metrics.last_status_at,
@@ -481,7 +481,7 @@ pub(crate) async fn unfeature_tag_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    if !delete_featured_tag(&db, &account.id, &tag).await? {
+    if !delete_featured_tag(&db, account.id(), &tag).await? {
         return Response::error("featured tag not found", 404);
     }
 
@@ -499,7 +499,7 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
-    let tags = list_featured_tags_for_account(&db, &account.id)
+    let tags = list_featured_tags_for_account(&db, account.id())
         .await?
         .into_iter()
         .map(|row| row.tag_name)
@@ -507,7 +507,7 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
 
     Response::from_json(&build_featured_tags_collection_document(
         &config,
-        &account.username,
+        account.username(),
         &tags,
     ))
 }
@@ -523,7 +523,7 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
-    let pinned_status_uris = crate::list_pinned_statuses_for_account(&db, &account.id)
+    let pinned_status_uris = crate::list_pinned_statuses_for_account(&db, account.id())
         .await?
         .into_iter()
         .filter_map(|status| status.ap_id)
@@ -531,7 +531,7 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
 
     Response::from_json(&build_featured_collection_document(
         &config,
-        &account.username,
+        account.username(),
         &pinned_status_uris,
     ))
 }

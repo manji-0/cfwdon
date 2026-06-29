@@ -45,7 +45,7 @@ pub(crate) async fn resolve_lookup_account(
         let Some(account) = find_account_by_username(db, &handle.username).await? else {
             return Err(Error::RustError("account not found".to_owned()));
         };
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         return Ok(MastodonAccountResponse::from_account_with_stats(
             &account, config, &stats,
         ));
@@ -93,7 +93,7 @@ pub(crate) async fn resolve_search_account(
     if let Some(username) = local_username_from_actor_uri(config, query)
         && let Some(account) = find_account_by_username(db, &username).await?
     {
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         return Ok(Some(MastodonAccountResponse::from_account_with_stats(
             &account, config, &stats,
         )));

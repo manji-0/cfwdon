@@ -205,8 +205,8 @@ pub(crate) async fn follow_tag_response(req: Request, ctx: RouteContext<()>) -> 
         return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
-    follow_tag(&db, &account.id, &tag).await?;
-    Response::from_json(&build_authenticated_tag_response(&db, &config, &account.id, &tag).await?)
+    follow_tag(&db, account.id(), &tag).await?;
+    Response::from_json(&build_authenticated_tag_response(&db, &config, account.id(), &tag).await?)
 }
 
 pub(crate) async fn unfollow_tag_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -214,8 +214,8 @@ pub(crate) async fn unfollow_tag_response(req: Request, ctx: RouteContext<()>) -
         return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
-    unfollow_tag(&db, &account.id, &tag).await?;
-    Response::from_json(&build_authenticated_tag_response(&db, &config, &account.id, &tag).await?)
+    unfollow_tag(&db, account.id(), &tag).await?;
+    Response::from_json(&build_authenticated_tag_response(&db, &config, account.id(), &tag).await?)
 }
 
 pub(crate) async fn feature_tag_v1_response(
@@ -226,14 +226,14 @@ pub(crate) async fn feature_tag_v1_response(
         return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
-    match feature_tag(&db, &account.id, &tag).await {
+    match feature_tag(&db, account.id(), &tag).await {
         Ok(()) => {}
         Err(Error::RustError(message)) if message == "featured tags limit reached" => {
             return Response::error(&message, 422);
         }
         Err(error) => return Err(error),
     }
-    Response::from_json(&build_authenticated_tag_response(&db, &config, &account.id, &tag).await?)
+    Response::from_json(&build_authenticated_tag_response(&db, &config, account.id(), &tag).await?)
 }
 
 pub(crate) async fn unfeature_tag_v1_response(
@@ -244,8 +244,8 @@ pub(crate) async fn unfeature_tag_v1_response(
         return Response::error("Auth0 authentication required", 401);
     };
     let tag = tag_from_context(&ctx)?;
-    unfeature_tag(&db, &account.id, &tag).await?;
-    Response::from_json(&build_authenticated_tag_response(&db, &config, &account.id, &tag).await?)
+    unfeature_tag(&db, account.id(), &tag).await?;
+    Response::from_json(&build_authenticated_tag_response(&db, &config, account.id(), &tag).await?)
 }
 
 pub(crate) async fn followed_tags_response(
@@ -262,7 +262,7 @@ pub(crate) async fn followed_tags_response(
     let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
     let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
 
-    let account_id = D1Type::Text(&account.id);
+    let account_id = D1Type::Text(account.id());
     let rows = db
         .prepare(
             "SELECT id, tag_name, created_at
@@ -298,7 +298,7 @@ pub(crate) async fn followed_tags_response(
     let mut documents = Vec::with_capacity(rows.len());
     for row in rows {
         documents.push(
-            build_authenticated_tag_response(&db, &config, &account.id, &row.tag_name).await?,
+            build_authenticated_tag_response(&db, &config, account.id(), &row.tag_name).await?,
         );
     }
 

@@ -73,7 +73,7 @@ pub(crate) async fn dismiss_notification_entry_usecase(
     {
         return Ok(false);
     }
-    dismiss_account_notification(db, &viewer.id, notification_id).await?;
+    dismiss_account_notification(db, viewer.id(), notification_id).await?;
     Ok(true)
 }
 
@@ -98,7 +98,7 @@ pub(crate) async fn dismiss_notification_group_usecase(
         return Ok(false);
     }
     for entry in entries {
-        dismiss_account_notification(db, &viewer.id, &entry.id).await?;
+        dismiss_account_notification(db, viewer.id(), &entry.id).await?;
     }
     Ok(true)
 }
@@ -107,7 +107,7 @@ pub(crate) async fn clear_notifications_usecase(
     db: &D1Database,
     viewer: &LocalAccount,
 ) -> Result<()> {
-    clear_account_notifications(db, &viewer.id).await
+    clear_account_notifications(db, viewer.id()).await
 }
 
 pub(crate) async fn unread_notifications_count_usecase(

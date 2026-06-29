@@ -13,7 +13,7 @@ use super::{
     upsert_remote_status, validate_poll_vote_submission,
 };
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, StoredRemotePollVoteIntent};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -31,36 +31,6 @@ struct RemoteStatusPollVotePreloadRow {
     poll_id: String,
     option_position: i64,
     option_title: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct RemotePollVoteInsertDraft {
-    vote_id: String,
-    poll_id: String,
-    account_id: String,
-    option_position: u32,
-    option_title: String,
-    activity_id: String,
-}
-
-impl RemotePollVoteInsertDraft {
-    fn from_parts(
-        vote_id: String,
-        poll_id: &str,
-        account_id: &str,
-        option_position: u32,
-        option_title: &str,
-        activity_id: String,
-    ) -> Self {
-        Self {
-            vote_id,
-            poll_id: poll_id.to_owned(),
-            account_id: account_id.to_owned(),
-            option_position,
-            option_title: option_title.to_owned(),
-            activity_id,
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -100,7 +70,7 @@ pub(crate) async fn build_remote_mastodon_poll_response(
     let own_votes = match viewer {
         Some(viewer) => remap_remote_poll_vote_positions(
             &options,
-            &list_remote_poll_votes_for_account(db, &poll.id, &viewer.id).await?,
+            &list_remote_poll_votes_for_account(db, &poll.id, viewer.id()).await?,
         ),
         None => Vec::new(),
     };
@@ -244,7 +214,7 @@ async fn preload_remote_poll_votes_by_poll_id(
             .join(", ")
     );
     let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-    vote_bindings.push(D1Type::Text(viewer.id.as_str()));
+    vote_bindings.push(D1Type::Text(viewer.id()));
     vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
     let vote_rows = db
         .prepare(&vote_sql)
@@ -365,7 +335,7 @@ pub(crate) async fn remote_poll_is_visible_to_viewer(
     let Some(viewer) = viewer else {
         return Ok(false);
     };
-    let has_own_vote = !list_remote_poll_votes_for_account(db, &poll.id, &viewer.id)
+    let has_own_vote = !list_remote_poll_votes_for_account(db, &poll.id, viewer.id())
         .await?
         .is_empty();
 
@@ -374,14 +344,14 @@ pub(crate) async fn remote_poll_is_visible_to_viewer(
             return Ok(true);
         }
         if remote_status_targets_local_viewer_followers(&raw_status, viewer, config)
-            && is_local_account_following_remote_actor(db, &viewer.id, &status.actor_uri).await?
+            && is_local_account_following_remote_actor(db, viewer.id(), &status.actor_uri).await?
         {
             return Ok(true);
         }
         return Ok(has_own_vote);
     }
 
-    if is_local_account_following_remote_actor(db, &viewer.id, &status.actor_uri).await? {
+    if is_local_account_following_remote_actor(db, viewer.id(), &status.actor_uri).await? {
         return Ok(true);
     }
 
@@ -619,7 +589,7 @@ async fn remote_poll_vote_plan(
         return Err(Error::RustError("poll not found".to_owned()));
     }
 
-    let existing_votes = list_remote_poll_votes_for_account(db, &poll.id, &viewer.id).await?;
+    let existing_votes = list_remote_poll_votes_for_account(db, &poll.id, viewer.id()).await?;
     let existing = remap_remote_poll_vote_positions(&options, &existing_votes);
     let had_existing_votes = !existing.is_empty();
     validate_poll_vote_submission(existing.len(), poll.multiple != 0, choices.len())
@@ -697,19 +667,19 @@ async fn queue_and_insert_remote_poll_votes(
             &status.object_uri,
             &option.title,
         )?;
-        queue_remote_actor_activity_required(db, &viewer.id, &actor.actor_uri, &payload_json)
+        queue_remote_actor_activity_required(db, viewer.id(), &actor.actor_uri, &payload_json)
             .await?;
 
         let vote_id = generate_entity_id(16)?;
-        let vote_draft = RemotePollVoteInsertDraft::from_parts(
+        let intent = StoredRemotePollVoteIntent::new(
             vote_id,
             &poll.id,
-            &viewer.id,
+            viewer.id(),
             *choice,
             &option.title,
             activity_id,
         );
-        insert_remote_poll_vote_row(db, &vote_draft).await?;
+        insert_remote_poll_vote_row(db, &intent).await?;
     }
 
     Ok(())
@@ -725,9 +695,9 @@ fn merged_remote_poll_own_votes(existing: Vec<u32>, new_choices: Vec<u32>) -> Ve
 
 async fn insert_remote_poll_vote_row(
     db: &D1Database,
-    draft: &RemotePollVoteInsertDraft,
+    intent: &StoredRemotePollVoteIntent,
 ) -> Result<()> {
-    let bindings = remote_poll_vote_insert_bindings(draft);
+    let bindings = remote_poll_vote_insert_bindings(intent);
     db.prepare(
         "INSERT OR IGNORE INTO remote_status_poll_votes (
             id,
@@ -753,14 +723,14 @@ async fn insert_remote_poll_vote_row(
     Ok(())
 }
 
-fn remote_poll_vote_insert_bindings(draft: &RemotePollVoteInsertDraft) -> [D1Type<'_>; 6] {
+fn remote_poll_vote_insert_bindings(intent: &StoredRemotePollVoteIntent) -> [D1Type<'_>; 6] {
     [
-        D1Type::Text(draft.vote_id.as_str()),
-        D1Type::Text(draft.poll_id.as_str()),
-        D1Type::Text(draft.account_id.as_str()),
-        D1Type::Integer(draft.option_position as i32),
-        D1Type::Text(draft.option_title.as_str()),
-        D1Type::Text(draft.activity_id.as_str()),
+        D1Type::Text(intent.vote_id.as_str()),
+        D1Type::Text(intent.poll_id.as_str()),
+        D1Type::Text(intent.account_id.as_str()),
+        D1Type::Integer(intent.option_position as i32),
+        D1Type::Text(intent.option_title.as_str()),
+        D1Type::Text(intent.activity_id.as_str()),
     ]
 }
 
@@ -856,35 +826,35 @@ mod tests {
     }
 
     #[test]
-    fn remote_poll_vote_insert_draft_maps_storage_fields() {
-        let draft = RemotePollVoteInsertDraft::from_parts(
-            "vote-1".to_owned(),
+    fn stored_remote_poll_vote_intent_maps_storage_fields() {
+        let intent = StoredRemotePollVoteIntent::new(
+            "vote-1",
             "poll-1",
             "acct-1",
             2,
             "Choice B",
-            "activity-1".to_owned(),
+            "activity-1",
         );
 
-        assert_eq!(draft.vote_id, "vote-1");
-        assert_eq!(draft.poll_id, "poll-1");
-        assert_eq!(draft.account_id, "acct-1");
-        assert_eq!(draft.option_position, 2);
-        assert_eq!(draft.option_title, "Choice B");
-        assert_eq!(draft.activity_id, "activity-1");
+        assert_eq!(intent.vote_id, "vote-1");
+        assert_eq!(intent.poll_id, "poll-1");
+        assert_eq!(intent.account_id, "acct-1");
+        assert_eq!(intent.option_position, 2);
+        assert_eq!(intent.option_title, "Choice B");
+        assert_eq!(intent.activity_id, "activity-1");
     }
 
     #[test]
     fn remote_poll_vote_insert_bindings_keep_sql_slot_order_stable() {
-        let draft = RemotePollVoteInsertDraft::from_parts(
-            "vote-1".to_owned(),
+        let intent = StoredRemotePollVoteIntent::new(
+            "vote-1",
             "poll-1",
             "acct-1",
             2,
             "Choice B",
-            "activity-1".to_owned(),
+            "activity-1",
         );
-        let bindings = remote_poll_vote_insert_bindings(&draft);
+        let bindings = remote_poll_vote_insert_bindings(&intent);
 
         assert!(matches!(bindings[0], D1Type::Text("vote-1")));
         assert!(matches!(bindings[1], D1Type::Text("poll-1")));

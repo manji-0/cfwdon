@@ -132,7 +132,7 @@ pub(crate) async fn mute_status_response(req: Request, ctx: RouteContext<()>) ->
         return Response::error("status not found", 404);
     };
 
-    mute_thread_for_status(&db, &viewer.id, &subject.status).await?;
+    mute_thread_for_status(&db, viewer.id(), &subject.status).await?;
     Response::from_json(&thread_mute_status_response(&db, &config, &viewer, subject).await?)
 }
 
@@ -157,7 +157,7 @@ pub(crate) async fn unmute_status_response(
         return Response::error("status not found", 404);
     };
 
-    unmute_thread_for_status(&db, &viewer.id, &subject.status).await?;
+    unmute_thread_for_status(&db, viewer.id(), &subject.status).await?;
     Response::from_json(&thread_mute_status_response(&db, &config, &viewer, subject).await?)
 }
 

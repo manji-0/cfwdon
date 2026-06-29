@@ -35,21 +35,21 @@ pub(crate) async fn ensure_direct_conversation_for_status(
         Some(in_reply_to_id) => {
             match find_conversation_id_by_status_id(db, in_reply_to_id).await? {
                 Some(conversation_id) => conversation_id,
-                None => create_conversation(db, &author.id).await?,
+                None => create_conversation(db, author.id()).await?,
             }
         }
-        None => create_conversation(db, &author.id).await?,
+        None => create_conversation(db, author.id()).await?,
     };
 
     let mut participants = HashSet::new();
-    participants.insert(author.id.clone());
+    participants.insert(author.id().to_owned());
     for participant in list_conversation_participants(db, &conversation_id).await? {
         participants.insert(participant);
     }
     for handle in extract_account_handles_from_text(&draft.text, config) {
         if handle.is_local_to(&config.instance_domain) {
             if let Some(account) = find_account_by_username(db, &handle.username).await? {
-                participants.insert(account.id);
+                participants.insert(account.id().to_owned());
             }
             continue;
         }
@@ -75,9 +75,9 @@ pub(crate) async fn ensure_direct_conversation_for_status(
             upsert_conversation_state(
                 db,
                 &conversation_id,
-                &account.id,
+                account.id(),
                 &status.id,
-                account.id != author.id,
+                account.id() != author.id(),
             )
             .await?;
         }

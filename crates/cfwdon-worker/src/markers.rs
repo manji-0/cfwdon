@@ -121,12 +121,12 @@ pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Res
 
     Response::from_json(&serde_json::json!({
         "home": if wants_home {
-            load_marker(&db, &account.id, HOME_MARKER_SCOPE).await?
+            load_marker(&db, account.id(), HOME_MARKER_SCOPE).await?
         } else {
             None
         },
         "notifications": if wants_notifications {
-            load_marker(&db, &account.id, NOTIFICATIONS_MARKER_SCOPE).await?
+            load_marker(&db, account.id(), NOTIFICATIONS_MARKER_SCOPE).await?
         } else {
             None
         },
@@ -151,14 +151,14 @@ pub(crate) async fn save_markers_response(
 
     Response::from_json(&serde_json::json!({
         "home": match request.home {
-            Some(home) => Some(save_marker(&db, &account.id, HOME_MARKER_SCOPE, home).await?),
-            None => load_marker(&db, &account.id, HOME_MARKER_SCOPE).await?,
+            Some(home) => Some(save_marker(&db, account.id(), HOME_MARKER_SCOPE, home).await?),
+            None => load_marker(&db, account.id(), HOME_MARKER_SCOPE).await?,
         },
         "notifications": match request.notifications {
             Some(notifications) => Some(
-                save_marker(&db, &account.id, NOTIFICATIONS_MARKER_SCOPE, notifications).await?
+                save_marker(&db, account.id(), NOTIFICATIONS_MARKER_SCOPE, notifications).await?
             ),
-            None => load_marker(&db, &account.id, NOTIFICATIONS_MARKER_SCOPE).await?,
+            None => load_marker(&db, account.id(), NOTIFICATIONS_MARKER_SCOPE).await?,
         },
     }))
 }

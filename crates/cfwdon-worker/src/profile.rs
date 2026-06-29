@@ -97,8 +97,8 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
     }
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let stats = load_account_stats(&db, &account.id).await?;
-            let settings = load_account_profile_settings(&db, &account.id).await?;
+            let stats = load_account_stats(&db, account.id()).await?;
+            let settings = load_account_profile_settings(&db, account.id()).await?;
             let response =
                 MastodonAccountResponse::from_account_with_stats(&account, &config, &stats)
                     .with_profile_settings(
@@ -174,10 +174,10 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
         None => return Response::error("Auth0 authentication required", 401),
     };
     let (stats, settings, featured_tags, follow_requests_count) = futures_util::try_join!(
-        load_account_stats(&db, &account.id),
-        load_account_profile_settings(&db, &account.id),
+        load_account_stats(&db, account.id()),
+        load_account_profile_settings(&db, account.id()),
         featured_tags_payload(&db, &config, &account),
-        count_pending_follow_requests(&db, &account.id),
+        count_pending_follow_requests(&db, account.id()),
     )?;
 
     Response::from_json(&build_credentials_document(
@@ -197,7 +197,7 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let settings = load_account_profile_settings(&db, &account.id).await?;
+    let settings = load_account_profile_settings(&db, account.id()).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
 
     Response::from_json(&build_profile_document(
@@ -219,12 +219,12 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
     let settings = &subject.settings;
 
     Response::from_json(&serde_json::json!({
-        "posting:default:visibility": account.default_post_visibility,
-        "posting:default:sensitive": account.default_sensitive,
-        "posting:default:language": account.default_language,
-        "posting:default:quote_policy": account.default_quote_policy,
-        "posting:default:privacy": account.default_post_visibility,
-        "posting:default:media_sensitive": account.default_sensitive,
+        "posting:default:visibility": account.default_visibility().as_str(),
+        "posting:default:sensitive": account.default_sensitive(),
+        "posting:default:language": account.default_language(),
+        "posting:default:quote_policy": account.default_quote_policy().as_str(),
+        "posting:default:privacy": account.default_visibility().as_str(),
+        "posting:default:media_sensitive": account.default_sensitive(),
         "posting:default:content_type": "text/plain",
         "reading:expand:media": if settings.show_media { "show_all" } else { "hide_all" },
         "reading:expand:spoilers": false,
@@ -324,7 +324,7 @@ fn account_preferences_subject_from_value(
     row: &serde_json::Value,
 ) -> Result<AccountPreferencesSubject> {
     let account = serde_json::from_value::<crate::AccountRow>(row.clone())
-        .map(LocalAccount::from)
+        .map(LocalAccount::from_record)
         .map_err(|error| {
             Error::RustError(format!("failed to decode account preferences row: {error}"))
         })?;
@@ -347,7 +347,7 @@ pub(crate) async fn update_credentials(
 
     let (account, settings, stats, featured_tags) =
         update_profile_internal(req, &ctx, &config, &account).await?;
-    let follow_requests_count = count_pending_follow_requests(&db, &account.id).await?;
+    let follow_requests_count = count_pending_follow_requests(&db, account.id()).await?;
     Response::from_json(&build_credentials_document(
         &account,
         &config,
@@ -371,7 +371,7 @@ pub(crate) async fn update_profile_response(
 
     let (account, settings, _stats, featured_tags) =
         update_profile_internal(req, &ctx, &config, &account).await?;
-    invalidate_account_public_cache(&ctx, &account.id, &account.username).await;
+    invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
     Response::from_json(&build_profile_document(
         &account,
         &config,
@@ -411,9 +411,9 @@ async fn update_profile_internal(
     let db = ctx.d1(&config.database_binding)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     let account = apply_account_credentials_update(&db, &bucket, config, account, &update).await?;
-    save_account_profile_settings(&db, &account.id, &update).await?;
-    let stats = load_account_stats(&db, &account.id).await?;
-    let settings = load_account_profile_settings(&db, &account.id).await?;
+    save_account_profile_settings(&db, account.id(), &update).await?;
+    let stats = load_account_stats(&db, account.id()).await?;
+    let settings = load_account_profile_settings(&db, account.id()).await?;
     let featured_tags = featured_tags_payload(&db, config, &account).await?;
 
     Ok((account, settings, stats, featured_tags))
@@ -437,12 +437,12 @@ async fn delete_profile_media_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
     enqueue_profile_update_activities(&db, &config, &account).await?;
-    invalidate_account_public_cache(&ctx, &account.id, &account.username).await;
+    invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
     enqueue_outbox_process_queue_best_effort(&ctx.env, "profile_media_delete").await;
-    let stats = load_account_stats(&db, &account.id).await?;
-    let settings = load_account_profile_settings(&db, &account.id).await?;
+    let stats = load_account_stats(&db, account.id()).await?;
+    let settings = load_account_profile_settings(&db, account.id()).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
-    let follow_requests_count = count_pending_follow_requests(&db, &account.id).await?;
+    let follow_requests_count = count_pending_follow_requests(&db, account.id()).await?;
 
     Response::from_json(&build_credentials_document(
         &account,
@@ -460,14 +460,16 @@ async fn clear_profile_media(
     account: &cfwdon_domain::LocalAccount,
     field: ProfileMediaField,
 ) -> Result<()> {
+    let avatar_key = account.avatar_object_key().map(str::to_owned);
+    let header_key = account.header_object_key().map(str::to_owned);
     let (existing_key, object_key_column, content_type_column) = match field {
         ProfileMediaField::Avatar => (
-            account.avatar_object_key.as_deref(),
+            avatar_key.as_deref(),
             "avatar_object_key",
             "avatar_content_type",
         ),
         ProfileMediaField::Header => (
-            account.header_object_key.as_deref(),
+            header_key.as_deref(),
             "header_object_key",
             "header_content_type",
         ),
@@ -477,7 +479,7 @@ async fn clear_profile_media(
         bucket.delete(object_key).await?;
     }
 
-    let account_id = D1Type::Text(account.id.as_str());
+    let account_id = D1Type::Text(account.id());
     db.prepare(format!(
         "UPDATE accounts
          SET {object_key_column} = NULL,
@@ -489,7 +491,7 @@ async fn clear_profile_media(
     .run()
     .await?;
 
-    let settings = load_account_profile_settings(db, &account.id).await?;
+    let settings = load_account_profile_settings(db, account.id()).await?;
     let updated = AccountProfileSettings {
         avatar_description: if matches!(field, ProfileMediaField::Avatar) {
             String::new()
@@ -503,7 +505,7 @@ async fn clear_profile_media(
         },
         ..settings
     };
-    upsert_account_profile_settings(db, &account.id, &updated).await
+    upsert_account_profile_settings(db, account.id(), &updated).await
 }
 
 async fn load_account_profile_settings(
@@ -644,7 +646,7 @@ async fn featured_tags_payload(
     config: &AppConfig,
     account: &cfwdon_domain::LocalAccount,
 ) -> Result<Vec<serde_json::Value>> {
-    let account_id = D1Type::Text(account.id.as_str());
+    let account_id = D1Type::Text(account.id());
     let result = db
         .prepare(
             "SELECT tag_name
@@ -661,7 +663,7 @@ async fn featured_tags_payload(
         .iter()
         .map(|row| row.tag_name.clone())
         .collect::<Vec<_>>();
-    let metrics_by_tag = featured_tag_metrics_by_tag(db, &account.id, &tag_names).await?;
+    let metrics_by_tag = featured_tag_metrics_by_tag(db, account.id(), &tag_names).await?;
     let mut documents = Vec::with_capacity(rows.len());
     for row in rows {
         let normalized = normalize_hashtag(&row.tag_name);
@@ -676,7 +678,7 @@ async fn featured_tags_payload(
         documents.push(serde_json::json!({
             "id": normalized,
             "name": normalized,
-            "url": format!("{}/tagged/{}", super::actor_url(config, &account.username), normalized),
+            "url": format!("{}/tagged/{}", super::actor_url(config, account.username()), normalized),
             "statuses_count": metrics.statuses_count.to_string(),
             "last_status_at": metrics.last_status_at,
         }));
@@ -740,11 +742,11 @@ fn build_credentials_document(
     .unwrap_or_else(|_| serde_json::json!({}));
 
     if let Some(object) = value.as_object_mut() {
-        object.insert("bot".to_owned(), serde_json::json!(account.bot));
-        object.insert("locked".to_owned(), serde_json::json!(account.locked));
+        object.insert("bot".to_owned(), serde_json::json!(account.is_bot()));
+        object.insert("locked".to_owned(), serde_json::json!(account.is_locked()));
         object.insert(
             "discoverable".to_owned(),
-            serde_json::json!(account.discoverable),
+            serde_json::json!(account.is_discoverable()),
         );
         object.insert(
             "avatar_description".to_owned(),
@@ -770,7 +772,7 @@ fn build_credentials_document(
             );
             source.insert(
                 "discoverable".to_owned(),
-                serde_json::json!(account.discoverable),
+                serde_json::json!(account.is_discoverable()),
             );
         }
     }
@@ -785,29 +787,27 @@ fn build_profile_document(
     featured_tags: Vec<serde_json::Value>,
 ) -> serde_json::Value {
     let avatar = account
-        .avatar_object_key
-        .as_deref()
+        .avatar_object_key()
         .map(|object_key| media_object_url(config, object_key));
     let header = account
-        .header_object_key
-        .as_deref()
+        .header_object_key()
         .map(|object_key| media_object_url(config, object_key));
 
     serde_json::json!({
-        "id": account.id,
-        "display_name": account.display_name,
-        "note": account.bio_text,
-        "fields": profile_fields_for_profile(&account.fields),
+        "id": account.id(),
+        "display_name": account.display_name(),
+        "note": account.bio_text(),
+        "fields": profile_fields_for_profile(account.fields()),
         "avatar": avatar,
         "avatar_static": avatar,
         "avatar_description": settings.avatar_description,
         "header": header,
         "header_static": header,
         "header_description": settings.header_description,
-        "locked": account.locked,
-        "bot": account.bot,
+        "locked": account.is_locked(),
+        "bot": account.is_bot(),
         "hide_collections": settings.hide_collections,
-        "discoverable": account.discoverable,
+        "discoverable": account.is_discoverable(),
         "indexable": settings.indexable,
         "show_media": settings.show_media,
         "show_media_replies": settings.show_media_replies,
@@ -856,10 +856,6 @@ pub(crate) fn profile_field_from_update(field: &UpdateCredentialsField) -> Optio
         name: field.name.clone()?,
         value: field.value.clone()?,
     })
-}
-
-pub(crate) fn parse_profile_fields_json(value: &str) -> Vec<ProfileField> {
-    serde_json::from_str(value).unwrap_or_default()
 }
 
 pub(crate) fn activitypub_profile_attachments(fields: &[ProfileField]) -> Vec<serde_json::Value> {

@@ -1011,7 +1011,7 @@ pub(crate) async fn filters_v1_response(req: Request, ctx: RouteContext<()>) -> 
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let filters = list_v1_filters(&db, &viewer.id)
+    let filters = list_v1_filters(&db, viewer.id())
         .await?
         .into_iter()
         .map(|row| v1_filter_document(&row))
@@ -1032,7 +1032,7 @@ pub(crate) async fn filter_v1_response(req: Request, ctx: RouteContext<()>) -> R
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
 
-    match find_v1_filter(&db, &viewer.id, &filter_id).await? {
+    match find_v1_filter(&db, viewer.id(), &filter_id).await? {
         Some(row) => Response::from_json(&v1_filter_document(&row)),
         None => Response::error("filter not found", 404),
     }
@@ -1061,7 +1061,7 @@ pub(crate) async fn create_filter_v1_response(
 
     let filter_id = create_filter_row(
         &db,
-        &viewer.id,
+        viewer.id(),
         &phrase,
         &contexts,
         expires_at.as_deref(),
@@ -1069,7 +1069,7 @@ pub(crate) async fn create_filter_v1_response(
     )
     .await?;
     replace_filter_keywords(&db, &filter_id, &[(phrase.clone(), whole_word)]).await?;
-    let Some(row) = list_v1_filters(&db, &viewer.id)
+    let Some(row) = list_v1_filters(&db, viewer.id())
         .await?
         .into_iter()
         .find(|row| row.phrase == phrase)
@@ -1094,10 +1094,10 @@ pub(crate) async fn update_filter_v1_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    let Some(existing_keyword) = find_filter_keyword(&db, &viewer.id, &filter_id).await? else {
+    let Some(existing_keyword) = find_filter_keyword(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
-    let Some(existing_filter) = find_filter(&db, &viewer.id, &existing_keyword.filter_id).await?
+    let Some(existing_filter) = find_filter(&db, viewer.id(), &existing_keyword.filter_id).await?
     else {
         return Response::error("filter not found", 404);
     };
@@ -1140,7 +1140,7 @@ pub(crate) async fn update_filter_v1_response(
 
     update_filter_row(
         &db,
-        &viewer.id,
+        viewer.id(),
         &existing_filter.id,
         &phrase,
         &contexts,
@@ -1150,7 +1150,7 @@ pub(crate) async fn update_filter_v1_response(
     .await?;
     update_filter_keyword_row(&db, &existing_keyword.id, &phrase, whole_word).await?;
 
-    let Some(row) = find_v1_filter(&db, &viewer.id, &existing_keyword.id).await? else {
+    let Some(row) = find_v1_filter(&db, viewer.id(), &existing_keyword.id).await? else {
         return Response::error("filter not found", 404);
     };
     Response::from_json(&v1_filter_document(&row))
@@ -1172,7 +1172,7 @@ pub(crate) async fn delete_filter_v1_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
 
-    let Some(keyword) = find_filter_keyword(&db, &viewer.id, &filter_id).await? else {
+    let Some(keyword) = find_filter_keyword(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
     delete_filter_keyword_row(&db, &keyword.id).await?;
@@ -1187,7 +1187,7 @@ pub(crate) async fn filters_v2_response(req: Request, ctx: RouteContext<()>) -> 
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let filters = list_filters(&db, &viewer.id).await?;
+    let filters = list_filters(&db, viewer.id()).await?;
     let (keywords_by_filter_id, statuses_by_filter_id) = futures_util::try_join!(
         list_filter_keywords_for_filters(&db, &filters),
         list_filter_statuses_for_filters(&db, &filters),
@@ -1224,7 +1224,7 @@ pub(crate) async fn filter_v2_response(req: Request, ctx: RouteContext<()>) -> R
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
 
-    match find_filter(&db, &viewer.id, &filter_id).await? {
+    match find_filter(&db, viewer.id(), &filter_id).await? {
         Some(row) => Response::from_json(&v2_filter_document(&db, &row).await?),
         None => Response::error("filter not found", 404),
     }
@@ -1277,7 +1277,7 @@ pub(crate) async fn create_filter_v2_response(
 
     let filter_id = create_filter_row(
         &db,
-        &viewer.id,
+        viewer.id(),
         &title,
         &contexts,
         expires_at.as_deref(),
@@ -1285,7 +1285,7 @@ pub(crate) async fn create_filter_v2_response(
     )
     .await?;
     replace_filter_keywords(&db, &filter_id, &keywords).await?;
-    let Some(row) = find_filter(&db, &viewer.id, &filter_id).await? else {
+    let Some(row) = find_filter(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
     Response::from_json(&v2_filter_document(&db, &row).await?)
@@ -1306,7 +1306,7 @@ pub(crate) async fn update_filter_v2_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    let Some(existing) = find_filter(&db, &viewer.id, &filter_id).await? else {
+    let Some(existing) = find_filter(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
     let request = parse_v2_filter_request(req).await?;
@@ -1333,7 +1333,7 @@ pub(crate) async fn update_filter_v2_response(
 
     update_filter_row(
         &db,
-        &viewer.id,
+        viewer.id(),
         &filter_id,
         &title,
         &contexts,
@@ -1356,7 +1356,7 @@ pub(crate) async fn update_filter_v2_response(
         replace_filter_keywords(&db, &filter_id, &keywords).await?;
     }
 
-    let Some(row) = find_filter(&db, &viewer.id, &filter_id).await? else {
+    let Some(row) = find_filter(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
     Response::from_json(&v2_filter_document(&db, &row).await?)
@@ -1377,7 +1377,7 @@ pub(crate) async fn delete_filter_v2_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    if !delete_filter_row(&db, &viewer.id, &filter_id).await? {
+    if !delete_filter_row(&db, viewer.id(), &filter_id).await? {
         return Response::error("filter not found", 404);
     }
     Response::from_json(&serde_json::json!({}))
@@ -1398,7 +1398,7 @@ pub(crate) async fn filter_keywords_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    if find_filter(&db, &viewer.id, &filter_id).await?.is_none() {
+    if find_filter(&db, viewer.id(), &filter_id).await?.is_none() {
         return Response::error("filter not found", 404);
     }
     let response = list_filter_keywords(&db, &filter_id)
@@ -1424,7 +1424,7 @@ pub(crate) async fn create_filter_keyword_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    if find_filter(&db, &viewer.id, &filter_id).await?.is_none() {
+    if find_filter(&db, viewer.id(), &filter_id).await?.is_none() {
         return Response::error("filter not found", 404);
     }
     let request = parse_keyword_request(req).await?;
@@ -1453,7 +1453,7 @@ pub(crate) async fn filter_keyword_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing keyword id route parameter".to_owned()))?;
-    match find_filter_keyword(&db, &viewer.id, &keyword_id).await? {
+    match find_filter_keyword(&db, viewer.id(), &keyword_id).await? {
         Some(row) => Response::from_json(&keyword_document(&row)),
         None => Response::error("filter keyword not found", 404),
     }
@@ -1474,7 +1474,7 @@ pub(crate) async fn update_filter_keyword_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing keyword id route parameter".to_owned()))?;
-    let Some(existing) = find_filter_keyword(&db, &viewer.id, &keyword_id).await? else {
+    let Some(existing) = find_filter_keyword(&db, viewer.id(), &keyword_id).await? else {
         return Response::error("filter keyword not found", 404);
     };
     let request = parse_keyword_request(req).await?;
@@ -1506,7 +1506,7 @@ pub(crate) async fn delete_filter_keyword_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing keyword id route parameter".to_owned()))?;
-    let Some(keyword) = find_filter_keyword(&db, &viewer.id, &keyword_id).await? else {
+    let Some(keyword) = find_filter_keyword(&db, viewer.id(), &keyword_id).await? else {
         return Response::error("filter keyword not found", 404);
     };
     delete_filter_keyword_row(&db, &keyword.id).await?;
@@ -1528,7 +1528,7 @@ pub(crate) async fn filter_statuses_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    if find_filter(&db, &viewer.id, &filter_id).await?.is_none() {
+    if find_filter(&db, viewer.id(), &filter_id).await?.is_none() {
         return Response::error("filter not found", 404);
     }
     let response = list_filter_statuses(&db, &filter_id)
@@ -1554,7 +1554,7 @@ pub(crate) async fn create_filter_status_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter id route parameter".to_owned()))?;
-    if find_filter(&db, &viewer.id, &filter_id).await?.is_none() {
+    if find_filter(&db, viewer.id(), &filter_id).await?.is_none() {
         return Response::error("filter not found", 404);
     }
     let request = parse_status_filter_request(req).await?;
@@ -1581,7 +1581,7 @@ pub(crate) async fn filter_status_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter status id route parameter".to_owned()))?;
-    match find_filter_status(&db, &viewer.id, &status_filter_id).await? {
+    match find_filter_status(&db, viewer.id(), &status_filter_id).await? {
         Some(row) => Response::from_json(&status_filter_document(&row)),
         None => Response::error("filter status not found", 404),
     }
@@ -1602,7 +1602,7 @@ pub(crate) async fn delete_filter_status_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing filter status id route parameter".to_owned()))?;
-    if find_filter_status(&db, &viewer.id, &status_filter_id)
+    if find_filter_status(&db, viewer.id(), &status_filter_id)
         .await?
         .is_none()
     {

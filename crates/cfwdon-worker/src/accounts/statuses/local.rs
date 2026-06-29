@@ -28,11 +28,11 @@ pub(crate) async fn local_account_statuses_response(
     let is_pinned_page = query.pinned.unwrap_or(false);
     let html_fetch_limit = limit.saturating_add(1);
     let mut statuses = if is_pinned_page {
-        list_pinned_statuses_for_account(db, &account.id).await?
+        list_pinned_statuses_for_account(db, account.id()).await?
     } else if wants_html {
         list_public_account_statuses(
             db,
-            &account.id,
+            account.id(),
             query.max_id.as_deref(),
             min_id,
             html_fetch_limit,
@@ -40,15 +40,15 @@ pub(crate) async fn local_account_statuses_response(
         .await?
     } else {
         let visibility = match viewer {
-            Some(viewer) if viewer.id == account.id => AccountStatusVisibilityScope::All,
-            Some(viewer) if is_local_follower_authorized(db, &viewer.id, &account.id).await? => {
+            Some(viewer) if viewer.id() == account.id() => AccountStatusVisibilityScope::All,
+            Some(viewer) if is_local_follower_authorized(db, viewer.id(), account.id()).await? => {
                 AccountStatusVisibilityScope::PublicUnlistedPrivate
             }
             _ => AccountStatusVisibilityScope::Public,
         };
         list_account_statuses(
             db,
-            &account.id,
+            account.id(),
             account_status_list_options(query, min_id, query_limit, visibility),
         )
         .await?
@@ -83,7 +83,7 @@ pub(crate) async fn local_account_statuses_response(
             let media = media_by_status_id.remove(&status.id).unwrap_or_default();
             if !local_status_matches_account_filters(
                 &status,
-                &account.id,
+                account.id(),
                 query,
                 &media,
                 status
@@ -99,9 +99,9 @@ pub(crate) async fn local_account_statuses_response(
 
         return account_statuses_html_response(
             config,
-            &account.display_name,
-            &account.username,
-            &actor_url(config, &account.username),
+            account.display_name(),
+            account.username(),
+            &actor_url(config, account.username()),
             &html_statuses,
             older_page_url.as_deref(),
         );
@@ -128,7 +128,7 @@ pub(crate) async fn local_account_statuses_response(
         async {
             match viewer {
                 Some(viewer) => {
-                    preload_local_status_viewer_state(db, &viewer.id, &status_refs, None).await
+                    preload_local_status_viewer_state(db, viewer.id(), &status_refs, None).await
                 }
                 None => Ok(Default::default()),
             }
@@ -138,7 +138,7 @@ pub(crate) async fn local_account_statuses_response(
         load_in_reply_to_account_ids(db, &statuses),
         async {
             match viewer {
-                Some(viewer) => load_account_filter_matcher(db, &viewer.id).await.map(Some),
+                Some(viewer) => load_account_filter_matcher(db, viewer.id()).await.map(Some),
                 None => Ok(None),
             }
         },
@@ -152,7 +152,7 @@ pub(crate) async fn local_account_statuses_response(
         let media = media_by_status_id.remove(&status.id).unwrap_or_default();
         if !local_status_matches_account_filters(
             &status,
-            &account.id,
+            account.id(),
             query,
             &media,
             status

@@ -547,7 +547,7 @@ async fn build_local_interaction_account_responses(
         let Some(account) = find_account_by_id(db, account_id).await? else {
             continue;
         };
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         responses.push(MastodonAccountResponse::from_account_with_stats(
             &account, config, &stats,
         ));
@@ -652,7 +652,7 @@ async fn status_interaction_accounts_response(
 
     let mut responses = match status {
         ResolvedStatus::Local(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
             let local_accounts = match kind {
@@ -692,7 +692,7 @@ async fn status_interaction_accounts_response(
             responses
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
             let local_accounts = match kind {
@@ -752,10 +752,10 @@ pub(crate) async fn status_object_response(
     let Some(status) = find_status_by_id(&db, &status_id).await? else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != account.id {
+    if status.account_id != account.id() {
         return Response::error("status not found", 404);
     }
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Response::error("status not found", 404);
     }
 
@@ -785,7 +785,7 @@ fn status_object_html_response(
     let title_text = strip_html_tags(&status.content_html);
     let fallback_title;
     let title_source = if title_text.is_empty() {
-        fallback_title = format!("@{}", account.username);
+        fallback_title = format!("@{}", account.username());
         fallback_title.as_str()
     } else {
         &title_text
@@ -834,13 +834,13 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
 
     let mut card = match status {
         ResolvedStatus::Local(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
-            build_status_card_value(&status._text_content)
+            build_status_card_value(&status.text)
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
             let attachments =
@@ -959,7 +959,7 @@ async fn load_remote_status_api_subject(
     db: &worker::D1Database,
     status: crate::RemoteStatusRow,
 ) -> Result<Option<LoadedStatusApiSubject>> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(None);
     }
     let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
@@ -1024,7 +1024,7 @@ pub(crate) async fn status_source_response(
 
     Response::from_json(&StatusSourceResponse {
         id: status.id,
-        text: status._text_content,
+        text: status.text,
         spoiler_text: status.spoiler_text,
     })
 }
@@ -1077,7 +1077,7 @@ pub(crate) async fn status_context_response(
             .await
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Response::error("status not found", 404);
             }
             let Some(actor) =
@@ -1145,7 +1145,7 @@ pub(crate) async fn status_history_response(
     }
 
     if let Some(status) = find_remote_status_by_id(&detail.base.db, &detail.base.status_id).await? {
-        if !is_public_activitypub_visibility(&status.visibility) {
+        if !is_public_activitypub_visibility(status.visibility.as_str()) {
             return Response::error("status not found", 404);
         }
         let Some(actor) =

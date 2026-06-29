@@ -11,7 +11,7 @@ pub(crate) async fn build_report_response(
 ) -> Result<MastodonReportResponse> {
     let target_account = match resolve_account_reference(db, &report.target_account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let stats = load_account_stats(db, &account.id).await?;
+            let stats = load_account_stats(db, account.id()).await?;
             MastodonAccountResponse::from_account_with_stats(&account, config, &stats)
         }
         Some(AccountReference::Remote(actor)) => MastodonAccountResponse::from_remote_actor(&actor),

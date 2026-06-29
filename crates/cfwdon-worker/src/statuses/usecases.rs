@@ -54,7 +54,7 @@ pub(crate) async fn delete_owned_local_status(
     requester: &LocalAccount,
     status_id: &str,
 ) -> Result<Option<DeleteLocalStatusResult>> {
-    let Some(status) = find_owned_local_status(db, status_id, &requester.id).await? else {
+    let Some(status) = find_owned_local_status(db, status_id, requester.id()).await? else {
         return Ok(None);
     };
 
@@ -189,7 +189,7 @@ pub(crate) async fn create_published_status_and_response(
     enqueue_outbox_activity(db, config, input.account, &status).await?;
     let _ = send_status_quote_notification(db, config, &status).await;
     if let Some(recipient_account_id) = input.in_reply_to_account_id.as_deref()
-        && recipient_account_id != input.account.id
+        && recipient_account_id != input.account.id()
     {
         let _ = send_push_notification(
             db,
@@ -197,24 +197,24 @@ pub(crate) async fn create_published_status_and_response(
             recipient_account_id,
             "status",
             serde_json::json!({
-                "account_id": input.account.id,
+                "account_id": input.account.id(),
                 "status_id": status.id,
                 "in_reply_to_account_id": recipient_account_id,
             }),
         )
         .await;
     }
-    for handle in extract_mentions_from_text(&status._text_content, config) {
+    for handle in extract_mentions_from_text(&status.text, config) {
         if let Some(account) = find_account_by_username(db, &handle.username).await?
-            && account.id != input.account.id
+            && account.id() != input.account.id()
         {
             let _ = send_push_notification(
                 db,
                 config,
-                &account.id,
+                account.id(),
                 "mention",
                 serde_json::json!({
-                    "account_id": input.account.id,
+                    "account_id": input.account.id(),
                     "status_id": status.id,
                 }),
             )
@@ -229,8 +229,8 @@ pub(crate) async fn create_published_status_and_response(
             preload_status_counts(db, &status_ids, &[]),
             preload_status_quote_counts(db, &quote_count_uris),
             preload_mastodon_poll_responses(db, &status_ids, Some(input.account)),
-            preload_local_status_viewer_state(db, &input.account.id, &status_refs, None),
-            load_account_filter_matcher(db, &input.account.id),
+            preload_local_status_viewer_state(db, input.account.id(), &status_refs, None),
+            load_account_filter_matcher(db, input.account.id()),
         )?;
     build_local_status_response_with_quote_count_preloads(
         db,

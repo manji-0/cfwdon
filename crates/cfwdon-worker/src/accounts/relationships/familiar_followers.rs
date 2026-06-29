@@ -92,8 +92,8 @@ pub(crate) async fn familiar_followers_response(
                     &mut seen_ids,
                     list_familiar_local_accounts_for_local_target(
                         &db,
-                        &viewer.id,
-                        &target.id,
+                        viewer.id(),
+                        target.id(),
                         FAMILIAR_FOLLOWERS_LIMIT as u32,
                     )
                     .await?,
@@ -105,7 +105,10 @@ pub(crate) async fn familiar_followers_response(
                         &mut accounts,
                         &mut seen_ids,
                         list_familiar_remote_actors_for_local_target(
-                            &db, &viewer.id, &target.id, remaining,
+                            &db,
+                            viewer.id(),
+                            target.id(),
+                            remaining,
                         )
                         .await?,
                     );
@@ -119,7 +122,7 @@ pub(crate) async fn familiar_followers_response(
                     &mut seen_ids,
                     list_familiar_local_accounts_for_remote_target(
                         &db,
-                        &viewer.id,
+                        viewer.id(),
                         &actor.actor_uri,
                         FAMILIAR_FOLLOWERS_LIMIT as u32,
                     )

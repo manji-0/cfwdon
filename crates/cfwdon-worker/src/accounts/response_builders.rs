@@ -11,7 +11,7 @@ pub(crate) async fn build_local_account_response(
     config: &cfwdon_core::AppConfig,
     account: &LocalAccount,
 ) -> Result<MastodonAccountResponse> {
-    let stats = load_account_stats(db, &account.id).await?;
+    let stats = load_account_stats(db, account.id()).await?;
     Ok(MastodonAccountResponse::from_account_with_stats(
         account, config, &stats,
     ))

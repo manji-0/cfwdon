@@ -63,24 +63,22 @@ pub(crate) fn build_activitypub_actor_document(
     config: &AppConfig,
     account: &LocalAccount,
 ) -> ActivityPubActorResponse {
-    let actor_url = actor_url(config, &account.username);
-    let public_key_id = public_key_id(config, &account.username);
+    let actor_url = actor_url(config, account.username());
+    let public_key_id = public_key_id(config, account.username());
     let icon = account
-        .avatar_object_key
-        .as_ref()
-        .zip(account.avatar_content_type.as_ref())
+        .avatar_object_key()
+        .zip(account.avatar_content_type())
         .map(|(object_key, content_type)| ActivityPubImage {
             image_type: "Image",
-            media_type: content_type.clone(),
+            media_type: content_type.to_owned(),
             url: media_object_url(config, object_key),
         });
     let image = account
-        .header_object_key
-        .as_ref()
-        .zip(account.header_content_type.as_ref())
+        .header_object_key()
+        .zip(account.header_content_type())
         .map(|(object_key, content_type)| ActivityPubImage {
             image_type: "Image",
-            media_type: content_type.clone(),
+            media_type: content_type.to_owned(),
             url: media_object_url(config, object_key),
         });
 
@@ -90,10 +88,14 @@ pub(crate) fn build_activitypub_actor_document(
             "https://w3id.org/security/v1",
         ],
         id: actor_url.clone(),
-        actor_type: if account.bot { "Service" } else { "Person" },
-        preferred_username: account.username.clone(),
-        name: account.display_name.clone(),
-        summary: account.bio_html.clone(),
+        actor_type: if account.is_bot() {
+            "Service"
+        } else {
+            "Person"
+        },
+        preferred_username: account.username().to_owned(),
+        name: account.display_name().to_owned(),
+        summary: account.bio_html().to_owned(),
         inbox: format!("{actor_url}/inbox"),
         outbox: format!("{actor_url}/outbox"),
         followers: format!("{actor_url}/followers"),
@@ -106,14 +108,14 @@ pub(crate) fn build_activitypub_actor_document(
         },
         icon,
         image,
-        attachment: activitypub_profile_attachments(&account.fields),
+        attachment: activitypub_profile_attachments(account.fields()),
         public_key: ActivityPubPublicKey {
             id: public_key_id,
             owner: actor_url.clone(),
-            public_key_pem: account.public_key_pem.clone(),
+            public_key_pem: account.public_key_pem().to_owned(),
         },
-        manually_approves_followers: account.locked,
-        discoverable: account.discoverable,
-        published: account.created_at.clone(),
+        manually_approves_followers: account.is_locked(),
+        discoverable: account.is_discoverable(),
+        published: account.created_at().to_owned(),
     }
 }

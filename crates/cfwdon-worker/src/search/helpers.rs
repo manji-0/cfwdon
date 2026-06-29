@@ -163,31 +163,6 @@ pub(crate) fn normalize_search_query_input(query: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{SearchV2ExecutionPlan, SearchV2Query};
-
-    #[test]
-    fn search_v2_execution_plan_normalizes_and_derives_controls() {
-        let plan = SearchV2ExecutionPlan::from_query(SearchV2Query {
-            q: "  “hello”  ".to_owned(),
-            search_type: Some("statuses".to_owned()),
-            resolve: Some(true),
-            limit: Some(99),
-            offset: Some(3),
-            ..SearchV2Query::default()
-        });
-
-        assert_eq!(plan.query_text(), "\"hello\"");
-        assert!(!plan.search_flags.accounts);
-        assert!(plan.search_flags.statuses);
-        assert_eq!(plan.limit, 40);
-        assert_eq!(plan.offset, 3);
-        assert!(plan.resolve_enabled);
-        assert!(plan.requires_auth);
-    }
-}
-
 fn fold_search_match_character(ch: char) -> Option<&'static str> {
     match ch {
         'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'ǎ' => Some("a"),
@@ -272,5 +247,30 @@ pub(crate) fn search_text_match_rank(query: &str, candidate: &str) -> u8 {
         2
     } else {
         3
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SearchV2ExecutionPlan, SearchV2Query};
+
+    #[test]
+    fn search_v2_execution_plan_normalizes_and_derives_controls() {
+        let plan = SearchV2ExecutionPlan::from_query(SearchV2Query {
+            q: "  “hello”  ".to_owned(),
+            search_type: Some("statuses".to_owned()),
+            resolve: Some(true),
+            limit: Some(99),
+            offset: Some(3),
+            ..SearchV2Query::default()
+        });
+
+        assert_eq!(plan.query_text(), "\"hello\"");
+        assert!(!plan.search_flags.accounts);
+        assert!(plan.search_flags.statuses);
+        assert_eq!(plan.limit, 40);
+        assert_eq!(plan.offset, 3);
+        assert!(plan.resolve_enabled);
+        assert!(plan.requires_auth);
     }
 }

@@ -82,12 +82,12 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
 
     let instance_host = instance_host(&config);
     let response = WebFingerResponse {
-        subject: format!("acct:{}@{}", account.username, instance_host),
+        subject: format!("acct:{}@{}", account.username(), instance_host),
         links: vec![
-            WebFingerLink::self_link(actor_url(&config, &account.username)),
+            WebFingerLink::self_link(actor_url(&config, account.username())),
             WebFingerLink::subscribe_link(format!(
                 "{}/remote-follow?domain={{uri}}",
-                actor_url(&config, &account.username)
+                actor_url(&config, account.username())
             )),
         ],
     };
@@ -123,8 +123,8 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
     let account = ensure_account_keys(&db, &config, account).await?;
 
     if wants_html {
-        let stats = load_account_stats(&db, &account.id).await?;
-        let statuses = list_public_outbox_statuses(&db, &account.id, 20).await?;
+        let stats = load_account_stats(&db, account.id()).await?;
+        let statuses = list_public_outbox_statuses(&db, account.id(), 20).await?;
         let status_ids = statuses
             .iter()
             .map(|status| status.id.clone())
@@ -169,7 +169,7 @@ pub(crate) async fn remote_follow_response(
     };
     let query: RemoteFollowQuery = req.query()?;
     let remote_base = remote_follow_base_url(&query.domain)?;
-    let acct = format!("acct:{}@{}", account.username, instance_host(&config));
+    let acct = format!("acct:{}@{}", account.username(), instance_host(&config));
     let location = format!(
         "{}/authorize_interaction?uri={}",
         remote_base.trim_end_matches('/'),
@@ -260,18 +260,20 @@ fn profile_html_document(
     stats: &AccountStats,
     posts_html: &str,
 ) -> String {
-    let profile_url = actor_url(config, &account.username);
+    let profile_url = actor_url(config, account.username());
     let display_name_source = profile_display_name_source(account);
     let display_name = escape_html(&display_name_source);
-    let username = escape_html(&format!("@{}@{}", account.username, instance_host(config)));
-    let title = escape_html(&format!("{display_name_source} ({})", account.username));
+    let username = escape_html(&format!(
+        "@{}@{}",
+        account.username(),
+        instance_host(config)
+    ));
+    let title = escape_html(&format!("{display_name_source} ({})", account.username()));
     let avatar_url = account
-        .avatar_object_key
-        .as_deref()
+        .avatar_object_key()
         .map(|object_key| media_object_url(config, object_key));
     let header_url = account
-        .header_object_key
-        .as_deref()
+        .header_object_key()
         .map(|object_key| media_object_url(config, object_key));
     let header_style = profile_header_style(header_url.as_deref());
     let avatar_html =
@@ -279,7 +281,7 @@ fn profile_html_document(
     let bio_html = profile_bio_html(account);
     let fields_html = profile_fields_html(account);
     let badges_html = profile_badges_html(account);
-    let created = escape_html(&account.created_at);
+    let created = escape_html(account.created_at());
     let posts_section = profile_posts_section(&profile_url, posts_html);
     format!(
         r#"<!doctype html>
@@ -319,10 +321,10 @@ a{{color:inherit}}main{{width:min(960px,100%);margin:0 auto;padding:32px 20px 48
 }
 
 fn profile_display_name_source(account: &LocalAccount) -> String {
-    if account.display_name.trim().is_empty() {
-        format!("@{}", account.username)
+    if account.display_name().trim().is_empty() {
+        format!("@{}", account.username())
     } else {
-        account.display_name.clone()
+        account.display_name().to_owned()
     }
 }
 
@@ -354,22 +356,22 @@ fn profile_avatar_html(
 }
 
 fn profile_bio_html(account: &LocalAccount) -> String {
-    if account.bio_html.trim().is_empty() {
+    if account.bio_html().trim().is_empty() {
         "<p class=\"muted\">No profile note yet.</p>".to_owned()
     } else {
-        account.bio_html.clone()
+        account.bio_html().to_owned()
     }
 }
 
 fn profile_fields_html(account: &LocalAccount) -> String {
-    if account.fields.is_empty() {
+    if account.fields().is_empty() {
         return String::new();
     }
 
     format!(
         "<dl class=\"fields\">{}</dl>",
         account
-            .fields
+            .fields()
             .iter()
             .map(|field| {
                 format!(
@@ -386,9 +388,11 @@ fn profile_fields_html(account: &LocalAccount) -> String {
 fn profile_badges_html(account: &LocalAccount) -> String {
     [
         account
-            .locked
+            .is_locked()
             .then_some("<span class=\"badge\">Locked</span>"),
-        account.bot.then_some("<span class=\"badge\">Bot</span>"),
+        account
+            .is_bot()
+            .then_some("<span class=\"badge\">Bot</span>"),
     ]
     .into_iter()
     .flatten()
@@ -457,15 +461,15 @@ pub(crate) async fn followers_collection_response(
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
-    let mut ordered_items = list_follower_actor_uris(&db, &account.id).await?;
+    let mut ordered_items = list_follower_actor_uris(&db, account.id()).await?;
     let mut seen = ordered_items.iter().cloned().collect::<HashSet<_>>();
-    for username in list_local_follower_usernames(&db, &account.id).await? {
+    for username in list_local_follower_usernames(&db, account.id()).await? {
         let actor_uri = actor_url(&config, &username);
         if seen.insert(actor_uri.clone()) {
             ordered_items.push(actor_uri);
         }
     }
-    let collection_id = format!("{}/followers", actor_url(&config, &account.username));
+    let collection_id = format!("{}/followers", actor_url(&config, account.username()));
     json_response(
         &build_ordered_collection_document(&collection_id, &ordered_items, &query),
         "application/activity+json",
@@ -489,8 +493,8 @@ pub(crate) async fn following_collection_response(
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
-    let ordered_items = list_following_actor_uris(&db, &account.id).await?;
-    let collection_id = format!("{}/following", actor_url(&config, &account.username));
+    let ordered_items = list_following_actor_uris(&db, account.id()).await?;
+    let collection_id = format!("{}/following", actor_url(&config, account.username()));
 
     json_response(
         &build_ordered_collection_document(&collection_id, &ordered_items, &query),
@@ -512,8 +516,8 @@ pub(crate) async fn outbox_response(ctx: RouteContext<()>) -> Result<Response> {
         return Response::error("actor not found", 404);
     };
 
-    let statuses = list_public_outbox_statuses(&db, &account.id, 20).await?;
-    let actor = actor_url(&config, &account.username);
+    let statuses = list_public_outbox_statuses(&db, account.id(), 20).await?;
+    let actor = actor_url(&config, account.username());
     let outbox = format!("{actor}/outbox");
     let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
 

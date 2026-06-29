@@ -662,11 +662,11 @@ async fn quote_state_for_local_quoted_status(
     viewer: &LocalAccount,
     quoted_account: &LocalAccount,
 ) -> Result<Option<&'static str>> {
-    let quoted_actor_uri = actor_url(config, &quoted_account.username);
-    if is_blocking_actor(db, &viewer.id, &quoted_actor_uri).await? {
+    let quoted_actor_uri = actor_url(config, quoted_account.username());
+    if is_blocking_actor(db, viewer.id(), &quoted_actor_uri).await? {
         return Ok(Some("blocked_account"));
     }
-    if is_muted_actor(db, &viewer.id, &quoted_actor_uri).await? {
+    if is_muted_actor(db, viewer.id(), &quoted_actor_uri).await? {
         return Ok(Some("muted_account"));
     }
     Ok(None)
@@ -677,13 +677,13 @@ async fn quote_state_for_remote_quoted_status(
     viewer: &LocalAccount,
     actor: &RemoteActorRow,
 ) -> Result<Option<&'static str>> {
-    if is_blocking_actor(db, &viewer.id, &actor.actor_uri).await? {
+    if is_blocking_actor(db, viewer.id(), &actor.actor_uri).await? {
         return Ok(Some("blocked_account"));
     }
-    if viewer_blocks_domain(db, &viewer.id, &actor.domain).await? {
+    if viewer_blocks_domain(db, viewer.id(), &actor.domain).await? {
         return Ok(Some("blocked_domain"));
     }
-    if is_muted_actor(db, &viewer.id, &actor.actor_uri).await? {
+    if is_muted_actor(db, viewer.id(), &actor.actor_uri).await? {
         return Ok(Some("muted_account"));
     }
     Ok(None)
@@ -740,12 +740,8 @@ async fn remote_quoted_status_document_state(
         .unwrap_or(accepted_quote_document_state()))
 }
 
-pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &str {
-    if matches!(status.visibility.as_str(), "private" | "direct") {
-        "nobody"
-    } else {
-        status.quote_approval_policy.as_deref().unwrap_or("public")
-    }
+pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &'static str {
+    status.effective_quote_approval_policy().as_str()
 }
 
 async fn build_local_quote_approval(
@@ -763,10 +759,13 @@ async fn build_local_quote_approval(
     let current_user = match policy {
         "public" => "automatic",
         "followers" => {
-            if viewer.map(|viewer| viewer.id == owner.id).unwrap_or(false) {
+            if viewer
+                .map(|viewer| viewer.id() == owner.id())
+                .unwrap_or(false)
+            {
                 "automatic"
             } else if let Some(viewer) = viewer {
-                if is_local_follower_authorized(db, &viewer.id, &owner.id).await? {
+                if is_local_follower_authorized(db, viewer.id(), owner.id()).await? {
                     "automatic"
                 } else {
                     "denied"
@@ -776,7 +775,10 @@ async fn build_local_quote_approval(
             }
         }
         _ => {
-            if viewer.map(|viewer| viewer.id == owner.id).unwrap_or(false) {
+            if viewer
+                .map(|viewer| viewer.id() == owner.id())
+                .unwrap_or(false)
+            {
                 "automatic"
             } else {
                 "denied"
@@ -875,9 +877,9 @@ fn mention_document_for_handle(
 
 fn local_mention_document(config: &AppConfig, account: &LocalAccount) -> serde_json::Value {
     serde_json::json!({
-        "id": account.id.clone(),
-        "username": account.username.clone(),
-        "url": actor_url(config, &account.username),
+        "id": account.id().to_owned(),
+        "username": account.username().to_owned(),
+        "url": actor_url(config, account.username()),
         "acct": account.acct(),
     })
 }
@@ -915,7 +917,12 @@ async fn load_mention_local_accounts(
     Ok(result
         .results::<AccountRow>()?
         .into_iter()
-        .map(|row| (row.username.to_ascii_lowercase(), LocalAccount::from(row)))
+        .map(|row| {
+            (
+                row.username.to_ascii_lowercase(),
+                LocalAccount::from_record(row),
+            )
+        })
         .collect())
 }
 
@@ -1214,9 +1221,9 @@ async fn load_local_status_response_details(
             Some(application) => application,
             None => build_status_application(db, status.application_id).await?,
         };
-    let card = build_status_card_value(&status._text_content);
+    let card = build_status_card_value(&status.text);
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
-    let mentions = build_status_mentions(db, config, &status._text_content).await?;
+    let mentions = build_status_mentions(db, config, &status.text).await?;
     let (favourites_count, reblogs_count) =
         local_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
@@ -1286,7 +1293,7 @@ async fn local_status_response_viewer_state(
             reblogged: state.reblogged,
             bookmarked: state.bookmarked,
             pinned: state.pinned,
-            muted: is_local_status_thread_muted_by(db, &viewer.id, status).await?,
+            muted: is_local_status_thread_muted_by(db, viewer.id(), status).await?,
         });
     }
 
@@ -1295,11 +1302,11 @@ async fn local_status_response_viewer_state(
     };
 
     Ok(LocalStatusResponseViewerState {
-        favourited: is_local_status_favourited_by(db, &viewer.id, status).await?,
-        reblogged: is_local_status_reblogged_by(db, &viewer.id, status).await?,
-        bookmarked: is_local_status_bookmarked_by(db, &viewer.id, status).await?,
-        pinned: is_local_status_pinned_by(db, &viewer.id, &status.id).await?,
-        muted: is_local_status_thread_muted_by(db, &viewer.id, status).await?,
+        favourited: is_local_status_favourited_by(db, viewer.id(), status).await?,
+        reblogged: is_local_status_reblogged_by(db, viewer.id(), status).await?,
+        bookmarked: is_local_status_bookmarked_by(db, viewer.id(), status).await?,
+        pinned: is_local_status_pinned_by(db, viewer.id(), &status.id).await?,
+        muted: is_local_status_thread_muted_by(db, viewer.id(), status).await?,
     })
 }
 
@@ -1545,10 +1552,10 @@ async fn remote_status_response_viewer_state(
     };
 
     Ok(RemoteStatusResponseViewerState {
-        favourited: is_remote_status_favourited_by(db, &viewer.id, &status.id).await?,
-        reblogged: is_remote_status_reblogged_by(db, &viewer.id, &status.id).await?,
-        bookmarked: is_remote_status_bookmarked_by(db, &viewer.id, &status.id).await?,
-        muted: is_muted_actor(db, &viewer.id, &actor.actor_uri).await?,
+        favourited: is_remote_status_favourited_by(db, viewer.id(), &status.id).await?,
+        reblogged: is_remote_status_reblogged_by(db, viewer.id(), &status.id).await?,
+        bookmarked: is_remote_status_bookmarked_by(db, viewer.id(), &status.id).await?,
+        muted: is_muted_actor(db, viewer.id(), &actor.actor_uri).await?,
     })
 }
 
@@ -1626,11 +1633,11 @@ async fn build_local_quoted_status_document(
             in_reply_to_account_id,
             media,
         );
-        response.card = build_status_card_value(&local_status._text_content);
+        response.card = build_status_card_value(&local_status.text);
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
         response.filtered =
             local_status_filtered_for_viewer(db, viewer, &local_status, filter_matcher).await?;
-        response.mentions = build_status_mentions(db, config, &local_status._text_content).await?;
+        response.mentions = build_status_mentions(db, config, &local_status.text).await?;
         let (favourites_count, reblogs_count) =
             local_status_counts(db, counts_preload, &local_status.id).await?;
         response.favourites_count = favourites_count;
@@ -1663,7 +1670,7 @@ async fn build_remote_quoted_status_document(
         if pending_remote_quote {
             return Ok(Some(pending_quote_document()));
         }
-        if !remote_quote_visibility_is_embeddable(&remote_status.visibility) {
+        if !remote_quote_visibility_is_embeddable(remote_status.visibility.as_str()) {
             return Ok(Some(unauthorized_quote_document()));
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?
@@ -1716,9 +1723,9 @@ async fn local_status_filtered_for_viewer(
     filtered_status_for_viewer(
         db,
         filter_matcher,
-        &viewer.id,
+        viewer.id(),
         &status.id,
-        &status._text_content,
+        &status.text,
         &status.spoiler_text,
     )
     .await
@@ -1737,7 +1744,7 @@ async fn remote_status_filtered_for_viewer(
     filtered_status_for_viewer(
         db,
         filter_matcher,
-        &viewer.id,
+        viewer.id(),
         &status.id,
         text_content,
         &status.spoiler_text,
@@ -1951,9 +1958,50 @@ async fn build_remote_reblog_embedded_response(
     ))
 }
 
+async fn build_local_reblog_wrapper_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    wrapper_status: &StatusRow,
+    wrapper_account: &LocalAccount,
+    in_reply_to_account_id: Option<String>,
+    boost_of_uri: &str,
+    filter_matcher: Option<&AccountFilterMatcher>,
+    counts_preload: Option<&StatusCountsPreload>,
+    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
+    poll_preload: Option<&MastodonPollResponsePreload>,
+    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
+    application_preload: Option<&StatusApplicationPreload>,
+    include_quote: bool,
+) -> Result<MastodonStatusResponse> {
+    let embedded = build_reblog_embedded_response(
+        db,
+        config,
+        viewer,
+        boost_of_uri,
+        filter_matcher,
+        counts_preload,
+        quote_counts_preload,
+        poll_preload,
+        viewer_state_preload,
+        application_preload,
+        include_quote,
+    )
+    .await?;
+
+    Ok(local_reblog_wrapper_response_from_embedded(
+        embedded,
+        wrapper_status,
+        wrapper_account,
+        in_reply_to_account_id,
+        config,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfwdon_domain::LocalAccountRecord;
 
     #[test]
     fn accepted_status_quotes_count_sql_counts_local_and_remote_quotes_once() {
@@ -2317,10 +2365,10 @@ mod tests {
             quote_of_uri: None,
             content_html: "<p>Hello</p>".to_owned(),
             spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
+            visibility: cfwdon_domain::Visibility::Public,
+            sensitive: false,
             language: Some("en".to_owned()),
-            quote_state: "accepted".to_owned(),
+            quote_state: cfwdon_domain::QuoteState::Accepted,
             published_at: "2026-05-10T01:02:03Z".to_owned(),
         }
     }
@@ -2352,13 +2400,13 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>Hello</p>".to_owned(),
-            _text_content: "Hello".to_owned(),
+            text: "Hello".to_owned(),
             spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
+            visibility: cfwdon_domain::Visibility::Public,
+            sensitive: false,
             language: Some("en".to_owned()),
             quote_approval_policy: None,
-            quote_state: "accepted".to_owned(),
+            quote_state: cfwdon_domain::QuoteState::Accepted,
             application_id: None,
             created_at: "2026-05-10T01:02:03Z".to_owned(),
             updated_at: None,
@@ -2366,68 +2414,6 @@ mod tests {
     }
 
     fn local_account_fixture() -> LocalAccount {
-        LocalAccount {
-            id: "acct-1".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.com".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: Some("en".to_owned()),
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "{}".to_owned(),
-            public_key_pem: "pem".to_owned(),
-            created_at: "2026-05-01T00:00:00Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice"))
     }
-}
-
-async fn build_local_reblog_wrapper_response(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
-    wrapper_status: &StatusRow,
-    wrapper_account: &LocalAccount,
-    in_reply_to_account_id: Option<String>,
-    boost_of_uri: &str,
-    filter_matcher: Option<&AccountFilterMatcher>,
-    counts_preload: Option<&StatusCountsPreload>,
-    quote_counts_preload: Option<&StatusQuoteCountsPreload>,
-    poll_preload: Option<&MastodonPollResponsePreload>,
-    viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
-    application_preload: Option<&StatusApplicationPreload>,
-    include_quote: bool,
-) -> Result<MastodonStatusResponse> {
-    let embedded = build_reblog_embedded_response(
-        db,
-        config,
-        viewer,
-        boost_of_uri,
-        filter_matcher,
-        counts_preload,
-        quote_counts_preload,
-        poll_preload,
-        viewer_state_preload,
-        application_preload,
-        include_quote,
-    )
-    .await?;
-
-    Ok(local_reblog_wrapper_response_from_embedded(
-        embedded,
-        wrapper_status,
-        wrapper_account,
-        in_reply_to_account_id,
-        config,
-    ))
 }

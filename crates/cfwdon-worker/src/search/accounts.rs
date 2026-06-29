@@ -346,7 +346,7 @@ pub(crate) async fn search_local_accounts(
     Ok(result
         .results::<AccountRow>()?
         .into_iter()
-        .map(LocalAccount::from)
+        .map(LocalAccount::from_record)
         .collect())
 }
 
@@ -454,7 +454,7 @@ pub(crate) async fn search_cached_accounts(
     offset: u32,
     following_only: bool,
 ) -> Result<Vec<MastodonAccountResponse>> {
-    let viewer_account_id = viewer.map(|account| account.id.as_str());
+    let viewer_account_id = viewer.map(|account| account.id());
     let query_limit = account_cache_query_limit(limit, offset);
     let search_terms = account_search_terms(query, config);
     let rank_query = account_search_term(query, config);
@@ -510,7 +510,7 @@ async fn load_cached_account_search_candidates(
     )?;
     let local_account_ids = local_accounts
         .iter()
-        .map(|account| account.id.clone())
+        .map(|account| account.id().to_owned())
         .collect::<Vec<_>>();
     let remote_actor_uris = remote_actors
         .iter()
@@ -526,7 +526,7 @@ async fn load_cached_account_search_candidates(
         if let Some(response) = local_search_account_response(
             &account,
             config,
-            local_stats.get(&account.id),
+            local_stats.get(account.id()),
             search_terms,
         ) {
             accounts.push(response);
@@ -631,14 +631,14 @@ async fn rank_cached_account_search_results(
                 .iter()
                 .map(|account| account.uri.clone())
                 .collect::<Vec<_>>();
-            list_accepted_follow_target_uris(db, &viewer.id, &target_uris).await?
+            list_accepted_follow_target_uris(db, viewer.id(), &target_uris).await?
         }
         None => Default::default(),
     };
     let mut ranked_accounts = Vec::with_capacity(accounts.len());
     for account in accounts {
         let relationship_rank = match viewer {
-            Some(viewer) if account.id == viewer.id => account_relationship_rank(true, false),
+            Some(viewer) if account.id == viewer.id() => account_relationship_rank(true, false),
             Some(_) => {
                 account_relationship_rank(false, followed_target_uris.contains(&account.uri))
             }
@@ -683,7 +683,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         let Some(account) = find_account_by_username(db, &handle.username).await? else {
             return Ok(None);
         };
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         MastodonAccountResponse::from_account_with_stats(&account, config, &stats)
     } else {
         let Some(actor) = find_remote_actor_by_username_domain(
@@ -707,7 +707,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         } else {
             account.uri.clone()
         };
-        let is_following = crate::find_follow_by_target(db, &viewer.id, &target_uri)
+        let is_following = crate::find_follow_by_target(db, viewer.id(), &target_uri)
             .await?
             .is_some_and(|follow| follow.state == "accepted");
         if !is_following {

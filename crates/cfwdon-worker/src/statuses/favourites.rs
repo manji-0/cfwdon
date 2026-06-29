@@ -46,7 +46,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
             upsert_favourite_local_status(
                 &action.auth.db,
                 &action.auth.config,
-                &viewer.id,
+                viewer.id(),
                 &subject.status,
             )
             .await?;
@@ -64,7 +64,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             let existing = find_favourite_activity_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &status.object_uri,
             )
             .await?;
@@ -78,7 +78,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
                 )?;
                 outbound_activity_id = queue_remote_actor_activity(
                     &action.auth.db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &payload_json,
                 )
@@ -86,7 +86,7 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
             }
             upsert_favourite_remote_status(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &status,
                 outbound_activity_id.as_deref(),
             )
@@ -131,7 +131,7 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_favourite_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &local_status_target_uri(&subject.status),
             )
             .await?;
@@ -149,7 +149,7 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
             if let Some(row) = find_favourite_activity_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &status.object_uri,
             )
             .await?
@@ -164,13 +164,14 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
                 )?;
                 let _ = queue_remote_actor_activity(
                     &action.auth.db,
-                    &viewer.id,
+                    viewer.id(),
                     &actor.actor_uri,
                     &payload_json,
                 )
                 .await?;
             }
-            delete_favourite_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri).await?;
+            delete_favourite_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri)
+                .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
             let response = build_remote_status_response(
                 &action.auth.db,
@@ -195,7 +196,7 @@ pub(crate) async fn favourites_response(req: Request, ctx: RouteContext<()>) -> 
     };
 
     let favourite_entries =
-        list_favourites_for_account(&auth.db, &auth.viewer.id, limit.saturating_mul(3)).await?;
+        list_favourites_for_account(&auth.db, auth.viewer.id(), limit.saturating_mul(3)).await?;
     build_saved_status_collection_response(
         &auth.db,
         &auth.config,

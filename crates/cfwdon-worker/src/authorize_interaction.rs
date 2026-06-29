@@ -49,7 +49,7 @@ pub(crate) async fn authorize_interaction_submit_response(
 
     let relationship = match resolve_account_reference(&db, &account.id).await? {
         Some(AccountReference::Local(target)) => {
-            if follower.id == target.id {
+            if follower.id() == target.id() {
                 return Response::error("cannot follow your own account", 422);
             }
             upsert_local_follow(
@@ -60,7 +60,8 @@ pub(crate) async fn authorize_interaction_submit_response(
                 &FollowAccountRequest::default(),
             )
             .await?;
-            build_relationship_for_target(&db, &config, &follower, &target.id, &account.uri).await?
+            build_relationship_for_target(&db, &config, &follower, target.id(), &account.uri)
+                .await?
         }
         Some(AccountReference::Remote(actor)) => {
             follow_remote_account(

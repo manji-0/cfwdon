@@ -177,7 +177,7 @@ pub(crate) async fn send_status_quote_notification(
     let Some(quote_of_uri) = quote_status.quote_of_uri.as_deref() else {
         return Ok(());
     };
-    if quote_status.quote_state != "accepted" {
+    if quote_status.quote_state != cfwdon_domain::QuoteState::Accepted {
         return Ok(());
     }
     let Some(target) = find_local_status_by_object_uri(db, config, quote_of_uri).await? else {

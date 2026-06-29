@@ -1,6 +1,6 @@
 use super::{
-    AppConfig, D1Database, Error, Result, StatusRow, find_account_by_id,
-    local_status_identity_from_uri, sql_placeholders, unique_ordered_refs,
+    AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
+    local_status_identity_from_uri, sql_placeholders, status_from_record, unique_ordered_refs,
 };
 use std::collections::HashMap;
 use worker::d1::D1Type;
@@ -42,8 +42,9 @@ pub(crate) async fn find_status_by_id(
          LIMIT 1",
     )
     .bind_refs(&status_id)?
-    .first::<StatusRow>(None)
+    .first::<StatusRecord>(None)
     .await
+    .map(|row| row.map(status_from_record))
 }
 
 pub(crate) async fn find_statuses_by_ids(
@@ -67,7 +68,9 @@ pub(crate) async fn find_statuses_by_ids(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn find_status_by_ap_id(
@@ -82,8 +85,9 @@ pub(crate) async fn find_status_by_ap_id(
          LIMIT 1",
     )
     .bind_refs(&ap_id)?
-    .first::<StatusRow>(None)
+    .first::<StatusRecord>(None)
     .await
+    .map(|row| row.map(status_from_record))
 }
 
 pub(crate) async fn find_statuses_by_ap_ids(
@@ -107,7 +111,9 @@ pub(crate) async fn find_statuses_by_ap_ids(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn load_in_reply_to_account_id(
@@ -190,7 +196,9 @@ pub(crate) async fn list_public_outbox_statuses(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn list_account_statuses(
@@ -290,7 +298,9 @@ pub(crate) async fn list_account_statuses(
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn list_public_account_statuses(
@@ -343,7 +353,9 @@ pub(crate) async fn list_public_account_statuses(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) async fn list_direct_local_replies(
@@ -362,7 +374,9 @@ pub(crate) async fn list_direct_local_replies(
         .all()
         .await?;
 
-    result.results::<StatusRow>()
+    result
+        .results::<StatusRecord>()
+        .map(|rows| rows.into_iter().map(status_from_record).collect())
 }
 
 pub(crate) fn local_status_target_uri(status: &StatusRow) -> String {
@@ -389,7 +403,7 @@ pub(crate) async fn find_local_status_by_object_uri(
     let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
         return Ok(None);
     };
-    if owner.username.eq_ignore_ascii_case(&username) {
+    if owner.username().eq_ignore_ascii_case(&username) {
         Ok(Some(status))
     } else {
         Ok(None)

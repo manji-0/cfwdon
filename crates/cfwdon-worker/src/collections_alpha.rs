@@ -310,7 +310,7 @@ async fn require_collection_writer(
 }
 
 fn is_owner(viewer: Option<&cfwdon_domain::LocalAccount>, account_id: &str) -> bool {
-    viewer.is_some_and(|viewer| viewer.id == account_id)
+    viewer.is_some_and(|viewer| viewer.id() == account_id)
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
@@ -966,7 +966,7 @@ fn collection_uri(
 ) -> String {
     format!(
         "{}/collections/{collection_id}",
-        actor_url(config, &owner.username)
+        actor_url(config, owner.username())
     )
 }
 
@@ -1012,7 +1012,7 @@ fn collection_document(
         "language": row.language,
         "account_id": row.account_id,
         "local": true,
-        "sensitive": row.sensitive != 0,
+        "sensitive": row.sensitive,
         "discoverable": row.discoverable != 0,
         "url": uri,
         "item_count": items.len(),
@@ -1037,7 +1037,7 @@ fn remote_collection_document(
         "language": row.language,
         "account_id": remote_account_rest_id(&owner.actor_uri),
         "local": false,
-        "sensitive": row.sensitive != 0,
+        "sensitive": row.sensitive,
         "discoverable": row.discoverable != 0,
         "url": row.url.as_deref().unwrap_or(&row.uri),
         "item_count": items.len(),
@@ -1062,7 +1062,7 @@ async fn account_actor_uri_for_reference(
     account_ref: &str,
 ) -> Result<Option<String>> {
     match resolve_account_reference(db, account_ref).await? {
-        Some(AccountReference::Local(account)) => Ok(Some(actor_url(config, &account.username))),
+        Some(AccountReference::Local(account)) => Ok(Some(actor_url(config, account.username()))),
         Some(AccountReference::Remote(actor)) => Ok(Some(actor.actor_uri)),
         None => Ok(None),
     }
@@ -1117,9 +1117,9 @@ async fn collection_activitypub_object(
         "type": "FeaturedCollection",
         "totalItems": ordered_items.len(),
         "name": row.name,
-        "attributedTo": actor_url(config, &owner.username),
+        "attributedTo": actor_url(config, owner.username()),
         "url": uri,
-        "sensitive": row.sensitive != 0,
+        "sensitive": row.sensitive,
         "discoverable": row.discoverable != 0,
         "published": row.created_at,
         "updated": row.updated_at,
@@ -1147,7 +1147,7 @@ async fn enqueue_collection_followers_activity(
     collection_id: &str,
     payload: serde_json::Value,
 ) -> Result<()> {
-    let follower_inboxes = list_follower_delivery_targets(db, &owner.id).await?;
+    let follower_inboxes = list_follower_delivery_targets(db, owner.id()).await?;
     if follower_inboxes.is_empty() {
         return Ok(());
     }
@@ -1156,7 +1156,7 @@ async fn enqueue_collection_followers_activity(
     })?;
     enqueue_targeted_outbox_activity(
         db,
-        &owner.id,
+        owner.id(),
         collection_id,
         &payload_json,
         &follower_inboxes,
@@ -1170,7 +1170,7 @@ async fn enqueue_collection_add_activity(
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
 ) -> Result<()> {
-    let actor = actor_url(config, &owner.username);
+    let actor = actor_url(config, owner.username());
     let collection_uri = collection_uri(config, owner, &row.id);
     let payload = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -1195,7 +1195,7 @@ async fn enqueue_collection_update_activity(
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{collection_uri}#updates/{}", row.updated_at),
         "type": "Update",
-        "actor": actor_url(config, &owner.username),
+        "actor": actor_url(config, owner.username()),
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
         "object": collection_activitypub_object(db, config, owner, row).await?,
     });
@@ -1208,7 +1208,7 @@ async fn enqueue_collection_remove_activity(
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
 ) -> Result<()> {
-    let actor = actor_url(config, &owner.username);
+    let actor = actor_url(config, owner.username());
     let collection_uri = collection_uri(config, owner, &row.id);
     let payload = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -1239,7 +1239,7 @@ async fn enqueue_collection_item_add_activity(
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{item_uri}#add"),
         "type": "Add",
-        "actor": actor_url(config, &owner.username),
+        "actor": actor_url(config, owner.username()),
         "object": object,
         "target": collection_uri(config, owner, collection_id),
     });
@@ -1296,7 +1296,7 @@ async fn enqueue_collection_feature_request_activity(
             "failed to serialize collection feature request: {error}"
         ))
     })?;
-    let _ = queue_remote_actor_activity(db, &owner.id, remote_actor_uri, &payload_json).await?;
+    let _ = queue_remote_actor_activity(db, owner.id(), remote_actor_uri, &payload_json).await?;
     Ok(())
 }
 
@@ -1312,7 +1312,7 @@ async fn enqueue_collection_item_remove_activity(
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{item_uri}#remove"),
         "type": "Remove",
-        "actor": actor_url(config, &owner.username),
+        "actor": actor_url(config, owner.username()),
         "object": item_uri,
         "target": collection_uri(config, owner, collection_id),
     });
@@ -1328,10 +1328,10 @@ async fn account_blocks_viewer(
     let Some(viewer) = viewer else {
         return Ok(false);
     };
-    if viewer.id == account.id {
+    if viewer.id() == account.id() {
         return Ok(false);
     }
-    is_blocking_actor(db, &account.id, &actor_url(config, &viewer.username)).await
+    is_blocking_actor(db, account.id(), &actor_url(config, viewer.username())).await
 }
 
 async fn owner_follows_actor(
@@ -1339,7 +1339,7 @@ async fn owner_follows_actor(
     owner: &cfwdon_domain::LocalAccount,
     target_actor_uri: &str,
 ) -> Result<bool> {
-    Ok(find_follow_by_target(db, &owner.id, target_actor_uri)
+    Ok(find_follow_by_target(db, owner.id(), target_actor_uri)
         .await?
         .map(|follow| follow.state == "accepted")
         .unwrap_or(false))
@@ -1353,22 +1353,22 @@ async fn account_reference_featureable_by_owner(
 ) -> Result<bool> {
     match target {
         AccountReference::Local(target) => {
-            if !target.discoverable {
+            if !target.is_discoverable() {
                 return Ok(false);
             }
-            let target_actor_uri = actor_url(config, &target.username);
-            if is_blocking_actor(db, &owner.id, &target_actor_uri).await?
-                || is_blocking_actor(db, &target.id, &actor_url(config, &owner.username)).await?
+            let target_actor_uri = actor_url(config, target.username());
+            if is_blocking_actor(db, owner.id(), &target_actor_uri).await?
+                || is_blocking_actor(db, target.id(), &actor_url(config, owner.username())).await?
             {
                 return Ok(false);
             }
-            if target.locked && target.id != owner.id {
+            if target.is_locked() && target.id() != owner.id() {
                 return owner_follows_actor(db, owner, &target_actor_uri).await;
             }
             Ok(true)
         }
         AccountReference::Remote(target) => {
-            if !target.discoverable || is_blocking_actor(db, &owner.id, &target.actor_uri).await? {
+            if !target.discoverable || is_blocking_actor(db, owner.id(), &target.actor_uri).await? {
                 return Ok(false);
             }
             if target.locked {
@@ -1405,7 +1405,7 @@ async fn account_id_for_actor_uri(
     if let Some(username) = local_username_from_actor_uri(config, actor_uri)
         && let Some(account) = crate::find_account_by_username(db, &username).await?
     {
-        return Ok(account.id);
+        return Ok(account.id().to_owned());
     }
     Ok(remote_account_rest_id(actor_uri))
 }
@@ -1441,7 +1441,7 @@ async fn account_response_for_reference(
 ) -> Result<Option<MastodonAccountResponse>> {
     match resolve_account_reference(db, account_ref).await? {
         Some(AccountReference::Local(account)) => {
-            let stats = load_account_stats(db, &account.id).await?;
+            let stats = load_account_stats(db, account.id()).await?;
             Ok(Some(MastodonAccountResponse::from_account_with_stats(
                 &account, config, &stats,
             )))
@@ -1472,11 +1472,11 @@ async fn collection_item_visible_to_viewer(
         return Ok(true);
     };
     let target_actor_uri = match resolve_account_reference(db, &item.target_account_ref).await? {
-        Some(AccountReference::Local(account)) => actor_url(config, &account.username),
+        Some(AccountReference::Local(account)) => actor_url(config, account.username()),
         Some(AccountReference::Remote(actor)) => actor.actor_uri,
         None => return Ok(true),
     };
-    Ok(!is_blocking_actor(db, &viewer.id, &target_actor_uri).await?)
+    Ok(!is_blocking_actor(db, viewer.id(), &target_actor_uri).await?)
 }
 
 async fn collection_with_accounts_document(
@@ -1502,12 +1502,12 @@ async fn collection_with_accounts_document(
     let collection = collection_document(config, owner, row, items);
 
     let mut accounts = Vec::new();
-    let stats = load_account_stats(db, &owner.id).await?;
+    let stats = load_account_stats(db, owner.id()).await?;
     accounts.push(MastodonAccountResponse::from_account_with_stats(
         owner, config, &stats,
     ));
 
-    let mut seen = HashSet::from([owner.id.clone()]);
+    let mut seen = HashSet::from([owner.id().to_owned()]);
     for item in visible_item_rows {
         if !seen.insert(item.target_account_ref.clone()) {
             continue;
@@ -1533,7 +1533,7 @@ async fn remote_collection_item_visible_to_viewer(
     let Some(viewer) = viewer else {
         return Ok(true);
     };
-    Ok(!is_blocking_actor(db, &viewer.id, &item.target_actor_uri).await?)
+    Ok(!is_blocking_actor(db, viewer.id(), &item.target_actor_uri).await?)
 }
 
 async fn remote_collection_with_accounts_document(
@@ -1570,7 +1570,7 @@ async fn remote_collection_with_accounts_document(
         if let Some(username) = local_username_from_actor_uri(config, &item.target_actor_uri)
             && let Some(account) = crate::find_account_by_username(db, &username).await?
         {
-            let stats = load_account_stats(db, &account.id).await?;
+            let stats = load_account_stats(db, account.id()).await?;
             accounts.push(MastodonAccountResponse::from_account_with_stats(
                 &account, config, &stats,
             ));
@@ -2099,7 +2099,7 @@ fn build_delete_feature_authorization_activity(
         .feature_authorization
         .clone()
         .unwrap_or_else(|| format!("{}/feature_authorization", item.id));
-    let actor = actor_url(config, &requester.username);
+    let actor = actor_url(config, requester.username());
     serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{feature_authorization}#delete"),
@@ -2128,13 +2128,13 @@ async fn enqueue_delete_feature_authorization_activity(
             "failed to serialize delete feature authorization activity: {error}"
         ))
     })?;
-    let _ = queue_remote_actor_activity(db, &requester.id, &collection.actor_uri, &payload_json)
+    let _ = queue_remote_actor_activity(db, requester.id(), &collection.actor_uri, &payload_json)
         .await?;
-    let follower_inboxes = list_follower_delivery_targets(db, &requester.id).await?;
+    let follower_inboxes = list_follower_delivery_targets(db, requester.id()).await?;
     if !follower_inboxes.is_empty() {
         enqueue_targeted_outbox_activity(
             db,
-            &requester.id,
+            requester.id(),
             &item.id,
             &payload_json,
             &follower_inboxes,
@@ -2436,9 +2436,9 @@ async fn collection_notification_filtered(
     sender: &cfwdon_domain::LocalAccount,
     notification_type: &str,
 ) -> Result<Option<bool>> {
-    let sender_actor_uri = actor_url(config, &sender.username);
-    if is_blocking_actor(db, &recipient.id, &sender_actor_uri).await?
-        || muted_notifications_for_actor(db, &recipient.id, &sender_actor_uri).await?
+    let sender_actor_uri = actor_url(config, sender.username());
+    if is_blocking_actor(db, recipient.id(), &sender_actor_uri).await?
+        || muted_notifications_for_actor(db, recipient.id(), &sender_actor_uri).await?
     {
         return Ok(None);
     }
@@ -2446,16 +2446,16 @@ async fn collection_notification_filtered(
         return Ok(Some(false));
     }
 
-    let policy = load_notification_policy_row(db, &recipient.id).await?;
+    let policy = load_notification_policy_row(db, recipient.id()).await?;
     let recipient_follows_sender =
-        accepted_follow_exists(db, &recipient.id, &sender_actor_uri).await?;
-    let recipient_actor_uri = actor_url(config, &recipient.username);
+        accepted_follow_exists(db, recipient.id(), &sender_actor_uri).await?;
+    let recipient_actor_uri = actor_url(config, recipient.username());
     let sender_follows_recipient =
-        accepted_follow_exists(db, &sender.id, &recipient_actor_uri).await?;
+        accepted_follow_exists(db, sender.id(), &recipient_actor_uri).await?;
     let sender_is_new_follower =
-        recent_accepted_follow_exists(db, &sender.id, &recipient_actor_uri, "-3 days").await?;
+        recent_accepted_follow_exists(db, sender.id(), &recipient_actor_uri, "-3 days").await?;
     let sender_is_new_account =
-        timestamp_is_after_current_timestamp_modifier(db, &sender.created_at, "-30 days").await?;
+        timestamp_is_after_current_timestamp_modifier(db, sender.created_at(), "-30 days").await?;
 
     let mut action = CollectionNotificationPolicyAction::Deliver;
     action = merge_collection_notification_policy_action(
@@ -2499,8 +2499,8 @@ async fn insert_collection_notification(
     let collection_item_key = collection_item_id.unwrap_or("");
     let bindings = [
         D1Type::Text(notification_id.as_str()),
-        D1Type::Text(recipient.id.as_str()),
-        D1Type::Text(sender.id.as_str()),
+        D1Type::Text(recipient.id()),
+        D1Type::Text(sender.id()),
         D1Type::Text(collection_id),
         collection_item_id.map_or(D1Type::Null, D1Type::Text),
         D1Type::Text(collection_item_key),
@@ -2550,7 +2550,7 @@ async fn insert_added_to_collection_notification(
     collection_id: &str,
     item_id: &str,
 ) -> Result<()> {
-    if owner.id == target.id {
+    if owner.id() == target.id() {
         return Ok(());
     }
     insert_collection_notification(
@@ -2577,7 +2577,7 @@ async fn insert_collection_update_notifications(
         else {
             continue;
         };
-        if target.id == owner.id {
+        if target.id() == owner.id() {
             continue;
         }
         insert_collection_notification(
@@ -2629,7 +2629,7 @@ pub(crate) async fn collect_collection_notification_entries(
     per_type_limit: u32,
 ) -> Result<()> {
     for notification in
-        list_collection_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_collection_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         if !notification_type_allowed(query, &notification.notification_type) {
             continue;
@@ -2640,9 +2640,9 @@ pub(crate) async fn collect_collection_notification_entries(
         let Some(owner) = find_account_by_id(db, &notification.from_account_id).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &owner.username))
+        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, owner.username()))
             .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &owner.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), owner.id(), None)
         {
             continue;
         }
@@ -2824,7 +2824,7 @@ async fn insert_collection_item(
 ) -> Result<CollectionItemRow> {
     let item_id = generate_entity_id(16)?;
     let (target_ref, state) = match target {
-        AccountReference::Local(account) => (account.id.clone(), "accepted"),
+        AccountReference::Local(account) => (account.id().to_owned(), "accepted"),
         AccountReference::Remote(actor) => (remote_account_rest_id(&actor.actor_uri), "pending"),
     };
     let bindings = [
@@ -3021,7 +3021,7 @@ fn can_revoke_collection_item(
     requester: &cfwdon_domain::LocalAccount,
     item: &CollectionItemRow,
 ) -> bool {
-    item.target_account_ref == requester.id
+    item.target_account_ref == requester.id()
 }
 
 fn route_param(ctx: &RouteContext<()>, name: &str) -> Result<String> {
@@ -3093,6 +3093,527 @@ fn build_collection_offset_link_header(
     ))
 }
 
+pub(crate) async fn alpha_account_collections_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: CollectionsQuery = req.query().unwrap_or_default();
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_COLLECTIONS_LIMIT)
+        .clamp(1, MAX_COLLECTIONS_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let account_id = route_param(&ctx, "account_id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match optional_collection_viewer(&req, &db, &config).await? {
+        Ok(viewer) => viewer,
+        Err(response) => return Ok(response),
+    };
+
+    let owner = match resolve_account_reference(&db, &account_id).await? {
+        Some(AccountReference::Local(account)) => account,
+        Some(AccountReference::Remote(_)) => {
+            let Some(AccountReference::Remote(owner)) =
+                resolve_account_reference(&db, &account_id).await?
+            else {
+                return Response::error("account not found", 404);
+            };
+            if viewer
+                .account
+                .as_ref()
+                .is_some_and(|viewer| viewer.id() == account_id)
+                || (if let Some(viewer) = viewer.account.as_ref() {
+                    is_blocking_actor(&db, viewer.id(), &owner.actor_uri).await?
+                } else {
+                    false
+                })
+            {
+                return Response::from_json(&collection_list_document(Vec::new()));
+            }
+            let rows =
+                list_remote_collection_rows_for_actor(&db, &owner.actor_uri, offset, limit).await?;
+            let total_count = count_remote_collection_rows_for_actor(&db, &owner.actor_uri).await?;
+            let mut response = Vec::new();
+            for row in rows.iter() {
+                revalidate_remote_collection_item_approvals(&db, &config, row).await?;
+                let items = list_remote_collection_items(&db, &row.id, false).await?;
+                let mut item_documents = Vec::new();
+                for item in &items {
+                    item_documents.push(remote_collection_item_document(&db, &config, item).await?);
+                }
+                response.push(remote_collection_document(
+                    &config,
+                    &owner,
+                    row,
+                    item_documents,
+                ));
+            }
+            let mut builder = Response::from_json(&collection_list_document(response))?;
+            if let Some(link_header) =
+                build_collection_offset_link_header(&req, limit, offset, rows.len(), total_count)?
+            {
+                builder.headers_mut().set("Link", &link_header)?;
+            }
+            return Ok(builder);
+        }
+        None => return Response::error("account not found", 404),
+    };
+    let include_private = is_owner(viewer.account.as_ref(), owner.id());
+    let collections_hidden =
+        account_blocks_viewer(&db, &config, &owner, viewer.account.as_ref()).await?;
+    let (rows, total_count) = if collections_hidden {
+        (Vec::new(), 0)
+    } else {
+        (
+            list_collection_rows_for_account(&db, owner.id(), include_private, offset, limit)
+                .await?,
+            count_collection_rows_for_account(&db, owner.id(), include_private).await?,
+        )
+    };
+    let mut response = Vec::new();
+    for row in rows.iter() {
+        let include_pending = include_private;
+        let items = list_collection_items(&db, &row.id, include_pending)
+            .await?
+            .iter()
+            .map(collection_item_document)
+            .collect::<Vec<_>>();
+        response.push(collection_document(&config, &owner, row, items));
+    }
+    let mut builder = Response::from_json(&collection_list_document(response))?;
+    if let Some(link_header) =
+        build_collection_offset_link_header(&req, limit, offset, rows.len(), total_count)?
+    {
+        builder.headers_mut().set("Link", &link_header)?;
+    }
+    Ok(builder)
+}
+
+pub(crate) async fn alpha_account_in_collections_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: CollectionsQuery = req.query().unwrap_or_default();
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_COLLECTIONS_LIMIT)
+        .clamp(1, MAX_COLLECTIONS_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let account_id = route_param(&ctx, "account_id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match require_collection_reader(&req, &db, &config).await? {
+        Ok(viewer) => viewer,
+        Err(response) => return Ok(response),
+    };
+    let target_account_id = match resolve_account_reference(&db, &account_id).await? {
+        Some(AccountReference::Local(account)) if account.id() == viewer.id() => {
+            account.id().to_owned()
+        }
+        Some(_) => return action_not_allowed_response(),
+        None => return Response::error("account not found", 404),
+    };
+
+    let target_actor_uri = actor_url(&config, viewer.username());
+    let local_total_count = count_in_collection_rows(&db, &target_account_id).await?;
+    let remote_total_count = count_remote_in_collection_rows(&db, &target_actor_uri).await?;
+    let total_count = local_total_count.saturating_add(remote_total_count);
+    let page_window = offset.saturating_add(limit);
+    let local_rows = list_local_in_collection_rows(&db, &target_account_id, page_window).await?;
+    let remote_rows = list_remote_in_collection_rows(&db, &target_actor_uri, page_window).await?;
+    let mut entries = local_rows
+        .into_iter()
+        .map(InCollectionPageEntry::Local)
+        .chain(remote_rows.into_iter().map(InCollectionPageEntry::Remote))
+        .collect::<Vec<_>>();
+    sort_in_collection_page_entries(&mut entries);
+
+    let page_entries = entries
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let page_size = page_entries.len();
+    let mut response = Vec::new();
+    for entry in page_entries {
+        match entry {
+            InCollectionPageEntry::Local(row) => {
+                let Some(owner) = find_account_by_id(&db, &row.account_id).await? else {
+                    continue;
+                };
+                let include_pending = viewer.id() == owner.id();
+                let items = list_collection_items(&db, &row.id, include_pending)
+                    .await?
+                    .iter()
+                    .map(collection_item_document)
+                    .collect::<Vec<_>>();
+                response.push(collection_document(&config, &owner, &row, items));
+            }
+            InCollectionPageEntry::Remote(row) => {
+                let Some(owner) = find_remote_actor_by_actor_uri(&db, &row.actor_uri).await? else {
+                    continue;
+                };
+                revalidate_remote_collection_item_approvals(&db, &config, &row).await?;
+                let items = list_remote_collection_items(&db, &row.id, true).await?;
+                let mut item_documents = Vec::new();
+                for item in &items {
+                    item_documents.push(remote_collection_item_document(&db, &config, item).await?);
+                }
+                response.push(remote_collection_document(
+                    &config,
+                    &owner,
+                    &row,
+                    item_documents,
+                ));
+            }
+        }
+    }
+    let mut builder = Response::from_json(&collection_list_document(response))?;
+    if let Some(link_header) =
+        build_collection_offset_link_header(&req, limit, offset, page_size, total_count)?
+    {
+        builder.headers_mut().set("Link", &link_header)?;
+    }
+    Ok(builder)
+}
+
+pub(crate) async fn alpha_collection_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match optional_collection_viewer(&req, &db, &config).await? {
+        Ok(viewer) => viewer,
+        Err(response) => return Ok(response),
+    };
+    let Some(row) = collection_row_by_id(&db, &collection_id).await? else {
+        let Some(row) = remote_collection_row_by_id(&db, &collection_id).await? else {
+            return Response::error("collection not found", 404);
+        };
+        let Some(owner) = find_remote_actor_by_actor_uri(&db, &row.actor_uri).await? else {
+            return Response::error("collection not found", 404);
+        };
+        if let Some(viewer) = viewer.account.as_ref()
+            && is_blocking_actor(&db, viewer.id(), &owner.actor_uri).await?
+        {
+            return Response::error("collection not found", 404);
+        }
+        let document = remote_collection_with_accounts_document(
+            &db,
+            &config,
+            &owner,
+            &row,
+            false,
+            viewer.account.as_ref(),
+        )
+        .await?;
+        return Response::from_json(&document);
+    };
+    let Some(owner) = find_account_by_id(&db, &row.account_id).await? else {
+        return Response::error("collection not found", 404);
+    };
+    if account_blocks_viewer(&db, &config, &owner, viewer.account.as_ref()).await? {
+        return Response::error("collection not found", 404);
+    }
+    let document = collection_with_accounts_document(
+        &db,
+        &config,
+        &owner,
+        &row,
+        is_owner(viewer.account.as_ref(), &row.account_id),
+        viewer.account.as_ref(),
+    )
+    .await?;
+    Response::from_json(&document)
+}
+
+pub(crate) async fn create_alpha_collection_response(
+    mut req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let request = match parse_collection_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
+    let details = validate_collection_request(&request, true);
+    if !details.is_empty() {
+        return validation_failed_response(details);
+    }
+
+    let mut targets = Vec::new();
+    if let Some(account_ids) = request.account_ids.as_ref() {
+        for account_id in account_ids.iter().take(MAX_COLLECTION_ITEMS) {
+            let Some(target) = resolve_account_reference(&db, account_id).await? else {
+                return Response::error("account not found", 404);
+            };
+            if !account_reference_featureable_by_owner(&db, &config, &owner, &target).await? {
+                return action_not_allowed_response();
+            }
+            targets.push(target);
+        }
+    }
+
+    let row = insert_collection(&db, owner.id(), &request).await?;
+    for target in targets {
+        let item = insert_collection_item(&db, &row.id, &target).await?;
+        match target {
+            AccountReference::Local(target) => {
+                insert_added_to_collection_notification(
+                    &db, &config, &owner, &target, &row.id, &item.id,
+                )
+                .await?;
+            }
+            AccountReference::Remote(actor) => {
+                enqueue_collection_feature_request_activity(
+                    &db,
+                    &config,
+                    &owner,
+                    &row.id,
+                    &item,
+                    &actor.actor_uri,
+                )
+                .await?;
+            }
+        }
+    }
+    let row = collection_row_by_id(&db, &row.id)
+        .await?
+        .ok_or_else(|| worker::Error::RustError("failed to reload collection".to_owned()))?;
+    enqueue_collection_add_activity(&db, &config, &owner, &row).await?;
+    let items = list_collection_items(&db, &row.id, true)
+        .await?
+        .iter()
+        .map(collection_item_document)
+        .collect::<Vec<_>>();
+    Response::from_json(&collection_response_document(collection_document(
+        &config, &owner, &row, items,
+    )))
+}
+
+pub(crate) async fn update_alpha_collection_response(
+    mut req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let Some(existing) = collection_row_by_id(&db, &collection_id).await? else {
+        return Response::error("collection not found", 404);
+    };
+    if existing.account_id != owner.id() {
+        return action_not_allowed_response();
+    }
+    let request = match parse_collection_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
+    let details = validate_collection_request(&request, false);
+    if !details.is_empty() {
+        return validation_failed_response(details);
+    }
+    let distribute_update = collection_update_requires_activity(&existing, &request);
+    let significant_update = collection_update_is_significant(&existing, &request);
+    let row = update_collection(&db, &collection_id, &request)
+        .await?
+        .ok_or_else(|| worker::Error::RustError("updated collection disappeared".to_owned()))?;
+    if distribute_update {
+        enqueue_collection_update_activity(&db, &config, &owner, &row).await?;
+    }
+    if significant_update {
+        insert_collection_update_notifications(&db, &config, &owner, &row.id).await?;
+    }
+    let items = list_collection_items(&db, &row.id, true)
+        .await?
+        .iter()
+        .map(collection_item_document)
+        .collect::<Vec<_>>();
+    Response::from_json(&collection_response_document(collection_document(
+        &config, &owner, &row, items,
+    )))
+}
+
+pub(crate) async fn delete_alpha_collection_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let Some(existing) = collection_row_by_id(&db, &collection_id).await? else {
+        return Response::error("collection not found", 404);
+    };
+    if existing.account_id != owner.id() {
+        return action_not_allowed_response();
+    }
+    enqueue_collection_remove_activity(&db, &config, &owner, &existing).await?;
+    let _ = delete_collection(&db, &collection_id).await?;
+    Ok(Response::empty()?.with_status(200))
+}
+
+pub(crate) async fn create_alpha_collection_item_response(
+    mut req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "collection_id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let Some(collection) = collection_row_by_id(&db, &collection_id).await? else {
+        return Response::error("collection not found", 404);
+    };
+    if collection.account_id != owner.id() {
+        return action_not_allowed_response();
+    }
+    let request = match parse_collection_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
+    let Some(account_id) = request.account_id.clone().or_else(|| {
+        request
+            .account_ids
+            .as_ref()
+            .and_then(|ids| ids.first())
+            .cloned()
+    }) else {
+        return Response::from_json(&serde_json::json!({
+            "error": "`account_id` parameter is missing",
+        }))
+        .map(|response| response.with_status(422));
+    };
+    let Some(target) = resolve_account_reference(&db, &account_id).await? else {
+        return Response::error("account not found", 404);
+    };
+    if !account_reference_featureable_by_owner(&db, &config, &owner, &target).await? {
+        return action_not_allowed_response();
+    }
+    let item = insert_collection_item(&db, &collection_id, &target).await?;
+    match target {
+        AccountReference::Local(target) => {
+            enqueue_collection_item_add_activity(&db, &config, &owner, &collection_id, &item)
+                .await?;
+            insert_added_to_collection_notification(
+                &db,
+                &config,
+                &owner,
+                &target,
+                &collection_id,
+                &item.id,
+            )
+            .await?;
+        }
+        AccountReference::Remote(actor) => {
+            enqueue_collection_feature_request_activity(
+                &db,
+                &config,
+                &owner,
+                &collection_id,
+                &item,
+                &actor.actor_uri,
+            )
+            .await?;
+        }
+    }
+    Response::from_json(&collection_item_response_document(
+        collection_item_document(&item),
+    ))
+}
+
+pub(crate) async fn delete_alpha_collection_item_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "collection_id")?;
+    let item_id = route_param(&ctx, "id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let owner = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let Some(collection) = collection_row_by_id(&db, &collection_id).await? else {
+        return Response::error("collection not found", 404);
+    };
+    if collection.account_id != owner.id() {
+        return action_not_allowed_response();
+    }
+    let Some(item) = collection_item_by_id(&db, &collection_id, &item_id).await? else {
+        return Response::error("collection item not found", 404);
+    };
+    enqueue_collection_item_remove_activity(&db, &config, &owner, &collection_id, &item).await?;
+    if !delete_collection_item(&db, &collection_id, &item_id).await? {
+        return Response::error("collection item not found", 404);
+    }
+    Ok(Response::empty()?.with_status(200))
+}
+
+pub(crate) async fn revoke_alpha_collection_item_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let collection_id = route_param(&ctx, "collection_id")?;
+    let item_id = route_param(&ctx, "id")?;
+    let db = ctx.d1(&config.database_binding)?;
+    let requester = match require_collection_writer(&req, &db, &config).await? {
+        Ok(account) => account,
+        Err(response) => return Ok(response),
+    };
+    let Some(_collection) = collection_row_by_id(&db, &collection_id).await? else {
+        let Some(remote_collection) = remote_collection_row_by_id(&db, &collection_id).await?
+        else {
+            return Response::error("collection not found", 404);
+        };
+        let Some(item) = remote_collection_item_by_id(&db, &collection_id, &item_id).await? else {
+            return Response::error("collection item not found", 404);
+        };
+        if item.target_actor_uri != actor_url(&config, requester.username()) {
+            return action_not_allowed_response();
+        }
+        enqueue_delete_feature_authorization_activity(
+            &db,
+            &config,
+            &requester,
+            &remote_collection,
+            &item,
+        )
+        .await?;
+        if !revoke_remote_collection_item(&db, &collection_id, &item_id).await? {
+            return Response::error("collection item not found", 404);
+        }
+        return Ok(Response::empty()?.with_status(200));
+    };
+    let Some(item) = collection_item_by_id(&db, &collection_id, &item_id).await? else {
+        return Response::error("collection item not found", 404);
+    };
+    if !can_revoke_collection_item(&requester, &item) {
+        return action_not_allowed_response();
+    }
+    if !revoke_collection_item(&db, &collection_id, &item_id).await? {
+        return Response::error("collection item not found", 404);
+    }
+    Ok(Response::empty()?.with_status(200))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3102,29 +3623,9 @@ mod tests {
     }
 
     fn fixture_owner() -> cfwdon_domain::LocalAccount {
-        cfwdon_domain::LocalAccount {
-            id: "acct-1".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.com".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "{}".to_owned(),
-            public_key_pem: "pem".to_owned(),
-            created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-        }
+        cfwdon_domain::LocalAccount::from_record(cfwdon_domain::LocalAccountRecord::test_fixture(
+            "acct-1", "alice",
+        ))
     }
 
     fn fixture_collection_row() -> CollectionRow {
@@ -3473,7 +3974,7 @@ mod tests {
         let item = RemoteCollectionItemRow {
             id: "remote-item".to_owned(),
             uri: Some("https://remote.example/users/alice/collections/1/items/1".to_owned()),
-            target_actor_uri: actor_url(&config, &owner.username),
+            target_actor_uri: actor_url(&config, owner.username()),
             state: "accepted".to_owned(),
             feature_authorization: Some(
                 "https://social.example/users/bob/feature_authorizations/1".to_owned(),
@@ -3574,15 +4075,14 @@ mod tests {
     #[test]
     fn collection_item_revoke_policy_allows_featured_local_account_only() {
         let owner = fixture_owner();
-        let target = cfwdon_domain::LocalAccount {
-            id: "acct-2".to_owned(),
-            username: "bob".to_owned(),
-            access_email: "bob@example.com".to_owned(),
-            ..fixture_owner()
-        };
+        let target = cfwdon_domain::LocalAccount::from_record({
+            let mut record = cfwdon_domain::LocalAccountRecord::test_fixture("acct-2", "bob");
+            record.access_email = "bob@example.com".to_owned();
+            record
+        });
         let item = CollectionItemRow {
             id: "item-1".to_owned(),
-            target_account_ref: target.id.clone(),
+            target_account_ref: target.id().to_owned(),
             state: "accepted".to_owned(),
             activity_uri: None,
             feature_authorization: None,
@@ -3592,523 +4092,4 @@ mod tests {
         assert!(can_revoke_collection_item(&target, &item));
         assert!(!can_revoke_collection_item(&owner, &item));
     }
-}
-
-pub(crate) async fn alpha_account_collections_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let query: CollectionsQuery = req.query().unwrap_or_default();
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_COLLECTIONS_LIMIT)
-        .clamp(1, MAX_COLLECTIONS_LIMIT);
-    let offset = query.offset.unwrap_or(0);
-    let account_id = route_param(&ctx, "account_id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match optional_collection_viewer(&req, &db, &config).await? {
-        Ok(viewer) => viewer,
-        Err(response) => return Ok(response),
-    };
-
-    let owner = match resolve_account_reference(&db, &account_id).await? {
-        Some(AccountReference::Local(account)) => account,
-        Some(AccountReference::Remote(_)) => {
-            let Some(AccountReference::Remote(owner)) =
-                resolve_account_reference(&db, &account_id).await?
-            else {
-                return Response::error("account not found", 404);
-            };
-            if viewer
-                .account
-                .as_ref()
-                .is_some_and(|viewer| viewer.id == account_id)
-                || (if let Some(viewer) = viewer.account.as_ref() {
-                    is_blocking_actor(&db, &viewer.id, &owner.actor_uri).await?
-                } else {
-                    false
-                })
-            {
-                return Response::from_json(&collection_list_document(Vec::new()));
-            }
-            let rows =
-                list_remote_collection_rows_for_actor(&db, &owner.actor_uri, offset, limit).await?;
-            let total_count = count_remote_collection_rows_for_actor(&db, &owner.actor_uri).await?;
-            let mut response = Vec::new();
-            for row in rows.iter() {
-                revalidate_remote_collection_item_approvals(&db, &config, row).await?;
-                let items = list_remote_collection_items(&db, &row.id, false).await?;
-                let mut item_documents = Vec::new();
-                for item in &items {
-                    item_documents.push(remote_collection_item_document(&db, &config, item).await?);
-                }
-                response.push(remote_collection_document(
-                    &config,
-                    &owner,
-                    row,
-                    item_documents,
-                ));
-            }
-            let mut builder = Response::from_json(&collection_list_document(response))?;
-            if let Some(link_header) =
-                build_collection_offset_link_header(&req, limit, offset, rows.len(), total_count)?
-            {
-                builder.headers_mut().set("Link", &link_header)?;
-            }
-            return Ok(builder);
-        }
-        None => return Response::error("account not found", 404),
-    };
-    let include_private = is_owner(viewer.account.as_ref(), &owner.id);
-    let collections_hidden =
-        account_blocks_viewer(&db, &config, &owner, viewer.account.as_ref()).await?;
-    let (rows, total_count) = if collections_hidden {
-        (Vec::new(), 0)
-    } else {
-        (
-            list_collection_rows_for_account(&db, &owner.id, include_private, offset, limit)
-                .await?,
-            count_collection_rows_for_account(&db, &owner.id, include_private).await?,
-        )
-    };
-    let mut response = Vec::new();
-    for row in rows.iter() {
-        let include_pending = include_private;
-        let items = list_collection_items(&db, &row.id, include_pending)
-            .await?
-            .iter()
-            .map(collection_item_document)
-            .collect::<Vec<_>>();
-        response.push(collection_document(&config, &owner, row, items));
-    }
-    let mut builder = Response::from_json(&collection_list_document(response))?;
-    if let Some(link_header) =
-        build_collection_offset_link_header(&req, limit, offset, rows.len(), total_count)?
-    {
-        builder.headers_mut().set("Link", &link_header)?;
-    }
-    Ok(builder)
-}
-
-pub(crate) async fn alpha_account_in_collections_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let query: CollectionsQuery = req.query().unwrap_or_default();
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_COLLECTIONS_LIMIT)
-        .clamp(1, MAX_COLLECTIONS_LIMIT);
-    let offset = query.offset.unwrap_or(0);
-    let account_id = route_param(&ctx, "account_id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match require_collection_reader(&req, &db, &config).await? {
-        Ok(viewer) => viewer,
-        Err(response) => return Ok(response),
-    };
-    let target_account_id = match resolve_account_reference(&db, &account_id).await? {
-        Some(AccountReference::Local(account)) if account.id == viewer.id => account.id,
-        Some(_) => return action_not_allowed_response(),
-        None => return Response::error("account not found", 404),
-    };
-
-    let target_actor_uri = actor_url(&config, &viewer.username);
-    let local_total_count = count_in_collection_rows(&db, &target_account_id).await?;
-    let remote_total_count = count_remote_in_collection_rows(&db, &target_actor_uri).await?;
-    let total_count = local_total_count.saturating_add(remote_total_count);
-    let page_window = offset.saturating_add(limit);
-    let local_rows = list_local_in_collection_rows(&db, &target_account_id, page_window).await?;
-    let remote_rows = list_remote_in_collection_rows(&db, &target_actor_uri, page_window).await?;
-    let mut entries = local_rows
-        .into_iter()
-        .map(InCollectionPageEntry::Local)
-        .chain(remote_rows.into_iter().map(InCollectionPageEntry::Remote))
-        .collect::<Vec<_>>();
-    sort_in_collection_page_entries(&mut entries);
-
-    let page_entries = entries
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let page_size = page_entries.len();
-    let mut response = Vec::new();
-    for entry in page_entries {
-        match entry {
-            InCollectionPageEntry::Local(row) => {
-                let Some(owner) = find_account_by_id(&db, &row.account_id).await? else {
-                    continue;
-                };
-                let include_pending = viewer.id == owner.id;
-                let items = list_collection_items(&db, &row.id, include_pending)
-                    .await?
-                    .iter()
-                    .map(collection_item_document)
-                    .collect::<Vec<_>>();
-                response.push(collection_document(&config, &owner, &row, items));
-            }
-            InCollectionPageEntry::Remote(row) => {
-                let Some(owner) = find_remote_actor_by_actor_uri(&db, &row.actor_uri).await? else {
-                    continue;
-                };
-                revalidate_remote_collection_item_approvals(&db, &config, &row).await?;
-                let items = list_remote_collection_items(&db, &row.id, true).await?;
-                let mut item_documents = Vec::new();
-                for item in &items {
-                    item_documents.push(remote_collection_item_document(&db, &config, item).await?);
-                }
-                response.push(remote_collection_document(
-                    &config,
-                    &owner,
-                    &row,
-                    item_documents,
-                ));
-            }
-        }
-    }
-    let mut builder = Response::from_json(&collection_list_document(response))?;
-    if let Some(link_header) =
-        build_collection_offset_link_header(&req, limit, offset, page_size, total_count)?
-    {
-        builder.headers_mut().set("Link", &link_header)?;
-    }
-    Ok(builder)
-}
-
-pub(crate) async fn alpha_collection_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match optional_collection_viewer(&req, &db, &config).await? {
-        Ok(viewer) => viewer,
-        Err(response) => return Ok(response),
-    };
-    let Some(row) = collection_row_by_id(&db, &collection_id).await? else {
-        let Some(row) = remote_collection_row_by_id(&db, &collection_id).await? else {
-            return Response::error("collection not found", 404);
-        };
-        let Some(owner) = find_remote_actor_by_actor_uri(&db, &row.actor_uri).await? else {
-            return Response::error("collection not found", 404);
-        };
-        if let Some(viewer) = viewer.account.as_ref()
-            && is_blocking_actor(&db, &viewer.id, &owner.actor_uri).await?
-        {
-            return Response::error("collection not found", 404);
-        }
-        let document = remote_collection_with_accounts_document(
-            &db,
-            &config,
-            &owner,
-            &row,
-            false,
-            viewer.account.as_ref(),
-        )
-        .await?;
-        return Response::from_json(&document);
-    };
-    let Some(owner) = find_account_by_id(&db, &row.account_id).await? else {
-        return Response::error("collection not found", 404);
-    };
-    if account_blocks_viewer(&db, &config, &owner, viewer.account.as_ref()).await? {
-        return Response::error("collection not found", 404);
-    }
-    let document = collection_with_accounts_document(
-        &db,
-        &config,
-        &owner,
-        &row,
-        is_owner(viewer.account.as_ref(), &row.account_id),
-        viewer.account.as_ref(),
-    )
-    .await?;
-    Response::from_json(&document)
-}
-
-pub(crate) async fn create_alpha_collection_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
-    let owner = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let request = match parse_collection_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return Response::error(message, 422),
-    };
-    let details = validate_collection_request(&request, true);
-    if !details.is_empty() {
-        return validation_failed_response(details);
-    }
-
-    let mut targets = Vec::new();
-    if let Some(account_ids) = request.account_ids.as_ref() {
-        for account_id in account_ids.iter().take(MAX_COLLECTION_ITEMS) {
-            let Some(target) = resolve_account_reference(&db, account_id).await? else {
-                return Response::error("account not found", 404);
-            };
-            if !account_reference_featureable_by_owner(&db, &config, &owner, &target).await? {
-                return action_not_allowed_response();
-            }
-            targets.push(target);
-        }
-    }
-
-    let row = insert_collection(&db, &owner.id, &request).await?;
-    for target in targets {
-        let item = insert_collection_item(&db, &row.id, &target).await?;
-        match target {
-            AccountReference::Local(target) => {
-                insert_added_to_collection_notification(
-                    &db, &config, &owner, &target, &row.id, &item.id,
-                )
-                .await?;
-            }
-            AccountReference::Remote(actor) => {
-                enqueue_collection_feature_request_activity(
-                    &db,
-                    &config,
-                    &owner,
-                    &row.id,
-                    &item,
-                    &actor.actor_uri,
-                )
-                .await?;
-            }
-        }
-    }
-    let row = collection_row_by_id(&db, &row.id)
-        .await?
-        .ok_or_else(|| worker::Error::RustError("failed to reload collection".to_owned()))?;
-    enqueue_collection_add_activity(&db, &config, &owner, &row).await?;
-    let items = list_collection_items(&db, &row.id, true)
-        .await?
-        .iter()
-        .map(collection_item_document)
-        .collect::<Vec<_>>();
-    Response::from_json(&collection_response_document(collection_document(
-        &config, &owner, &row, items,
-    )))
-}
-
-pub(crate) async fn update_alpha_collection_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let owner = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let Some(existing) = collection_row_by_id(&db, &collection_id).await? else {
-        return Response::error("collection not found", 404);
-    };
-    if existing.account_id != owner.id {
-        return action_not_allowed_response();
-    }
-    let request = match parse_collection_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return Response::error(message, 422),
-    };
-    let details = validate_collection_request(&request, false);
-    if !details.is_empty() {
-        return validation_failed_response(details);
-    }
-    let distribute_update = collection_update_requires_activity(&existing, &request);
-    let significant_update = collection_update_is_significant(&existing, &request);
-    let row = update_collection(&db, &collection_id, &request)
-        .await?
-        .ok_or_else(|| worker::Error::RustError("updated collection disappeared".to_owned()))?;
-    if distribute_update {
-        enqueue_collection_update_activity(&db, &config, &owner, &row).await?;
-    }
-    if significant_update {
-        insert_collection_update_notifications(&db, &config, &owner, &row.id).await?;
-    }
-    let items = list_collection_items(&db, &row.id, true)
-        .await?
-        .iter()
-        .map(collection_item_document)
-        .collect::<Vec<_>>();
-    Response::from_json(&collection_response_document(collection_document(
-        &config, &owner, &row, items,
-    )))
-}
-
-pub(crate) async fn delete_alpha_collection_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let owner = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let Some(existing) = collection_row_by_id(&db, &collection_id).await? else {
-        return Response::error("collection not found", 404);
-    };
-    if existing.account_id != owner.id {
-        return action_not_allowed_response();
-    }
-    enqueue_collection_remove_activity(&db, &config, &owner, &existing).await?;
-    let _ = delete_collection(&db, &collection_id).await?;
-    Ok(Response::empty()?.with_status(200))
-}
-
-pub(crate) async fn create_alpha_collection_item_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "collection_id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let owner = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let Some(collection) = collection_row_by_id(&db, &collection_id).await? else {
-        return Response::error("collection not found", 404);
-    };
-    if collection.account_id != owner.id {
-        return action_not_allowed_response();
-    }
-    let request = match parse_collection_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return Response::error(message, 422),
-    };
-    let Some(account_id) = request.account_id.clone().or_else(|| {
-        request
-            .account_ids
-            .as_ref()
-            .and_then(|ids| ids.first())
-            .cloned()
-    }) else {
-        return Response::from_json(&serde_json::json!({
-            "error": "`account_id` parameter is missing",
-        }))
-        .map(|response| response.with_status(422));
-    };
-    let Some(target) = resolve_account_reference(&db, &account_id).await? else {
-        return Response::error("account not found", 404);
-    };
-    if !account_reference_featureable_by_owner(&db, &config, &owner, &target).await? {
-        return action_not_allowed_response();
-    }
-    let item = insert_collection_item(&db, &collection_id, &target).await?;
-    match target {
-        AccountReference::Local(target) => {
-            enqueue_collection_item_add_activity(&db, &config, &owner, &collection_id, &item)
-                .await?;
-            insert_added_to_collection_notification(
-                &db,
-                &config,
-                &owner,
-                &target,
-                &collection_id,
-                &item.id,
-            )
-            .await?;
-        }
-        AccountReference::Remote(actor) => {
-            enqueue_collection_feature_request_activity(
-                &db,
-                &config,
-                &owner,
-                &collection_id,
-                &item,
-                &actor.actor_uri,
-            )
-            .await?;
-        }
-    }
-    Response::from_json(&collection_item_response_document(
-        collection_item_document(&item),
-    ))
-}
-
-pub(crate) async fn delete_alpha_collection_item_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "collection_id")?;
-    let item_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let owner = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let Some(collection) = collection_row_by_id(&db, &collection_id).await? else {
-        return Response::error("collection not found", 404);
-    };
-    if collection.account_id != owner.id {
-        return action_not_allowed_response();
-    }
-    let Some(item) = collection_item_by_id(&db, &collection_id, &item_id).await? else {
-        return Response::error("collection item not found", 404);
-    };
-    enqueue_collection_item_remove_activity(&db, &config, &owner, &collection_id, &item).await?;
-    if !delete_collection_item(&db, &collection_id, &item_id).await? {
-        return Response::error("collection item not found", 404);
-    }
-    Ok(Response::empty()?.with_status(200))
-}
-
-pub(crate) async fn revoke_alpha_collection_item_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let collection_id = route_param(&ctx, "collection_id")?;
-    let item_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
-    let requester = match require_collection_writer(&req, &db, &config).await? {
-        Ok(account) => account,
-        Err(response) => return Ok(response),
-    };
-    let Some(_collection) = collection_row_by_id(&db, &collection_id).await? else {
-        let Some(remote_collection) = remote_collection_row_by_id(&db, &collection_id).await?
-        else {
-            return Response::error("collection not found", 404);
-        };
-        let Some(item) = remote_collection_item_by_id(&db, &collection_id, &item_id).await? else {
-            return Response::error("collection item not found", 404);
-        };
-        if item.target_actor_uri != actor_url(&config, &requester.username) {
-            return action_not_allowed_response();
-        }
-        enqueue_delete_feature_authorization_activity(
-            &db,
-            &config,
-            &requester,
-            &remote_collection,
-            &item,
-        )
-        .await?;
-        if !revoke_remote_collection_item(&db, &collection_id, &item_id).await? {
-            return Response::error("collection item not found", 404);
-        }
-        return Ok(Response::empty()?.with_status(200));
-    };
-    let Some(item) = collection_item_by_id(&db, &collection_id, &item_id).await? else {
-        return Response::error("collection item not found", 404);
-    };
-    if !can_revoke_collection_item(&requester, &item) {
-        return action_not_allowed_response();
-    }
-    if !revoke_collection_item(&db, &collection_id, &item_id).await? {
-        return Response::error("collection item not found", 404);
-    }
-    Ok(Response::empty()?.with_status(200))
 }

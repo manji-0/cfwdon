@@ -1,4 +1,5 @@
-use super::RemoteStatusRow;
+use super::RemoteStatusRecord;
+use super::{RemoteStatusRow, remote_status_from_record};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
@@ -51,7 +52,7 @@ pub(crate) async fn list_update_notifications_for_account(
 
 impl UpdateNotificationRow {
     pub(crate) fn as_remote_status_row(&self) -> RemoteStatusRow {
-        RemoteStatusRow {
+        remote_status_from_record(RemoteStatusRecord {
             id: self.id.clone(),
             actor_uri: self.actor_uri.clone(),
             object_uri: self.object_uri.clone(),
@@ -66,6 +67,6 @@ impl UpdateNotificationRow {
             language: self.language.clone(),
             quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
-        }
+        })
     }
 }

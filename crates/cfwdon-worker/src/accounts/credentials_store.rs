@@ -26,24 +26,24 @@ fn account_source_defaults(
             .source
             .as_ref()
             .and_then(|source| source.privacy.as_deref())
-            .unwrap_or(account.default_post_visibility.as_str())
+            .unwrap_or(account.default_visibility().as_str())
             .to_owned(),
         quote_policy: update
             .source
             .as_ref()
             .and_then(|source| source.quote_policy.as_deref())
-            .unwrap_or(account.default_quote_policy.as_str())
+            .unwrap_or(account.default_quote_policy().as_str())
             .to_owned(),
         sensitive: update
             .source
             .as_ref()
             .and_then(|source| source.sensitive)
-            .unwrap_or(account.default_sensitive),
+            .unwrap_or(account.default_sensitive()),
         language: update
             .source
             .as_ref()
             .and_then(|source| source.language.clone())
-            .or_else(|| account.default_language.clone()),
+            .or_else(|| account.default_language().map(str::to_owned)),
     }
 }
 
@@ -67,7 +67,7 @@ fn account_profile_fields(
                 .filter_map(profile_field_from_update)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_else(|| account.fields.clone())
+        .unwrap_or_else(|| account.fields().to_vec())
 }
 
 fn profile_media_value<'a>(
@@ -103,12 +103,12 @@ fn account_credentials_update_draft(
     let display_name = update
         .display_name
         .as_deref()
-        .unwrap_or(account.display_name.as_str())
+        .unwrap_or(account.display_name())
         .to_owned();
     let bio_text = update
         .note
         .as_deref()
-        .unwrap_or(account.bio_text.as_str())
+        .unwrap_or(account.bio_text())
         .to_owned();
     let bio_html = render_status_html(&bio_text);
     let fields = account_profile_fields(account, update);
@@ -121,9 +121,9 @@ fn account_credentials_update_draft(
         bio_text,
         bio_html,
         fields_json,
-        locked: update.locked.unwrap_or(account.locked),
-        bot: update.bot.unwrap_or(account.bot),
-        discoverable: update.discoverable.unwrap_or(account.discoverable),
+        locked: update.locked.unwrap_or(account.is_locked()),
+        bot: update.bot.unwrap_or(account.is_bot()),
+        discoverable: update.discoverable.unwrap_or(account.is_discoverable()),
         source_defaults: account_source_defaults(account, update),
     })
 }
@@ -155,12 +155,12 @@ async fn delete_replaced_profile_media(
     account: &LocalAccount,
     media: &StoredProfileMedia,
 ) -> Result<()> {
-    if let Some(previous) = account.avatar_object_key.as_deref()
+    if let Some(previous) = account.avatar_object_key()
         && profile_media_was_replaced(Some(previous), media.avatar.as_ref())
     {
         delete_r2_object(bucket, previous, "delete_profile_previous").await?;
     }
-    if let Some(previous) = account.header_object_key.as_deref()
+    if let Some(previous) = account.header_object_key()
         && profile_media_was_replaced(Some(previous), media.header.as_ref())
     {
         delete_r2_object(bucket, previous, "delete_profile_previous").await?;
@@ -192,25 +192,25 @@ async fn update_account_credentials_row(
         },
         profile_media_value(
             media.avatar.as_ref(),
-            account.avatar_object_key.as_deref(),
+            account.avatar_object_key(),
             |value| &value.0,
         ),
         profile_media_value(
             media.avatar.as_ref(),
-            account.avatar_content_type.as_deref(),
+            account.avatar_content_type(),
             |value| &value.1,
         ),
         profile_media_value(
             media.header.as_ref(),
-            account.header_object_key.as_deref(),
+            account.header_object_key(),
             |value| &value.0,
         ),
         profile_media_value(
             media.header.as_ref(),
-            account.header_content_type.as_deref(),
+            account.header_content_type(),
             |value| &value.1,
         ),
-        D1Type::Text(account.id.as_str()),
+        D1Type::Text(account.id()),
     ];
 
     db.prepare(
@@ -252,7 +252,7 @@ pub(crate) async fn apply_account_credentials_update(
     delete_replaced_profile_media(bucket, account, &media).await?;
     update_account_credentials_row(db, account, &draft, &media).await?;
 
-    let updated = find_account_by_id(db, &account.id)
+    let updated = find_account_by_id(db, account.id())
         .await?
         .ok_or_else(|| Error::RustError("failed to reload updated account".to_owned()))?;
     enqueue_profile_update_activities(db, config, &updated).await?;
@@ -267,7 +267,9 @@ async fn store_profile_media(
     let media_id = generate_entity_id(16)?;
     let object_key = format!(
         "profiles/{}/{}/{}",
-        account.id, upload.object_kind, media_id
+        account.id(),
+        upload.object_kind,
+        media_id
     );
     let started_at_ms = observability_started_at_ms();
     let result = bucket
@@ -295,34 +297,10 @@ async fn store_profile_media(
 mod tests {
     use super::*;
     use crate::profile::{UpdateCredentialsField, UpdateCredentialsSource};
+    use cfwdon_domain::LocalAccountRecord;
 
     fn test_account() -> LocalAccount {
-        LocalAccount {
-            id: "acct-1".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.com".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: vec![ProfileField {
-                name: "Website".to_owned(),
-                value: "https://example.com".to_owned(),
-            }],
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "{}".to_owned(),
-            public_key_pem: "pem".to_owned(),
-            created_at: "2025-01-01T00:00:00Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice"))
     }
 
     #[test]
@@ -356,7 +334,7 @@ mod tests {
         let account = test_account();
         let update = UpdateCredentialsRequest::default();
 
-        assert_eq!(account_profile_fields(&account, &update), account.fields);
+        assert_eq!(account_profile_fields(&account, &update), account.fields());
     }
 
     #[test]
@@ -445,11 +423,12 @@ mod tests {
 
     #[test]
     fn account_source_defaults_falls_back_to_account_values() {
-        let mut account = test_account();
-        account.default_post_visibility = "unlisted".to_owned();
-        account.default_quote_policy = "followers".to_owned();
-        account.default_sensitive = true;
-        account.default_language = Some("en".to_owned());
+        let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+        record.default_post_visibility = "unlisted".to_owned();
+        record.default_quote_policy = "followers".to_owned();
+        record.default_sensitive = 1;
+        record.default_language = Some("en".to_owned());
+        let account = LocalAccount::from_record(record);
 
         let defaults = account_source_defaults(&account, &UpdateCredentialsRequest::default());
 

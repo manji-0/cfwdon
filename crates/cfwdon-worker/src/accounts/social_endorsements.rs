@@ -20,7 +20,7 @@ pub(crate) async fn endorsements_response(req: Request, ctx: RouteContext<()>) -
         since_id,
     } = AccountCollectionPage::from_query(&query, 40, 80)?;
     let collection =
-        list_local_endorsement_accounts(&db, &config, &viewer.id, limit, max_id, since_id).await?;
+        list_local_endorsement_accounts(&db, &config, viewer.id(), limit, max_id, since_id).await?;
     endorsement_collection_response(&req, limit, max_id, since_id, collection)
 }
 
@@ -43,9 +43,15 @@ pub(crate) async fn account_endorsements_response(
     } = AccountCollectionPage::from_query(&query, 40, 80)?;
     match resolve_account_reference(&db, &target_account_id).await? {
         Some(AccountReference::Local(account)) => {
-            let collection =
-                list_local_endorsement_accounts(&db, &config, &account.id, limit, max_id, since_id)
-                    .await?;
+            let collection = list_local_endorsement_accounts(
+                &db,
+                &config,
+                account.id(),
+                limit,
+                max_id,
+                since_id,
+            )
+            .await?;
             endorsement_collection_response(&req, limit, max_id, since_id, collection)
         }
         Some(AccountReference::Remote(actor)) => {

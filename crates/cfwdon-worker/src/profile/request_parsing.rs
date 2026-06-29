@@ -138,7 +138,7 @@ fn normalize_update_credentials_source(
         *privacy = privacy.trim().to_ascii_lowercase();
         if privacy.is_empty() {
             source.privacy = None;
-        } else if super::Visibility::parse(privacy).is_none() {
+        } else if super::Visibility::parse(privacy).is_err() {
             return Err(
                 "source[privacy] must be one of: public, unlisted, private, direct".to_owned(),
             );
@@ -152,7 +152,8 @@ fn normalize_update_credentials_source(
         }
     }
 
-    source.quote_policy = normalize_quote_approval_policy(source.quote_policy.take())?;
+    source.quote_policy = normalize_quote_approval_policy(source.quote_policy.take())?
+        .map(|policy| policy.as_str().to_owned());
     Ok(())
 }
 

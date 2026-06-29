@@ -25,14 +25,15 @@ pub(crate) async fn collect_quote_notification_entries(
         return Ok(());
     }
 
-    for quote in list_local_quote_notifications_for_account(db, &viewer.id, per_type_limit).await? {
+    for quote in list_local_quote_notifications_for_account(db, viewer.id(), per_type_limit).await?
+    {
         let Some(actor) = find_account_by_id(db, &quote.account_id).await? else {
             continue;
         };
         if !can_view_local_status(db, &quote, Some(viewer), &actor).await?
-            || muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+            || muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
                 .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
@@ -50,9 +51,9 @@ pub(crate) async fn collect_quote_notification_entries(
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("quote-local-{}-{}", actor.id, quote.id),
+                id: format!("quote-local-{}-{}", actor.id(), quote.id),
                 notification_type: "quote".to_owned(),
-                group_key: format!("quote-local-{}-{}", actor.id, quote.id),
+                group_key: format!("quote-local-{}-{}", actor.id(), quote.id),
                 created_at: quote.created_at.clone(),
                 account: MastodonAccountResponse::from_account(&actor, config),
                 status: Some(status_response),
@@ -61,12 +62,13 @@ pub(crate) async fn collect_quote_notification_entries(
         );
     }
 
-    for quote in list_remote_quote_notifications_for_account(db, &viewer.id, per_type_limit).await?
+    for quote in
+        list_remote_quote_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &quote.actor_uri).await? else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);
@@ -109,13 +111,13 @@ pub(crate) async fn collect_quoted_update_notification_entries(
     }
 
     for update in
-        list_quoted_update_notifications_for_account(db, &viewer.id, per_type_limit).await?
+        list_quoted_update_notifications_for_account(db, viewer.id(), per_type_limit).await?
     {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &update.remote_actor_uri).await?
         else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);
@@ -157,6 +159,8 @@ pub(crate) async fn collect_quoted_update_notification_entries(
     Ok(())
 }
 
+use cfwdon_domain::{QuoteState, Visibility};
+
 fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> StatusRow {
     StatusRow {
         id: update.id.clone(),
@@ -166,13 +170,13 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
         boost_of_uri: update.boost_of_uri.clone(),
         quote_of_uri: update.quote_of_uri.clone(),
         content_html: update.content_html.clone(),
-        _text_content: update.text_content.clone(),
+        text: update.text_content.clone(),
         spoiler_text: update.spoiler_text.clone(),
-        visibility: update.visibility.clone(),
-        sensitive: update.sensitive,
+        visibility: Visibility::parse(&update.visibility).unwrap_or(Visibility::Public),
+        sensitive: update.sensitive != 0,
         language: update.language.clone(),
         quote_approval_policy: None,
-        quote_state: update.quote_state.clone(),
+        quote_state: QuoteState::parse(&update.quote_state).unwrap_or(QuoteState::Accepted),
         application_id: None,
         created_at: update.created_at.clone(),
         updated_at: None,
@@ -214,12 +218,18 @@ mod tests {
         assert_eq!(status.boost_of_uri, update.boost_of_uri);
         assert_eq!(status.quote_of_uri, update.quote_of_uri);
         assert_eq!(status.content_html, update.content_html);
-        assert_eq!(status._text_content, update.text_content);
+        assert_eq!(status.text, update.text_content);
         assert_eq!(status.spoiler_text, update.spoiler_text);
-        assert_eq!(status.visibility, update.visibility);
-        assert_eq!(status.sensitive, update.sensitive);
+        assert_eq!(
+            status.visibility,
+            Visibility::parse(&update.visibility).unwrap_or(Visibility::Public)
+        );
+        assert_eq!(status.sensitive, update.sensitive != 0);
         assert_eq!(status.language, update.language);
-        assert_eq!(status.quote_state, update.quote_state);
+        assert_eq!(
+            status.quote_state,
+            QuoteState::parse(&update.quote_state).unwrap_or(QuoteState::Accepted)
+        );
         assert_eq!(status.created_at, update.created_at);
         assert!(status.quote_approval_policy.is_none());
         assert!(status.application_id.is_none());

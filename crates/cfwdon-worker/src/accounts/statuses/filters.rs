@@ -91,6 +91,8 @@ pub(crate) fn remote_status_matches_account_filters(
 mod tests {
     use super::*;
 
+    use cfwdon_domain::{QuoteState, Visibility};
+
     fn status_row() -> StatusRow {
         StatusRow {
             id: "status-1".to_owned(),
@@ -100,13 +102,13 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>#rust hello</p>".to_owned(),
-            _text_content: "#rust hello".to_owned(),
+            text: "#rust hello".to_owned(),
             spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
+            visibility: Visibility::Public,
+            sensitive: false,
             language: None,
             quote_approval_policy: None,
-            quote_state: "accepted".to_owned(),
+            quote_state: QuoteState::Accepted,
             application_id: None,
             created_at: "2026-01-01T00:00:00Z".to_owned(),
             updated_at: None,
@@ -124,10 +126,10 @@ mod tests {
             quote_of_uri: None,
             content_html: "<p>#rust hello</p>".to_owned(),
             spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
+            visibility: Visibility::Public,
+            sensitive: false,
             language: None,
-            quote_state: "accepted".to_owned(),
+            quote_state: QuoteState::Accepted,
             published_at: "2026-01-01T00:00:00Z".to_owned(),
         }
     }

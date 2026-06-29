@@ -143,9 +143,9 @@ pub(crate) async fn enqueue_profile_update_activities(
     config: &AppConfig,
     account: &LocalAccount,
 ) -> Result<()> {
-    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
+    for target_actor_uri in list_follower_actor_uris(db, account.id()).await? {
         let payload_json = crate::build_update_person_activity(config, account)?;
-        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+        queue_remote_actor_activity(db, account.id(), &target_actor_uri, &payload_json).await?;
     }
 
     Ok(())
@@ -157,13 +157,13 @@ pub(crate) async fn enqueue_status_update_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
     }
 
     let payload_json = build_status_update_activity(db, config, account, status).await?;
-    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
-        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+    for target_actor_uri in list_follower_actor_uris(db, account.id()).await? {
+        queue_remote_actor_activity(db, account.id(), &target_actor_uri, &payload_json).await?;
     }
 
     Ok(())
@@ -175,14 +175,14 @@ pub(crate) async fn enqueue_add_featured_status_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
     }
 
     let payload_json =
         build_add_featured_activity(config, account, &local_status_target_uri(status))?;
-    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
-        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+    for target_actor_uri in list_follower_actor_uris(db, account.id()).await? {
+        queue_remote_actor_activity(db, account.id(), &target_actor_uri, &payload_json).await?;
     }
 
     Ok(())
@@ -194,14 +194,14 @@ pub(crate) async fn enqueue_remove_featured_status_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(&status.visibility) {
+    if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
     }
 
     let payload_json =
         build_remove_featured_activity(config, account, &local_status_target_uri(status))?;
-    for target_actor_uri in list_follower_actor_uris(db, &account.id).await? {
-        queue_remote_actor_activity(db, &account.id, &target_actor_uri, &payload_json).await?;
+    for target_actor_uri in list_follower_actor_uris(db, account.id()).await? {
+        queue_remote_actor_activity(db, account.id(), &target_actor_uri, &payload_json).await?;
     }
 
     Ok(())

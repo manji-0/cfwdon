@@ -123,7 +123,7 @@ pub(crate) async fn notifications_policy_response(
         return Response::error("Auth0 authentication required", 401);
     };
 
-    let row = load_notification_policy_row(&auth.db, &auth.viewer.id).await?;
+    let row = load_notification_policy_row(&auth.db, auth.viewer.id()).await?;
     Response::from_json(&build_notification_policy_document(&row))
 }
 
@@ -136,7 +136,7 @@ pub(crate) async fn update_notifications_policy_response(
     };
 
     let update = parse_update_notification_policy_request(req).await?;
-    let current = load_notification_policy_row(&auth.db, &auth.viewer.id).await?;
+    let current = load_notification_policy_row(&auth.db, auth.viewer.id()).await?;
     let next = NotificationPolicyRow {
         for_not_following: match update.for_not_following.as_deref() {
             Some(value) => normalize_policy_value(value, "for_not_following")?,
@@ -161,7 +161,7 @@ pub(crate) async fn update_notifications_policy_response(
     };
 
     let bindings = [
-        D1Type::Text(auth.viewer.id.as_str()),
+        D1Type::Text(auth.viewer.id()),
         D1Type::Text(next.for_not_following.as_str()),
         D1Type::Text(next.for_not_followers.as_str()),
         D1Type::Text(next.for_new_accounts.as_str()),

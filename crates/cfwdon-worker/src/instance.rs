@@ -544,8 +544,8 @@ pub(crate) async fn announcements_response(
             .with_status(422));
         }
     };
-    let read_ids = list_announcement_read_ids(&db, &account.id).await?;
-    let reaction_state = load_announcement_reaction_state(&db, &account.id).await?;
+    let read_ids = list_announcement_read_ids(&db, account.id()).await?;
+    let reaction_state = load_announcement_reaction_state(&db, account.id()).await?;
 
     Response::from_json(&build_announcements_document(
         &config,
@@ -576,9 +576,9 @@ pub(crate) async fn announcement_reaction_mutation_response(
 
     match req.method().as_ref() {
         "DELETE" => {
-            delete_announcement_reaction(&db, &account.id, announcement_id, reaction_name).await?
+            delete_announcement_reaction(&db, account.id(), announcement_id, reaction_name).await?
         }
-        _ => save_announcement_reaction(&db, &account.id, announcement_id, reaction_name).await?,
+        _ => save_announcement_reaction(&db, account.id(), announcement_id, reaction_name).await?,
     }
 
     Ok(Response::empty()?.with_status(200))
@@ -600,7 +600,7 @@ pub(crate) async fn dismiss_announcement_mutation_response(
     if !configured_announcement_exists(&config, announcement_id) {
         return Response::error("announcement not found", 404);
     }
-    save_announcement_dismissal(&db, &account.id, announcement_id).await?;
+    save_announcement_dismissal(&db, account.id(), announcement_id).await?;
     Ok(Response::empty()?.with_status(200))
 }
 
@@ -689,7 +689,7 @@ pub(crate) async fn trending_tags_response(
     let mut tags = HashMap::<String, TrendingTagAggregate>::new();
 
     for status in list_local_public_timeline_statuses(&db, &cursor, 200).await? {
-        for tag in extract_hashtags_from_text(&status._text_content) {
+        for tag in extract_hashtags_from_text(&status.text) {
             let entry = tags.entry(tag).or_default();
             entry.statuses_count += 1;
             entry.accounts.insert(status.account_id.clone());
@@ -942,6 +942,56 @@ fn unix_day_bucket(timestamp: i64) -> i64 {
     timestamp.div_euclid(86_400) * 86_400
 }
 
+pub(crate) async fn nodeinfo_links_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    nodeinfo_links_response_for_config(&config)
+}
+
+pub(crate) fn nodeinfo_links_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    nodeinfo_links_response_for_config(&config)
+}
+
+fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Response> {
+    cache_public_response(
+        Response::from_json(&build_nodeinfo_links_document(config))?,
+        300,
+    )
+}
+
+pub(crate) async fn nodeinfo_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    nodeinfo_response_for_config(&db, config).await
+}
+
+pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    nodeinfo_response_for_config(&db, config).await
+}
+
+async fn nodeinfo_response_for_config(
+    db: &worker::D1Database,
+    config: super::AppConfig,
+) -> Result<Response> {
+    let summary = load_instance_summary(db, config.clone()).await?;
+    let active_month = load_active_month_users(db).await?;
+    let user_count = load_total_local_accounts(db).await?;
+    let status_count = load_total_local_statuses(db).await?;
+
+    cache_public_response(
+        Response::from_json(&build_nodeinfo_document(
+            &summary,
+            &config,
+            user_count,
+            active_month,
+            status_count,
+        ))?,
+        300,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1049,54 +1099,4 @@ mod tests {
         );
         assert_eq!(entries[1].url, "https://example.com/b");
     }
-}
-
-pub(crate) async fn nodeinfo_links_response(ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    nodeinfo_links_response_for_config(&config)
-}
-
-pub(crate) fn nodeinfo_links_response_from_env(env: &Env) -> Result<Response> {
-    let config = load_config_from_env(env);
-    nodeinfo_links_response_for_config(&config)
-}
-
-fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Response> {
-    cache_public_response(
-        Response::from_json(&build_nodeinfo_links_document(config))?,
-        300,
-    )
-}
-
-pub(crate) async fn nodeinfo_response(ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
-    nodeinfo_response_for_config(&db, config).await
-}
-
-pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
-    let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
-    nodeinfo_response_for_config(&db, config).await
-}
-
-async fn nodeinfo_response_for_config(
-    db: &worker::D1Database,
-    config: super::AppConfig,
-) -> Result<Response> {
-    let summary = load_instance_summary(db, config.clone()).await?;
-    let active_month = load_active_month_users(db).await?;
-    let user_count = load_total_local_accounts(db).await?;
-    let status_count = load_total_local_statuses(db).await?;
-
-    cache_public_response(
-        Response::from_json(&build_nodeinfo_document(
-            &summary,
-            &config,
-            user_count,
-            active_month,
-            status_count,
-        ))?,
-        300,
-    )
 }

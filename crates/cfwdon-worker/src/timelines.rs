@@ -214,7 +214,7 @@ async fn preload_public_timeline_remote_viewer_state(
         })
         .collect::<Vec<_>>();
 
-    preload_remote_status_viewer_state(db, &viewer.id, &statuses).await
+    preload_remote_status_viewer_state(db, viewer.id(), &statuses).await
 }
 
 async fn preload_public_timeline_remote_polls(
@@ -281,7 +281,7 @@ async fn preload_public_timeline_local_viewer_state(
         })
         .collect::<Vec<_>>();
 
-    preload_local_status_viewer_state(db, &viewer.id, &statuses, known_has_thread_mutes).await
+    preload_local_status_viewer_state(db, viewer.id(), &statuses, known_has_thread_mutes).await
 }
 
 async fn preload_timeline_candidate_reply_account_ids(
@@ -342,7 +342,7 @@ fn local_status_quote_count_uri(
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
             "{}/statuses/{}",
-            actor_url(config, &account.username),
+            actor_url(config, account.username()),
             status.id
         )
     })
@@ -393,7 +393,7 @@ fn local_status_actor_uri(
 ) -> Option<String> {
     accounts_by_id
         .get(&status.account_id)
-        .map(|account| actor_url(config, &account.username))
+        .map(|account| actor_url(config, account.username()))
 }
 
 async fn preload_muted_timeline_actor_uris(
@@ -414,7 +414,7 @@ async fn preload_muted_timeline_actor_uris(
             .map(|(_, actor)| actor.actor_uri.clone()),
     );
 
-    list_active_muted_actor_uris(db, &viewer.id, &actor_uris).await
+    list_active_muted_actor_uris(db, viewer.id(), &actor_uris).await
 }
 
 async fn timeline_entries_from_candidates(
@@ -685,9 +685,9 @@ pub(crate) async fn home_timeline_response(
         return empty_timeline_response();
     }
     let (filter_matcher, candidate_rows, viewer_has_thread_mutes) = futures_util::try_join!(
-        load_account_filter_matcher(&db, &viewer.id),
-        list_home_timeline_candidate_ids(&db, &viewer.id, &cursor, query_limit),
-        account_has_thread_mutes(&db, &viewer.id),
+        load_account_filter_matcher(&db, viewer.id()),
+        list_home_timeline_candidate_ids(&db, viewer.id(), &cursor, query_limit),
+        account_has_thread_mutes(&db, viewer.id()),
     )?;
 
     let mut local_candidate_ids = Vec::new();
@@ -753,7 +753,7 @@ pub(crate) async fn home_timeline_response(
                     continue;
                 }
                 if viewer_has_thread_mutes
-                    && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+                    && is_local_status_thread_muted_by(&db, viewer.id(), &status).await?
                 {
                     continue;
                 }
@@ -825,7 +825,7 @@ pub(crate) async fn public_timeline_response(
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
         None => None,
     };
     let local_statuses = if include_local {
@@ -842,7 +842,7 @@ pub(crate) async fn public_timeline_response(
     let mut candidates = Vec::new();
     let mut local_accounts_by_id = HashMap::new();
     let viewer_has_thread_mutes = match viewer {
-        Some(viewer) => account_has_thread_mutes(&db, &viewer.id).await?,
+        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
         None => false,
     };
 
@@ -856,7 +856,7 @@ pub(crate) async fn public_timeline_response(
             }
             if viewer_has_thread_mutes
                 && let Some(viewer) = viewer
-                && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+                && is_local_status_thread_muted_by(&db, viewer.id(), &status).await?
             {
                 continue;
             }
@@ -933,7 +933,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
         None => None,
     };
     let local_statuses = if include_local {
@@ -949,14 +949,14 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let (local_accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows(&db, &local_statuses).await?;
     let viewer_has_thread_mutes = match viewer {
-        Some(viewer) => account_has_thread_mutes(&db, &viewer.id).await?,
+        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
         None => false,
     };
     let mut candidates = Vec::new();
 
     if include_local {
         for status in local_statuses {
-            let status_tags = extract_hashtags_from_text(&status._text_content);
+            let status_tags = extract_hashtags_from_text(&status.text);
             if !matches_tag_timeline_filters(&status_tags, &tag, &query) {
                 continue;
             }
@@ -965,7 +965,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             };
             if viewer_has_thread_mutes
                 && let Some(viewer) = viewer
-                && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+                && is_local_status_thread_muted_by(&db, viewer.id(), &status).await?
             {
                 continue;
             }
@@ -1060,7 +1060,7 @@ pub(crate) async fn link_timeline_response(
         return empty_timeline_response();
     }
     let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(&db, &viewer.id).await?),
+        Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
         None => None,
     };
 
@@ -1071,13 +1071,13 @@ pub(crate) async fn link_timeline_response(
     let (local_accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows(&db, &local_link_statuses).await?;
     let viewer_has_thread_mutes = match viewer {
-        Some(viewer) => account_has_thread_mutes(&db, &viewer.id).await?,
+        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
         None => false,
     };
     let mut candidates = Vec::new();
 
     for status in local_link_statuses {
-        if !status_card_url_matches_targets(&status._text_content, &target_url_set) {
+        if !status_card_url_matches_targets(&status.text, &target_url_set) {
             continue;
         }
         if !local_accounts_by_id.contains_key(&status.account_id) {
@@ -1085,7 +1085,7 @@ pub(crate) async fn link_timeline_response(
         };
         if viewer_has_thread_mutes
             && let Some(viewer) = viewer
-            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
+            && is_local_status_thread_muted_by(&db, viewer.id(), &status).await?
         {
             continue;
         }
@@ -1128,6 +1128,75 @@ pub(crate) async fn link_timeline_response(
     timeline_response_from_entries(&req, limit, entries)
 }
 
+pub(crate) async fn direct_timeline_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let query: TimelinePaginationQuery = req.query().unwrap_or_default();
+    let limit = timeline_limit(&query);
+    let query_limit = timeline_fetch_limit(limit);
+    let db = ctx.d1(&config.database_binding)?;
+    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+        Some(viewer) => viewer,
+        None => return Response::error("Auth0 authentication required", 401),
+    };
+    let cursor = resolve_timeline_cursor(&db, &query).await?;
+    let filter_matcher = load_account_filter_matcher(&db, viewer.id()).await?;
+    let direct_statuses =
+        list_local_direct_timeline_statuses(&db, viewer.id(), &cursor, query_limit).await?;
+    let direct_status_refs = direct_statuses.iter().collect::<Vec<_>>();
+    let (local_accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows_from_status_refs(&db, &direct_status_refs).await?;
+    let muted_actor_uris = preload_muted_timeline_actor_uris(
+        &db,
+        &config,
+        &viewer,
+        &direct_status_refs,
+        &[],
+        &local_accounts_by_id,
+    )
+    .await?;
+    let viewer_has_thread_mutes = account_has_thread_mutes(&db, viewer.id()).await?;
+    let mut candidates = Vec::new();
+
+    for status in direct_statuses {
+        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
+        else {
+            continue;
+        };
+        if muted_actor_uris.contains(&actor_uri) {
+            continue;
+        }
+        if viewer_has_thread_mutes
+            && is_local_status_thread_muted_by(&db, viewer.id(), &status).await?
+        {
+            continue;
+        }
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
+    }
+
+    let candidates = select_public_timeline_candidates(candidates, limit);
+    let entries = timeline_entries_from_candidates(
+        &db,
+        &config,
+        Some(&viewer),
+        Some(&filter_matcher),
+        &local_accounts_by_id,
+        candidates,
+        false,
+        Some(viewer_has_thread_mutes),
+    )
+    .await?;
+
+    timeline_response_from_entries(&req, limit, entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1162,13 +1231,13 @@ mod tests {
                     boost_of_uri: None,
                     quote_of_uri: None,
                     content_html: String::new(),
-                    _text_content: String::new(),
+                    text: String::new(),
                     spoiler_text: String::new(),
-                    visibility: "public".to_owned(),
-                    sensitive: 0,
+                    visibility: cfwdon_domain::Visibility::Public,
+                    sensitive: false,
                     language: None,
                     quote_approval_policy: None,
-                    quote_state: "accepted".to_owned(),
+                    quote_state: cfwdon_domain::QuoteState::Accepted,
                     application_id: None,
                     created_at: created_at.to_owned(),
                     updated_at: Some(created_at.to_owned()),
@@ -1301,73 +1370,4 @@ mod tests {
             &targets,
         ));
     }
-}
-
-pub(crate) async fn direct_timeline_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let query: TimelinePaginationQuery = req.query().unwrap_or_default();
-    let limit = timeline_limit(&query);
-    let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(viewer) => viewer,
-        None => return Response::error("Auth0 authentication required", 401),
-    };
-    let cursor = resolve_timeline_cursor(&db, &query).await?;
-    let filter_matcher = load_account_filter_matcher(&db, &viewer.id).await?;
-    let direct_statuses =
-        list_local_direct_timeline_statuses(&db, &viewer.id, &cursor, query_limit).await?;
-    let direct_status_refs = direct_statuses.iter().collect::<Vec<_>>();
-    let (local_accounts_by_id, mut media_by_status_id) =
-        preload_local_timeline_rows_from_status_refs(&db, &direct_status_refs).await?;
-    let muted_actor_uris = preload_muted_timeline_actor_uris(
-        &db,
-        &config,
-        &viewer,
-        &direct_status_refs,
-        &[],
-        &local_accounts_by_id,
-    )
-    .await?;
-    let viewer_has_thread_mutes = account_has_thread_mutes(&db, &viewer.id).await?;
-    let mut candidates = Vec::new();
-
-    for status in direct_statuses {
-        let Some(actor_uri) = local_status_actor_uri(&config, &local_accounts_by_id, &status)
-        else {
-            continue;
-        };
-        if muted_actor_uris.contains(&actor_uri) {
-            continue;
-        }
-        if viewer_has_thread_mutes
-            && is_local_status_thread_muted_by(&db, &viewer.id, &status).await?
-        {
-            continue;
-        }
-        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        candidates.push(PublicTimelineCandidateEntry {
-            timestamp: status.created_at.clone(),
-            id: status.id.clone(),
-            candidate: PublicTimelineCandidate::Local { status, media },
-        });
-    }
-
-    let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = timeline_entries_from_candidates(
-        &db,
-        &config,
-        Some(&viewer),
-        Some(&filter_matcher),
-        &local_accounts_by_id,
-        candidates,
-        false,
-        Some(viewer_has_thread_mutes),
-    )
-    .await?;
-
-    timeline_response_from_entries(&req, limit, entries)
 }

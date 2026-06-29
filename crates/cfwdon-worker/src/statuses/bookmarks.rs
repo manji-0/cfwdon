@@ -40,7 +40,7 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
     .await?
     {
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
-            upsert_bookmark_local_status(&action.auth.db, &viewer.id, &subject.status).await?;
+            upsert_bookmark_local_status(&action.auth.db, viewer.id(), &subject.status).await?;
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -51,7 +51,7 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
             Response::from_json(&response)
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
-            upsert_bookmark_remote_status(&action.auth.db, &viewer.id, &status).await?;
+            upsert_bookmark_remote_status(&action.auth.db, viewer.id(), &status).await?;
             let response = build_remote_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -90,7 +90,7 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
             delete_bookmark_by_target_uri(
                 &action.auth.db,
-                &viewer.id,
+                viewer.id(),
                 &local_status_target_uri(&subject.status),
             )
             .await?;
@@ -104,7 +104,7 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
             Response::from_json(&response)
         }
         Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
-            delete_bookmark_by_target_uri(&action.auth.db, &viewer.id, &status.object_uri).await?;
+            delete_bookmark_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri).await?;
             let response = build_remote_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -127,7 +127,7 @@ pub(crate) async fn bookmarks_response(req: Request, ctx: RouteContext<()>) -> R
     };
 
     let bookmark_entries =
-        list_bookmarks_for_account(&auth.db, &auth.viewer.id, limit.saturating_mul(3)).await?;
+        list_bookmarks_for_account(&auth.db, auth.viewer.id(), limit.saturating_mul(3)).await?;
     build_saved_status_collection_response(
         &auth.db,
         &auth.config,

@@ -27,19 +27,19 @@ async fn suggested_accounts(
     for (account, _sort_key) in
         list_discoverable_accounts_with_sort_key(&db, 200, 0, DirectoryOrder::Active).await?
     {
-        if account.id == viewer.id {
+        if account.id() == viewer.id() {
             continue;
         }
-        let target_actor_uri = actor_url(&config, &account.username);
-        if find_follow_by_target(&db, &viewer.id, &target_actor_uri)
+        let target_actor_uri = actor_url(&config, account.username());
+        if find_follow_by_target(&db, viewer.id(), &target_actor_uri)
             .await?
             .is_some()
-            || is_blocking_actor(&db, &viewer.id, &target_actor_uri).await?
-            || is_muted_actor(&db, &viewer.id, &target_actor_uri).await?
+            || is_blocking_actor(&db, viewer.id(), &target_actor_uri).await?
+            || is_muted_actor(&db, viewer.id(), &target_actor_uri).await?
         {
             continue;
         }
-        let stats = load_account_stats(&db, &account.id).await?;
+        let stats = load_account_stats(&db, account.id()).await?;
         suggestions.push(MastodonAccountResponse::from_account_with_stats(
             &account, &config, &stats,
         ));

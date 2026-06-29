@@ -183,7 +183,7 @@ pub(crate) async fn update_media_attachment(
         None => return Response::error("Auth0 authentication required", 401),
     };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
-        Some(media) if media.account_id == account.id => media,
+        Some(media) if media.account_id == account.id() => media,
         _ => return Response::error("media not found", 404),
     };
 
@@ -211,7 +211,7 @@ pub(crate) async fn delete_media_attachment(
         None => return Response::error("Auth0 authentication required", 401),
     };
     let media = match find_media_attachment_by_id(&db, &media_id).await? {
-        Some(media) if media.account_id == account.id => media,
+        Some(media) if media.account_id == account.id() => media,
         _ => return Response::error("media not found", 404),
     };
     if media.status_id.is_some() {

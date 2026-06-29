@@ -152,7 +152,7 @@ pub(crate) async fn resolve_visible_action_status(
                 .map(ResolvedVisibleActionStatus::Local),
         ),
         Some(ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(&status.visibility) {
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Ok(None);
             }
             Ok(Some(ResolvedVisibleActionStatus::Remote(status, actor)))

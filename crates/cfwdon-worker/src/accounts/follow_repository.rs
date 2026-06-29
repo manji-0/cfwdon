@@ -16,8 +16,8 @@ pub(crate) async fn follow_local_account(
         db,
         config,
         follower,
-        &target.id,
-        &actor_url(config, &target.username),
+        target.id(),
+        &actor_url(config, target.username()),
     )
     .await
 }
@@ -28,9 +28,9 @@ pub(crate) async fn unfollow_local_account(
     follower: &LocalAccount,
     target: &LocalAccount,
 ) -> Result<crate::RelationshipResponse> {
-    let target_actor_uri = actor_url(config, &target.username);
-    delete_follow_by_target(db, &follower.id, &target_actor_uri).await?;
-    build_relationship_for_target(db, config, follower, &target.id, &target_actor_uri).await
+    let target_actor_uri = actor_url(config, target.username());
+    delete_follow_by_target(db, follower.id(), &target_actor_uri).await?;
+    build_relationship_for_target(db, config, follower, target.id(), &target_actor_uri).await
 }
 
 pub(crate) async fn follow_remote_account_relationship(

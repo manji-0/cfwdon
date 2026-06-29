@@ -51,10 +51,10 @@ pub(crate) async fn list_local_mention_notifications_for_account(
     limit: u32,
     min_created_at: Option<&str>,
 ) -> Result<Vec<MentionNotificationRow>> {
-    let pattern = format!("%@{}%", viewer.username.to_ascii_lowercase());
+    let pattern = format!("%@{}%", viewer.username().to_ascii_lowercase());
     let result = if let Some(min_created_at) = min_created_at {
         let bindings = [
-            D1Type::Text(viewer.id.as_str()),
+            D1Type::Text(viewer.id()),
             D1Type::Text(pattern.as_str()),
             D1Type::Text(min_created_at),
             D1Type::Integer(limit as i32),
@@ -73,7 +73,7 @@ pub(crate) async fn list_local_mention_notifications_for_account(
         .await?
     } else {
         let bindings = [
-            D1Type::Text(viewer.id.as_str()),
+            D1Type::Text(viewer.id()),
             D1Type::Text(pattern.as_str()),
             D1Type::Integer(limit as i32),
         ];
@@ -107,7 +107,7 @@ fn local_mention_row_targets_viewer(
 ) -> bool {
     extract_mentions_from_text(&row.text_content, config)
         .into_iter()
-        .any(|handle| handle.username == viewer.username)
+        .any(|handle| handle.username == viewer.username())
 }
 
 pub(crate) async fn list_remote_mention_notifications_for_account(
@@ -119,7 +119,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
 ) -> Result<Vec<RemoteMentionNotificationRow>> {
     let pattern = format!(
         "%@{}@{}%",
-        viewer.username.to_ascii_lowercase(),
+        viewer.username().to_ascii_lowercase(),
         instance_host(config)
     );
     let result = if let Some(min_published_at) = min_published_at {
@@ -177,12 +177,13 @@ fn remote_mention_row_targets_viewer(
     let text_content = strip_html_tags(&row.content_html);
     extract_mentions_from_text(&text_content, config)
         .into_iter()
-        .any(|handle| handle.username == viewer.username)
+        .any(|handle| handle.username == viewer.username())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfwdon_domain::LocalAccountRecord;
 
     fn test_config() -> AppConfig {
         AppConfig::new(
@@ -193,29 +194,7 @@ mod tests {
     }
 
     fn test_viewer() -> LocalAccount {
-        LocalAccount {
-            id: "acct-alice".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.com".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "{}".to_owned(),
-            public_key_pem: "pem".to_owned(),
-            created_at: "2025-01-01T00:00:00Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-alice", "alice"))
     }
 
     #[test]

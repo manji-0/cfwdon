@@ -4,17 +4,18 @@ use super::notifications::{
 };
 use super::{
     AppConfig, MastodonAccountResponse, NotificationsQuery, RemoteStatusNotificationRow,
-    RemoteStatusRow, actor_url, build_local_status_response, build_remote_status_response,
-    can_view_local_status, find_accounts_by_ids, find_media_attachments_by_status_ids,
-    find_remote_actors_by_actor_uris, list_local_status_notifications_for_account,
-    list_remote_status_notifications_for_account, load_in_reply_to_account_ids,
-    muted_notifications_for_actor, remote_account_rest_id,
+    RemoteStatusRecord, RemoteStatusRow, actor_url, build_local_status_response,
+    build_remote_status_response, can_view_local_status, find_accounts_by_ids,
+    find_media_attachments_by_status_ids, find_remote_actors_by_actor_uris,
+    list_local_status_notifications_for_account, list_remote_status_notifications_for_account,
+    load_in_reply_to_account_ids, muted_notifications_for_actor, remote_account_rest_id,
+    remote_status_from_record,
 };
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
 
 fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> RemoteStatusRow {
-    RemoteStatusRow {
+    remote_status_from_record(RemoteStatusRecord {
         id: status.id.clone(),
         actor_uri: status.actor_uri.clone(),
         object_uri: status.object_uri.clone(),
@@ -29,7 +30,7 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Remot
         language: status.language.clone(),
         quote_state: status.quote_state.clone(),
         published_at: status.published_at.clone(),
-    }
+    })
 }
 
 pub(crate) async fn collect_status_notification_entries(
@@ -45,7 +46,7 @@ pub(crate) async fn collect_status_notification_entries(
     }
 
     let local_statuses =
-        list_local_status_notifications_for_account(db, &viewer.id, per_type_limit).await?;
+        list_local_status_notifications_for_account(db, viewer.id(), per_type_limit).await?;
     let local_account_ids = local_statuses
         .iter()
         .map(|status| status.account_id.clone())
@@ -65,9 +66,9 @@ pub(crate) async fn collect_status_notification_entries(
             continue;
         };
         if !can_view_local_status(db, &status, Some(viewer), actor).await?
-            || muted_notifications_for_actor(db, &viewer.id, &actor_url(config, &actor.username))
+            || muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
                 .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), &actor.id, None)
+            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
@@ -85,9 +86,9 @@ pub(crate) async fn collect_status_notification_entries(
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("status-local-{}-{}", actor.id, status.id),
+                id: format!("status-local-{}-{}", actor.id(), status.id),
                 notification_type: "status".to_owned(),
-                group_key: format!("status-local-{}-{}", actor.id, status.id),
+                group_key: format!("status-local-{}-{}", actor.id(), status.id),
                 created_at: status.created_at,
                 account: MastodonAccountResponse::from_account(actor, config),
                 status: Some(status_response),
@@ -97,7 +98,7 @@ pub(crate) async fn collect_status_notification_entries(
     }
 
     let remote_statuses =
-        list_remote_status_notifications_for_account(db, &viewer.id, per_type_limit).await?;
+        list_remote_status_notifications_for_account(db, viewer.id(), per_type_limit).await?;
     let remote_actor_uris = remote_statuses
         .iter()
         .map(|status| status.actor_uri.clone())
@@ -111,7 +112,7 @@ pub(crate) async fn collect_status_notification_entries(
         let Some(actor) = remote_actors.get(&status.actor_uri) else {
             continue;
         };
-        if muted_notifications_for_actor(db, &viewer.id, &actor.actor_uri).await? {
+        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);

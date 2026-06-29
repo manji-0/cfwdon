@@ -161,38 +161,6 @@ fn wrap_pkcs1_rsa_public_key_as_spki(pkcs1_der: &[u8]) -> Vec<u8> {
     der_sequence(&spki_content)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{decode_public_key_pem, wrap_pkcs1_rsa_public_key_as_spki};
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD;
-
-    #[test]
-    fn decode_public_key_pem_keeps_spki_public_key_der() {
-        let der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
-        let pem = format!(
-            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
-            STANDARD.encode(&der)
-        );
-
-        assert_eq!(decode_public_key_pem(&pem).unwrap(), der);
-    }
-
-    #[test]
-    fn decode_public_key_pem_wraps_pkcs1_rsa_public_key_as_spki() {
-        let pkcs1 = vec![0x30, 0x06, 0x02, 0x01, 0x03, 0x02, 0x01, 0x11];
-        let pem = format!(
-            "-----BEGIN RSA PUBLIC KEY-----\n{}\n-----END RSA PUBLIC KEY-----\n",
-            STANDARD.encode(&pkcs1)
-        );
-
-        assert_eq!(
-            decode_public_key_pem(&pem).unwrap(),
-            wrap_pkcs1_rsa_public_key_as_spki(&pkcs1)
-        );
-    }
-}
-
 async fn import_private_signing_key(
     subtle: &web_sys::SubtleCrypto,
     private_key_jwk: &str,
@@ -223,4 +191,36 @@ async fn import_private_signing_key(
     .await?
     .dyn_into::<CryptoKey>()
     .map_err(|_| Error::RustError("failed to import account private signing key".to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_public_key_pem, wrap_pkcs1_rsa_public_key_as_spki};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    #[test]
+    fn decode_public_key_pem_keeps_spki_public_key_der() {
+        let der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
+        let pem = format!(
+            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
+            STANDARD.encode(&der)
+        );
+
+        assert_eq!(decode_public_key_pem(&pem).unwrap(), der);
+    }
+
+    #[test]
+    fn decode_public_key_pem_wraps_pkcs1_rsa_public_key_as_spki() {
+        let pkcs1 = vec![0x30, 0x06, 0x02, 0x01, 0x03, 0x02, 0x01, 0x11];
+        let pem = format!(
+            "-----BEGIN RSA PUBLIC KEY-----\n{}\n-----END RSA PUBLIC KEY-----\n",
+            STANDARD.encode(&pkcs1)
+        );
+
+        assert_eq!(
+            decode_public_key_pem(&pem).unwrap(),
+            wrap_pkcs1_rsa_public_key_as_spki(&pkcs1)
+        );
+    }
 }

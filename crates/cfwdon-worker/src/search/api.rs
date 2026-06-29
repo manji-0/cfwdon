@@ -147,10 +147,10 @@ pub(crate) async fn account_directory(req: Request, ctx: RouteContext<()>) -> Re
         for (account, sort_key) in
             list_discoverable_accounts_with_sort_key(&db, fetch_limit, 0, order).await?
         {
-            let stats = load_account_stats(&db, &account.id).await?;
+            let stats = load_account_stats(&db, account.id()).await?;
             entries.push((
                 sort_key,
-                account.username.clone(),
+                account.username().to_owned(),
                 MastodonAccountResponse::from_account_with_stats(&account, &config, &stats),
             ));
         }

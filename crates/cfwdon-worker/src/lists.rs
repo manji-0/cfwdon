@@ -349,7 +349,7 @@ async fn resolve_list_member_document(
     account_ref: &str,
 ) -> Result<Option<serde_json::Value>> {
     if let Some(account) = find_account_by_id(db, account_ref).await? {
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         return Ok(Some(serde_json::to_value(
             crate::MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
         )?));
@@ -388,8 +388,8 @@ pub(crate) fn list_membership_variants_for_local_account(
     config: &cfwdon_core::AppConfig,
 ) -> [String; 2] {
     [
-        account.id.clone(),
-        format!("{}@{}", account.username, config.instance_domain),
+        account.id().to_owned(),
+        format!("{}@{}", account.username(), config.instance_domain),
     ]
 }
 
@@ -468,7 +468,7 @@ pub(crate) async fn account_lists_response(
 
     let target_refs = target_refs.into_iter().collect::<HashSet<_>>();
     let mut documents = Vec::new();
-    for row in list_rows_for_account(&db, &account.id).await? {
+    for row in list_rows_for_account(&db, account.id()).await? {
         let memberships = list_membership_refs(&db, &row.id).await?;
         if memberships
             .into_iter()
@@ -496,7 +496,7 @@ pub(crate) async fn list_timeline_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let Some(list) = list_row_by_id(&db, &account.id, &list_id).await? else {
+    let Some(list) = list_row_by_id(&db, account.id(), &list_id).await? else {
         return Response::error("list not found", 404);
     };
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
@@ -520,7 +520,7 @@ pub(crate) async fn list_timeline_response(
         if list.replies_policy == "none" && status.in_reply_to_id.is_some() {
             continue;
         }
-        if is_local_status_thread_muted_by(&db, &account.id, &status).await? {
+        if is_local_status_thread_muted_by(&db, account.id(), &status).await? {
             continue;
         }
         let media = find_media_attachments_by_status_id(&db, &status.id).await?;
@@ -550,7 +550,7 @@ pub(crate) async fn list_timeline_response(
         if list.replies_policy == "none" && status.in_reply_to_uri.is_some() {
             continue;
         }
-        if is_muted_actor(&db, &account.id, &actor.actor_uri).await? {
+        if is_muted_actor(&db, account.id(), &actor.actor_uri).await? {
             continue;
         }
         entries.push((
@@ -588,7 +588,7 @@ pub(crate) async fn lists_response(req: Request, ctx: RouteContext<()>) -> Resul
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let documents = list_rows_for_account(&db, &account.id)
+    let documents = list_rows_for_account(&db, account.id())
         .await?
         .into_iter()
         .map(|row| list_document(&row))
@@ -609,7 +609,7 @@ pub(crate) async fn create_list_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let row = create_list_row(&db, &account.id, &request).await?;
+    let row = create_list_row(&db, account.id(), &request).await?;
     Response::from_json(&list_document(&row))
 }
 
@@ -621,7 +621,7 @@ pub(crate) async fn list_response(req: Request, ctx: RouteContext<()>) -> Result
         None => return Response::error("Auth0 authentication required", 401),
     };
     let list_id = list_id_from_context(&ctx)?;
-    match list_row_by_id(&db, &account.id, &list_id).await? {
+    match list_row_by_id(&db, account.id(), &list_id).await? {
         Some(row) => Response::from_json(&list_document(&row)),
         None => Response::error("list not found", 404),
     }
@@ -641,7 +641,7 @@ pub(crate) async fn update_list_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    match update_list_row(&db, &account.id, &list_id, &request).await? {
+    match update_list_row(&db, account.id(), &list_id, &request).await? {
         Some(row) => Response::from_json(&list_document(&row)),
         None => Response::error("list not found", 404),
     }
@@ -655,7 +655,7 @@ pub(crate) async fn delete_list_response(req: Request, ctx: RouteContext<()>) ->
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if !delete_list_row(&db, &account.id, &list_id).await? {
+    if !delete_list_row(&db, account.id(), &list_id).await? {
         return Response::error("list not found", 404);
     }
     Response::from_json(&serde_json::json!({}))
@@ -672,7 +672,7 @@ pub(crate) async fn list_accounts_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
     let list_id = list_id_from_context(&ctx)?;
-    if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
+    if list_row_by_id(&db, account.id(), &list_id).await?.is_none() {
         return Response::error("list not found", 404);
     }
 
@@ -715,7 +715,7 @@ pub(crate) async fn add_list_accounts_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
+    if list_row_by_id(&db, account.id(), &list_id).await?.is_none() {
         return Response::error("list not found", 404);
     }
 
@@ -737,7 +737,7 @@ pub(crate) async fn delete_list_accounts_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    if list_row_by_id(&db, &account.id, &list_id).await?.is_none() {
+    if list_row_by_id(&db, account.id(), &list_id).await?.is_none() {
         return Response::error("list not found", 404);
     }
 
@@ -756,35 +756,10 @@ pub(crate) async fn delete_list_accounts_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cfwdon_domain::{LocalAccount, ProfileField};
+    use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 
     fn fixture_account() -> LocalAccount {
-        LocalAccount {
-            id: "acct-1".to_owned(),
-            username: "alice".to_owned(),
-            access_email: "alice@example.com".to_owned(),
-            display_name: "Alice".to_owned(),
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: vec![ProfileField {
-                name: "website".to_owned(),
-                value: "https://example.com".to_owned(),
-            }],
-            locked: false,
-            bot: false,
-            discoverable: true,
-            default_post_visibility: "public".to_owned(),
-            default_quote_policy: "public".to_owned(),
-            default_sensitive: false,
-            default_language: Some("en".to_owned()),
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: "{}".to_owned(),
-            public_key_pem: "pem".to_owned(),
-            created_at: "2026-01-01T00:00:00.000Z".to_owned(),
-        }
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice"))
     }
 
     #[test]

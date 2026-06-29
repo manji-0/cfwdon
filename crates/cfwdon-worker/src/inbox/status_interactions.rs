@@ -19,7 +19,7 @@ pub(crate) async fn handle_inbox_like(
     let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? else {
         return Ok(());
     };
-    if status.account_id != account.id {
+    if status.account_id != account.id() {
         return Ok(());
     }
     let activity_uri = activity.get("id").and_then(serde_json::Value::as_str);
@@ -58,7 +58,7 @@ pub(crate) async fn handle_inbox_announce(
     upsert_remote_reblog_status(db, config, remote_actor, activity).await?;
 
     if let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? {
-        if status.account_id != account.id {
+        if status.account_id != account.id() {
             return Ok(());
         }
         let activity_uri = activity.get("id").and_then(serde_json::Value::as_str);

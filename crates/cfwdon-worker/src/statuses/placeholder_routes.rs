@@ -45,15 +45,15 @@ pub(crate) struct TranslationProviderLanguageRow {
 
 pub(crate) fn normalize_quote_approval_policy(
     value: Option<String>,
-) -> std::result::Result<Option<String>, String> {
+) -> std::result::Result<Option<cfwdon_domain::QuoteApprovalPolicy>, String> {
     let value = value
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty());
     match value.as_deref() {
-        None | Some("public") | Some("followers") | Some("nobody") => Ok(value),
-        Some(_) => {
-            Err("quote_approval_policy must be one of: public, followers, nobody".to_owned())
-        }
+        None => Ok(None),
+        Some(value) => cfwdon_domain::QuoteApprovalPolicy::parse(value)
+            .map(Some)
+            .map_err(|error| error.to_string()),
     }
 }
 
@@ -80,6 +80,7 @@ async fn parse_interaction_policy_update_request(
     };
 
     normalize_quote_approval_policy(policy)
+        .map(|policy| policy.map(|policy| policy.as_str().to_owned()))
 }
 
 pub(crate) fn build_translation_document_for_language(
@@ -1105,7 +1106,7 @@ pub(crate) async fn status_interaction_policy_response(
     let Some(status) = find_status_by_id(&db, &status_id).await? else {
         return Response::error("status not found", 404);
     };
-    if status.account_id != viewer.id {
+    if status.account_id != viewer.id() {
         return Response::error("status not found", 404);
     }
     let effective_policy = match requested_policy.as_deref() {
@@ -1188,11 +1189,12 @@ pub(crate) async fn translate_status_response(
         .get("language")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("und");
+    let viewer_default_language = viewer
+        .as_ref()
+        .and_then(|viewer| viewer.default_language().map(str::to_owned));
     let target_language = translation_target_language(
         request.lang.as_deref(),
-        viewer
-            .as_ref()
-            .and_then(|viewer| viewer.default_language.as_deref()),
+        viewer_default_language.as_deref(),
         &configured_instance_languages(&config),
         source_language,
     );

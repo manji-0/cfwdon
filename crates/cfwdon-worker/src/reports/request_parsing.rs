@@ -131,7 +131,7 @@ pub(crate) async fn validate_report_status_ids(
         else {
             return Err("status not found".to_owned());
         };
-        if status.account_id != target_account.id {
+        if status.account_id != target_account.id() {
             return Err("status_ids must belong to the reported account".to_owned());
         }
     }

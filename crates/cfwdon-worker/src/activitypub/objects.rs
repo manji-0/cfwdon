@@ -18,7 +18,7 @@ pub(crate) fn local_status_ap_id(
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
             "{}/statuses/{}",
-            actor_url(config, &account.username),
+            actor_url(config, account.username()),
             status.id
         )
     })
@@ -77,9 +77,9 @@ pub(crate) async fn build_activitypub_note(
     status: &StatusRow,
     include_context: bool,
 ) -> Result<serde_json::Value> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let note_id = local_status_ap_id(config, account, status);
-    let audiences = activitypub_audiences(config, &account.username, &status.visibility);
+    let audiences = activitypub_audiences(config, account.username(), status.visibility.as_str());
     let (poll, reply_uri, attachments) = futures_util::try_join!(
         find_status_poll_by_status_id(db, &status.id),
         async {
@@ -127,7 +127,7 @@ pub(crate) async fn build_activitypub_note(
         note["summary"] = serde_json::json!(status.spoiler_text.clone());
         note["sensitive"] = serde_json::json!(true);
     } else {
-        note["sensitive"] = serde_json::json!(status.sensitive != 0);
+        note["sensitive"] = serde_json::json!(status.sensitive);
     }
     if let Some(language) = &status.language {
         let mut content_map = serde_json::Map::new();

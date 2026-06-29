@@ -15,33 +15,33 @@ pub(crate) async fn handle_inbox_follow(
 ) -> Result<()> {
     if !follow_targets_local_actor(
         activity.get("object"),
-        &actor_url(config, &account.username),
+        &actor_url(config, account.username()),
     ) {
         return Ok(());
     }
 
-    let locked = account.locked;
+    let locked = account.is_locked();
     let follow_activity_id = activity.get("id").and_then(serde_json::Value::as_str);
 
     if locked {
-        upsert_remote_follow_request(db, &account.id, remote_actor, follow_activity_id).await?;
+        upsert_remote_follow_request(db, account.id(), remote_actor, follow_activity_id).await?;
         return Ok(());
     }
 
     delete_remote_follow_request_by_actor(
         db,
-        &account.id,
+        account.id(),
         &remote_actor.actor_uri,
         &remote_actor.actor_uri,
     )
     .await?;
-    upsert_follower(db, &account.id, remote_actor, follow_activity_id).await?;
+    upsert_follower(db, account.id(), remote_actor, follow_activity_id).await?;
 
     let accept_activity =
         build_accept_activity(config, account, activity, &remote_actor.actor_uri)?;
     let _ = queue_remote_actor_activity_required(
         db,
-        &account.id,
+        account.id(),
         &remote_actor.actor_uri,
         &accept_activity,
     )

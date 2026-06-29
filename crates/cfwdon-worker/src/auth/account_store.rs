@@ -1,5 +1,5 @@
 use cfwdon_core::{AppConfig, AuthenticatedUser};
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{ComposingAccessProvision, LocalAccount};
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
@@ -16,17 +16,24 @@ pub(crate) async fn resolve_local_account(
         return ensure_account_keys(db, config, account).await;
     }
 
-    let base_username = username_from_email(&user.email);
-    let candidate = match find_account_by_username(db, &base_username).await? {
-        Some(_) => format!("{}-{}", base_username, short_email_suffix(&user.email)),
-        None => base_username,
+    let base_username_taken = {
+        let email = cfwdon_domain::AccessEmail::parse(&user.email).map_err(|error| {
+            Error::RustError(format!("authenticated user email is invalid: {error}"))
+        })?;
+        let base = cfwdon_domain::Username::derive_from_email(&email, false);
+        find_account_by_username(db, base.as_str()).await?.is_some()
     };
-
-    let display_name = candidate.clone();
+    let provision = ComposingAccessProvision {
+        email: user.email.clone(),
+    }
+    .resolve(base_username_taken)
+    .map_err(|error| Error::RustError(format!("authenticated user email is invalid: {error}")))?;
+    let candidate = provision.username.as_str();
+    let display_name = candidate.to_owned();
     let key_material = generate_account_key_material().await?;
     let bindings = [
-        D1Type::Text(candidate.as_str()),
-        D1Type::Text(user.email.as_str()),
+        D1Type::Text(candidate),
+        D1Type::Text(provision.email.as_str()),
         D1Type::Text(display_name.as_str()),
         D1Type::Text(""),
         D1Type::Text(key_material.public_key_pem.as_str()),
@@ -66,7 +73,7 @@ pub(crate) async fn resolve_local_account(
     let account = find_account_by_email(db, &user.email)
         .await?
         .ok_or_else(|| Error::RustError("failed to load provisioned account".to_owned()))?;
-    store_account_private_key(db, config, &account.id, &key_material.private_key_jwk).await?;
+    store_account_private_key(db, config, account.id(), &key_material.private_key_jwk).await?;
     Ok(account)
 }
 
@@ -75,8 +82,8 @@ pub(crate) async fn ensure_account_keys(
     config: &AppConfig,
     account: LocalAccount,
 ) -> Result<LocalAccount> {
-    if !account.public_key_pem.is_empty()
-        && load_account_private_key_jwk(db, config, &account.id)
+    if !account.public_key_pem().is_empty()
+        && load_account_private_key_jwk(db, config, account.id())
             .await?
             .is_some()
     {
@@ -87,7 +94,7 @@ pub(crate) async fn ensure_account_keys(
     let bindings = [
         D1Type::Text(key_material.private_key_jwk.as_str()),
         D1Type::Text(key_material.public_key_pem.as_str()),
-        D1Type::Text(account.id.as_str()),
+        D1Type::Text(account.id()),
     ];
 
     db.prepare(
@@ -100,9 +107,9 @@ pub(crate) async fn ensure_account_keys(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    store_account_private_key(db, config, &account.id, &key_material.private_key_jwk).await?;
+    store_account_private_key(db, config, account.id(), &key_material.private_key_jwk).await?;
 
-    find_account_by_id(db, &account.id)
+    find_account_by_id(db, account.id())
         .await?
         .ok_or_else(|| Error::RustError("failed to reload account key material".to_owned()))
 }
@@ -244,7 +251,7 @@ pub(crate) async fn find_account_by_email(
         .first::<AccountRow>(None)
         .await?;
 
-    Ok(row.map(LocalAccount::from))
+    Ok(row.map(LocalAccount::from_record))
 }
 
 pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Option<LocalAccount>> {
@@ -261,7 +268,7 @@ pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Opti
         .first::<AccountRow>(None)
         .await?;
 
-    Ok(row.map(LocalAccount::from))
+    Ok(row.map(LocalAccount::from_record))
 }
 
 pub(crate) async fn find_account_by_username(
@@ -282,28 +289,5 @@ pub(crate) async fn find_account_by_username(
         .first::<AccountRow>(None)
         .await?;
 
-    Ok(row.map(LocalAccount::from))
-}
-
-fn username_from_email(email: &str) -> String {
-    let local = email.split('@').next().unwrap_or("user");
-    let sanitized: String = local
-        .chars()
-        .map(|ch| ch.to_ascii_lowercase())
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
-        .collect();
-
-    if sanitized.is_empty() {
-        "user".to_owned()
-    } else {
-        sanitized
-    }
-}
-
-fn short_email_suffix(email: &str) -> String {
-    let checksum = email.bytes().fold(0u32, |acc, byte| {
-        acc.wrapping_mul(16777619).wrapping_add(byte as u32)
-    });
-
-    format!("{:06x}", checksum & 0x00ff_ffff)
+    Ok(row.map(LocalAccount::from_record))
 }

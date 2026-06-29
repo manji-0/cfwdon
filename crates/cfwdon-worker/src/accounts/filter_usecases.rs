@@ -25,7 +25,7 @@ pub(crate) async fn block_account_usecase(
 ) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
-            if blocker.id == target.id {
+            if blocker.id() == target.id() {
                 return Err(FilterActionError::CannotTargetSelf);
             }
             block_local_account(db, config, blocker, &target)
@@ -70,7 +70,7 @@ pub(crate) async fn mute_account_usecase(
 ) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
-            if muter.id == target.id {
+            if muter.id() == target.id() {
                 return Err(FilterActionError::CannotTargetSelf);
             }
             mute_local_account(db, config, muter, &target, notifications, expires_at)

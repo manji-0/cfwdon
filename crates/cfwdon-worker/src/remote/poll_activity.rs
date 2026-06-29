@@ -11,7 +11,7 @@ pub(crate) fn build_poll_vote_activity(
     question_uri: &str,
     option_title: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let vote_id = format!("{actor}/votes/{}", generate_entity_id(12)?);
     let activity_id = format!("{vote_id}/activity");
     build_poll_vote_activity_with_ids(
@@ -34,7 +34,7 @@ pub(crate) fn build_poll_vote_activity_with_ids(
     vote_id: &str,
     activity_id: &str,
 ) -> Result<(String, String)> {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": activity_id,
@@ -45,7 +45,7 @@ pub(crate) fn build_poll_vote_activity_with_ids(
             "id": vote_id,
             "type": "Note",
             "name": option_title,
-            "attributedTo": actor_url(config, &account.username),
+            "attributedTo": actor_url(config, account.username()),
             "to": [remote_actor_uri],
             "inReplyTo": question_uri,
         }

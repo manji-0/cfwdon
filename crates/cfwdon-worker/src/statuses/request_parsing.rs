@@ -2,6 +2,7 @@ use super::{
     StatusDraft, normalize_quote_approval_policy, normalize_status_poll, parse_media_ids_from_form,
     parse_optional_bool,
 };
+use cfwdon_domain::ComposingStatus;
 use serde::Deserialize;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::{FormData, FormEntry, Request};
@@ -143,34 +144,30 @@ fn parsed_status_draft_from_request(
     idempotency_key: Option<String>,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let scheduled_at = normalize_scheduled_at(request.scheduled_at.as_deref())?;
-    let text = request.status.unwrap_or_default().trim().to_owned();
     let poll = normalize_status_poll(request.poll)?;
     let media_ids = normalize_status_media_ids(request.media_ids);
     let quoted_status_id = normalized_optional_string(request.quoted_status_id);
-    validate_status_draft_inputs(
-        &text,
-        &media_ids,
-        poll.is_some(),
-        quoted_status_id.as_deref(),
-    )?;
     let visibility = status_visibility_from_request(request.visibility.as_deref())?;
     let quote_approval_policy = normalize_quote_approval_policy(request.quote_approval_policy)?;
 
+    let composing = ComposingStatus {
+        text: request.status.unwrap_or_default(),
+        visibility,
+        spoiler_text: request.spoiler_text.unwrap_or_default(),
+        sensitive: request.sensitive.unwrap_or(false),
+        language: request.language,
+        quote_approval_policy,
+        in_reply_to_id: request.in_reply_to_id,
+        media_ids,
+        poll,
+    };
+    let draft = composing
+        .validate(quoted_status_id.as_deref())
+        .map_err(|error| error.to_string())?
+        .state;
+
     Ok(ParsedStatusDraft {
-        draft: StatusDraft {
-            text,
-            visibility,
-            spoiler_text: request.spoiler_text.unwrap_or_default().trim().to_owned(),
-            sensitive: request.sensitive.unwrap_or(false),
-            language: request
-                .language
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty()),
-            quote_approval_policy,
-            in_reply_to_id: normalized_optional_string(request.in_reply_to_id),
-            media_ids,
-            poll,
-        },
+        draft,
         idempotency_key: idempotency_key
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty()),
@@ -179,6 +176,7 @@ fn parsed_status_draft_from_request(
     })
 }
 
+#[allow(dead_code)]
 fn validate_status_draft_inputs(
     text: &str,
     media_ids: &[String],
@@ -207,9 +205,8 @@ fn status_visibility_from_request(
 ) -> std::result::Result<super::Visibility, String> {
     match value.map(str::trim) {
         Some("") | None => Ok(super::Visibility::Public),
-        Some(value) => super::Visibility::parse(value).ok_or_else(|| {
-            "visibility must be one of: public, unlisted, private, direct".to_owned()
-        }),
+        Some(value) => super::Visibility::parse(value)
+            .map_err(|_| "visibility must be one of: public, unlisted, private, direct".to_owned()),
     }
 }
 

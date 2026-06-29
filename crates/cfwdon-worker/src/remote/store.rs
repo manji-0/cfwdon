@@ -3,50 +3,40 @@ use crate::{
     count_followers_by_actor, delete_remote_status_poll_by_status_id, extract_remote_poll_draft,
     find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
     generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
-    now_iso_string, quote_target_uri_from_object, remote_quote_state_for_local_target,
-    render_status_html, replace_remote_status_attachments, replace_remote_status_hashtags,
+    now_iso_string, quote_target_uri_from_object,
+    remote::adapters::{
+        activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
+    },
+    replace_remote_status_attachments, replace_remote_status_hashtags,
     send_remote_status_quote_notification, send_remote_status_update_notifications,
-    upsert_remote_status_poll, visibility_from_activitypub_object,
+    upsert_remote_status_poll,
+};
+use cfwdon_domain::{
+    RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
+    StoredRemoteReblogIntent, StoredRemoteStatusIntent, remote_status_default_quote_state,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct RemoteStatusRow {
-    pub(crate) id: String,
-    pub(crate) actor_uri: String,
-    pub(crate) object_uri: String,
-    pub(crate) url: Option<String>,
-    pub(crate) in_reply_to_uri: Option<String>,
-    #[serde(default)]
-    pub(crate) boost_of_uri: Option<String>,
-    #[serde(default)]
-    pub(crate) quote_of_uri: Option<String>,
-    pub(crate) content_html: String,
-    pub(crate) spoiler_text: String,
-    pub(crate) visibility: String,
-    pub(crate) sensitive: i32,
-    pub(crate) language: Option<String>,
-    #[serde(default = "default_remote_quote_state")]
-    pub(crate) quote_state: String,
-    pub(crate) published_at: String,
+pub(crate) type RemoteStatusRow = RemoteStatus;
+
+pub(crate) use cfwdon_domain::RemoteStatusRecord;
+
+pub(crate) fn remote_status_from_record(record: RemoteStatusRecord) -> RemoteStatusRow {
+    RemoteStatus::from_record(record)
 }
 
 pub(crate) fn default_remote_quote_state() -> String {
-    "accepted".to_owned()
+    remote_status_default_quote_state()
 }
 
-pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &str {
-    if status.quote_of_uri.is_none() {
-        "accepted"
-    } else {
-        status.quote_state.as_str()
-    }
+pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &'static str {
+    status.effective_quote_state().as_str()
 }
 
 pub(crate) fn remote_status_has_active_quote(status: &RemoteStatusRow) -> bool {
-    status.quote_of_uri.is_some() && effective_remote_status_quote_state(status) != "revoked"
+    status.has_active_quote()
 }
 
 pub(crate) async fn find_remote_status_by_id(
@@ -61,8 +51,9 @@ pub(crate) async fn find_remote_status_by_id(
          LIMIT 1",
     )
     .bind_refs(bindings.iter())?
-    .first::<RemoteStatusRow>(None)
+    .first::<RemoteStatusRecord>(None)
     .await
+    .map(|row| row.map(remote_status_from_record))
 }
 
 pub(crate) async fn find_remote_status_raw_object_by_id(
@@ -106,8 +97,9 @@ pub(crate) async fn find_remote_status_by_object_uri(
          LIMIT 1",
     )
     .bind_refs(bindings.iter())?
-    .first::<RemoteStatusRow>(None)
+    .first::<RemoteStatusRecord>(None)
     .await
+    .map(|row| row.map(remote_status_from_record))
 }
 
 pub(crate) async fn find_remote_status_by_url_or_object_uri(
@@ -123,79 +115,22 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
          LIMIT 1",
     )
     .bind_refs(bindings.iter())?
-    .first::<RemoteStatusRow>(None)
+    .first::<RemoteStatusRecord>(None)
     .await
+    .map(|row| row.map(remote_status_from_record))
 }
 
 #[derive(Debug, Deserialize)]
 struct RemoteStatusEditStateRow {
-    id: String,
-    actor_uri: String,
-    object_uri: String,
-    url: Option<String>,
-    in_reply_to_uri: Option<String>,
-    boost_of_uri: Option<String>,
-    quote_of_uri: Option<String>,
-    content_html: String,
-    spoiler_text: String,
-    visibility: String,
-    sensitive: i32,
-    language: Option<String>,
-    #[serde(default = "default_remote_quote_state")]
-    quote_state: String,
-    published_at: String,
+    #[serde(flatten)]
+    record: RemoteStatusRecord,
     raw_object_json: String,
 }
 
 impl RemoteStatusEditStateRow {
     fn status_row(&self) -> RemoteStatusRow {
-        RemoteStatusRow {
-            id: self.id.clone(),
-            actor_uri: self.actor_uri.clone(),
-            object_uri: self.object_uri.clone(),
-            url: self.url.clone(),
-            in_reply_to_uri: self.in_reply_to_uri.clone(),
-            boost_of_uri: self.boost_of_uri.clone(),
-            quote_of_uri: self.quote_of_uri.clone(),
-            content_html: self.content_html.clone(),
-            spoiler_text: self.spoiler_text.clone(),
-            visibility: self.visibility.clone(),
-            sensitive: self.sensitive,
-            language: self.language.clone(),
-            quote_state: self.quote_state.clone(),
-            published_at: self.published_at.clone(),
-        }
+        remote_status_from_record(self.record.clone())
     }
-}
-
-fn remote_status_content_html(object: &serde_json::Value) -> String {
-    object
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            object
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(render_status_html)
-        })
-        .unwrap_or_default()
-}
-
-fn remote_status_published_at(object: &serde_json::Value) -> String {
-    object
-        .get("published")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| object.get("updated").and_then(serde_json::Value::as_str))
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn remote_status_language(object: &serde_json::Value) -> Option<String> {
-    object
-        .get("contentMap")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|map| map.keys().next().cloned())
 }
 
 fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
@@ -221,43 +156,6 @@ fn remote_status_lookup_value_bindings(value: &str) -> [D1Type<'_>; 1] {
     [D1Type::Text(value)]
 }
 
-fn remote_status_object_uri(object: &serde_json::Value) -> Result<&str> {
-    object
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))
-}
-
-struct RemoteStatusUpsertDraft {
-    status_id: String,
-    actor_uri: String,
-    object_uri: String,
-    url: Option<String>,
-    in_reply_to_uri: Option<String>,
-    quote_of_uri: Option<String>,
-    content_html: String,
-    spoiler_text: String,
-    visibility: String,
-    sensitive: bool,
-    language: Option<String>,
-    quote_state: &'static str,
-    published_at: String,
-    raw_object_json: String,
-    revision_at: String,
-}
-
-struct RemoteReblogUpsertDraft {
-    status_id: String,
-    actor_uri: String,
-    object_uri: String,
-    boost_of_uri: String,
-    quote_of_uri: Option<String>,
-    visibility: String,
-    quote_state: &'static str,
-    published_at: String,
-    raw_object_json: String,
-}
-
 fn serialize_remote_store_json(value: &serde_json::Value, label: &str) -> Result<String> {
     serde_json::to_string(value)
         .map_err(|error| Error::RustError(format!("failed to serialize {label}: {error}")))
@@ -275,95 +173,50 @@ fn serialize_remote_status_snapshot_json(snapshot: &serde_json::Value) -> Result
     serialize_remote_store_json(snapshot, "remote status snapshot")
 }
 
-fn remote_status_upsert_draft(
+fn build_remote_status_store_intent(
     actor: &RemoteActorProfile,
     object: &serde_json::Value,
-    status_id: String,
-    quote_state: &'static str,
+    status_id: StatusId,
+    quote_resolution: RemoteQuoteResolution,
     revision_at: String,
-) -> Result<RemoteStatusUpsertDraft> {
-    let object_uri = remote_status_object_uri(object)?.to_owned();
-    let raw_object_json = serialize_remote_status_object_json(object)?;
-    let quote_of_uri = quote_target_uri_from_object(object);
-
-    Ok(RemoteStatusUpsertDraft {
-        status_id,
-        actor_uri: actor.actor_uri.clone(),
-        object_uri,
-        url: object
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        in_reply_to_uri: object
-            .get("inReplyTo")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        quote_of_uri,
-        content_html: remote_status_content_html(object),
-        spoiler_text: object
-            .get("summary")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        visibility: visibility_from_activitypub_object(object),
-        sensitive: object
-            .get("sensitive")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        language: remote_status_language(object),
-        quote_state,
-        published_at: remote_status_published_at(object),
-        raw_object_json,
-        revision_at,
-    })
+) -> Result<StoredRemoteStatusIntent> {
+    let input = activity_pub_status_input_from_object(object);
+    let incoming = input
+        .into_incoming()
+        .map_err(|error| Error::RustError(error.to_string()))?;
+    Ok(incoming
+        .into_store_intent(
+            status_id,
+            actor.actor_uri.clone(),
+            quote_resolution,
+            serialize_remote_status_object_json(object)?,
+            revision_at,
+        )
+        .state)
 }
 
-fn remote_reblog_activity_uri(activity: &serde_json::Value) -> Result<&str> {
-    activity
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote announce activity is missing id".to_owned()))
-}
-
-fn remote_reblog_boost_of_uri(activity: &serde_json::Value) -> Result<&str> {
-    activity
-        .get("object")
-        .and_then(|value| crate::activity_object_id(Some(value)))
-        .ok_or_else(|| Error::RustError("remote announce activity is missing object id".to_owned()))
-}
-
-fn remote_reblog_published_at(activity: &serde_json::Value, fallback: String) -> String {
-    activity
-        .get("published")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| activity.get("updated").and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or(fallback)
-}
-
-fn remote_reblog_upsert_draft(
+fn build_remote_reblog_store_intent(
     actor: &RemoteActorProfile,
     activity: &serde_json::Value,
-    status_id: String,
-    quote_of_uri: Option<String>,
-    quote_state: &'static str,
-    fallback_published_at: String,
-) -> Result<RemoteReblogUpsertDraft> {
-    let object_uri = remote_reblog_activity_uri(activity)?.to_owned();
-    let boost_of_uri = remote_reblog_boost_of_uri(activity)?.to_owned();
-    let raw_object_json = serialize_remote_reblog_activity_json(activity)?;
-
-    Ok(RemoteReblogUpsertDraft {
-        status_id,
-        actor_uri: actor.actor_uri.clone(),
-        object_uri,
-        boost_of_uri,
-        quote_of_uri,
-        visibility: visibility_from_activitypub_object(activity),
-        quote_state,
-        published_at: remote_reblog_published_at(activity, fallback_published_at),
-        raw_object_json,
-    })
+    status_id: StatusId,
+    quote_resolution: RemoteQuoteResolution,
+) -> Result<StoredRemoteReblogIntent> {
+    let input = activity_pub_reblog_input_from_activity(activity);
+    let incoming = input
+        .into_incoming()
+        .map_err(|error| Error::RustError(error.to_string()))?;
+    let mut intent = incoming
+        .into_store_intent(
+            status_id,
+            actor.actor_uri.clone(),
+            quote_resolution,
+            serialize_remote_reblog_activity_json(activity)?,
+        )
+        .state;
+    if intent.published_at.is_empty() {
+        intent.published_at = now_iso_string()?;
+    }
+    Ok(intent)
 }
 
 async fn find_remote_status_edit_state_by_object_uri(
@@ -390,7 +243,7 @@ async fn insert_previous_remote_status_snapshot(
     previous: &RemoteStatusEditStateRow,
     revision_at: &str,
 ) -> Result<()> {
-    let Some(actor) = find_remote_actor_by_actor_uri(db, &previous.actor_uri).await? else {
+    let Some(actor) = find_remote_actor_by_actor_uri(db, &previous.record.actor_uri).await? else {
         return Ok(());
     };
     let response =
@@ -399,14 +252,14 @@ async fn insert_previous_remote_status_snapshot(
     snapshot["created_at"] = serde_json::json!(revision_at);
     let snapshot = normalize_status_history_entry(snapshot);
     let snapshot_json = serialize_remote_status_snapshot_json(&snapshot)?;
-    insert_remote_status_edit_snapshot(db, &previous.id, &snapshot_json, revision_at).await
+    insert_remote_status_edit_snapshot(db, &previous.record.id, &snapshot_json, revision_at).await
 }
 
 async fn upsert_remote_status_draft(
     db: &D1Database,
-    draft: &RemoteStatusUpsertDraft,
+    intent: &StoredRemoteStatusIntent,
 ) -> Result<()> {
-    let bindings = remote_status_upsert_bindings(draft);
+    let bindings = remote_status_upsert_bindings(intent);
     db.prepare(remote_status_upsert_sql())
         .bind_refs(bindings.iter())?
         .run()
@@ -459,24 +312,24 @@ fn remote_status_upsert_sql() -> &'static str {
         updated_at = ?16"
 }
 
-fn remote_status_upsert_bindings(draft: &RemoteStatusUpsertDraft) -> [D1Type<'_>; 16] {
+fn remote_status_upsert_bindings(intent: &StoredRemoteStatusIntent) -> [D1Type<'_>; 16] {
     [
-        D1Type::Text(draft.status_id.as_str()),
-        D1Type::Text(draft.actor_uri.as_str()),
-        D1Type::Text(draft.object_uri.as_str()),
-        optional_text_binding(draft.url.as_deref()),
-        optional_text_binding(draft.in_reply_to_uri.as_deref()),
+        D1Type::Text(intent.status_id.as_str()),
+        D1Type::Text(intent.actor_uri.as_str()),
+        D1Type::Text(intent.object_uri.as_str()),
+        optional_text_binding(intent.url.as_deref()),
+        optional_text_binding(intent.in_reply_to_uri.as_deref()),
         D1Type::Null,
-        optional_text_binding(draft.quote_of_uri.as_deref()),
-        D1Type::Text(draft.content_html.as_str()),
-        D1Type::Text(draft.spoiler_text.as_str()),
-        D1Type::Text(draft.visibility.as_str()),
-        bool_binding(draft.sensitive),
-        optional_text_binding(draft.language.as_deref()),
-        D1Type::Text(draft.quote_state),
-        D1Type::Text(draft.published_at.as_str()),
-        D1Type::Text(draft.raw_object_json.as_str()),
-        D1Type::Text(draft.revision_at.as_str()),
+        optional_text_binding(intent.quote_of_uri.as_deref()),
+        D1Type::Text(intent.content_html.as_str()),
+        D1Type::Text(intent.spoiler_text.as_str()),
+        D1Type::Text(intent.visibility.as_str()),
+        bool_binding(intent.sensitive),
+        optional_text_binding(intent.language.as_deref()),
+        D1Type::Text(intent.quote_state.as_str()),
+        D1Type::Text(intent.published_at.as_str()),
+        D1Type::Text(intent.raw_object_json.as_str()),
+        D1Type::Text(intent.revision_at.as_str()),
     ]
 }
 
@@ -484,12 +337,12 @@ async fn insert_previous_remote_status_snapshot_if_changed(
     db: &D1Database,
     config: &AppConfig,
     previous: Option<&RemoteStatusEditStateRow>,
-    draft: &RemoteStatusUpsertDraft,
+    intent: &StoredRemoteStatusIntent,
 ) -> Result<()> {
     if let Some(previous) =
-        previous.filter(|existing| existing.raw_object_json != draft.raw_object_json)
+        previous.filter(|existing| existing.raw_object_json != intent.raw_object_json)
     {
-        insert_previous_remote_status_snapshot(db, config, previous, &draft.revision_at).await?;
+        insert_previous_remote_status_snapshot(db, config, previous, &intent.revision_at).await?;
     }
 
     Ok(())
@@ -497,9 +350,9 @@ async fn insert_previous_remote_status_snapshot_if_changed(
 
 async fn reload_upserted_remote_status(
     db: &D1Database,
-    draft: &RemoteStatusUpsertDraft,
+    intent: &StoredRemoteStatusIntent,
 ) -> Result<RemoteStatusRow> {
-    find_remote_status_by_object_uri(db, &draft.object_uri)
+    find_remote_status_by_object_uri(db, &intent.object_uri)
         .await?
         .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))
 }
@@ -537,7 +390,7 @@ async fn send_remote_status_change_notifications(
     config: &AppConfig,
     previous_raw_object_json: Option<&str>,
     status: &RemoteStatusRow,
-    draft: &RemoteStatusUpsertDraft,
+    intent: &StoredRemoteStatusIntent,
 ) {
     if previous_raw_object_json.is_none() {
         let _ = send_remote_status_quote_notification(
@@ -545,11 +398,11 @@ async fn send_remote_status_change_notifications(
             config,
             &status.id,
             &status.actor_uri,
-            &status.quote_state,
+            status.quote_state.as_str(),
             status.quote_of_uri.as_deref(),
         )
         .await;
-    } else if previous_raw_object_json != Some(draft.raw_object_json.as_str()) {
+    } else if previous_raw_object_json != Some(intent.raw_object_json.as_str()) {
         let _ = send_remote_status_update_notifications(
             db,
             config,
@@ -567,25 +420,25 @@ pub(crate) async fn upsert_remote_status(
     actor: &RemoteActorProfile,
     object: &serde_json::Value,
 ) -> Result<()> {
-    let object_uri = remote_status_object_uri(object)?;
+    let object_uri = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))?;
     let previous = find_remote_status_edit_state_by_object_uri(db, object_uri).await?;
     let quote_of_uri = quote_target_uri_from_object(object);
-    let quote_state =
-        evaluate_remote_quote_state(db, config, actor, quote_of_uri.as_deref()).await?;
+    let quote_resolution =
+        resolve_remote_quote_resolution(db, config, actor, quote_of_uri.as_deref()).await?;
     let revision_at = now_iso_string()?;
-    let draft = remote_status_upsert_draft(
-        actor,
-        object,
-        generate_entity_id(16)?,
-        quote_state,
-        revision_at,
-    )?;
+    let status_id = StatusId::new(generate_entity_id(16)?)
+        .map_err(|error| Error::RustError(error.to_string()))?;
+    let intent =
+        build_remote_status_store_intent(actor, object, status_id, quote_resolution, revision_at)?;
 
-    insert_previous_remote_status_snapshot_if_changed(db, config, previous.as_ref(), &draft)
+    insert_previous_remote_status_snapshot_if_changed(db, config, previous.as_ref(), &intent)
         .await?;
-    upsert_remote_status_draft(db, &draft).await?;
+    upsert_remote_status_draft(db, &intent).await?;
 
-    let status = reload_upserted_remote_status(db, &draft).await?;
+    let status = reload_upserted_remote_status(db, &intent).await?;
     replace_remote_status_dependents(db, &status, object).await?;
     send_remote_status_change_notifications(
         db,
@@ -594,7 +447,7 @@ pub(crate) async fn upsert_remote_status(
             .as_ref()
             .map(|value| value.raw_object_json.as_str()),
         &status,
-        &draft,
+        &intent,
     )
     .await;
 
@@ -679,25 +532,21 @@ pub(crate) async fn upsert_remote_reblog_status(
     activity: &serde_json::Value,
 ) -> Result<()> {
     let quote_of_uri = quote_target_uri_from_object(activity);
-    let quote_state =
-        evaluate_remote_quote_state(db, config, remote_actor, quote_of_uri.as_deref()).await?;
-    let draft = remote_reblog_upsert_draft(
-        remote_actor,
-        activity,
-        generate_entity_id(16)?,
-        quote_of_uri,
-        quote_state,
-        now_iso_string()?,
-    )?;
+    let quote_resolution =
+        resolve_remote_quote_resolution(db, config, remote_actor, quote_of_uri.as_deref()).await?;
+    let status_id = StatusId::new(generate_entity_id(16)?)
+        .map_err(|error| Error::RustError(error.to_string()))?;
+    let intent =
+        build_remote_reblog_store_intent(remote_actor, activity, status_id, quote_resolution)?;
 
-    upsert_remote_reblog_status_draft(db, &draft).await
+    upsert_remote_reblog_status_draft(db, &intent).await
 }
 
 async fn upsert_remote_reblog_status_draft(
     db: &D1Database,
-    draft: &RemoteReblogUpsertDraft,
+    intent: &StoredRemoteReblogIntent,
 ) -> Result<()> {
-    let bindings = remote_reblog_upsert_bindings(draft);
+    let bindings = remote_reblog_upsert_bindings(intent);
     db.prepare(remote_reblog_upsert_sql())
         .bind_refs(bindings.iter())?
         .run()
@@ -749,48 +598,55 @@ fn remote_reblog_upsert_sql() -> &'static str {
         updated_at = CURRENT_TIMESTAMP"
 }
 
-fn remote_reblog_upsert_bindings(draft: &RemoteReblogUpsertDraft) -> [D1Type<'_>; 15] {
+fn remote_reblog_upsert_bindings(intent: &StoredRemoteReblogIntent) -> [D1Type<'_>; 15] {
     [
-        D1Type::Text(draft.status_id.as_str()),
-        D1Type::Text(draft.actor_uri.as_str()),
-        D1Type::Text(draft.object_uri.as_str()),
+        D1Type::Text(intent.status_id.as_str()),
+        D1Type::Text(intent.actor_uri.as_str()),
+        D1Type::Text(intent.object_uri.as_str()),
         D1Type::Null,
         D1Type::Null,
-        D1Type::Text(draft.boost_of_uri.as_str()),
-        optional_text_binding(draft.quote_of_uri.as_deref()),
+        D1Type::Text(intent.boost_of_uri.as_str()),
+        optional_text_binding(intent.quote_of_uri.as_deref()),
         D1Type::Text(""),
         D1Type::Text(""),
-        D1Type::Text(draft.visibility.as_str()),
+        D1Type::Text(intent.visibility.as_str()),
         D1Type::Integer(0),
         D1Type::Null,
-        D1Type::Text(draft.quote_state),
-        D1Type::Text(draft.published_at.as_str()),
-        D1Type::Text(draft.raw_object_json.as_str()),
+        D1Type::Text(intent.quote_state.as_str()),
+        D1Type::Text(intent.published_at.as_str()),
+        D1Type::Text(intent.raw_object_json.as_str()),
     ]
 }
 
-async fn evaluate_remote_quote_state(
+async fn resolve_remote_quote_resolution(
     db: &D1Database,
     config: &AppConfig,
     actor: &RemoteActorProfile,
     quote_of_uri: Option<&str>,
-) -> Result<&'static str> {
+) -> Result<RemoteQuoteResolution> {
     let Some(quote_of_uri) = quote_of_uri else {
-        return Ok("accepted");
+        return Ok(RemoteQuoteResolution::without_quote());
     };
     let Some(status) = find_local_status_by_object_uri(db, config, quote_of_uri).await? else {
-        return Ok("accepted");
+        return Ok(RemoteQuoteResolution::accepted_quote(
+            quote_of_uri.to_owned(),
+        ));
     };
     let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
-        return Ok("accepted");
+        return Ok(RemoteQuoteResolution::accepted_quote(
+            quote_of_uri.to_owned(),
+        ));
     };
     let remote_actor_follows_owner =
-        count_followers_by_actor(db, &owner.id, &actor.actor_uri).await? > 0;
-    let blocked_by_owner = crate::is_blocking_actor(db, &owner.id, &actor.actor_uri).await?;
-    Ok(remote_quote_state_for_local_target(
-        &status,
-        remote_actor_follows_owner,
-        blocked_by_owner,
+        count_followers_by_actor(db, owner.id(), &actor.actor_uri).await? > 0;
+    let blocked_by_owner = crate::is_blocking_actor(db, owner.id(), &actor.actor_uri).await?;
+    let policy = status.effective_quote_approval_policy();
+    Ok(RemoteQuoteResolution::with_local_target(
+        quote_of_uri.to_owned(),
+        RemoteQuoteLocalTarget {
+            blocked_by_owner,
+            policy_allows: policy.allows_quote(false, remote_actor_follows_owner),
+        },
     ))
 }
 
@@ -849,8 +705,10 @@ mod tests {
     }
 
     #[test]
-    fn remote_status_object_uri_requires_id() {
-        let error = remote_status_object_uri(&json!({})).unwrap_err();
+    fn incoming_remote_status_requires_object_id() {
+        let error = activity_pub_status_input_from_object(&json!({}))
+            .into_incoming()
+            .unwrap_err();
 
         assert!(error.to_string().contains("missing id"));
     }
@@ -956,7 +814,9 @@ mod tests {
     }
 
     #[test]
-    fn remote_status_upsert_draft_extracts_storage_fields() {
+    fn build_remote_status_store_intent_extracts_storage_fields() {
+        use cfwdon_domain::{QuoteState, RemoteQuoteResolution, StatusId, Visibility};
+
         let actor = remote_actor_profile_fixture();
         let object = json!({
             "id": "https://remote.example/users/alice/statuses/1",
@@ -972,43 +832,45 @@ mod tests {
             }
         });
 
-        let draft = remote_status_upsert_draft(
+        let intent = build_remote_status_store_intent(
             &actor,
             &object,
-            "remote-status-id".to_owned(),
-            "accepted",
+            StatusId::new("remote-status-id").expect("status id"),
+            RemoteQuoteResolution::without_quote(),
             "revision-time".to_owned(),
         )
-        .unwrap();
+        .expect("store intent");
 
-        assert_eq!(draft.actor_uri, actor.actor_uri);
+        assert_eq!(intent.actor_uri, actor.actor_uri);
         assert_eq!(
-            draft.object_uri,
+            intent.object_uri,
             "https://remote.example/users/alice/statuses/1"
         );
         assert_eq!(
-            draft.url.as_deref(),
+            intent.url.as_deref(),
             Some("https://remote.example/@alice/1")
         );
         assert_eq!(
-            draft.in_reply_to_uri.as_deref(),
+            intent.in_reply_to_uri.as_deref(),
             Some("https://remote.example/users/bob/statuses/9")
         );
-        assert_eq!(draft.content_html, "<p>Hello</p>");
-        assert_eq!(draft.spoiler_text, "spoiler");
-        assert_eq!(draft.visibility, "public");
-        assert!(draft.sensitive);
-        assert_eq!(draft.language.as_deref(), Some("ja"));
-        assert_eq!(draft.quote_state, "accepted");
-        assert_eq!(draft.published_at, "2026-05-10T01:02:03Z");
-        assert_eq!(draft.revision_at, "revision-time");
-        assert_eq!(draft.status_id, "remote-status-id");
+        assert_eq!(intent.content_html, "<p>Hello</p>");
+        assert_eq!(intent.spoiler_text, "spoiler");
+        assert_eq!(intent.visibility, Visibility::Public);
+        assert!(intent.sensitive);
+        assert_eq!(intent.language.as_deref(), Some("ja"));
+        assert_eq!(intent.quote_state, QuoteState::Accepted);
+        assert_eq!(intent.published_at, "2026-05-10T01:02:03Z");
+        assert_eq!(intent.revision_at, "revision-time");
+        assert_eq!(intent.status_id.as_str(), "remote-status-id");
     }
 
     #[test]
     fn remote_status_upsert_bindings_keep_sql_slot_order_stable() {
-        let draft = RemoteStatusUpsertDraft {
-            status_id: "remote-status-id".to_owned(),
+        use cfwdon_domain::{QuoteState, StatusId, StoredRemoteStatusIntent, Visibility};
+
+        let intent = StoredRemoteStatusIntent {
+            status_id: StatusId::new("remote-status-id").expect("status id"),
             actor_uri: "https://remote.example/users/alice".to_owned(),
             object_uri: "https://remote.example/users/alice/statuses/1".to_owned(),
             url: Some("https://remote.example/@alice/1".to_owned()),
@@ -1016,15 +878,15 @@ mod tests {
             quote_of_uri: Some("https://local.example/users/alice/statuses/2".to_owned()),
             content_html: "<p>Hello</p>".to_owned(),
             spoiler_text: "spoiler".to_owned(),
-            visibility: "public".to_owned(),
+            visibility: Visibility::Public,
             sensitive: true,
             language: Some("ja".to_owned()),
-            quote_state: "accepted",
+            quote_state: QuoteState::Accepted,
             published_at: "2026-05-10T01:02:03Z".to_owned(),
             raw_object_json: "{\"type\":\"Note\"}".to_owned(),
             revision_at: "revision-time".to_owned(),
         };
-        let bindings = remote_status_upsert_bindings(&draft);
+        let bindings = remote_status_upsert_bindings(&intent);
 
         assert!(matches!(bindings[0], D1Type::Text("remote-status-id")));
         assert!(matches!(
@@ -1060,7 +922,9 @@ mod tests {
     }
 
     #[test]
-    fn remote_reblog_upsert_draft_extracts_storage_fields() {
+    fn build_remote_reblog_store_intent_extracts_storage_fields() {
+        use cfwdon_domain::{QuoteState, RemoteQuoteResolution, StatusId, Visibility};
+
         let actor = remote_actor_profile_fixture();
         let activity = json!({
             "id": "https://remote.example/users/alice/activities/announce/1",
@@ -1068,42 +932,45 @@ mod tests {
             "object": {
                 "id": "https://remote.example/users/bob/statuses/9"
             },
+            "quoteUri": "https://local.example/users/alice/statuses/2",
             "published": "2026-05-11T01:02:03Z",
             "to": ["https://www.w3.org/ns/activitystreams#Public"]
         });
 
-        let draft = remote_reblog_upsert_draft(
+        let intent = build_remote_reblog_store_intent(
             &actor,
             &activity,
-            "remote-reblog-id".to_owned(),
-            Some("https://local.example/users/alice/statuses/2".to_owned()),
-            "accepted",
-            "fallback-time".to_owned(),
+            StatusId::new("remote-reblog-id").expect("status id"),
+            RemoteQuoteResolution::accepted_quote(
+                "https://local.example/users/alice/statuses/2".to_owned(),
+            ),
         )
-        .unwrap();
+        .expect("store intent");
 
-        assert_eq!(draft.status_id, "remote-reblog-id");
-        assert_eq!(draft.actor_uri, actor.actor_uri);
+        assert_eq!(intent.status_id.as_str(), "remote-reblog-id");
+        assert_eq!(intent.actor_uri, actor.actor_uri);
         assert_eq!(
-            draft.object_uri,
+            intent.object_uri,
             "https://remote.example/users/alice/activities/announce/1"
         );
         assert_eq!(
-            draft.boost_of_uri,
+            intent.boost_of_uri,
             "https://remote.example/users/bob/statuses/9"
         );
         assert_eq!(
-            draft.quote_of_uri.as_deref(),
+            intent.quote_of_uri.as_deref(),
             Some("https://local.example/users/alice/statuses/2")
         );
-        assert_eq!(draft.visibility, "public");
-        assert_eq!(draft.quote_state, "accepted");
-        assert_eq!(draft.published_at, "2026-05-11T01:02:03Z");
-        assert!(draft.raw_object_json.contains("\"Announce\""));
+        assert_eq!(intent.visibility, Visibility::Public);
+        assert_eq!(intent.quote_state, QuoteState::Accepted);
+        assert_eq!(intent.published_at, "2026-05-11T01:02:03Z");
+        assert!(intent.raw_object_json.contains("\"Announce\""));
     }
 
     #[test]
-    fn remote_reblog_upsert_draft_uses_fallback_published_at() {
+    fn build_remote_reblog_store_intent_fills_missing_published_at() {
+        use cfwdon_domain::{RemoteQuoteResolution, StatusId};
+
         let actor = remote_actor_profile_fixture();
         let activity = json!({
             "id": "https://remote.example/users/alice/activities/announce/1",
@@ -1111,33 +978,33 @@ mod tests {
             "object": "https://remote.example/users/bob/statuses/9"
         });
 
-        let draft = remote_reblog_upsert_draft(
+        let intent = build_remote_reblog_store_intent(
             &actor,
             &activity,
-            "remote-reblog-id".to_owned(),
-            None,
-            "accepted",
-            "fallback-time".to_owned(),
+            StatusId::new("remote-reblog-id").expect("status id"),
+            RemoteQuoteResolution::without_quote(),
         )
-        .unwrap();
+        .expect("store intent");
 
-        assert_eq!(draft.published_at, "fallback-time");
+        assert!(!intent.published_at.is_empty());
     }
 
     #[test]
     fn remote_reblog_upsert_bindings_keep_sql_slot_order_stable() {
-        let draft = RemoteReblogUpsertDraft {
-            status_id: "remote-reblog-id".to_owned(),
+        use cfwdon_domain::{QuoteState, StatusId, StoredRemoteReblogIntent, Visibility};
+
+        let intent = StoredRemoteReblogIntent {
+            status_id: StatusId::new("remote-reblog-id").expect("status id"),
             actor_uri: "https://remote.example/users/alice".to_owned(),
             object_uri: "https://remote.example/users/alice/activities/announce/1".to_owned(),
             boost_of_uri: "https://remote.example/users/bob/statuses/9".to_owned(),
             quote_of_uri: Some("https://local.example/users/alice/statuses/2".to_owned()),
-            visibility: "unlisted".to_owned(),
-            quote_state: "accepted",
+            visibility: Visibility::Unlisted,
+            quote_state: QuoteState::Accepted,
             published_at: "2026-05-11T01:02:03Z".to_owned(),
             raw_object_json: "{\"type\":\"Announce\"}".to_owned(),
         };
-        let bindings = remote_reblog_upsert_bindings(&draft);
+        let bindings = remote_reblog_upsert_bindings(&intent);
 
         assert!(matches!(bindings[0], D1Type::Text("remote-reblog-id")));
         assert!(matches!(
@@ -1172,61 +1039,41 @@ mod tests {
     }
 
     #[test]
-    fn remote_status_content_html_prefers_content() {
-        let object = json!({
+    fn activity_pub_status_input_prefers_content_html() {
+        let input = activity_pub_status_input_from_object(&json!({
             "content": "<p>Remote content</p>",
             "name": "Fallback name",
-        });
+        }));
 
-        assert_eq!(remote_status_content_html(&object), "<p>Remote content</p>");
+        assert_eq!(input.content_html, "<p>Remote content</p>");
     }
 
     #[test]
-    fn remote_status_content_html_renders_name_fallback() {
-        let object = json!({
-            "name": "Fallback name",
-        });
-
-        assert_eq!(
-            remote_status_content_html(&object),
-            render_status_html("Fallback name")
-        );
-    }
-
-    #[test]
-    fn remote_status_published_at_prefers_published() {
-        let object = json!({
+    fn incoming_remote_status_maps_published_at_and_language() {
+        let incoming = activity_pub_status_input_from_object(&json!({
+            "id": "https://remote.example/statuses/1",
             "published": "2026-05-10T01:02:03Z",
             "updated": "2026-05-10T04:05:06Z",
-        });
-
-        assert_eq!(remote_status_published_at(&object), "2026-05-10T01:02:03Z");
-    }
-
-    #[test]
-    fn remote_status_published_at_falls_back_to_updated() {
-        let object = json!({
-            "updated": "2026-05-10T04:05:06Z",
-        });
-
-        assert_eq!(remote_status_published_at(&object), "2026-05-10T04:05:06Z");
-    }
-
-    #[test]
-    fn remote_status_language_extracts_content_map_key() {
-        let object = json!({
             "contentMap": {
                 "ja": "こんにちは",
             },
-        });
+        }))
+        .into_incoming()
+        .expect("incoming status");
 
-        assert_eq!(remote_status_language(&object).as_deref(), Some("ja"));
+        assert_eq!(incoming.published_at(), "2026-05-10T01:02:03Z");
+        assert_eq!(incoming.language().as_deref(), Some("ja"));
     }
 
     #[test]
-    fn remote_status_language_ignores_missing_content_map() {
-        let object = json!({});
+    fn incoming_remote_status_falls_back_to_updated_timestamp() {
+        let incoming = activity_pub_status_input_from_object(&json!({
+            "id": "https://remote.example/statuses/1",
+            "updated": "2026-05-10T04:05:06Z",
+        }))
+        .into_incoming()
+        .expect("incoming status");
 
-        assert_eq!(remote_status_language(&object), None);
+        assert_eq!(incoming.published_at(), "2026-05-10T04:05:06Z");
     }
 }

@@ -117,7 +117,7 @@ pub(crate) fn note_targets_account(
     account: &LocalAccount,
     config: &AppConfig,
 ) -> bool {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     activity_audience_uris(&serde_json::json!({ "object": object }))
         .into_iter()
         .any(|audience| audience == actor)
@@ -128,7 +128,7 @@ pub(crate) fn note_targets_followers(
     account: &LocalAccount,
     config: &AppConfig,
 ) -> bool {
-    let actor = actor_url(config, &account.username);
+    let actor = actor_url(config, account.username());
     let followers = format!("{actor}/followers");
     activity_audience_uris(&serde_json::json!({ "object": object }))
         .into_iter()
@@ -221,10 +221,13 @@ pub(crate) fn object_attributed_to_remote_actor(
 }
 
 pub(crate) fn quote_target_uri_from_object(object: &serde_json::Value) -> Option<String> {
-    ["quoteUri", "quoteUrl", "_misskey_quote"]
-        .into_iter()
-        .find_map(|field| object.get(field).and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
+    cfwdon_domain::quote_target_uri_from_fields(
+        object.get("quoteUri").and_then(serde_json::Value::as_str),
+        object.get("quoteUrl").and_then(serde_json::Value::as_str),
+        object
+            .get("_misskey_quote")
+            .and_then(serde_json::Value::as_str),
+    )
 }
 
 pub(crate) fn extract_remote_note_object(
@@ -247,14 +250,10 @@ pub(crate) fn extract_remote_note_object(
 }
 
 pub(crate) fn visibility_from_activitypub_object(object: &serde_json::Value) -> String {
-    let to = object.get("to");
-    let cc = object.get("cc");
-
-    if contains_public_audience(to) {
-        "public".to_owned()
-    } else if contains_public_audience(cc) {
-        "unlisted".to_owned()
-    } else {
-        "private".to_owned()
-    }
+    cfwdon_domain::visibility_from_activitypub_audiences(
+        contains_public_audience(object.get("to")),
+        contains_public_audience(object.get("cc")),
+    )
+    .as_str()
+    .to_owned()
 }

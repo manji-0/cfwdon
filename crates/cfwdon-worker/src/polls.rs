@@ -116,7 +116,7 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
             return Response::error("poll has already expired", 422);
         }
 
-        if let Err(error) = apply_poll_vote(&db, &poll, &viewer.id, &choices).await {
+        if let Err(error) = apply_poll_vote(&db, &poll, viewer.id(), &choices).await {
             return match error {
                 Error::RustError(message) => Response::error(message, 422),
                 other => Err(other),

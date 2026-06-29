@@ -26,10 +26,10 @@ pub(crate) async fn collect_admin_report_notifications_entries(
         let Some(account) = find_account_by_id(db, &report.account_id).await? else {
             continue;
         };
-        if !notification_account_matches_filter(query.account_id.as_deref(), &account.id, None) {
+        if !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None) {
             continue;
         }
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
@@ -61,18 +61,18 @@ pub(crate) async fn collect_admin_sign_up_notifications_entries(
         return Ok(());
     }
 
-    for account in list_admin_sign_up_notifications(db, &viewer.id, per_type_limit).await? {
-        if !notification_account_matches_filter(query.account_id.as_deref(), &account.id, None) {
+    for account in list_admin_sign_up_notifications(db, viewer.id(), per_type_limit).await? {
+        if !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None) {
             continue;
         }
-        let stats = load_account_stats(db, &account.id).await?;
+        let stats = load_account_stats(db, account.id()).await?;
         push_notification_entry(
             entries,
             MastodonNotificationResponse {
-                id: format!("admin-sign-up-{}", account.id),
+                id: format!("admin-sign-up-{}", account.id()),
                 notification_type: "admin.sign_up".to_owned(),
-                group_key: format!("admin-sign-up-{}", account.id),
-                created_at: account.created_at.clone(),
+                group_key: format!("admin-sign-up-{}", account.id()),
+                created_at: account.created_at().to_owned(),
                 account: MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
                 status: None,
                 report: None,
