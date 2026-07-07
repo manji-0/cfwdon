@@ -1,3 +1,9 @@
+//! Placeholders for future programmatic cache invalidation via Workers Cache.
+//!
+//! Workers Cache is enabled in `wrangler.toml` and honors `Cache-Control` /
+//! `Cache-Tag` response headers. When the Rust worker runtime exposes
+//! `ctx.cache.purge()`, these hooks can purge tagged actor and status responses.
+
 use worker::{Response, Result, RouteContext};
 
 pub(crate) async fn cached_account_api_response(

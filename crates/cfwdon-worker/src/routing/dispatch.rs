@@ -3,6 +3,7 @@ use super::{
     selection::fast_router_kind,
 };
 use crate::root_document;
+use crate::{CACHE_TTL_HEALTH, cache_public_response};
 use worker::{Env, Request, Response, Result};
 
 pub(crate) async fn dispatch_route(
@@ -12,11 +13,11 @@ pub(crate) async fn dispatch_route(
     path: &str,
 ) -> Result<Response> {
     if method == "GET" && path == "/" {
-        return Response::from_json(&root_document());
+        return cache_public_response(Response::from_json(&root_document())?, CACHE_TTL_HEALTH);
     }
 
     if method == "GET" && path == "/healthz" {
-        return Response::ok("ok");
+        return cache_public_response(Response::ok("ok")?, CACHE_TTL_HEALTH);
     }
 
     if let Some(response) = dispatch_exact_without_router(method, path, &env).await? {

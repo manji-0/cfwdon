@@ -13,22 +13,22 @@ use crate::{
     build_local_status_response, build_local_status_response_with_quote_count_preloads,
     build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
     build_remote_status_response, build_remote_status_response_with_timeline_preloads,
-    can_view_local_status, clear_local_status_quote, collect_visible_notifications,
-    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
-    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
-    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
-    find_account_by_username, find_accounts_by_ids, find_authenticated_local_account,
-    find_conversation_for_account, find_conversation_id_by_status_id,
-    find_follower_follow_activity_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_actors_by_actor_uris,
-    find_remote_status_attachments_by_status_ids, find_remote_status_by_id, find_status_by_id,
-    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
-    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
-    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
-    list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    cache_public_response, can_view_local_status, clear_local_status_quote,
+    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
+    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
+    enqueue_targeted_outbox_activity, extract_hashtags_from_html, extract_hashtags_from_text,
+    filter_notification_entries_by_query, find_account_by_id, find_account_by_username,
+    find_accounts_by_ids, find_authenticated_local_account, find_conversation_for_account,
+    find_conversation_id_by_status_id, find_follower_follow_activity_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_media_attachments_by_status_ids, find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_actors_by_actor_uris, find_remote_status_attachments_by_status_ids,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
+    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
+    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
+    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
@@ -1193,7 +1193,10 @@ pub(crate) fn oauth_authorization_server_response_from_env(env: &Env) -> Result<
 }
 
 fn oauth_authorization_server_response_for_config(config: &crate::AppConfig) -> Result<Response> {
-    Response::from_json(&build_oauth_authorization_server_document(config))
+    cache_public_response(
+        Response::from_json(&build_oauth_authorization_server_document(config))?,
+        crate::CACHE_TTL_OAUTH_DISCOVERY,
+    )
 }
 
 pub(crate) async fn oauth_userinfo_response(
@@ -1239,19 +1242,22 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
         account.display_name().to_owned()
     };
 
-    Response::from_json(&serde_json::json!({
-        "type": "rich",
-        "version": "1.0",
-        "title": format!("New status by {}", account.username()),
-        "author_name": author_name,
-        "author_url": actor_url(&config, account.username()),
-        "provider_name": config.instance_domain,
-        "provider_url": format!("{}/", oauth_base_url(&config)),
-        "cache_age": 86400,
-        "html": build_oembed_html(&account, &status_url, &status.content_html),
-        "width": query.maxwidth.unwrap_or(400),
-        "height": query.maxheight,
-    }))
+    cache_public_response(
+        Response::from_json(&serde_json::json!({
+            "type": "rich",
+            "version": "1.0",
+            "title": format!("New status by {}", account.username()),
+            "author_name": author_name,
+            "author_url": actor_url(&config, account.username()),
+            "provider_name": config.instance_domain,
+            "provider_url": format!("{}/", oauth_base_url(&config)),
+            "cache_age": 86400,
+            "html": build_oembed_html(&account, &status_url, &status.content_html),
+            "width": query.maxwidth.unwrap_or(400),
+            "height": query.maxheight,
+        }))?,
+        crate::CACHE_TTL_OEMBED,
+    )
 }
 
 pub(crate) async fn donation_campaigns_response(

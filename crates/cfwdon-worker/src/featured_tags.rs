@@ -5,7 +5,7 @@ use crate::instance::{actor_url, instance_base_url};
 use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
-use crate::{normalize_hashtag, sql_placeholders};
+use crate::{CACHE_TTL_FEDERATION, cache_public_response, normalize_hashtag, sql_placeholders};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -505,11 +505,14 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
         .map(|row| row.tag_name)
         .collect::<Vec<_>>();
 
-    Response::from_json(&build_featured_tags_collection_document(
-        &config,
-        account.username(),
-        &tags,
-    ))
+    cache_public_response(
+        Response::from_json(&build_featured_tags_collection_document(
+            &config,
+            account.username(),
+            &tags,
+        ))?,
+        CACHE_TTL_FEDERATION,
+    )
 }
 
 pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Result<Response> {

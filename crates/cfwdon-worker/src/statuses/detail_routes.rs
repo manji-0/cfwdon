@@ -1,12 +1,12 @@
 use super::{
-    Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
+    CACHE_TTL_FEDERATION, Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
     build_activitypub_note, build_finished_context_async_refresh_header,
     build_local_status_context, build_local_status_response, build_remote_status_context,
-    build_remote_status_response, cache_status_api_response, cached_status_api_response,
-    find_account_by_id, find_account_by_username, find_authenticated_local_account,
-    find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id,
+    build_remote_status_response, cache_public_json_response, cache_public_response_with_options,
+    cache_status_api_response, cached_status_api_response, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_local_status_by_object_uri,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_id, find_remote_status_by_url_or_object_uri, find_status_by_id,
     find_visible_local_status_response_subject, is_public_activitypub_visibility,
     list_local_favourite_account_ids_for_remote_status,
     list_local_favourite_account_ids_for_status, list_local_reblog_account_ids_for_remote_status,
@@ -761,11 +761,27 @@ pub(crate) async fn status_object_response(
 
     if status_object_prefers_html(&req)? {
         let preload = load_local_status_response_preload(&db, &status).await?;
-        return status_object_html_response(&config, &account, &status, &preload.media);
+        return cache_public_response_with_options(
+            status_object_html_response(&config, &account, &status, &preload.media)?,
+            CACHE_TTL_FEDERATION,
+            None,
+            &[
+                ("Vary", "Accept"),
+                ("Cache-Tag", &format!("status-{status_id}")),
+            ],
+        );
     }
 
     let note = build_activitypub_note(&db, &config, &account, &status, true).await?;
-    super::json_response(&note, "application/activity+json; charset=utf-8", &[])
+    cache_public_json_response(
+        &note,
+        "application/activity+json; charset=utf-8",
+        CACHE_TTL_FEDERATION,
+        &[
+            ("Vary", "Accept"),
+            ("Cache-Tag", &format!("status-{status_id}")),
+        ],
+    )
 }
 
 pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {

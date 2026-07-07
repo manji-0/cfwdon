@@ -1,9 +1,11 @@
 use super::{
-    AccountStats, AppConfig, Error, LocalAccount, Request, Response, Result, RouteContext,
-    actor_url, build_activitypub_actor_document, build_outbox_activities, build_tag_response,
-    cache_actor_json_response, cache_actor_profile_html_response, cached_actor_json_response,
+    AccountStats, AppConfig, CACHE_TTL_FEDERATION, CACHE_TTL_STATIC_METADATA, CACHE_TTL_TRENDS,
+    Error, LocalAccount, Request, Response, Result, RouteContext, actor_url,
+    build_activitypub_actor_document, build_outbox_activities, build_tag_response,
+    cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
+    cache_public_response, cache_public_response_with_options, cached_actor_json_response,
     cached_actor_profile_html_response, ensure_account_keys, escape_html, find_account_by_username,
-    find_media_attachments_by_status_ids, instance_host, json_response, list_follower_actor_uris,
+    find_media_attachments_by_status_ids, instance_host, list_follower_actor_uris,
     list_following_actor_uris, list_local_follower_usernames, list_public_outbox_statuses,
     load_account_stats, load_config, local_status_html_item, media_object_url, normalize_hashtag,
     parse_webfinger_resource, render_profile_field_value_html,
@@ -92,9 +94,10 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
         ],
     };
 
-    json_response(
+    cache_public_json_response(
         &response,
         "application/jrd+json",
+        CACHE_TTL_STATIC_METADATA,
         &[("Access-Control-Allow-Origin", "*")],
     )
 }
@@ -140,16 +143,24 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
             .join("");
         let html = profile_html_document(&config, &account, &stats, &posts_html);
         cache_actor_profile_html_response(&ctx, &username, html.clone()).await?;
-        return profile_html_response(html);
+        let cache_tag = format!("account-{username}");
+        return cache_public_response_with_options(
+            profile_html_response(html)?,
+            CACHE_TTL_FEDERATION,
+            None,
+            &[("Cache-Tag", &cache_tag)],
+        );
     }
 
     let response = build_activitypub_actor_document(&config, &account);
     cache_actor_json_response(&ctx, &username, &response).await?;
 
-    json_response(
+    let cache_tag = format!("account-{username}");
+    cache_public_json_response(
         &response,
         "application/activity+json",
-        &[("Vary", "Accept")],
+        CACHE_TTL_FEDERATION,
+        &[("Vary", "Accept"), ("Cache-Tag", &cache_tag)],
     )
 }
 
@@ -442,7 +453,10 @@ pub(crate) async fn tag_response(ctx: RouteContext<()>) -> Result<Response> {
         .ok_or_else(|| Error::RustError("missing tag route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
 
-    Response::from_json(&build_tag_response(&db, &config, &tag).await?)
+    cache_public_response(
+        Response::from_json(&build_tag_response(&db, &config, &tag).await?)?,
+        CACHE_TTL_TRENDS,
+    )
 }
 
 pub(crate) async fn followers_collection_response(
@@ -470,10 +484,12 @@ pub(crate) async fn followers_collection_response(
         }
     }
     let collection_id = format!("{}/followers", actor_url(&config, account.username()));
-    json_response(
+    let cache_tag = format!("account-{username}");
+    cache_public_json_response(
         &build_ordered_collection_document(&collection_id, &ordered_items, &query),
         "application/activity+json",
-        &[],
+        CACHE_TTL_FEDERATION,
+        &[("Cache-Tag", &cache_tag)],
     )
 }
 
@@ -496,10 +512,12 @@ pub(crate) async fn following_collection_response(
     let ordered_items = list_following_actor_uris(&db, account.id()).await?;
     let collection_id = format!("{}/following", actor_url(&config, account.username()));
 
-    json_response(
+    let cache_tag = format!("account-{username}");
+    cache_public_json_response(
         &build_ordered_collection_document(&collection_id, &ordered_items, &query),
         "application/activity+json",
-        &[],
+        CACHE_TTL_FEDERATION,
+        &[("Cache-Tag", &cache_tag)],
     )
 }
 
@@ -520,8 +538,9 @@ pub(crate) async fn outbox_response(ctx: RouteContext<()>) -> Result<Response> {
     let actor = actor_url(&config, account.username());
     let outbox = format!("{actor}/outbox");
     let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
+    let cache_tag = format!("account-{username}");
 
-    json_response(
+    cache_public_json_response(
         &serde_json::json!({
             "@context": "https://www.w3.org/ns/activitystreams",
             "type": "OrderedCollection",
@@ -530,7 +549,8 @@ pub(crate) async fn outbox_response(ctx: RouteContext<()>) -> Result<Response> {
             "orderedItems": ordered_items,
         }),
         "application/activity+json",
-        &[],
+        CACHE_TTL_FEDERATION,
+        &[("Cache-Tag", &cache_tag)],
     )
 }
 

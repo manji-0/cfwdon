@@ -401,7 +401,7 @@ pub(crate) async fn instance_peers_search_response(
         domains.retain(|domain| domain.to_ascii_lowercase().contains(&q));
     }
 
-    Response::from_json(&domains)
+    cache_public_response(Response::from_json(&domains)?, CACHE_TTL_INSTANCE_SUMMARY)
 }
 
 pub(crate) async fn instance_activity_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -649,13 +649,16 @@ pub(crate) async fn trending_statuses_response(
     }
 
     entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    Response::from_json(
-        &entries
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .map(|(_, _, status)| status)
-            .collect::<Vec<_>>(),
+    cache_public_response(
+        Response::from_json(
+            &entries
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(_, _, status)| status)
+                .collect::<Vec<_>>(),
+        )?,
+        CACHE_TTL_TRENDS,
     )
 }
 
@@ -666,13 +669,16 @@ pub(crate) async fn trending_links_response(
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
     let db = ctx.d1(&config.database_binding)?;
-    Response::from_json(
-        &list_trending_link_documents(
-            &db,
-            query.limit.unwrap_or(10).clamp(1, 20),
-            query.offset.unwrap_or(0),
-        )
-        .await?,
+    cache_public_response(
+        Response::from_json(
+            &list_trending_link_documents(
+                &db,
+                query.limit.unwrap_or(10).clamp(1, 20),
+                query.offset.unwrap_or(0),
+            )
+            .await?,
+        )?,
+        CACHE_TTL_TRENDS,
     )
 }
 
@@ -729,7 +735,7 @@ pub(crate) async fn trending_tags_response(
     {
         response.push(build_tag_response(&db, &config, &tag).await?);
     }
-    Response::from_json(&response)
+    cache_public_response(Response::from_json(&response)?, CACHE_TTL_TRENDS)
 }
 
 pub(crate) async fn custom_emojis_response(_ctx: RouteContext<()>) -> Result<Response> {
