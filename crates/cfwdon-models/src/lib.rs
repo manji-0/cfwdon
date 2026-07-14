@@ -3,8 +3,13 @@
 //! Each module implements a [`stateright::Model`] that delegates transition logic to
 //! pure functions in [`cfwdon_domain`], so the checker explores outcomes without
 //! duplicating business rules.
+//!
+//! [`refinement`] maps each model to worker call sites and checks that guarded
+//! implementation steps refine the abstract transitions.
 
 #![allow(dead_code)]
+
+pub mod refinement;
 
 mod access_provision;
 mod activitypub_visibility;
@@ -39,4 +44,5 @@ pub fn verify_models() {
     access_provision::check_access_provision_model();
     inbox_replay::check_inbox_replay_model();
     federation_request_policy::check_federation_request_policy_model();
+    refinement::verify_refinements();
 }

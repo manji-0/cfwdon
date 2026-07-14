@@ -6,11 +6,11 @@ pub(crate) struct QuoteApprovalModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct QuoteApprovalModelState {
-    quote_state: QuoteState,
-    has_quote: bool,
-    target_exists_locally: bool,
-    blocked_by_owner: bool,
-    policy_allows: bool,
+    pub(crate) quote_state: QuoteState,
+    pub(crate) has_quote: bool,
+    pub(crate) target_exists_locally: bool,
+    pub(crate) blocked_by_owner: bool,
+    pub(crate) policy_allows: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
