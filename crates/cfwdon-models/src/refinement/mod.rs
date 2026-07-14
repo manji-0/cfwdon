@@ -12,6 +12,7 @@ mod quote;
 mod quote_approval;
 mod registration;
 mod status_draft;
+mod status_draft_publish;
 pub(crate) mod verify;
 
 pub use catalog::{OperationMapping, REFINEMENT_CATALOG, RefinementEntry};
@@ -30,6 +31,7 @@ pub(crate) fn verify_refinements() {
     local_follow_request::check_local_follow_request_refinement();
     activitypub_visibility::check_activitypub_visibility_refinement();
     quote::check_quote_refinement();
+    status_draft_publish::check_status_draft_publish_refinement();
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use stateright::{Checker, Model, Property};
 pub(crate) struct StatusDraftPublishModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum PublishStage {
+pub(crate) enum PublishStage {
     Composing,
     Validated,
     Published,
@@ -17,17 +17,17 @@ enum PublishStage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct StatusDraftPublishModelState {
-    stage: PublishStage,
-    has_text: bool,
-    media_count: u8,
-    has_poll: bool,
-    has_quote: bool,
-    visibility: Visibility,
-    policy_override: Option<QuoteApprovalPolicy>,
-    account_default: QuoteApprovalPolicy,
-    quote_target_local: bool,
-    published_policy: Option<QuoteApprovalPolicy>,
-    published_quote_state: Option<QuoteState>,
+    pub(crate) stage: PublishStage,
+    pub(crate) has_text: bool,
+    pub(crate) media_count: u8,
+    pub(crate) has_poll: bool,
+    pub(crate) has_quote: bool,
+    pub(crate) visibility: Visibility,
+    pub(crate) policy_override: Option<QuoteApprovalPolicy>,
+    pub(crate) account_default: QuoteApprovalPolicy,
+    pub(crate) quote_target_local: bool,
+    pub(crate) published_policy: Option<QuoteApprovalPolicy>,
+    pub(crate) published_quote_state: Option<QuoteState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,58 +47,19 @@ pub(crate) enum StatusDraftPublishAction {
 
 impl StatusDraftPublishModel {
     fn fixture_account(account_default: QuoteApprovalPolicy) -> LocalAccount {
-        let mut record = LocalAccountRecord::test_fixture("acct-model", "alice");
-        record.default_quote_policy = account_default.as_str().to_owned();
-        LocalAccount::from_record(record)
+        status_draft_publish_fixture_account(account_default)
     }
 
     fn composing_status(state: &StatusDraftPublishModelState) -> ComposingStatus {
-        let poll = state.has_poll.then(|| {
-            PollDraft::try_new(vec!["yes".to_owned(), "no".to_owned()], 300, false, false)
-                .expect("fixture poll")
-        });
-
-        ComposingStatus {
-            text: if state.has_text {
-                "hello".to_owned()
-            } else {
-                String::new()
-            },
-            visibility: state.visibility,
-            spoiler_text: String::new(),
-            sensitive: false,
-            language: None,
-            quote_approval_policy: state.policy_override,
-            in_reply_to_id: None,
-            media_ids: (0..state.media_count)
-                .map(|index| format!("media-{index}"))
-                .collect(),
-            poll,
-        }
+        status_draft_publish_composing(state)
     }
 
     fn quote_resolution(state: &StatusDraftPublishModelState) -> QuoteTargetResolution {
-        if state.has_quote {
-            QuoteTargetResolution::with_target(state.quote_target_local)
-        } else {
-            QuoteTargetResolution::none()
-        }
+        status_draft_publish_quote_resolution(state)
     }
 
     fn expected_validation_error(state: &StatusDraftPublishModelState) -> Option<StatusDraftError> {
-        if !state.has_text && state.media_count == 0 && !state.has_poll {
-            return Some(StatusDraftError::EmptyPayload);
-        }
-        if state.media_count > 4 {
-            return Some(StatusDraftError::TooManyMedia);
-        }
-        if state.has_poll && state.media_count > 0 {
-            return Some(StatusDraftError::PollWithMedia);
-        }
-        if state.has_quote && (state.has_poll || state.media_count > 0) {
-            return Some(StatusDraftError::QuoteWithMediaOrPoll);
-        }
-        None
+        status_draft_publish_validation_error(state)
     }
 
     fn cycle_visibility(visibility: Visibility) -> Visibility {
@@ -126,6 +87,102 @@ impl StatusDraftPublishModel {
             QuoteApprovalPolicy::Nobody => QuoteApprovalPolicy::Public,
         }
     }
+}
+
+pub(crate) fn status_draft_publish_fixture_account(
+    account_default: QuoteApprovalPolicy,
+) -> LocalAccount {
+    let mut record = LocalAccountRecord::test_fixture("acct-model", "alice");
+    record.default_quote_policy = account_default.as_str().to_owned();
+    LocalAccount::from_record(record)
+}
+
+pub(crate) fn status_draft_publish_composing(
+    state: &StatusDraftPublishModelState,
+) -> ComposingStatus {
+    let poll = state.has_poll.then(|| {
+        PollDraft::try_new(vec!["yes".to_owned(), "no".to_owned()], 300, false, false)
+            .expect("fixture poll")
+    });
+
+    ComposingStatus {
+        text: if state.has_text {
+            "hello".to_owned()
+        } else {
+            String::new()
+        },
+        visibility: state.visibility,
+        spoiler_text: String::new(),
+        sensitive: false,
+        language: None,
+        quote_approval_policy: state.policy_override,
+        in_reply_to_id: None,
+        media_ids: (0..state.media_count)
+            .map(|index| format!("media-{index}"))
+            .collect(),
+        poll,
+    }
+}
+
+pub(crate) fn status_draft_publish_quote_resolution(
+    state: &StatusDraftPublishModelState,
+) -> QuoteTargetResolution {
+    if state.has_quote {
+        QuoteTargetResolution::with_target(state.quote_target_local)
+    } else {
+        QuoteTargetResolution::none()
+    }
+}
+
+pub(crate) fn status_draft_publish_validation_error(
+    state: &StatusDraftPublishModelState,
+) -> Option<StatusDraftError> {
+    if !state.has_text && state.media_count == 0 && !state.has_poll {
+        return Some(StatusDraftError::EmptyPayload);
+    }
+    if state.media_count > 4 {
+        return Some(StatusDraftError::TooManyMedia);
+    }
+    if state.has_poll && state.media_count > 0 {
+        return Some(StatusDraftError::PollWithMedia);
+    }
+    if state.has_quote && (state.has_poll || state.media_count > 0) {
+        return Some(StatusDraftError::QuoteWithMediaOrPoll);
+    }
+    None
+}
+
+pub(crate) fn status_draft_publish_quoted_status_id(
+    state: &StatusDraftPublishModelState,
+) -> Option<&'static str> {
+    state.has_quote.then_some("quote-1")
+}
+
+/// Mirrors `parse_status_draft` validation and `insert_status` publish intent resolution.
+pub(crate) fn apply_status_draft_publish_validate(
+    state: &StatusDraftPublishModelState,
+) -> PublishStage {
+    match status_draft_publish_composing(state)
+        .validate(status_draft_publish_quoted_status_id(state))
+    {
+        Ok(_) => PublishStage::Validated,
+        Err(_) => PublishStage::ValidationFailed,
+    }
+}
+
+pub(crate) fn apply_status_draft_publish_publish(
+    state: &StatusDraftPublishModelState,
+) -> Option<(QuoteApprovalPolicy, QuoteState)> {
+    let quoted_status_id = status_draft_publish_quoted_status_id(state);
+    let draft = status_draft_publish_composing(state)
+        .validate(quoted_status_id)
+        .ok()?
+        .state;
+    let account = status_draft_publish_fixture_account(state.account_default);
+    let intent = draft
+        .into_publish_intent(&account, status_draft_publish_quote_resolution(state))
+        .state;
+    Some((intent.quote_policy, intent.quote_state))
 }
 
 impl Model for StatusDraftPublishModel {
@@ -256,32 +313,17 @@ impl Model for StatusDraftPublishModel {
                 if state.stage != PublishStage::Composing {
                     return None;
                 }
-                let quoted_status_id = state.has_quote.then_some("quote-1");
-                match Self::composing_status(state).validate(quoted_status_id) {
-                    Ok(_) => {
-                        next.stage = PublishStage::Validated;
-                    }
-                    Err(_) => {
-                        next.stage = PublishStage::ValidationFailed;
-                    }
-                }
+                next.stage = apply_status_draft_publish_validate(state);
             }
             StatusDraftPublishAction::Publish => {
                 if state.stage != PublishStage::Validated {
                     return None;
                 }
-                let quoted_status_id = state.has_quote.then_some("quote-1");
-                let draft = Self::composing_status(state)
-                    .validate(quoted_status_id)
-                    .expect("validated draft")
-                    .state;
-                let account = Self::fixture_account(state.account_default);
-                let intent = draft
-                    .into_publish_intent(&account, Self::quote_resolution(state))
-                    .state;
+                let (policy, quote_state) =
+                    apply_status_draft_publish_publish(state).expect("validated publish");
                 next.stage = PublishStage::Published;
-                next.published_policy = Some(intent.quote_policy);
-                next.published_quote_state = Some(intent.quote_state);
+                next.published_policy = Some(policy);
+                next.published_quote_state = Some(quote_state);
             }
         }
 

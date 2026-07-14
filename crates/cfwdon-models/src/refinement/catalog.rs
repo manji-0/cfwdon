@@ -314,7 +314,20 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             "crates/cfwdon-worker/src/statuses/mutations.rs",
         ],
         abstraction: "composition facts + publish stage",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "Validate",
+                domain_call: "ComposingStatus::validate",
+                implementation_call: "parse_status_draft",
+                worker_guard: "composition submitted for publish",
+            },
+            OperationMapping {
+                model_action: "Publish",
+                domain_call: "StatusDraft::into_publish_intent",
+                implementation_call: "insert_status",
+                worker_guard: "draft validated successfully",
+            },
+        ],
     },
     RefinementEntry {
         model: "registration_pipeline",
