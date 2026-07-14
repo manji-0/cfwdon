@@ -35,7 +35,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `outbox_delivery_pool` | `delivery` | `delivery.rs` | yes |
 | `outbox_pipeline` | `delivery` | `delivery.rs` | yes |
 | `local_follow_request` | `follow` | `follow_requests.rs` | yes |
-| `activitypub_visibility` | `remote` | `activitypub/objects.rs` | catalog only |
+| `activitypub_visibility` | `remote::activitypub` | `activitypub/objects.rs`, `parse.rs` | yes |
 | `status_draft_publish` | `status::draft` | `request_parsing`, `mutations` | catalog only |
 | `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | catalog only |
 | `access_provision` | `account::registration` | `meta_placeholder_routes` | catalog only |

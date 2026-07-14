@@ -9,8 +9,8 @@ pub(crate) struct ActivityPubVisibilityModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ActivityPubVisibilityModelState {
-    to_contains_public: bool,
-    cc_contains_public: bool,
+    pub(crate) to_contains_public: bool,
+    pub(crate) cc_contains_public: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

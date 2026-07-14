@@ -285,10 +285,26 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
     },
     RefinementEntry {
         model: "activitypub_visibility",
-        domain_module: "cfwdon_domain::remote",
-        implementation_sites: &["crates/cfwdon-worker/src/activitypub/objects.rs"],
-        abstraction: "ActivityPub audience lists",
-        operations: &[],
+        domain_module: "cfwdon_domain::remote::activitypub",
+        implementation_sites: &[
+            "crates/cfwdon-worker/src/activitypub/objects.rs",
+            "crates/cfwdon-worker/src/activitypub/parse.rs",
+        ],
+        abstraction: "ActivityPub to/cc public audience flags",
+        operations: &[
+            OperationMapping {
+                model_action: "EmitPublic / EmitUnlisted / EmitFollowersOnly / EmitDirect",
+                domain_call: "activitypub_audience_flags_for_visibility",
+                implementation_call: "activitypub_audiences",
+                worker_guard: "local note emission",
+            },
+            OperationMapping {
+                model_action: "ToggleToPublic / ToggleCcPublic",
+                domain_call: "visibility_from_activitypub_audiences",
+                implementation_call: "visibility_from_activitypub_object",
+                worker_guard: "remote object ingest",
+            },
+        ],
     },
     RefinementEntry {
         model: "status_draft_publish",

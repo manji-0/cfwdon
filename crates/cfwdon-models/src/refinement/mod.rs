@@ -1,3 +1,4 @@
+mod activitypub_visibility;
 mod catalog;
 mod concurrent_delivery;
 mod federation_dns;
@@ -26,6 +27,7 @@ pub(crate) fn verify_refinements() {
     outbox_pipeline::check_outbox_pipeline_refinement();
     outbound_follow::check_outbound_follow_refinement();
     local_follow_request::check_local_follow_request_refinement();
+    activitypub_visibility::check_activitypub_visibility_refinement();
 }
 
 #[cfg(test)]
