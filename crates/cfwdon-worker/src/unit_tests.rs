@@ -43,23 +43,23 @@ use super::{
     filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
     format_async_refresh_header_value, hash_account_password, image_dimensions,
     include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
-    is_admin_account, is_follow_undo, local_quote_policy_allows, local_username_from_actor_uri,
-    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
-    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
-    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
-    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
-    normalized_account_search_query, normalized_action_uri, notification_sort_key,
-    notification_timestamp_sort_token, oauth_access_token_has_any_scope_json,
-    oauth_authorize_url_from_form, object_attributed_to_remote_actor,
-    optimistic_remote_poll_vote_deltas, paginate_tag_search_matches,
-    parse_activitypub_request_date_ms, parse_basic_authorization_header,
-    parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
-    parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
-    parse_lookup_handle, parse_media_focus, parse_media_id_fields,
-    parse_remote_actor_profile_document, parse_signature_header, parse_status_search_query,
-    parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
-    quote_authorization_uri, quote_document_with_state, quote_placeholder_document,
-    quote_target_uri_from_object, redirect_uri_matches_registered,
+    is_admin_account, is_follow_undo, local_quote_policy_allows, local_quote_revoke_allowed,
+    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
+    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
+    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
+    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
+    notification_sort_key, notification_timestamp_sort_token,
+    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
+    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
+    paginate_tag_search_matches, parse_activitypub_request_date_ms,
+    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
+    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
+    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
+    parse_media_id_fields, parse_remote_actor_profile_document, parse_signature_header,
+    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
+    pending_quote_document, quote_authorization_uri, quote_document_with_state,
+    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
     remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
     remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
     remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
@@ -4041,6 +4041,41 @@ fn status_has_active_quote_depends_on_quote_state() {
     status.quote_state = cfwdon_domain::QuoteState::Revoked;
     assert_eq!(effective_status_quote_state(&status), "revoked");
     assert!(!status_has_active_quote(&status));
+}
+
+#[test]
+fn local_quote_revoke_allowed_requires_quote_author_and_active_quote() {
+    let target_uri = "https://social.example/users/bob/statuses/target-1";
+    let mut quote = StatusRow {
+        id: "quote-1".to_owned(),
+        account_id: "alice".to_owned(),
+        ap_id: Some("https://social.example/users/alice/statuses/quote-1".to_owned()),
+        in_reply_to_id: None,
+        boost_of_uri: None,
+        quote_of_uri: Some(target_uri.to_owned()),
+        content_html: "<p>hello</p>".to_owned(),
+        text: "hello".to_owned(),
+        spoiler_text: String::new(),
+        visibility: cfwdon_domain::Visibility::Public,
+        sensitive: false,
+        language: Some("en".to_owned()),
+        quote_approval_policy: None,
+        quote_state: cfwdon_domain::QuoteState::Accepted,
+        application_id: None,
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        updated_at: None,
+    };
+
+    assert!(local_quote_revoke_allowed("alice", &quote, target_uri));
+    assert!(!local_quote_revoke_allowed("bob", &quote, target_uri));
+    assert!(!local_quote_revoke_allowed(
+        "alice",
+        &quote,
+        "https://other.example/statuses/1"
+    ));
+
+    quote.quote_state = cfwdon_domain::QuoteState::Revoked;
+    assert!(!local_quote_revoke_allowed("alice", &quote, target_uri));
 }
 
 #[test]

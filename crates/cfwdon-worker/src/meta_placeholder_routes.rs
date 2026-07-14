@@ -39,17 +39,16 @@ use crate::{
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
     load_announcement_reaction_state, load_config, load_config_from_env,
     load_in_reply_to_account_id, load_in_reply_to_account_ids, load_latest_filter_updated_at,
-    load_remote_status_updated_at, load_status_updated_at, local_status_ap_id,
-    local_status_target_uri, media_object_url, normalize_status_history_entry, now_iso_string,
-    oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
+    load_remote_status_updated_at, load_status_updated_at, local_quote_revoke_allowed,
+    local_status_ap_id, local_status_target_uri, media_object_url, normalize_status_history_entry,
+    now_iso_string, oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
     parse_optional_bool, parse_relationship_query_ids, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
     queue_remote_actor_activity, queue_remote_actor_activity_required, quote_authorization_uri,
-    quote_request_uri, remote_account_rest_id, remote_status_has_active_quote,
-    remote_status_has_media, resolve_account_reference, resolve_status_reference,
-    send_push_notification, status_has_active_quote, store_account_password,
+    quote_request_uri, remote_account_rest_id, remote_status_has_media, resolve_account_reference,
+    resolve_status_reference, send_push_notification, store_account_password,
     store_account_private_key, streaming_batch_from_entries, update_local_status_quote_state,
     update_remote_status_quote_state,
 };
@@ -4041,34 +4040,22 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
     };
     let (target_status_id, target_uri) = match &target_status {
         crate::ResolvedStatus::Local(status) => {
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-                return Response::error("status not found", 404);
-            };
-            if status.account_id != requester.id()
-                || !can_view_local_status(&db, status, Some(&requester), &account).await?
-            {
-                return Response::error("status not found", 404);
-            }
             (status.id.clone(), local_status_target_uri(status))
         }
-        crate::ResolvedStatus::Remote(status) => {
-            let _ = status;
-            return Response::error("status not found", 404);
-        }
+        crate::ResolvedStatus::Remote(status) => (status.id.clone(), status.object_uri.clone()),
     };
-    let mut quote_revocation_targets = list_follower_delivery_targets(&db, requester.id()).await?;
 
     match resolve_status_reference(&db, &config, &quote_status_id).await? {
         Some(crate::ResolvedStatus::Local(quote_status)) => {
-            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
-                || !status_has_active_quote(&quote_status)
-            {
+            if !local_quote_revoke_allowed(requester.id(), &quote_status, target_uri.as_str()) {
                 return Response::error("status not found", 404);
             }
             let Some(quote_author) = find_account_by_id(&db, &quote_status.account_id).await?
             else {
                 return Response::error("status not found", 404);
             };
+            let quote_revocation_targets =
+                list_follower_delivery_targets(&db, quote_author.id()).await?;
 
             let current_media = find_media_attachments_by_status_id(&db, &quote_status.id).await?;
             let previous_in_reply_to_account_id =
@@ -4104,8 +4091,6 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
 
             let updated_status = clear_local_status_quote(&db, &quote_status, &revision_at).await?;
             enqueue_status_update_activity(&db, &config, &quote_author, &updated_status).await?;
-            quote_revocation_targets
-                .extend(list_follower_delivery_targets(&db, quote_author.id()).await?);
             enqueue_quote_revocation_federation(
                 &db,
                 &config,
@@ -4133,42 +4118,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedStatus::Remote(quote_status)) => {
-            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
-                || !remote_status_has_active_quote(&quote_status)
-            {
-                return Response::error("status not found", 404);
-            }
-            let Some(quote_author) =
-                find_remote_actor_by_actor_uri(&db, &quote_status.actor_uri).await?
-            else {
-                return Response::error("status not found", 404);
-            };
-            let updated_status =
-                update_remote_status_quote_state(&db, &quote_status.id, QuoteState::Revoked)
-                    .await?;
-            enqueue_quote_revocation_federation(
-                &db,
-                &config,
-                &requester,
-                &target_status_id,
-                &target_uri,
-                &quote_status.object_uri,
-                &quote_status.id,
-                &quote_revocation_targets,
-                Some(&quote_author.actor_uri),
-            )
-            .await?;
-            let response = build_remote_status_response(
-                &db,
-                &config,
-                Some(&requester),
-                &updated_status,
-                &quote_author,
-            )
-            .await?;
-            Response::from_json(&response)
-        }
+        Some(crate::ResolvedStatus::Remote(_)) => Response::error("status not found", 404),
         None => Response::error("status not found", 404),
     }
 }

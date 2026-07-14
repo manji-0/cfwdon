@@ -23,6 +23,17 @@ pub(crate) fn status_has_active_quote(status: &StatusRow) -> bool {
     status.has_active_quote()
 }
 
+/// Mirrors quote revoke API guard: only the quote author may revoke an active quote.
+pub(crate) fn local_quote_revoke_allowed(
+    requester_account_id: &str,
+    quote: &StatusRow,
+    target_uri: &str,
+) -> bool {
+    quote.account_id == requester_account_id
+        && quote.quote_of_uri.as_deref() == Some(target_uri)
+        && status_has_active_quote(quote)
+}
+
 pub(crate) fn status_is_visible_to_requester(
     status: &StatusRow,
     viewer: Option<&LocalAccount>,

@@ -36,6 +36,7 @@ pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &
     status.effective_quote_state().as_str()
 }
 
+#[allow(dead_code)]
 pub(crate) fn remote_status_has_active_quote(status: &RemoteStatusRow) -> bool {
     status.has_active_quote()
 }
