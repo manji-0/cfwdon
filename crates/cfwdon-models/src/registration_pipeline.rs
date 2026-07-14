@@ -8,7 +8,7 @@ use stateright::{Checker, Model, Property};
 pub(crate) struct RegistrationPipelineModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum RegistrationStage {
+pub(crate) enum RegistrationStage {
     Composing,
     Validated,
     ValidationFailed,
@@ -17,7 +17,7 @@ enum RegistrationStage {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum TextFieldInput {
+pub(crate) enum TextFieldInput {
     Missing,
     Blank,
     Invalid,
@@ -26,11 +26,11 @@ enum TextFieldInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RegistrationPipelineModelState {
-    stage: RegistrationStage,
-    username: TextFieldInput,
-    email: TextFieldInput,
-    password_present: bool,
-    agreement: bool,
+    pub(crate) stage: RegistrationStage,
+    pub(crate) username: TextFieldInput,
+    pub(crate) email: TextFieldInput,
+    pub(crate) password_present: bool,
+    pub(crate) agreement: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,69 +46,25 @@ pub(crate) enum RegistrationPipelineAction {
 
 impl RegistrationPipelineModel {
     fn field_value(input: TextFieldInput, kind: FieldKind) -> Option<String> {
-        match (input, kind) {
-            (TextFieldInput::Missing, _) => None,
-            (TextFieldInput::Blank, _) => Some(String::new()),
-            (TextFieldInput::Invalid, FieldKind::Username) => Some("bad name!".to_owned()),
-            (TextFieldInput::Invalid, FieldKind::Email) => Some("not-an-email".to_owned()),
-            (TextFieldInput::Valid, FieldKind::Username) => Some("alice".to_owned()),
-            (TextFieldInput::Valid, FieldKind::Email) => Some("alice@example.com".to_owned()),
-        }
+        registration_pipeline_field_value(input, kind)
     }
 
     fn composing_registration(state: &RegistrationPipelineModelState) -> ComposingRegistration {
-        ComposingRegistration {
-            username: Self::field_value(state.username, FieldKind::Username),
-            email: Self::field_value(state.email, FieldKind::Email),
-            password_present: state.password_present,
-            agreement: state.agreement.then_some(true),
-        }
+        registration_pipeline_composing(state)
     }
 
     fn expected_validation_errors(
         state: &RegistrationPipelineModelState,
     ) -> RegistrationValidationErrors {
-        let mut errors = RegistrationValidationErrors::default();
-
-        match state.username {
-            TextFieldInput::Missing | TextFieldInput::Blank => {
-                errors.username = Some(RegistrationFieldIssue::Blank);
-            }
-            TextFieldInput::Invalid => {
-                errors.username = Some(RegistrationFieldIssue::InvalidFormat);
-            }
-            TextFieldInput::Valid => {}
-        }
-
-        match state.email {
-            TextFieldInput::Missing | TextFieldInput::Blank => {
-                errors.email = Some(RegistrationFieldIssue::Blank);
-            }
-            TextFieldInput::Invalid => {
-                errors.email = Some(RegistrationFieldIssue::InvalidFormat);
-            }
-            TextFieldInput::Valid => {}
-        }
-
-        if !state.password_present {
-            errors.password = Some(RegistrationFieldIssue::Blank);
-        }
-        if !state.agreement {
-            errors.agreement = Some(RegistrationFieldIssue::MustBeAccepted);
-        }
-
-        errors
+        registration_pipeline_validation_errors(state)
     }
 
     fn fixture_keys() -> AccountKeyMaterial {
-        AccountKeyMaterial {
-            private_key_jwk: r#"{"kty":"RSA"}"#.to_owned(),
-            public_key_pem: "pem-fixture".to_owned(),
-        }
+        registration_pipeline_fixture_keys()
     }
 
     fn fixture_account_id() -> AccountId {
-        AccountId::new("acct-model").expect("fixture account id")
+        registration_pipeline_fixture_account_id()
     }
 
     fn cycle_field(input: TextFieldInput) -> TextFieldInput {
@@ -121,16 +77,7 @@ impl RegistrationPipelineModel {
     }
 
     fn provisioned_account(state: &RegistrationPipelineModelState) -> LocalAccount {
-        let validated = Self::composing_registration(state)
-            .validate()
-            .expect("validated registration");
-        assert!(validated.has_event(&RegistrationEvent::IntentValidated));
-        let intent = validated.state;
-        let provisioned = intent
-            .register(Self::fixture_account_id(), Self::fixture_keys())
-            .provision("2026-01-01T00:00:00.000Z".to_owned());
-        assert!(provisioned.has_event(&RegistrationEvent::AccountProvisioned));
-        provisioned.state
+        registration_pipeline_provisioned_account(state)
     }
 }
 
@@ -138,6 +85,103 @@ impl RegistrationPipelineModel {
 enum FieldKind {
     Username,
     Email,
+}
+
+fn registration_pipeline_field_value(input: TextFieldInput, kind: FieldKind) -> Option<String> {
+    match (input, kind) {
+        (TextFieldInput::Missing, _) => None,
+        (TextFieldInput::Blank, _) => Some(String::new()),
+        (TextFieldInput::Invalid, FieldKind::Username) => Some("bad name!".to_owned()),
+        (TextFieldInput::Invalid, FieldKind::Email) => Some("not-an-email".to_owned()),
+        (TextFieldInput::Valid, FieldKind::Username) => Some("alice".to_owned()),
+        (TextFieldInput::Valid, FieldKind::Email) => Some("alice@example.com".to_owned()),
+    }
+}
+
+pub(crate) fn registration_pipeline_composing(
+    state: &RegistrationPipelineModelState,
+) -> ComposingRegistration {
+    ComposingRegistration {
+        username: registration_pipeline_field_value(state.username, FieldKind::Username),
+        email: registration_pipeline_field_value(state.email, FieldKind::Email),
+        password_present: state.password_present,
+        agreement: state.agreement.then_some(true),
+    }
+}
+
+pub(crate) fn registration_pipeline_validation_errors(
+    state: &RegistrationPipelineModelState,
+) -> RegistrationValidationErrors {
+    let mut errors = RegistrationValidationErrors::default();
+
+    match state.username {
+        TextFieldInput::Missing | TextFieldInput::Blank => {
+            errors.username = Some(RegistrationFieldIssue::Blank);
+        }
+        TextFieldInput::Invalid => {
+            errors.username = Some(RegistrationFieldIssue::InvalidFormat);
+        }
+        TextFieldInput::Valid => {}
+    }
+
+    match state.email {
+        TextFieldInput::Missing | TextFieldInput::Blank => {
+            errors.email = Some(RegistrationFieldIssue::Blank);
+        }
+        TextFieldInput::Invalid => {
+            errors.email = Some(RegistrationFieldIssue::InvalidFormat);
+        }
+        TextFieldInput::Valid => {}
+    }
+
+    if !state.password_present {
+        errors.password = Some(RegistrationFieldIssue::Blank);
+    }
+    if !state.agreement {
+        errors.agreement = Some(RegistrationFieldIssue::MustBeAccepted);
+    }
+
+    errors
+}
+
+pub(crate) fn registration_pipeline_fixture_keys() -> AccountKeyMaterial {
+    AccountKeyMaterial {
+        private_key_jwk: r#"{"kty":"RSA"}"#.to_owned(),
+        public_key_pem: "pem-fixture".to_owned(),
+    }
+}
+
+pub(crate) fn registration_pipeline_fixture_account_id() -> AccountId {
+    AccountId::new("acct-model").expect("fixture account id")
+}
+
+/// Mirrors `validate_account_registration_request` success gate.
+pub(crate) fn apply_registration_pipeline_validate(
+    state: &RegistrationPipelineModelState,
+) -> RegistrationStage {
+    if registration_pipeline_validation_errors(state).is_empty() {
+        RegistrationStage::Validated
+    } else {
+        RegistrationStage::ValidationFailed
+    }
+}
+
+pub(crate) fn registration_pipeline_provisioned_account(
+    state: &RegistrationPipelineModelState,
+) -> LocalAccount {
+    let validated = registration_pipeline_composing(state)
+        .validate()
+        .expect("validated registration");
+    assert!(validated.has_event(&RegistrationEvent::IntentValidated));
+    let intent = validated.state;
+    let provisioned = intent
+        .register(
+            registration_pipeline_fixture_account_id(),
+            registration_pipeline_fixture_keys(),
+        )
+        .provision("2026-01-01T00:00:00.000Z".to_owned());
+    assert!(provisioned.has_event(&RegistrationEvent::AccountProvisioned));
+    provisioned.state
 }
 
 impl Model for RegistrationPipelineModel {
@@ -229,11 +273,7 @@ impl Model for RegistrationPipelineModel {
                 if state.stage != RegistrationStage::Composing {
                     return None;
                 }
-                if Self::expected_validation_errors(state).is_empty() {
-                    next.stage = RegistrationStage::Validated;
-                } else {
-                    next.stage = RegistrationStage::ValidationFailed;
-                }
+                next.stage = apply_registration_pipeline_validate(state);
             }
             RegistrationPipelineAction::Register => {
                 if state.stage != RegistrationStage::Validated {

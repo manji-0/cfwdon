@@ -11,6 +11,7 @@ mod outbox_pipeline;
 mod quote;
 mod quote_approval;
 mod registration;
+mod registration_pipeline;
 mod status_draft;
 mod status_draft_publish;
 pub(crate) mod verify;
@@ -20,6 +21,7 @@ pub use catalog::{OperationMapping, REFINEMENT_CATALOG, RefinementEntry};
 pub(crate) fn verify_refinements() {
     quote_approval::check_quote_approval_refinement();
     registration::check_registration_refinement();
+    registration_pipeline::check_registration_pipeline_refinement();
     status_draft::check_status_draft_refinement();
     federation_dns::check_federation_dns_refinement();
     inbox_replay::check_inbox_replay_refinement();

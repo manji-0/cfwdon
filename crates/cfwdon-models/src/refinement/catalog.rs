@@ -334,7 +334,26 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         domain_module: "cfwdon_domain::account::registration",
         implementation_sites: &["crates/cfwdon-worker/src/meta_placeholder_routes.rs"],
         abstraction: "registration field inputs + pipeline stage",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "Validate",
+                domain_call: "ComposingRegistration::validate",
+                implementation_call: "validate_account_registration_request",
+                worker_guard: "registration form submitted",
+            },
+            OperationMapping {
+                model_action: "Register",
+                domain_call: "RegistrationIntent::register",
+                implementation_call: "insert_registered_account",
+                worker_guard: "validated registration and unique username/email",
+            },
+            OperationMapping {
+                model_action: "Provision",
+                domain_call: "RegisteredAccount::provision",
+                implementation_call: "store_account_password / issue_oauth_access_token",
+                worker_guard: "account row created",
+            },
+        ],
     },
     RefinementEntry {
         model: "access_provision",
