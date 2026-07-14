@@ -1,15 +1,6 @@
 use super::{Error, Result};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
-pub(crate) fn delivery_retry_delay_modifier(attempt: u32) -> &'static str {
-    match attempt {
-        1 => "+1 minute",
-        2 => "+5 minutes",
-        3 => "+15 minutes",
-        _ => "+60 minutes",
-    }
-}
-
 pub(crate) fn now_iso_string() -> Result<String> {
     #[cfg(target_arch = "wasm32")]
     {

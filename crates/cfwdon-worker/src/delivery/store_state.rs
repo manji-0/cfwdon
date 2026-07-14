@@ -1,4 +1,6 @@
-use super::{D1Database, Result, delivery_retry_delay_modifier};
+use cfwdon_domain::delivery_retry_delay_modifier;
+
+use super::{D1Database, Result};
 use crate::sql_placeholders;
 use worker::d1::D1Type;
 

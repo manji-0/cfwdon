@@ -1,4 +1,5 @@
 pub mod account;
+pub mod delivery;
 pub mod error;
 pub mod ids;
 pub mod instance;
@@ -14,6 +15,13 @@ pub use account::{
     ComposingAccessProvision, ComposingRegistration, LocalAccount, LocalAccountRecord,
     ProfileField, RegisteringAccount, RegistrationFieldIssue, RegistrationIntent,
     RegistrationValidationErrors, Username, UsernameError,
+};
+pub use delivery::{
+    DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse, OutboundActivityState,
+    RemoteFollowState, delivery_retry_delay_modifier, follow_state_after_inbox_response,
+    initial_remote_follow_state, is_delivery_terminal, next_delivery_attempt_count,
+    outbound_state_after_delivery_attempt, outbound_terminal_failure_follow_state,
+    reconcile_pending_follow_on_outbound_terminal_failure,
 };
 pub use error::{
     IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RemoteStatusError,

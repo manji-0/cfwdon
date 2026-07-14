@@ -1,29 +1,7 @@
 use crate::{FollowAccountRequest, FollowRow, LocalAccount, RemoteActorProfile, RemoteActorRow};
+use cfwdon_domain::{RemoteFollowState, initial_remote_follow_state};
 use worker::d1::D1Type;
 use worker::{D1Database, Error, Result};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RemoteFollowState {
-    Pending,
-    Accepted,
-}
-
-impl RemoteFollowState {
-    fn for_actor(actor: &RemoteActorRow) -> Self {
-        if actor.locked {
-            Self::Pending
-        } else {
-            Self::Accepted
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Accepted => "accepted",
-        }
-    }
-}
 
 #[derive(Debug)]
 struct RemoteFollowUpsertDraft {
@@ -52,7 +30,7 @@ impl RemoteFollowUpsertDraft {
             target_inbox_uri: inbox_uris.0,
             target_shared_inbox_uri: inbox_uris.1,
             follow_activity_id: follow_activity_id.to_owned(),
-            state: RemoteFollowState::for_actor(actor),
+            state: initial_remote_follow_state(actor.locked),
             show_reblogs: request.reblogs.unwrap_or(true),
             notify: request.notify.unwrap_or(false),
             languages_json: serialize_follow_languages(request)?,

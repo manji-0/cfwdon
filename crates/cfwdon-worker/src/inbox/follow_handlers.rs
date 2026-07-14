@@ -5,6 +5,7 @@ use super::{
     queue_remote_actor_activity_required, update_follow_state_from_response, upsert_follower,
     upsert_remote_follow_request,
 };
+use cfwdon_domain::FollowInboxResponse;
 
 pub(crate) async fn handle_inbox_follow(
     db: &D1Database,
@@ -59,7 +60,13 @@ pub(crate) async fn handle_inbox_accept(
     if handle_inbox_collection_feature_accept(db, config, activity, remote_actor).await? {
         return Ok(());
     }
-    update_follow_state_from_response(db, activity, remote_actor, "accepted").await
+    update_follow_state_from_response(
+        db,
+        activity,
+        remote_actor,
+        FollowInboxResponse::Accept.as_str(),
+    )
+    .await
 }
 
 pub(crate) async fn handle_inbox_reject(
@@ -70,5 +77,11 @@ pub(crate) async fn handle_inbox_reject(
     if handle_inbox_collection_feature_reject(db, activity, remote_actor).await? {
         return Ok(());
     }
-    update_follow_state_from_response(db, activity, remote_actor, "rejected").await
+    update_follow_state_from_response(
+        db,
+        activity,
+        remote_actor,
+        FollowInboxResponse::Reject.as_str(),
+    )
+    .await
 }

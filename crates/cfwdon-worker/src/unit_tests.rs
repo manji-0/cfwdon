@@ -32,25 +32,24 @@ use super::{
     build_timeline_link_header_for_url, build_translation_document,
     build_translation_document_for_language, build_translation_languages_document,
     build_update_person_activity_with_id, classify_media_kind, configured_html_document,
-    context_async_refresh_id, delivery_retry_delay_modifier, derive_link_timeline_match_urls,
-    describe_outbound_activity, directory_order, effective_local_quote_approval_policy,
-    effective_remote_status_quote_state, effective_search_v2_following, effective_search_v2_offset,
-    effective_status_quote_state, extract_account_handles_from_text, extract_hashtags_from_html,
-    extract_hashtags_from_text, extract_html_preview_metadata, extract_inbox_target_username,
-    extract_mentions_from_text, extract_remote_note_object, extract_remote_poll_draft,
-    extract_remote_profile_media_url, filter_notification_entries_by_query, first_url_from_text,
-    follow_targets_local_actor, format_async_refresh_header_value, hash_account_password,
-    image_dimensions, include_local_source, include_remote_source, instance_base_url,
-    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
-    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
-    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
-    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
-    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
-    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    notification_sort_key, notification_timestamp_sort_token,
-    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
-    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
-    outbound_terminal_failure_follow_state, paginate_tag_search_matches,
+    context_async_refresh_id, derive_link_timeline_match_urls, describe_outbound_activity,
+    directory_order, effective_local_quote_approval_policy, effective_remote_status_quote_state,
+    effective_search_v2_following, effective_search_v2_offset, effective_status_quote_state,
+    extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
+    extract_html_preview_metadata, extract_inbox_target_username, extract_mentions_from_text,
+    extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
+    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
+    format_async_refresh_header_value, hash_account_password, image_dimensions,
+    include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
+    is_admin_account, is_follow_undo, local_quote_policy_allows, local_username_from_actor_uri,
+    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
+    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
+    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
+    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
+    normalized_account_search_query, normalized_action_uri, notification_sort_key,
+    notification_timestamp_sort_token, oauth_access_token_has_any_scope_json,
+    oauth_authorize_url_from_form, object_attributed_to_remote_actor,
+    optimistic_remote_poll_vote_deltas, paginate_tag_search_matches,
     parse_activitypub_request_date_ms, parse_basic_authorization_header,
     parse_bearer_authorization_header, parse_csv_list, parse_deepl_translated_text,
     parse_http_url_parts, parse_internal_pagination_id, parse_libretranslate_translated_text,
@@ -1731,16 +1730,6 @@ fn apply_activitypub_poll_fields_uses_any_of_for_multiple_choice() {
 }
 
 #[test]
-fn outbound_terminal_failure_marks_follow_as_failed_only_for_follow() {
-    assert_eq!(
-        outbound_terminal_failure_follow_state("Follow"),
-        Some("failed")
-    );
-    assert_eq!(outbound_terminal_failure_follow_state("Undo"), None);
-    assert_eq!(outbound_terminal_failure_follow_state("Like"), None);
-}
-
-#[test]
 fn instance_base_url_normalizes_bare_domain() {
     let config = AppConfig::new("example.com", "cfwdon", "test instance");
     assert_eq!(instance_base_url(&config), "https://example.com");
@@ -1782,15 +1771,6 @@ fn parse_http_url_parts_adds_root_for_bare_query() {
     let (host, path) = parse_http_url_parts("https://remote.example?foo=bar").unwrap();
     assert_eq!(host, "remote.example");
     assert_eq!(path, "/?foo=bar");
-}
-
-#[test]
-fn delivery_retry_delay_backoff_steps_up() {
-    assert_eq!(delivery_retry_delay_modifier(1), "+1 minute");
-    assert_eq!(delivery_retry_delay_modifier(2), "+5 minutes");
-    assert_eq!(delivery_retry_delay_modifier(3), "+15 minutes");
-    assert_eq!(delivery_retry_delay_modifier(4), "+60 minutes");
-    assert_eq!(delivery_retry_delay_modifier(8), "+60 minutes");
 }
 
 #[test]

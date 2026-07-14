@@ -1,0 +1,11 @@
+[package]
+name = "cfwdon-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Stateright model-checking models for cfwdon domain protocols"
+publish = false
+
+[dependencies]
+cfwdon-domain.workspace = true
+stateright.workspace = true

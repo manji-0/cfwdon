@@ -56,6 +56,23 @@ devbox run ci
 
 Use `devbox run ci` as the minimum gate before sending a change.
 
+## Model Checking
+<!-- constrained-by ../../crates/cfwdon-models/src/quote.rs -->
+
+Formal models for domain protocols live in [`crates/cfwdon-models`](../../crates/cfwdon-models). The crate uses [Stateright](https://www.stateright.rs/) to explore finite state spaces and check safety (`always`) and reachability (`sometimes`) properties.
+
+The first model covers quote approval policy and quote-state resolution in [`crates/cfwdon-domain/src/quote.rs`](../../crates/cfwdon-domain/src/quote.rs). Transition steps delegate to the same pure helpers used in production, so the checker does not duplicate business rules.
+
+A second model covers outbound delivery retries, inbox `Accept`/`Reject` responses, and remote-follow reconciliation in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), including the rule that terminal failure of a `Follow` activity moves a pending follow to `failed` while inbox `Reject` moves it to `rejected`.
+
+A third model checks that two concurrently processed outbound deliveries evolve independently while each slot still follows the same retry rules as production `buffer_unordered` processing.
+
+```sh
+cargo test -p cfwdon-models
+```
+
+`devbox run test` and `devbox run ci` already run `cargo test --workspace`, so model checks are part of the normal gate.
+
 ## Local Worker
 <!-- constrained-by ../reference/configuration.md -->
 

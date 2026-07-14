@@ -1,7 +1,11 @@
 use serde::Deserialize;
 use worker::d1::D1Type;
 
-use super::{D1Database, Result, delivery_retry_delay_modifier};
+use cfwdon_domain::{
+    RemoteFollowState, delivery_retry_delay_modifier, outbound_terminal_failure_follow_state,
+};
+
+use super::{D1Database, Result};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OutboundActivityRow {
@@ -82,11 +86,10 @@ pub(crate) async fn mark_outbound_activity_terminal_failure(
     Ok(())
 }
 
-pub(crate) fn outbound_terminal_failure_follow_state(activity_type: &str) -> Option<&'static str> {
-    match activity_type {
-        "Follow" => Some("failed"),
-        _ => None,
-    }
+pub(crate) fn outbound_terminal_failure_follow_state_name(
+    activity_type: &str,
+) -> Option<&'static str> {
+    outbound_terminal_failure_follow_state(activity_type).map(RemoteFollowState::as_str)
 }
 
 pub(crate) async fn reconcile_outbound_activity_terminal_failure(
@@ -96,7 +99,7 @@ pub(crate) async fn reconcile_outbound_activity_terminal_failure(
 ) -> Result<()> {
     mark_outbound_activity_terminal_failure(db, &delivery.id, next_attempt).await?;
 
-    if let Some(state) = outbound_terminal_failure_follow_state(&delivery.activity_type)
+    if let Some(state) = outbound_terminal_failure_follow_state_name(&delivery.activity_type)
         && let Some(target_actor_uri) = delivery.target_actor_uri.as_deref()
     {
         let bindings = [
