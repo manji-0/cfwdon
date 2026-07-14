@@ -15,8 +15,8 @@ pub mod transition;
 pub use account::{
     AccessEmail, AccessEmailError, AccessProvisionIntent, AccountHandle, AccountKeyMaterial,
     ComposingAccessProvision, ComposingRegistration, LocalAccount, LocalAccountRecord,
-    ProfileField, RegisteringAccount, RegistrationFieldIssue, RegistrationIntent,
-    RegistrationValidationErrors, Username, UsernameError,
+    ProfileField, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
+    RegistrationIntent, RegistrationValidationErrors, Username, UsernameError,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,

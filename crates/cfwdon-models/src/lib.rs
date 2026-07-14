@@ -18,6 +18,7 @@ mod outbox_pipeline;
 mod quote;
 mod quote_approval;
 mod registration_pipeline;
+mod registration_transition_events;
 mod status_draft_publish;
 
 /// Run every Stateright model in this crate. Panics when a property is violated.
@@ -32,6 +33,7 @@ pub fn verify_models() {
     activitypub_visibility::check_activitypub_visibility_model();
     status_draft_publish::check_status_draft_publish_model();
     registration_pipeline::check_registration_pipeline_model();
+    registration_transition_events::check_registration_transition_events_model();
     access_provision::check_access_provision_model();
     inbox_replay::check_inbox_replay_model();
     federation_request_policy::check_federation_request_policy_model();

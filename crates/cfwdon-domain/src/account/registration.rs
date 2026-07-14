@@ -30,6 +30,12 @@ impl RegistrationValidationErrors {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistrationEvent {
+    IntentValidated,
+    AccountProvisioned,
+}
+
 /// Raw account registration input before domain validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComposingRegistration {
@@ -42,7 +48,8 @@ pub struct ComposingRegistration {
 impl ComposingRegistration {
     pub fn validate(
         self,
-    ) -> Result<Transition<RegistrationIntent, ()>, RegistrationValidationErrors> {
+    ) -> Result<Transition<RegistrationIntent, RegistrationEvent>, RegistrationValidationErrors>
+    {
         let mut errors = RegistrationValidationErrors::default();
 
         let username = match self.username.as_deref() {
@@ -89,10 +96,13 @@ impl ComposingRegistration {
         }
 
         if errors.is_empty() {
-            Ok(Transition::without_events(RegistrationIntent {
-                username: username.expect("validated username"),
-                email: email.expect("validated email"),
-            }))
+            Ok(Transition::with_event(
+                RegistrationIntent {
+                    username: username.expect("validated username"),
+                    email: email.expect("validated email"),
+                },
+                RegistrationEvent::IntentValidated,
+            ))
         } else {
             Err(errors)
         }
@@ -141,30 +151,33 @@ pub struct RegisteringAccount {
 }
 
 impl RegisteringAccount {
-    pub fn provision(self, created_at: String) -> Transition<LocalAccount, ()> {
-        Transition::without_events(LocalAccount {
-            id: self.id.into_inner(),
-            username: self.username.into_inner(),
-            access_email: self.email.into_inner(),
-            display_name: self.display_name,
-            bio_html: String::new(),
-            bio_text: String::new(),
-            fields: Vec::new(),
-            locked: false,
-            bot: false,
-            discoverable: false,
-            default_post_visibility: Visibility::Public,
-            default_quote_policy: QuoteApprovalPolicy::Public,
-            default_sensitive: false,
-            default_language: None,
-            avatar_object_key: None,
-            avatar_content_type: None,
-            header_object_key: None,
-            header_content_type: None,
-            private_key_jwk: self.keys.private_key_jwk,
-            public_key_pem: self.keys.public_key_pem,
-            created_at,
-        })
+    pub fn provision(self, created_at: String) -> Transition<LocalAccount, RegistrationEvent> {
+        Transition::with_event(
+            LocalAccount {
+                id: self.id.into_inner(),
+                username: self.username.into_inner(),
+                access_email: self.email.into_inner(),
+                display_name: self.display_name,
+                bio_html: String::new(),
+                bio_text: String::new(),
+                fields: Vec::new(),
+                locked: false,
+                bot: false,
+                discoverable: false,
+                default_post_visibility: Visibility::Public,
+                default_quote_policy: QuoteApprovalPolicy::Public,
+                default_sensitive: false,
+                default_language: None,
+                avatar_object_key: None,
+                avatar_content_type: None,
+                header_object_key: None,
+                header_content_type: None,
+                private_key_jwk: self.keys.private_key_jwk,
+                public_key_pem: self.keys.public_key_pem,
+                created_at,
+            },
+            RegistrationEvent::AccountProvisioned,
+        )
     }
 }
 
@@ -210,6 +223,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn validate_emits_intent_validated_event() {
+        let transition = ComposingRegistration {
+            username: Some("alice".to_owned()),
+            email: Some("alice@example.com".to_owned()),
+            password_present: true,
+            agreement: Some(true),
+        }
+        .validate()
+        .expect("valid registration");
+
+        assert!(transition.has_event(&RegistrationEvent::IntentValidated));
+    }
+
+    #[test]
     fn composing_registration_requires_core_fields() {
         let errors = ComposingRegistration {
             username: None,
@@ -247,9 +274,9 @@ mod tests {
                 public_key_pem: "pem".to_owned(),
             },
         );
-        let account = registering
-            .provision("2026-01-01T00:00:00.000Z".to_owned())
-            .state;
+        let provisioned = registering.provision("2026-01-01T00:00:00.000Z".to_owned());
+        assert!(provisioned.has_event(&RegistrationEvent::AccountProvisioned));
+        let account = provisioned.state;
 
         assert_eq!(account.username(), "alice");
         assert_eq!(account.access_email(), "alice@example.com");

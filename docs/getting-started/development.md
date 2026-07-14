@@ -89,6 +89,8 @@ A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-do
 
 Quote owner approve, reject, and revoke API handlers in the worker now delegate quote-state transitions to [`OwnerQuoteAction`](../../crates/cfwdon-domain/src/quote.rs) and remote status upserts merge quote state through `merged_quote_state_for_remote_upsert`.
 
+Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdon-domain/src/account/registration.rs) values through [`Transition`](../../crates/cfwdon-domain/src/transition.rs), and a fourteenth model checks that validate and provision steps surface the expected events.
+
 ```sh
 cargo test -p cfwdon-models
 ```

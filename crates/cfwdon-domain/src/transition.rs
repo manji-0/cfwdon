@@ -19,4 +19,11 @@ impl<TState, TEvent> Transition<TState, TEvent> {
             events: vec![event],
         }
     }
+
+    pub fn has_event(&self, event: &TEvent) -> bool
+    where
+        TEvent: PartialEq,
+    {
+        self.events.iter().any(|candidate| candidate == event)
+    }
 }

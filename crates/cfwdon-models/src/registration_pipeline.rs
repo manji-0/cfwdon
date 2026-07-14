@@ -1,6 +1,6 @@
 use cfwdon_domain::{
     AccountId, AccountKeyMaterial, ComposingRegistration, LocalAccount, QuoteApprovalPolicy,
-    RegistrationFieldIssue, RegistrationValidationErrors, Visibility,
+    RegistrationEvent, RegistrationFieldIssue, RegistrationValidationErrors, Visibility,
 };
 use stateright::{Checker, Model, Property};
 
@@ -121,14 +121,16 @@ impl RegistrationPipelineModel {
     }
 
     fn provisioned_account(state: &RegistrationPipelineModelState) -> LocalAccount {
-        let intent = Self::composing_registration(state)
+        let validated = Self::composing_registration(state)
             .validate()
-            .expect("validated registration")
-            .state;
-        intent
+            .expect("validated registration");
+        assert!(validated.has_event(&RegistrationEvent::IntentValidated));
+        let intent = validated.state;
+        let provisioned = intent
             .register(Self::fixture_account_id(), Self::fixture_keys())
-            .provision("2026-01-01T00:00:00.000Z".to_owned())
-            .state
+            .provision("2026-01-01T00:00:00.000Z".to_owned());
+        assert!(provisioned.has_event(&RegistrationEvent::AccountProvisioned));
+        provisioned.state
     }
 }
 

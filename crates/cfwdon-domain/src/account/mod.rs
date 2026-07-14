@@ -7,7 +7,8 @@ pub use email::{AccessEmail, AccessEmailError};
 pub use record::LocalAccountRecord;
 pub use registration::{
     AccessProvisionIntent, AccountKeyMaterial, ComposingAccessProvision, ComposingRegistration,
-    RegisteringAccount, RegistrationFieldIssue, RegistrationIntent, RegistrationValidationErrors,
+    RegisteringAccount, RegistrationEvent, RegistrationFieldIssue, RegistrationIntent,
+    RegistrationValidationErrors,
 };
 pub use username::{Username, UsernameError};
 
