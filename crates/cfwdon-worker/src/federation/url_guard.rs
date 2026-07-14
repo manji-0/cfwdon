@@ -1,3 +1,4 @@
+use cfwdon_domain::{RemoteUrlPolicyIssue, is_blocked_ip_address, remote_url_policy_from_parts};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -25,28 +26,26 @@ pub(crate) struct DnsJsonAnswer {
 }
 
 pub(crate) async fn validate_remote_fetch_url(url: &Url) -> Result<()> {
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(Error::RustError(
-            "remote URL must not include user info".to_owned(),
-        ));
-    }
     let host = url
         .host_str()
-        .ok_or_else(|| Error::RustError("remote URL must include host".to_owned()))?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") {
-        return Err(Error::RustError("localhost is not allowed".to_owned()));
+        .ok_or_else(|| Error::RustError("remote URL must include host".to_owned()))?;
+    if let Err(issue) = remote_url_policy_from_parts(
+        url.scheme(),
+        host,
+        !url.username().is_empty() || url.password().is_some(),
+    ) {
+        return Err(Error::RustError(match issue {
+            RemoteUrlPolicyIssue::UnsupportedScheme => "unsupported remote URL scheme".to_owned(),
+            RemoteUrlPolicyIssue::MissingHost => "remote URL must include host".to_owned(),
+            RemoteUrlPolicyIssue::UserInfoPresent => {
+                "remote URL must not include user info".to_owned()
+            }
+            RemoteUrlPolicyIssue::LocalhostBlocked => "localhost is not allowed".to_owned(),
+            RemoteUrlPolicyIssue::BlockedIp => "private or loopback IPs are not allowed".to_owned(),
+        }));
     }
-    if let Ok(ip) = host.parse::<IpAddr>()
-        && is_blocked_ip_address(ip)
-    {
-        return Err(Error::RustError(
-            "private or loopback IPs are not allowed".to_owned(),
-        ));
-    }
-    if host.parse::<IpAddr>().is_err() {
-        validate_remote_hostname_resolution(&host).await?;
+    if host.parse::<std::net::IpAddr>().is_err() {
+        validate_remote_hostname_resolution(host).await?;
     }
 
     Ok(())
@@ -124,25 +123,4 @@ async fn resolve_dns_json_ips(host: &str, record_type: &str) -> Result<Vec<IpAdd
         .into_iter()
         .filter_map(|answer| answer.data.parse::<IpAddr>().ok())
         .collect())
-}
-
-fn is_blocked_ip_address(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-                || v4.is_broadcast()
-                || v4.octets()[0] == 0
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-        }
-    }
 }

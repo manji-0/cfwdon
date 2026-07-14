@@ -1,6 +1,10 @@
 use crate::{RemoteActorProfile, parse_remote_http_url, sha256_http_digest};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use cfwdon_domain::{
+    activitypub_date_within_skew, activitypub_key_id_matches_actor,
+    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
+};
 use time::{
     Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
     format_description::well_known::{Rfc2822, Rfc3339},
@@ -19,10 +23,11 @@ pub(crate) fn cached_remote_actor_matches_key(
     key_id: &str,
     actor_uri: &str,
 ) -> bool {
-    if !key_id_matches_actor(key_id, actor_uri, &remote_actor.actor_uri) {
-        return false;
-    }
-    remote_actor.public_key_id.is_empty() || key_id == remote_actor.public_key_id
+    cached_remote_actor_key_matches(
+        key_id_matches_actor(key_id, actor_uri, &remote_actor.actor_uri),
+        &remote_actor.public_key_id,
+        key_id,
+    )
 }
 
 pub(crate) fn extract_activity_actor_uri(activity: &serde_json::Value) -> Result<String> {
@@ -191,8 +196,7 @@ pub(crate) fn validate_request_date(headers: &Headers) -> Result<()> {
     let parsed = parse_activitypub_request_date_ms(&date)
         .ok_or_else(|| Error::RustError("invalid Date header".to_owned()))?;
 
-    let skew_ms = (js_sys::Date::now() - parsed).abs();
-    if skew_ms > 12.0 * 60.0 * 60.0 * 1000.0 {
+    if !activitypub_date_within_skew(parsed, js_sys::Date::now()) {
         return Err(Error::RustError(
             "Date header outside allowed skew".to_owned(),
         ));
@@ -204,7 +208,10 @@ pub(crate) fn validate_request_date(headers: &Headers) -> Result<()> {
 pub(crate) fn validate_activitypub_signature_headers(
     signature: &ParsedSignatureHeader,
 ) -> Result<()> {
-    for required_header in ["(request-target)", "date", "digest"] {
+    if activitypub_signature_lists_required_headers(&signature.headers) {
+        return Ok(());
+    }
+    for required_header in cfwdon_domain::ACTIVITYPUB_REQUIRED_SIGNED_HEADERS {
         if !signature
             .headers
             .iter()
@@ -215,7 +222,6 @@ pub(crate) fn validate_activitypub_signature_headers(
             )));
         }
     }
-
     Ok(())
 }
 
@@ -274,11 +280,5 @@ pub(crate) fn build_signature_signing_string(
 }
 
 fn key_id_matches_actor(key_id: &str, raw_actor_uri: &str, canonical_actor_uri: &str) -> bool {
-    let Ok(key_url) = parse_remote_http_url(key_id) else {
-        return false;
-    };
-    let mut key_actor = key_url.clone();
-    key_actor.set_fragment(None);
-
-    key_actor.as_str() == raw_actor_uri || key_actor.as_str() == canonical_actor_uri
+    activitypub_key_id_matches_actor(key_id, raw_actor_uri, canonical_actor_uri)
 }

@@ -1,6 +1,7 @@
 pub mod account;
 pub mod delivery;
 pub mod error;
+pub mod federation;
 pub mod follow;
 pub mod ids;
 pub mod instance;
@@ -29,6 +30,13 @@ pub use delivery::{
 pub use error::{
     IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RemoteStatusError,
     StatusDraftError, VisibilityError,
+};
+pub use federation::{
+    ACTIVITYPUB_MAX_DATE_SKEW_MS, ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState,
+    RemoteUrlPolicyIssue, activitypub_date_within_skew, activitypub_key_id_matches_actor,
+    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
+    inbox_activity_after_failure, inbox_activity_after_receive, inbox_activity_after_success,
+    is_blocked_ip_address, remote_http_url_scheme_allowed, remote_url_policy_from_parts,
 };
 pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,

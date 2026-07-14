@@ -81,6 +81,10 @@ A ninth model covers account registration in [`crates/cfwdon-domain/src/account/
 
 A tenth model covers OAuth-style access provisioning in the same module: email resolution, username derivation with collision suffixing, and provisioning defaults for first-time authenticated users.
 
+An eleventh model covers shared inbox replay dedupe in [`crates/cfwdon-domain/src/federation/inbox.rs`](../../crates/cfwdon-domain/src/federation/inbox.rs): first delivery is accepted, in-flight and processed replays are rejected, and failed processing releases the slot.
+
+A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/federation/`](../../crates/cfwdon-domain/src/federation/): ActivityPub signed-header requirements, actor keyId matching, static remote URL host policy, and request date skew bounds.
+
 ```sh
 cargo test -p cfwdon-models
 ```

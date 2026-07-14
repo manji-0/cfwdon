@@ -9,6 +9,8 @@
 mod access_provision;
 mod activitypub_visibility;
 mod concurrent_delivery;
+mod federation_request_policy;
+mod inbox_replay;
 mod local_follow_request;
 mod outbound_follow;
 mod outbox_pipeline;
@@ -29,4 +31,6 @@ pub fn verify_models() {
     status_draft_publish::check_status_draft_publish_model();
     registration_pipeline::check_registration_pipeline_model();
     access_provision::check_access_provision_model();
+    inbox_replay::check_inbox_replay_model();
+    federation_request_policy::check_federation_request_policy_model();
 }
