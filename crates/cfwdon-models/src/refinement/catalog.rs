@@ -135,26 +135,29 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
     RefinementEntry {
         model: "inbox_replay",
         domain_module: "cfwdon_domain::federation::inbox",
-        implementation_sites: &["(pending worker wiring)"],
+        implementation_sites: &[
+            "crates/cfwdon-worker/src/inbox/activity_store.rs",
+            "crates/cfwdon-worker/src/inbox.rs",
+        ],
         abstraction: "InboxActivityRecordState per activity id",
         operations: &[
             OperationMapping {
                 model_action: "Receive",
                 domain_call: "inbox_activity_after_receive",
-                implementation_call: "(pending)",
-                worker_guard: "first delivery only",
+                implementation_call: "begin_inbox_activity_processing",
+                worker_guard: "INSERT OR IGNORE returns a row",
             },
             OperationMapping {
                 model_action: "CompleteSuccess",
                 domain_call: "inbox_activity_after_success",
-                implementation_call: "(pending)",
+                implementation_call: "mark_inbox_activity_processed",
                 worker_guard: "in-flight row only",
             },
             OperationMapping {
                 model_action: "CompleteFailure",
                 domain_call: "inbox_activity_after_failure",
-                implementation_call: "(pending)",
-                worker_guard: "in-flight row only",
+                implementation_call: "release_inbox_activity_processing",
+                worker_guard: "in-flight row with processed_at IS NULL",
             },
         ],
     },
@@ -248,10 +251,41 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "federation_request_policy",
         domain_module: "cfwdon_domain::federation",
         implementation_sites: &[
-            "crates/cfwdon-worker/src/federation/request_validation.rs",
+            "crates/cfwdon-worker/src/http/request_validation.rs",
             "crates/cfwdon-worker/src/federation/url_guard.rs",
         ],
         abstraction: "signed-header facts + URL host + date skew",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "CycleSignedHeaders",
+                domain_call: "activitypub_signature_lists_required_headers",
+                implementation_call: "validate_activitypub_signature_headers",
+                worker_guard: "parsed Signature header present",
+            },
+            OperationMapping {
+                model_action: "CycleKeyIdCase",
+                domain_call: "activitypub_key_id_matches_actor",
+                implementation_call: "key_id_matches_actor",
+                worker_guard: "activity actor URI resolved",
+            },
+            OperationMapping {
+                model_action: "ToggleCachedPublicKeyId",
+                domain_call: "cached_remote_actor_key_matches",
+                implementation_call: "cached_remote_actor_matches_key",
+                worker_guard: "remote actor profile loaded",
+            },
+            OperationMapping {
+                model_action: "CycleRemoteHost",
+                domain_call: "remote_url_policy_from_parts",
+                implementation_call: "parse_remote_http_url + url_guard",
+                worker_guard: "outbound federation fetch",
+            },
+            OperationMapping {
+                model_action: "ToggleDateSkew",
+                domain_call: "activitypub_date_within_skew",
+                implementation_call: "validate_request_date",
+                worker_guard: "Date header parses",
+            },
+        ],
     },
 ];

@@ -29,7 +29,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `quote_approval` | `cfwdon_domain::quote` | `quote_owner_action_response`, remote upsert | yes |
 | `registration_transition_events` | `account::registration` | `validate_account_registration_request` | yes |
 | `status_draft_transition_events` | `status::draft` | `request_parsing`, `insert_status` | yes |
-| `inbox_replay` | `federation::inbox` | (pending) | catalog only |
+| `inbox_replay` | `federation::inbox` | `inbox/activity_store.rs`, `inbox.rs` | yes |
 | `outbound_follow` | `delivery` | `delivery.rs` | catalog only |
 | `concurrent_delivery` | `delivery` | `delivery.rs` | catalog only |
 | `outbox_delivery_pool` | `delivery` | `delivery.rs` | catalog only |
@@ -39,7 +39,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `status_draft_publish` | `status::draft` | `request_parsing`, `mutations` | catalog only |
 | `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | catalog only |
 | `access_provision` | `account::registration` | `meta_placeholder_routes` | catalog only |
-| `federation_request_policy` | `federation` | `request_validation`, `url_guard` | catalog only |
+| `federation_request_policy` | `federation` | `http/request_validation`, `url_guard` | yes |
 | `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |
 
 ## Worked example: quote approval
