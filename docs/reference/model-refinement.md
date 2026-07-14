@@ -40,6 +40,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | catalog only |
 | `access_provision` | `account::registration` | `meta_placeholder_routes` | catalog only |
 | `federation_request_policy` | `federation` | `request_validation`, `url_guard` | catalog only |
+| `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |
 
 ## Worked example: quote approval
 

@@ -1,4 +1,7 @@
-use cfwdon_domain::{RemoteUrlPolicyIssue, is_blocked_ip_address, remote_url_policy_from_parts};
+use cfwdon_domain::{
+    RemoteDnsResolutionIssue, RemoteUrlPolicyIssue, host_is_ip_literal, parse_dns_answer_ips,
+    remote_hostname_dns_resolution_allowed, remote_url_policy_from_parts,
+};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -44,7 +47,7 @@ pub(crate) async fn validate_remote_fetch_url(url: &Url) -> Result<()> {
             RemoteUrlPolicyIssue::BlockedIp => "private or loopback IPs are not allowed".to_owned(),
         }));
     }
-    if host.parse::<std::net::IpAddr>().is_err() {
+    if !host_is_ip_literal(host) {
         validate_remote_hostname_resolution(host).await?;
     }
 
@@ -59,15 +62,15 @@ async fn validate_remote_hostname_resolution(host: &str) -> Result<()> {
     let mut resolved = Vec::new();
     resolved.extend(resolve_dns_json_ips(host, "A").await?);
     resolved.extend(resolve_dns_json_ips(host, "AAAA").await?);
-    if resolved.is_empty() {
-        return Err(Error::RustError(format!(
-            "remote host {host} did not resolve to any public A/AAAA records"
-        )));
-    }
-    if resolved.iter().any(|ip| is_blocked_ip_address(*ip)) {
-        return Err(Error::RustError(format!(
-            "remote host {host} resolved to a blocked IP range"
-        )));
+    if let Err(issue) = remote_hostname_dns_resolution_allowed(&resolved) {
+        return Err(Error::RustError(match issue {
+            RemoteDnsResolutionIssue::NoRecords => {
+                format!("remote host {host} did not resolve to any public A/AAAA records")
+            }
+            RemoteDnsResolutionIssue::BlockedAddress => {
+                format!("remote host {host} resolved to a blocked IP range")
+            }
+        }));
     }
 
     cache_remote_hostname_validation(host);
@@ -117,10 +120,10 @@ async fn resolve_dns_json_ips(host: &str, record_type: &str) -> Result<Vec<IpAdd
         )));
     }
 
-    Ok(body
-        .answer
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|answer| answer.data.parse::<IpAddr>().ok())
-        .collect())
+    Ok(parse_dns_answer_ips(
+        body.answer
+            .unwrap_or_default()
+            .iter()
+            .map(|answer| answer.data.as_str()),
+    ))
 }

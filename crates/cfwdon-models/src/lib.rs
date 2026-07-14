@@ -14,6 +14,7 @@ pub mod refinement;
 mod access_provision;
 mod activitypub_visibility;
 mod concurrent_delivery;
+mod federation_dns_policy;
 mod federation_request_policy;
 mod inbox_replay;
 mod local_follow_request;
@@ -44,5 +45,6 @@ pub fn verify_models() {
     access_provision::check_access_provision_model();
     inbox_replay::check_inbox_replay_model();
     federation_request_policy::check_federation_request_policy_model();
+    federation_dns_policy::check_federation_dns_policy_model();
     refinement::verify_refinements();
 }

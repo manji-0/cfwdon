@@ -225,6 +225,26 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         operations: &[],
     },
     RefinementEntry {
+        model: "federation_dns_policy",
+        domain_module: "cfwdon_domain::federation::dns",
+        implementation_sites: &["crates/cfwdon-worker/src/federation/url_guard.rs"],
+        abstraction: "static host policy + DNS A/AAAA answers + validation cache",
+        operations: &[
+            OperationMapping {
+                model_action: "CycleDnsResolution",
+                domain_call: "remote_hostname_dns_resolution_allowed",
+                implementation_call: "validate_remote_hostname_resolution",
+                worker_guard: "hostname is not an IP literal and cache miss",
+            },
+            OperationMapping {
+                model_action: "ToggleCacheHit",
+                domain_call: "remote_url_policy_from_parts",
+                implementation_call: "remote_hostname_validation_cache_hit",
+                worker_guard: "prior successful DNS validation within TTL",
+            },
+        ],
+    },
+    RefinementEntry {
         model: "federation_request_policy",
         domain_module: "cfwdon_domain::federation",
         implementation_sites: &[
