@@ -179,8 +179,21 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "outbox_delivery_pool",
         domain_module: "cfwdon_domain::delivery",
         implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
-        abstraction: "eight delivery attempt buckets",
-        operations: &[],
+        abstraction: "eight OutboundDeliverySlot buckets by attempt_count",
+        operations: &[
+            OperationMapping {
+                model_action: "SucceedAt",
+                domain_call: "outbound_delivery_slot_after_attempt",
+                implementation_call: "mark_outbox_delivery_delivered / mark_outbound_activity_delivered",
+                worker_guard: "queued row at attempt index",
+            },
+            OperationMapping {
+                model_action: "FailAt",
+                domain_call: "outbound_delivery_slot_after_attempt",
+                implementation_call: "reschedule_* or reconcile_*_terminal_failure",
+                worker_guard: "queued row at attempt index",
+            },
+        ],
     },
     RefinementEntry {
         model: "outbox_pipeline",

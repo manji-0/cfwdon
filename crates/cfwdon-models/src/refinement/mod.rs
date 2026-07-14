@@ -2,6 +2,7 @@ mod catalog;
 mod federation_dns;
 mod federation_request_policy;
 mod inbox_replay;
+mod outbox_delivery_pool;
 mod quote_approval;
 mod registration;
 mod status_draft;
@@ -16,6 +17,7 @@ pub(crate) fn verify_refinements() {
     federation_dns::check_federation_dns_refinement();
     inbox_replay::check_inbox_replay_refinement();
     federation_request_policy::check_federation_request_policy_refinement();
+    outbox_delivery_pool::check_outbox_delivery_pool_refinement();
 }
 
 #[cfg(test)]

@@ -12,7 +12,10 @@ pub(crate) use outbox_enqueue::*;
 pub(crate) use store::*;
 pub(crate) use store_state::*;
 
-use cfwdon_domain::{OUTBOX_DELIVERY_CONCURRENCY, generic_outbox_has_follower_targets};
+use cfwdon_domain::{
+    OUTBOX_DELIVERY_CONCURRENCY, generic_outbox_has_follower_targets, is_delivery_terminal,
+    next_delivery_attempt_count,
+};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -159,16 +162,16 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                 summary.delivered += 1;
             }
             Err(error) => {
-                let next_attempt = delivery.attempt_count.saturating_add(1) as u32;
+                let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
                 console_error!(
                     "outbox delivery failed: id={} target={} attempt={} terminal={} error={}",
                     delivery.id,
                     target_inbox,
                     next_attempt,
-                    next_attempt >= 5,
+                    is_delivery_terminal(next_attempt),
                     error
                 );
-                if next_attempt >= 5 {
+                if is_delivery_terminal(next_attempt) {
                     mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?;
                 } else {
                     reschedule_outbox_delivery(db, &delivery.id, next_attempt).await?;
@@ -220,16 +223,16 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                 summary.delivered += 1;
             }
             Err(error) => {
-                let next_attempt = delivery.attempt_count.saturating_add(1) as u32;
+                let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
                 console_error!(
                     "outbound delivery failed: id={} target={} attempt={} terminal={} error={}",
                     delivery.id,
                     delivery.target_inbox,
                     next_attempt,
-                    next_attempt >= 5,
+                    is_delivery_terminal(next_attempt),
                     error
                 );
-                if next_attempt >= 5 {
+                if is_delivery_terminal(next_attempt) {
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
                 } else {

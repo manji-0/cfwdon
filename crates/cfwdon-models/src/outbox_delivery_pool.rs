@@ -18,6 +18,13 @@ pub(crate) struct OutboxDeliveryPoolModelState {
     failed: u8,
 }
 
+impl OutboxDeliveryPoolModelState {
+    pub(crate) fn has_queued_slots_at(&self, attempt_index: u8) -> bool {
+        let index = attempt_index as usize;
+        index < self.queued_at.len() && self.queued_at[index] > 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum OutboxDeliveryPoolAction {
     SucceedAt(u8),
@@ -28,35 +35,36 @@ impl OutboxDeliveryPoolModel {
     fn total_slots(state: &OutboxDeliveryPoolModelState) -> u8 {
         state.delivered + state.failed + state.queued_at.iter().sum::<u8>()
     }
+}
 
-    fn apply_outcome(
-        state: &mut OutboxDeliveryPoolModelState,
-        attempt_index: u8,
-        outcome: DeliveryAttemptOutcome,
-    ) -> bool {
-        let index = attempt_index as usize;
-        if index >= state.queued_at.len() || state.queued_at[index] == 0 {
-            return false;
-        }
-
-        let slot = OutboundDeliverySlot {
-            state: OutboundActivityState::Queued,
-            attempt_count: attempt_index as u32,
-        };
-        let next = outbound_delivery_slot_after_attempt(slot, outcome);
-        state.queued_at[index] -= 1;
-        match next.state {
-            OutboundActivityState::Queued => {
-                let next_index = next.attempt_count as usize;
-                if next_index < state.queued_at.len() {
-                    state.queued_at[next_index] += 1;
-                }
-            }
-            OutboundActivityState::Delivered => state.delivered += 1,
-            OutboundActivityState::Failed => state.failed += 1,
-        }
-        true
+/// Shared pool transition used by the Stateright model and worker refinement checks.
+pub(crate) fn apply_outbox_delivery_pool_outcome(
+    state: &mut OutboxDeliveryPoolModelState,
+    attempt_index: u8,
+    outcome: DeliveryAttemptOutcome,
+) -> bool {
+    let index = attempt_index as usize;
+    if index >= state.queued_at.len() || state.queued_at[index] == 0 {
+        return false;
     }
+
+    let slot = OutboundDeliverySlot {
+        state: OutboundActivityState::Queued,
+        attempt_count: attempt_index as u32,
+    };
+    let next = outbound_delivery_slot_after_attempt(slot, outcome);
+    state.queued_at[index] -= 1;
+    match next.state {
+        OutboundActivityState::Queued => {
+            let next_index = next.attempt_count as usize;
+            if next_index < state.queued_at.len() {
+                state.queued_at[next_index] += 1;
+            }
+        }
+        OutboundActivityState::Delivered => state.delivered += 1,
+        OutboundActivityState::Failed => state.failed += 1,
+    }
+    true
 }
 
 impl Model for OutboxDeliveryPoolModel {
@@ -86,11 +94,17 @@ impl Model for OutboxDeliveryPoolModel {
         let mut next = *state;
         let applied = match action {
             OutboxDeliveryPoolAction::SucceedAt(attempt_index) => {
-                Self::apply_outcome(&mut next, attempt_index, DeliveryAttemptOutcome::Success)
+                apply_outbox_delivery_pool_outcome(
+                    &mut next,
+                    attempt_index,
+                    DeliveryAttemptOutcome::Success,
+                )
             }
-            OutboxDeliveryPoolAction::FailAt(attempt_index) => {
-                Self::apply_outcome(&mut next, attempt_index, DeliveryAttemptOutcome::Failure)
-            }
+            OutboxDeliveryPoolAction::FailAt(attempt_index) => apply_outbox_delivery_pool_outcome(
+                &mut next,
+                attempt_index,
+                DeliveryAttemptOutcome::Failure,
+            ),
         };
         applied.then_some(next)
     }
