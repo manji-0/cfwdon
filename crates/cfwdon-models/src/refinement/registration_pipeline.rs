@@ -1,11 +1,12 @@
-use cfwdon_domain::RegistrationEvent;
+use cfwdon_domain::{RegistrationEvent, finalize_registration_validation};
 
 use crate::refinement::verify::{assert_model_matches_domain, assert_worker_refinement};
 use crate::registration_pipeline::{
     RegistrationPipelineAction, RegistrationPipelineModel, RegistrationPipelineModelState,
     RegistrationStage, TextFieldInput, apply_registration_pipeline_validate,
-    registration_pipeline_composing, registration_pipeline_provisioned_account,
-    registration_pipeline_validation_errors,
+    registration_pipeline_composing, registration_pipeline_finalize_allowed,
+    registration_pipeline_provisioned_account, registration_pipeline_register_allowed,
+    registration_pipeline_uniqueness_facts, registration_pipeline_validation_errors,
 };
 use stateright::Model;
 
@@ -18,7 +19,12 @@ fn model_domain_step(
 
 /// Mirrors `validate_account_registration_request` success gate.
 fn worker_validate_succeeds(state: RegistrationPipelineModelState) -> bool {
-    registration_pipeline_composing(&state).validate().is_ok()
+    registration_pipeline_validation_errors(&state).is_empty()
+}
+
+/// Mirrors account registration handler success gate before insert.
+fn worker_register_succeeds(state: RegistrationPipelineModelState) -> bool {
+    registration_pipeline_finalize_allowed(&state)
 }
 
 fn worker_allows(
@@ -27,7 +33,7 @@ fn worker_allows(
 ) -> bool {
     match action {
         RegistrationPipelineAction::Validate => state.stage == RegistrationStage::Composing,
-        RegistrationPipelineAction::Register => state.stage == RegistrationStage::Validated,
+        RegistrationPipelineAction::Register => registration_pipeline_register_allowed(&state),
         RegistrationPipelineAction::Provision => state.stage == RegistrationStage::Registered,
         _ => false,
     }
@@ -72,9 +78,11 @@ fn worker_states() -> Vec<RegistrationPipelineModelState> {
             validated.stage = RegistrationStage::Validated;
             states.push(validated);
 
-            let mut registered = validated;
-            registered.stage = RegistrationStage::Registered;
-            states.push(registered);
+            if registration_pipeline_register_allowed(&validated) {
+                let mut registered = validated;
+                registered.stage = RegistrationStage::Registered;
+                states.push(registered);
+            }
         }
     }
     states
@@ -87,7 +95,13 @@ pub(crate) fn check_registration_pipeline_refinement() {
         worker_states(),
         |state| match state.stage {
             RegistrationStage::Composing => vec![RegistrationPipelineAction::Validate],
-            RegistrationStage::Validated => vec![RegistrationPipelineAction::Register],
+            RegistrationStage::Validated => {
+                if registration_pipeline_register_allowed(state) {
+                    vec![RegistrationPipelineAction::Register]
+                } else {
+                    Vec::new()
+                }
+            }
             RegistrationStage::Registered => vec![RegistrationPipelineAction::Provision],
             RegistrationStage::ValidationFailed | RegistrationStage::Provisioned => Vec::new(),
         },
@@ -118,7 +132,23 @@ pub(crate) fn check_registration_pipeline_refinement() {
             "validate stage for {state:?}"
         );
 
-        if worker_validate_succeeds(state) {
+        let finalize_ok = finalize_registration_validation(
+            composing.clone().validate(),
+            registration_pipeline_uniqueness_facts(&state),
+        )
+        .is_ok();
+        assert_eq!(
+            worker_register_succeeds(state),
+            finalize_ok,
+            "register finalize parity for {state:?}"
+        );
+        assert_eq!(
+            registration_pipeline_register_allowed(&state),
+            state.stage == RegistrationStage::Validated && worker_register_succeeds(state),
+            "register guard for {state:?}"
+        );
+
+        if worker_register_succeeds(state) {
             let account = registration_pipeline_provisioned_account(&state);
             assert_eq!(account.username(), "alice");
             assert_eq!(account.access_email(), "alice@example.com");
@@ -134,11 +164,24 @@ pub(crate) fn check_registration_pipeline_refinement() {
         email: TextFieldInput::Valid,
         password_present: true,
         agreement: true,
+        username_taken: false,
+        email_taken: false,
     };
     assert_eq!(
         apply_registration_pipeline_validate(&invalid),
         RegistrationStage::ValidationFailed
     );
+
+    let taken = RegistrationPipelineModelState {
+        stage: RegistrationStage::Composing,
+        username: TextFieldInput::Valid,
+        email: TextFieldInput::Valid,
+        password_present: true,
+        agreement: true,
+        username_taken: true,
+        email_taken: false,
+    };
+    assert!(!registration_pipeline_register_allowed(&taken));
 }
 
 #[cfg(test)]

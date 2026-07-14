@@ -16,8 +16,9 @@ pub use account::{
     AccessEmail, AccessEmailError, AccessProvisionIntent, AccountHandle, AccountKeyMaterial,
     ComposingAccessProvision, ComposingRegistration, LocalAccount, LocalAccountRecord,
     ProfileField, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
-    RegistrationIntent, RegistrationValidationErrors, RegistrationValidationField, Username,
-    UsernameError, registration_field_issue_message,
+    RegistrationIntent, RegistrationUniquenessFacts, RegistrationValidationErrors,
+    RegistrationValidationField, Username, UsernameError, finalize_registration_validation,
+    registration_field_issue_message, registration_uniqueness_errors,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,

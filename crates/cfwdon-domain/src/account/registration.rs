@@ -11,6 +11,7 @@ pub enum RegistrationFieldIssue {
     Blank,
     InvalidFormat,
     MustBeAccepted,
+    Taken,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -99,7 +100,56 @@ pub fn registration_field_issue_message(
         (RegistrationValidationField::Agreement, RegistrationFieldIssue::InvalidFormat) => {
             "is invalid"
         }
+        (RegistrationValidationField::Username, RegistrationFieldIssue::Taken)
+        | (RegistrationValidationField::Email, RegistrationFieldIssue::Taken) => {
+            "has already been taken"
+        }
+        (RegistrationValidationField::Password, RegistrationFieldIssue::Taken)
+        | (RegistrationValidationField::Agreement, RegistrationFieldIssue::Taken) => "is invalid",
         (_, RegistrationFieldIssue::MustBeAccepted) => "must be accepted",
+    }
+}
+
+/// Persisted-account collision facts checked after field validation succeeds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegistrationUniquenessFacts {
+    pub username_taken: bool,
+    pub email_taken: bool,
+}
+
+impl RegistrationUniquenessFacts {
+    pub fn validation_errors(self) -> RegistrationValidationErrors {
+        registration_uniqueness_errors(self)
+    }
+}
+
+pub fn registration_uniqueness_errors(
+    facts: RegistrationUniquenessFacts,
+) -> RegistrationValidationErrors {
+    let mut errors = RegistrationValidationErrors::default();
+    if facts.username_taken {
+        errors.username = Some(RegistrationFieldIssue::Taken);
+    }
+    if facts.email_taken {
+        errors.email = Some(RegistrationFieldIssue::Taken);
+    }
+    errors
+}
+
+/// Field validation followed by uniqueness checks, matching account registration handlers.
+pub fn finalize_registration_validation(
+    validate_result: Result<
+        Transition<RegistrationIntent, RegistrationEvent>,
+        RegistrationValidationErrors,
+    >,
+    uniqueness: RegistrationUniquenessFacts,
+) -> Result<RegistrationIntent, RegistrationValidationErrors> {
+    let intent = validate_result?.state;
+    let uniqueness_errors = registration_uniqueness_errors(uniqueness);
+    if uniqueness_errors.is_empty() {
+        Ok(intent)
+    } else {
+        Err(uniqueness_errors)
     }
 }
 
@@ -192,6 +242,14 @@ pub struct RegistrationIntent {
 impl RegistrationIntent {
     pub fn display_name(&self) -> &str {
         self.username.as_str()
+    }
+
+    pub fn uniqueness_errors(
+        &self,
+        facts: RegistrationUniquenessFacts,
+    ) -> RegistrationValidationErrors {
+        let _ = self;
+        registration_uniqueness_errors(facts)
     }
 
     pub fn register(self, id: AccountId, keys: AccountKeyMaterial) -> RegisteringAccount {
@@ -327,6 +385,43 @@ mod tests {
             errors.agreement,
             Some(RegistrationFieldIssue::MustBeAccepted)
         );
+    }
+
+    #[test]
+    fn uniqueness_errors_map_taken_fields() {
+        let errors = RegistrationUniquenessFacts {
+            username_taken: true,
+            email_taken: false,
+        }
+        .validation_errors();
+        assert_eq!(errors.username, Some(RegistrationFieldIssue::Taken));
+        assert_eq!(errors.email, None);
+
+        let details = errors.into_api_details();
+        assert_eq!(
+            details.get("username"),
+            Some(&vec!["has already been taken".to_owned()])
+        );
+    }
+
+    #[test]
+    fn finalize_registration_validation_checks_uniqueness_after_fields() {
+        let uniqueness = RegistrationUniquenessFacts {
+            username_taken: false,
+            email_taken: true,
+        };
+        let errors = finalize_registration_validation(
+            ComposingRegistration {
+                username: Some("alice".to_owned()),
+                email: Some("alice@example.com".to_owned()),
+                password_present: true,
+                agreement: Some(true),
+            }
+            .validate(),
+            uniqueness,
+        )
+        .unwrap_err();
+        assert_eq!(errors.email, Some(RegistrationFieldIssue::Taken));
     }
 
     #[test]

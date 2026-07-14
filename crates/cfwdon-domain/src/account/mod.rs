@@ -8,7 +8,9 @@ pub use record::LocalAccountRecord;
 pub use registration::{
     AccessProvisionIntent, AccountKeyMaterial, ComposingAccessProvision, ComposingRegistration,
     RegisteringAccount, RegistrationEvent, RegistrationFieldIssue, RegistrationIntent,
-    RegistrationValidationErrors, RegistrationValidationField, registration_field_issue_message,
+    RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationValidationField,
+    finalize_registration_validation, registration_field_issue_message,
+    registration_uniqueness_errors,
 };
 pub use username::{Username, UsernameError};
 

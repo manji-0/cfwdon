@@ -203,16 +203,36 @@ fn normalized_registration_email(value: Option<String>) -> Option<String> {
     normalized_registration_field(value).map(|value| value.to_ascii_lowercase())
 }
 
+/// Field validation only; account creation uses `account_registration_api_details`.
+#[allow(dead_code)]
 pub(crate) fn validate_account_registration_request(
     validation: &AccountRegistrationValidation,
 ) -> BTreeMap<&'static str, Vec<String>> {
-    let composing = cfwdon_domain::ComposingRegistration {
+    account_registration_api_details(
+        validation,
+        cfwdon_domain::RegistrationUniquenessFacts::default(),
+    )
+}
+
+fn account_registration_composing(
+    validation: &AccountRegistrationValidation,
+) -> cfwdon_domain::ComposingRegistration {
+    cfwdon_domain::ComposingRegistration {
         username: validation.username.clone(),
         email: validation.email.clone(),
         password_present: validation.password_present,
         agreement: validation.agreement,
-    };
-    match composing.validate() {
+    }
+}
+
+fn account_registration_api_details(
+    validation: &AccountRegistrationValidation,
+    uniqueness: cfwdon_domain::RegistrationUniquenessFacts,
+) -> BTreeMap<&'static str, Vec<String>> {
+    match cfwdon_domain::finalize_registration_validation(
+        account_registration_composing(validation).validate(),
+        uniqueness,
+    ) {
         Ok(_) => BTreeMap::new(),
         Err(errors) => errors.into_api_details(),
     }
@@ -4133,28 +4153,25 @@ pub(crate) async fn create_account_placeholder_response(
         Err(message) => return Response::error(&message, 422),
     };
     let agreement = parse_optional_bool(request.agreement.as_deref()).unwrap_or_default();
-    let mut details = validate_account_registration_request(&AccountRegistrationValidation {
+    let validation = AccountRegistrationValidation {
         username: request.username.clone(),
         email: request.email.clone(),
         password_present: request.password.is_some(),
         agreement,
-    });
-    if let Some(username) = request.username.as_deref()
-        && find_account_by_username(&db, username).await?.is_some()
-    {
-        details
-            .entry("username")
-            .or_default()
-            .push("has already been taken".to_owned());
-    }
-    if let Some(email) = request.email.as_deref()
-        && find_account_by_email(&db, email).await?.is_some()
-    {
-        details
-            .entry("email")
-            .or_default()
-            .push("has already been taken".to_owned());
-    }
+    };
+    let uniqueness = cfwdon_domain::RegistrationUniquenessFacts {
+        username_taken: if let Some(username) = request.username.as_deref() {
+            find_account_by_username(&db, username).await?.is_some()
+        } else {
+            false
+        },
+        email_taken: if let Some(email) = request.email.as_deref() {
+            find_account_by_email(&db, email).await?.is_some()
+        } else {
+            false
+        },
+    };
+    let details = account_registration_api_details(&validation, uniqueness);
     if !details.is_empty() {
         return validation_failed_response(details);
     }

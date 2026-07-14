@@ -343,7 +343,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             },
             OperationMapping {
                 model_action: "Register",
-                domain_call: "RegistrationIntent::register",
+                domain_call: "finalize_registration_validation",
                 implementation_call: "insert_registered_account",
                 worker_guard: "validated registration and unique username/email",
             },

@@ -3678,6 +3678,34 @@ fn validate_account_registration_request_rejects_invalid_username() {
 }
 
 #[test]
+fn finalize_registration_validation_rejects_taken_username() {
+    use cfwdon_domain::{
+        ComposingRegistration, RegistrationFieldIssue, RegistrationUniquenessFacts,
+        finalize_registration_validation,
+    };
+
+    let composing = ComposingRegistration {
+        username: Some("alice".to_owned()),
+        email: Some("alice@example.com".to_owned()),
+        password_present: true,
+        agreement: Some(true),
+    };
+    let errors = finalize_registration_validation(
+        composing.validate(),
+        RegistrationUniquenessFacts {
+            username_taken: true,
+            email_taken: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(errors.username, Some(RegistrationFieldIssue::Taken));
+    assert_eq!(
+        errors.into_api_details().get("username"),
+        Some(&vec!["has already been taken".to_owned()])
+    );
+}
+
+#[test]
 fn email_confirmation_message_uses_configured_instance_and_token() {
     let config = AppConfig::new("social.example", "cfwdon", "test");
     let url = build_email_confirmation_url(&config, "tok en/1");

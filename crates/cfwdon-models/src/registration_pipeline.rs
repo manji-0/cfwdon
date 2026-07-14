@@ -1,6 +1,7 @@
 use cfwdon_domain::{
     AccountId, AccountKeyMaterial, ComposingRegistration, LocalAccount, QuoteApprovalPolicy,
-    RegistrationEvent, RegistrationFieldIssue, RegistrationValidationErrors, Visibility,
+    RegistrationEvent, RegistrationFieldIssue, RegistrationUniquenessFacts,
+    RegistrationValidationErrors, Visibility, registration_uniqueness_errors,
 };
 use stateright::{Checker, Model, Property};
 
@@ -31,6 +32,8 @@ pub(crate) struct RegistrationPipelineModelState {
     pub(crate) email: TextFieldInput,
     pub(crate) password_present: bool,
     pub(crate) agreement: bool,
+    pub(crate) username_taken: bool,
+    pub(crate) email_taken: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -39,6 +42,8 @@ pub(crate) enum RegistrationPipelineAction {
     CycleEmail,
     TogglePassword,
     ToggleAgreement,
+    ToggleUsernameTaken,
+    ToggleEmailTaken,
     Validate,
     Register,
     Provision,
@@ -155,6 +160,38 @@ pub(crate) fn registration_pipeline_fixture_account_id() -> AccountId {
     AccountId::new("acct-model").expect("fixture account id")
 }
 
+pub(crate) fn registration_pipeline_uniqueness_facts(
+    state: &RegistrationPipelineModelState,
+) -> RegistrationUniquenessFacts {
+    RegistrationUniquenessFacts {
+        username_taken: state.username_taken,
+        email_taken: state.email_taken,
+    }
+}
+
+pub(crate) fn registration_pipeline_uniqueness_errors(
+    state: &RegistrationPipelineModelState,
+) -> RegistrationValidationErrors {
+    registration_uniqueness_errors(registration_pipeline_uniqueness_facts(state))
+}
+
+/// Mirrors register guard: validated inputs and no username/email collision.
+pub(crate) fn registration_pipeline_register_allowed(
+    state: &RegistrationPipelineModelState,
+) -> bool {
+    state.stage == RegistrationStage::Validated
+        && registration_pipeline_validation_errors(state).is_empty()
+        && registration_pipeline_uniqueness_errors(state).is_empty()
+}
+
+/// Mirrors `finalize_registration_validation` success gate.
+pub(crate) fn registration_pipeline_finalize_allowed(
+    state: &RegistrationPipelineModelState,
+) -> bool {
+    registration_pipeline_validation_errors(state).is_empty()
+        && registration_pipeline_uniqueness_errors(state).is_empty()
+}
+
 /// Mirrors `validate_account_registration_request` success gate.
 pub(crate) fn apply_registration_pipeline_validate(
     state: &RegistrationPipelineModelState,
@@ -205,13 +242,19 @@ impl Model for RegistrationPipelineModel {
             ] {
                 for password_present in [false, true] {
                     for agreement in [false, true] {
-                        states.push(RegistrationPipelineModelState {
-                            stage: RegistrationStage::Composing,
-                            username,
-                            email,
-                            password_present,
-                            agreement,
-                        });
+                        for username_taken in [false, true] {
+                            for email_taken in [false, true] {
+                                states.push(RegistrationPipelineModelState {
+                                    stage: RegistrationStage::Composing,
+                                    username,
+                                    email,
+                                    password_present,
+                                    agreement,
+                                    username_taken,
+                                    email_taken,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -228,11 +271,15 @@ impl Model for RegistrationPipelineModel {
                     RegistrationPipelineAction::CycleEmail,
                     RegistrationPipelineAction::TogglePassword,
                     RegistrationPipelineAction::ToggleAgreement,
+                    RegistrationPipelineAction::ToggleUsernameTaken,
+                    RegistrationPipelineAction::ToggleEmailTaken,
                     RegistrationPipelineAction::Validate,
                 ]);
             }
             RegistrationStage::Validated => {
-                actions.push(RegistrationPipelineAction::Register);
+                if registration_pipeline_register_allowed(state) {
+                    actions.push(RegistrationPipelineAction::Register);
+                }
             }
             RegistrationStage::Registered => {
                 actions.push(RegistrationPipelineAction::Provision);
@@ -269,6 +316,18 @@ impl Model for RegistrationPipelineModel {
                 }
                 next.agreement = !next.agreement;
             }
+            RegistrationPipelineAction::ToggleUsernameTaken => {
+                if state.stage != RegistrationStage::Composing {
+                    return None;
+                }
+                next.username_taken = !next.username_taken;
+            }
+            RegistrationPipelineAction::ToggleEmailTaken => {
+                if state.stage != RegistrationStage::Composing {
+                    return None;
+                }
+                next.email_taken = !next.email_taken;
+            }
             RegistrationPipelineAction::Validate => {
                 if state.stage != RegistrationStage::Composing {
                     return None;
@@ -276,7 +335,7 @@ impl Model for RegistrationPipelineModel {
                 next.stage = apply_registration_pipeline_validate(state);
             }
             RegistrationPipelineAction::Register => {
-                if state.stage != RegistrationStage::Validated {
+                if !registration_pipeline_register_allowed(state) {
                     return None;
                 }
                 next.stage = RegistrationStage::Registered;
@@ -306,6 +365,14 @@ impl Model for RegistrationPipelineModel {
                 |_, state: &RegistrationPipelineModelState| {
                     state.stage != RegistrationStage::Validated
                         || Self::expected_validation_errors(state).is_empty()
+                },
+            ),
+            Property::always(
+                "registered_implies_unique_username_and_email",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage != RegistrationStage::Registered
+                        && state.stage != RegistrationStage::Provisioned
+                        || (!state.username_taken && !state.email_taken)
                 },
             ),
             Property::always(
