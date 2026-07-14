@@ -25,7 +25,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 
 | Model | Domain module | Worker sites | Executable refinement |
 | --- | --- | --- | --- |
-| `quote` | `cfwdon_domain::quote` | `statuses/mutations`, publish intent | catalog only |
+| `quote` | `cfwdon_domain::quote` | `statuses/mutations`, publish intent | yes |
 | `quote_approval` | `cfwdon_domain::quote` | `quote_owner_action_response`, remote upsert | yes |
 | `registration_transition_events` | `account::registration` | `validate_account_registration_request` | yes |
 | `status_draft_transition_events` | `status::draft` | `request_parsing`, `insert_status` | yes |

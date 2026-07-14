@@ -8,6 +8,7 @@ mod local_follow_request;
 mod outbound_follow;
 mod outbox_delivery_pool;
 mod outbox_pipeline;
+mod quote;
 mod quote_approval;
 mod registration;
 mod status_draft;
@@ -28,6 +29,7 @@ pub(crate) fn verify_refinements() {
     outbound_follow::check_outbound_follow_refinement();
     local_follow_request::check_local_follow_request_refinement();
     activitypub_visibility::check_activitypub_visibility_refinement();
+    quote::check_quote_refinement();
 }
 
 #[cfg(test)]
