@@ -12,8 +12,9 @@ use crate::{
     upsert_remote_status_poll,
 };
 use cfwdon_domain::{
-    RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
-    StoredRemoteReblogIntent, StoredRemoteStatusIntent, remote_status_default_quote_state,
+    QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
+    StoredRemoteReblogIntent, StoredRemoteStatusIntent, merged_quote_state_for_remote_upsert,
+    remote_status_default_quote_state,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -303,10 +304,7 @@ fn remote_status_upsert_sql() -> &'static str {
         visibility = excluded.visibility,
         sensitive = excluded.sensitive,
         language = excluded.language,
-        quote_state = CASE
-            WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
-            ELSE excluded.quote_state
-        END,
+        quote_state = excluded.quote_state,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
         updated_at = ?16"
@@ -431,8 +429,14 @@ pub(crate) async fn upsert_remote_status(
     let revision_at = now_iso_string()?;
     let status_id = StatusId::new(generate_entity_id(16)?)
         .map_err(|error| Error::RustError(error.to_string()))?;
-    let intent =
+    let mut intent =
         build_remote_status_store_intent(actor, object, status_id, quote_resolution, revision_at)?;
+    if let Some(ref previous) = previous {
+        intent.quote_state = merged_quote_state_for_remote_upsert(
+            previous.status_row().quote_state,
+            intent.quote_state,
+        );
+    }
 
     insert_previous_remote_status_snapshot_if_changed(db, config, previous.as_ref(), &intent)
         .await?;
@@ -653,9 +657,9 @@ async fn resolve_remote_quote_resolution(
 pub(crate) async fn update_remote_status_quote_state(
     db: &D1Database,
     status_id: &str,
-    quote_state: &str,
+    quote_state: QuoteState,
 ) -> Result<RemoteStatusRow> {
-    let bindings = remote_status_quote_state_update_bindings(quote_state, status_id);
+    let bindings = remote_status_quote_state_update_bindings(quote_state.as_str(), status_id);
     db.prepare(
         "UPDATE remote_statuses
          SET quote_state = ?1,
@@ -750,11 +754,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_status_upsert_sql_preserves_revoked_quote_state() {
+    fn remote_status_upsert_sql_writes_merged_quote_state() {
         let sql = remote_status_upsert_sql();
 
         assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
-        assert!(sql.contains("WHEN remote_statuses.quote_state = 'revoked'"));
+        assert!(sql.contains("quote_state = excluded.quote_state"));
         assert!(sql.contains("updated_at = ?16"));
     }
 

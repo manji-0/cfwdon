@@ -51,7 +51,9 @@ pub use follow::{
 pub use ids::{AccountId, MediaId, StatusId};
 pub use instance::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 pub use media::{MediaAttachment, StatusBoundMedia, StoredMediaAttachmentIntent, UploadedMedia};
-pub use quote::{QuoteApprovalPolicy, QuoteState};
+pub use quote::{
+    OwnerQuoteAction, QuoteApprovalPolicy, QuoteState, merged_quote_state_for_remote_upsert,
+};
 pub use remote::{
     ActivityPubReblogInput, ActivityPubStatusInput, IncomingRemoteReblog, IncomingRemoteStatus,
     RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, RemoteStatusRecord,

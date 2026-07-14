@@ -174,11 +174,49 @@ impl QuoteState {
     pub fn shows_quote_placeholder(self) -> bool {
         self == Self::Pending
     }
+
+    pub fn quote_state_after_owner_action(self, action: OwnerQuoteAction) -> Self {
+        match action {
+            OwnerQuoteAction::Approve => Self::quote_state_after_owner_approve(self),
+            OwnerQuoteAction::Reject => Self::quote_state_after_owner_reject(self),
+            OwnerQuoteAction::Revoke => Self::quote_state_after_revoke(self),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OwnerQuoteAction {
+    Approve,
+    Reject,
+    Revoke,
+}
+
+pub fn merged_quote_state_for_remote_upsert(
+    current: QuoteState,
+    incoming: QuoteState,
+) -> QuoteState {
+    QuoteState::quote_state_after_remote_upsert(current, incoming)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_action_transitions_match_api_paths() {
+        assert_eq!(
+            QuoteState::Pending.quote_state_after_owner_action(OwnerQuoteAction::Approve),
+            QuoteState::Accepted
+        );
+        assert_eq!(
+            QuoteState::Pending.quote_state_after_owner_action(OwnerQuoteAction::Reject),
+            QuoteState::Rejected
+        );
+        assert_eq!(
+            QuoteState::Accepted.quote_state_after_owner_action(OwnerQuoteAction::Revoke),
+            QuoteState::Revoked
+        );
+    }
 
     #[test]
     fn quote_policy_for_private_visibility_is_nobody() {

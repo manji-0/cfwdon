@@ -87,6 +87,8 @@ A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/f
 
 A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently.
 
+Quote owner approve, reject, and revoke API handlers in the worker now delegate quote-state transitions to [`OwnerQuoteAction`](../../crates/cfwdon-domain/src/quote.rs) and remote status upserts merge quote state through `merged_quote_state_for_remote_upsert`.
+
 ```sh
 cargo test -p cfwdon-models
 ```

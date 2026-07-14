@@ -1,13 +1,13 @@
 use super::activitypub::{ACTIVITYPUB_CONTENT_TYPE, static_head_response};
 use crate::{
-    bookmark_status, create_status, delete_status, favourite_status, mute_status_response,
-    pin_status_response, reblog_status, revoke_quote_response, status_api_response,
-    status_card_response, status_context_response, status_favourited_by_response,
-    status_history_response, status_interaction_policy_response, status_object_response,
-    status_quotes_response, status_reblogged_by_response, status_source_response,
-    statuses_index_placeholder_response, translate_status_response, unbookmark_status,
-    unfavourite_status, unmute_status_response, unpin_status_response, unreblog_status,
-    update_status,
+    approve_quote_response, bookmark_status, create_status, delete_status, favourite_status,
+    mute_status_response, pin_status_response, reblog_status, reject_quote_response,
+    revoke_quote_response, status_api_response, status_card_response, status_context_response,
+    status_favourited_by_response, status_history_response, status_interaction_policy_response,
+    status_object_response, status_quotes_response, status_reblogged_by_response,
+    status_source_response, statuses_index_placeholder_response, translate_status_response,
+    unbookmark_status, unfavourite_status, unmute_status_response, unpin_status_response,
+    unreblog_status, update_status,
 };
 use worker::Router;
 
@@ -41,6 +41,14 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
         .get_async("/api/v1/statuses/:id/quotes", |req, ctx| async move {
             status_quotes_response(req, ctx).await
         })
+        .post_async(
+            "/api/v1/statuses/:id/quotes/:quote_id/approve",
+            |req, ctx| async move { approve_quote_response(req, ctx).await },
+        )
+        .post_async(
+            "/api/v1/statuses/:id/quotes/:quote_id/reject",
+            |req, ctx| async move { reject_quote_response(req, ctx).await },
+        )
         .post_async(
             "/api/v1/statuses/:id/quotes/:quote_id/revoke",
             |req, ctx| async move { revoke_quote_response(req, ctx).await },

@@ -47,9 +47,10 @@ use crate::{
     remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, status_has_active_quote,
     store_account_password, store_account_private_key, streaming_batch_from_entries,
-    update_remote_status_quote_state,
+    update_local_status_quote_state, update_remote_status_quote_state,
 };
 use async_stream::try_stream;
+use cfwdon_domain::{OwnerQuoteAction, QuoteState};
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -3705,6 +3706,131 @@ async fn enqueue_quote_revocation_federation(
     Ok(())
 }
 
+pub(crate) async fn approve_quote_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    quote_owner_action_response(req, ctx, OwnerQuoteAction::Approve).await
+}
+
+pub(crate) async fn reject_quote_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    quote_owner_action_response(req, ctx, OwnerQuoteAction::Reject).await
+}
+
+async fn quote_owner_action_response(
+    req: Request,
+    ctx: RouteContext<()>,
+    action: OwnerQuoteAction,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let requester = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Auth0 authentication required", 401),
+    };
+
+    let Some(target_status_id) = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Response::error("missing status id route parameter", 400);
+    };
+    let Some(quote_status_id) = ctx
+        .param("quote_id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Response::error("missing quote status id route parameter", 400);
+    };
+
+    let Some(target_status) = resolve_status_reference(&db, &config, &target_status_id).await?
+    else {
+        return Response::error("status not found", 404);
+    };
+    let (target_uri, _) = match &target_status {
+        crate::ResolvedStatus::Local(status) => {
+            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
+                return Response::error("status not found", 404);
+            };
+            if status.account_id != requester.id()
+                || !can_view_local_status(&db, status, Some(&requester), &account).await?
+            {
+                return Response::error("status not found", 404);
+            }
+            (local_status_target_uri(status), ())
+        }
+        crate::ResolvedStatus::Remote(_) => return Response::error("status not found", 404),
+    };
+
+    match resolve_status_reference(&db, &config, &quote_status_id).await? {
+        Some(crate::ResolvedStatus::Local(quote_status)) => {
+            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
+                || quote_status.effective_quote_state() != QuoteState::Pending
+            {
+                return Response::error("status not found", 404);
+            }
+            let Some(quote_author) = find_account_by_id(&db, &quote_status.account_id).await?
+            else {
+                return Response::error("status not found", 404);
+            };
+            let updated_at = now_iso_string()?;
+            let updated_status = update_local_status_quote_state(
+                &db,
+                &quote_status,
+                quote_status
+                    .quote_state
+                    .quote_state_after_owner_action(action),
+                &updated_at,
+            )
+            .await?;
+            let media = find_media_attachments_by_status_id(&db, &updated_status.id).await?;
+            let in_reply_to_account_id = load_in_reply_to_account_id(&db, &updated_status).await?;
+            let response = build_local_status_response(
+                &db,
+                &config,
+                Some(&requester),
+                &updated_status,
+                &quote_author,
+                in_reply_to_account_id,
+                media,
+            )
+            .await?;
+            Response::from_json(&response)
+        }
+        Some(crate::ResolvedStatus::Remote(quote_status)) => {
+            if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str())
+                || quote_status.effective_quote_state() != QuoteState::Pending
+            {
+                return Response::error("status not found", 404);
+            }
+            let Some(quote_author) =
+                find_remote_actor_by_actor_uri(&db, &quote_status.actor_uri).await?
+            else {
+                return Response::error("status not found", 404);
+            };
+            let updated_status = update_remote_status_quote_state(
+                &db,
+                &quote_status.id,
+                quote_status
+                    .quote_state
+                    .quote_state_after_owner_action(action),
+            )
+            .await?;
+            let response = build_remote_status_response(
+                &db,
+                &config,
+                Some(&requester),
+                &updated_status,
+                &quote_author,
+            )
+            .await?;
+            Response::from_json(&response)
+        }
+        None => Response::error("status not found", 404),
+    }
+}
+
 pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
@@ -3838,7 +3964,8 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
                 return Response::error("status not found", 404);
             };
             let updated_status =
-                update_remote_status_quote_state(&db, &quote_status.id, "revoked").await?;
+                update_remote_status_quote_state(&db, &quote_status.id, QuoteState::Revoked)
+                    .await?;
             enqueue_quote_revocation_federation(
                 &db,
                 &config,

@@ -499,13 +499,6 @@ fn local_status_quote_policy_update_bindings<'a>(
     ]
 }
 
-fn local_status_quote_clear_bindings<'a>(
-    updated_at: &'a str,
-    status_id: &'a str,
-) -> [D1Type<'a>; 2] {
-    [D1Type::Text(updated_at), D1Type::Text(status_id)]
-}
-
 pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
     delete_status_poll(db, status_id).await?;
 
@@ -581,23 +574,54 @@ pub(crate) async fn update_local_status_quote_approval_policy(
     require_status_by_id(db, &status.id).await
 }
 
-pub(crate) async fn clear_local_status_quote(
+fn local_status_quote_state_update_bindings<'a>(
+    quote_state: &'a str,
+    updated_at: &'a str,
+    status_id: &'a str,
+) -> [D1Type<'a>; 3] {
+    [
+        D1Type::Text(quote_state),
+        D1Type::Text(updated_at),
+        D1Type::Text(status_id),
+    ]
+}
+
+pub(crate) async fn update_local_status_quote_state(
     db: &D1Database,
     status: &StatusRow,
+    quote_state: cfwdon_domain::QuoteState,
     updated_at: &str,
 ) -> Result<StatusRow> {
-    let bindings = local_status_quote_clear_bindings(updated_at, &status.id);
+    let bindings = local_status_quote_state_update_bindings(
+        quote_state.as_str(),
+        updated_at,
+        status.id.as_str(),
+    );
     db.prepare(
         "UPDATE statuses
-         SET quote_state = 'revoked',
-             updated_at = ?1
-         WHERE id = ?2",
+         SET quote_state = ?1,
+             updated_at = ?2
+         WHERE id = ?3",
     )
     .bind_refs(bindings.iter())?
     .run()
     .await?;
 
     require_status_by_id(db, &status.id).await
+}
+
+pub(crate) async fn clear_local_status_quote(
+    db: &D1Database,
+    status: &StatusRow,
+    updated_at: &str,
+) -> Result<StatusRow> {
+    update_local_status_quote_state(
+        db,
+        status,
+        cfwdon_domain::QuoteState::quote_state_after_revoke(status.quote_state),
+        updated_at,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -885,13 +909,18 @@ mod tests {
     }
 
     #[test]
-    fn local_status_quote_clear_bindings_keep_sql_slot_order_stable() {
-        let bindings = local_status_quote_clear_bindings("2026-01-02T03:04:05.000Z", "status-1");
+    fn local_status_quote_state_update_bindings_keep_sql_slot_order_stable() {
+        let bindings = local_status_quote_state_update_bindings(
+            "accepted",
+            "2026-01-02T03:04:05.000Z",
+            "status-1",
+        );
 
+        assert!(matches!(bindings[0], D1Type::Text("accepted")));
         assert!(matches!(
-            bindings[0],
+            bindings[1],
             D1Type::Text("2026-01-02T03:04:05.000Z")
         ));
-        assert!(matches!(bindings[1], D1Type::Text("status-1")));
+        assert!(matches!(bindings[2], D1Type::Text("status-1")));
     }
 }

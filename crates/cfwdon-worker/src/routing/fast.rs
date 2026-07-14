@@ -4,11 +4,11 @@ use crate::{
     account_featured_tags_response, account_followers_response, account_following_response,
     account_lists_response, account_lookup, account_relationships, account_response,
     account_search, account_statuses_response, accounts_index_response, announcements_response,
-    auth0_callback_response, authorize_follow_request_response, authorize_interaction_response,
-    authorize_interaction_submit_response, block_account, blocks_response, bookmark_status,
-    bookmarks_response, create_account_placeholder_response, create_media_attachment,
-    create_status, custom_emojis_response, delete_media_attachment, delete_status,
-    direct_timeline_response, donation_campaigns_response, endorse_account_response,
+    approve_quote_response, auth0_callback_response, authorize_follow_request_response,
+    authorize_interaction_response, authorize_interaction_submit_response, block_account,
+    blocks_response, bookmark_status, bookmarks_response, create_account_placeholder_response,
+    create_media_attachment, create_status, custom_emojis_response, delete_media_attachment,
+    delete_status, direct_timeline_response, donation_campaigns_response, endorse_account_response,
     endorsements_response, familiar_followers_response, favourite_status, favourites_response,
     follow_account, follow_request_response, follow_requests_response, followed_tags_response,
     home_timeline_response, identity_proofs_response, instance_activity_response,
@@ -21,7 +21,7 @@ use crate::{
     nodeinfo_links_response, nodeinfo_response, note_account_response,
     oauth_authorization_server_response, oauth_authorize_response, oauth_token_response,
     oauth_userinfo_response, oembed_response, pin_account_response, pin_status_response,
-    public_timeline_response, reblog_status, reject_follow_request_response,
+    public_timeline_response, reblog_status, reject_follow_request_response, reject_quote_response,
     remove_from_followers_response, revoke_quote_response, status_api_response,
     status_card_response, status_context_response, status_favourited_by_response,
     status_history_response, status_interaction_policy_response, status_quotes_response,
@@ -339,6 +339,14 @@ fn status_router() -> Router<'static, ()> {
         .delete_async("/api/v1/statuses/:id", |req, ctx| async move {
             delete_status(req, ctx).await
         })
+        .post_async(
+            "/api/v1/statuses/:id/quotes/:quote_id/approve",
+            |req, ctx| async move { approve_quote_response(req, ctx).await },
+        )
+        .post_async(
+            "/api/v1/statuses/:id/quotes/:quote_id/reject",
+            |req, ctx| async move { reject_quote_response(req, ctx).await },
+        )
         .post_async(
             "/api/v1/statuses/:id/quotes/:quote_id/revoke",
             |req, ctx| async move { revoke_quote_response(req, ctx).await },
