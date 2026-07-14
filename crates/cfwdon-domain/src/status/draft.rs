@@ -6,6 +6,12 @@ use crate::status::poll::PollDraft;
 use crate::status::visibility::Visibility;
 use crate::transition::Transition;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusDraftEvent {
+    DraftValidated,
+    PublishIntentResolved,
+}
+
 /// Raw status composition input before domain validation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComposingStatus {
@@ -24,7 +30,7 @@ impl ComposingStatus {
     pub fn validate(
         self,
         quoted_status_id: Option<&str>,
-    ) -> Result<Transition<StatusDraft, ()>, StatusDraftError> {
+    ) -> Result<Transition<StatusDraft, StatusDraftEvent>, StatusDraftError> {
         let has_poll = self.poll.is_some();
         let media_ids = self
             .media_ids
@@ -46,23 +52,26 @@ impl ComposingStatus {
             return Err(StatusDraftError::QuoteWithMediaOrPoll);
         }
 
-        Ok(Transition::without_events(StatusDraft {
-            text: self.text.trim().to_owned(),
-            visibility: self.visibility,
-            spoiler_text: self.spoiler_text.trim().to_owned(),
-            sensitive: self.sensitive,
-            language: self
-                .language
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty()),
-            quote_approval_policy: self.quote_approval_policy,
-            in_reply_to_id: self
-                .in_reply_to_id
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty()),
-            media_ids,
-            poll: self.poll,
-        }))
+        Ok(Transition::with_event(
+            StatusDraft {
+                text: self.text.trim().to_owned(),
+                visibility: self.visibility,
+                spoiler_text: self.spoiler_text.trim().to_owned(),
+                sensitive: self.sensitive,
+                language: self
+                    .language
+                    .map(|value| value.trim().to_ascii_lowercase())
+                    .filter(|value| !value.is_empty()),
+                quote_approval_policy: self.quote_approval_policy,
+                in_reply_to_id: self
+                    .in_reply_to_id
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty()),
+                media_ids,
+                poll: self.poll,
+            },
+            StatusDraftEvent::DraftValidated,
+        ))
     }
 }
 
@@ -93,12 +102,15 @@ impl StatusDraft {
         self,
         account: &LocalAccount,
         quote_target: QuoteTargetResolution,
-    ) -> PublishIntent {
-        PublishIntent {
-            quote_policy: self.effective_quote_policy(account),
-            quote_state: quote_target.initial_state(),
-            draft: self,
-        }
+    ) -> Transition<PublishIntent, StatusDraftEvent> {
+        Transition::with_event(
+            PublishIntent {
+                quote_policy: self.effective_quote_policy(account),
+                quote_state: quote_target.initial_state(),
+                draft: self,
+            },
+            StatusDraftEvent::PublishIntentResolved,
+        )
     }
 }
 
@@ -169,6 +181,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_emits_draft_validated_event() {
+        let transition = ComposingStatus {
+            text: "hello".to_owned(),
+            visibility: Visibility::Public,
+            spoiler_text: String::new(),
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            in_reply_to_id: None,
+            media_ids: Vec::new(),
+            poll: None,
+        }
+        .validate(None)
+        .expect("valid draft");
+
+        assert!(transition.has_event(&StatusDraftEvent::DraftValidated));
+    }
+
+    #[test]
     fn composing_status_rejects_empty_payload() {
         let composing = ComposingStatus {
             text: String::new(),
@@ -203,9 +234,33 @@ mod tests {
         .validate(None)
         .expect("valid draft")
         .state;
-        let intent = draft.into_publish_intent(&fixture_account(), QuoteTargetResolution::none());
+        let intent = draft
+            .into_publish_intent(&fixture_account(), QuoteTargetResolution::none())
+            .state;
 
         assert_eq!(intent.quote_policy, QuoteApprovalPolicy::Followers);
         assert_eq!(intent.quote_state, QuoteState::Accepted);
+    }
+
+    #[test]
+    fn publish_intent_emits_publish_intent_resolved_event() {
+        let draft = ComposingStatus {
+            text: "hello".to_owned(),
+            visibility: Visibility::Public,
+            spoiler_text: String::new(),
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            in_reply_to_id: None,
+            media_ids: Vec::new(),
+            poll: None,
+        }
+        .validate(None)
+        .expect("valid draft")
+        .state;
+        let transition =
+            draft.into_publish_intent(&fixture_account(), QuoteTargetResolution::none());
+
+        assert!(transition.has_event(&StatusDraftEvent::PublishIntentResolved));
     }
 }

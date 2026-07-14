@@ -35,7 +35,10 @@ pub(crate) async fn insert_status(
     quote_of_uri: Option<&str>,
 ) -> Result<StatusRow> {
     let quote_resolution = quote_target_resolution(db, config, quote_of_uri).await?;
-    let publish_intent = draft.clone().into_publish_intent(account, quote_resolution);
+    let publish_intent = draft
+        .clone()
+        .into_publish_intent(account, quote_resolution)
+        .state;
     let status_id = generate_entity_id(16)?;
     let created_at = now_iso_string()?;
     let stored = publish_intent

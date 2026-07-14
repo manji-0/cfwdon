@@ -91,6 +91,8 @@ Quote owner approve, reject, and revoke API handlers in the worker now delegate 
 
 Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdon-domain/src/account/registration.rs) values through [`Transition`](../../crates/cfwdon-domain/src/transition.rs), and a fourteenth model checks that validate and provision steps surface the expected events.
 
+Status draft transitions now emit typed [`StatusDraftEvent`](../../crates/cfwdon-domain/src/status/draft.rs) values on validate and publish-intent resolution, and a fifteenth model checks those events are surfaced consistently.
+
 ```sh
 cargo test -p cfwdon-models
 ```

@@ -66,7 +66,7 @@ pub use report::StoredReportIntent;
 pub use status::{
     ComposingStatus, LocalReblogPersistenceFacts, LocalStatus, LocalStatusPersistenceFacts,
     LocalStatusRecord, PollDraft, PublishIntent, QuoteTargetResolution, StatusDraft,
-    StoredLocalPollVoteIntent, StoredLocalReblogIntent, StoredLocalStatusIntent,
+    StatusDraftEvent, StoredLocalPollVoteIntent, StoredLocalReblogIntent, StoredLocalStatusIntent,
     StoredRemotePollVoteIntent, Visibility, local_status_default_quote_state,
 };
 pub use transition::Transition;

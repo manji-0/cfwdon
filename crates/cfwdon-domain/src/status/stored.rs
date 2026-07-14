@@ -169,10 +169,12 @@ mod tests {
             media_ids: Vec::new(),
             poll: None,
         };
-        let intent = draft.into_publish_intent(
-            &fixture_account(),
-            QuoteTargetResolution::with_target(false),
-        );
+        let intent = draft
+            .into_publish_intent(
+                &fixture_account(),
+                QuoteTargetResolution::with_target(false),
+            )
+            .state;
         let stored = intent
             .into_stored_intent(LocalStatusPersistenceFacts {
                 status_id: "status-1".to_owned(),

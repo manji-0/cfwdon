@@ -20,6 +20,7 @@ mod quote_approval;
 mod registration_pipeline;
 mod registration_transition_events;
 mod status_draft_publish;
+mod status_draft_transition_events;
 
 /// Run every Stateright model in this crate. Panics when a property is violated.
 pub fn verify_models() {
@@ -32,6 +33,7 @@ pub fn verify_models() {
     outbox_pipeline::check_outbox_pipeline_model();
     activitypub_visibility::check_activitypub_visibility_model();
     status_draft_publish::check_status_draft_publish_model();
+    status_draft_transition_events::check_status_draft_transition_events_model();
     registration_pipeline::check_registration_pipeline_model();
     registration_transition_events::check_registration_transition_events_model();
     access_provision::check_access_provision_model();

@@ -276,7 +276,9 @@ impl Model for StatusDraftPublishModel {
                     .expect("validated draft")
                     .state;
                 let account = Self::fixture_account(state.account_default);
-                let intent = draft.into_publish_intent(&account, Self::quote_resolution(state));
+                let intent = draft
+                    .into_publish_intent(&account, Self::quote_resolution(state))
+                    .state;
                 next.stage = PublishStage::Published;
                 next.published_policy = Some(intent.quote_policy);
                 next.published_quote_state = Some(intent.quote_state);
