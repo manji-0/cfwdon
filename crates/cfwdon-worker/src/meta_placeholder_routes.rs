@@ -8,27 +8,30 @@ use crate::{
     AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
     RouteContext, StreamingBatch, StreamingEntry, StreamingEvent, StreamingLoopState,
     StreamingPublicPlan, actor_url, app_bearer_token_from_request, authenticate_local_api_request,
-    build_announcements_document, build_app_verify_credentials_document_from_parts,
-    build_app_verify_credentials_document_from_row, build_delete_quote_authorization_activity,
-    build_local_status_response, build_local_status_response_with_quote_count_preloads,
-    build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
-    build_remote_status_response, build_remote_status_response_with_timeline_preloads,
-    cache_public_response, can_view_local_status, clear_local_status_quote,
-    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
-    enqueue_targeted_outbox_activity, extract_hashtags_from_html, extract_hashtags_from_text,
-    filter_notification_entries_by_query, find_account_by_id, find_account_by_username,
-    find_accounts_by_ids, find_authenticated_local_account, find_conversation_for_account,
-    find_conversation_id_by_status_id, find_follower_follow_activity_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_media_attachments_by_status_ids, find_oauth_access_token_with_account_by_bearer_token,
-    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
-    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
-    find_remote_actors_by_actor_uris, find_remote_status_attachments_by_status_ids,
-    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
-    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
-    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
-    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    build_accept_quote_request_activity, build_announcements_document,
+    build_app_verify_credentials_document_from_parts,
+    build_app_verify_credentials_document_from_row, build_create_quote_authorization_activity,
+    build_delete_quote_authorization_activity, build_local_status_response,
+    build_local_status_response_with_quote_count_preloads, build_oauth_token_document,
+    build_quote_request_object, build_reject_follow_activity, build_reject_quote_request_activity,
+    build_relationship_for_target, build_remote_status_response,
+    build_remote_status_response_with_timeline_preloads, cache_public_response,
+    can_view_local_status, clear_local_status_quote, collect_visible_notifications,
+    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
+    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
+    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
+    find_account_by_username, find_accounts_by_ids, find_authenticated_local_account,
+    find_conversation_for_account, find_conversation_id_by_status_id,
+    find_follower_follow_activity_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
+    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
+    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
+    find_remote_actor_by_actor_uri, find_remote_actors_by_actor_uris,
+    find_remote_status_attachments_by_status_ids, find_remote_status_by_id, find_status_by_id,
+    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
+    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
+    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
+    list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
@@ -43,11 +46,12 @@ use crate::{
     preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    queue_remote_actor_activity, queue_remote_actor_activity_required, remote_account_rest_id,
-    remote_status_has_active_quote, remote_status_has_media, resolve_account_reference,
-    resolve_status_reference, send_push_notification, status_has_active_quote,
-    store_account_password, store_account_private_key, streaming_batch_from_entries,
-    update_local_status_quote_state, update_remote_status_quote_state,
+    queue_remote_actor_activity, queue_remote_actor_activity_required, quote_authorization_uri,
+    quote_request_uri, remote_account_rest_id, remote_status_has_active_quote,
+    remote_status_has_media, resolve_account_reference, resolve_status_reference,
+    send_push_notification, status_has_active_quote, store_account_password,
+    store_account_private_key, streaming_batch_from_entries, update_local_status_quote_state,
+    update_remote_status_quote_state,
 };
 use async_stream::try_stream;
 use cfwdon_domain::{OwnerQuoteAction, QuoteState};
@@ -3706,6 +3710,157 @@ async fn enqueue_quote_revocation_federation(
     Ok(())
 }
 
+async fn enqueue_quote_approval_federation(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    requester: &cfwdon_domain::LocalAccount,
+    target_status_id: &str,
+    target_uri: &str,
+    interacting_object_uri: &str,
+    authorization_key: &str,
+    follower_inboxes: &[String],
+    remote_quote_author_actor_uri: Option<&str>,
+) -> Result<()> {
+    let authorization_uri = quote_authorization_uri(target_uri, authorization_key);
+    let create_payload = build_create_quote_authorization_activity(
+        config,
+        requester,
+        interacting_object_uri,
+        target_uri,
+        authorization_key,
+    )?;
+
+    let mut unique_follower_inboxes = Vec::new();
+    let mut seen = HashSet::new();
+    for inbox in follower_inboxes {
+        let inbox = inbox.trim();
+        if !inbox.is_empty() && seen.insert(inbox.to_owned()) {
+            unique_follower_inboxes.push(inbox.to_owned());
+        }
+    }
+    if !unique_follower_inboxes.is_empty() {
+        enqueue_targeted_outbox_activity(
+            db,
+            requester.id(),
+            target_status_id,
+            &create_payload,
+            &unique_follower_inboxes,
+        )
+        .await?;
+    }
+
+    if let Some(remote_actor_uri) = remote_quote_author_actor_uri {
+        let quote_request = build_quote_request_object(
+            &quote_request_uri(interacting_object_uri, authorization_key),
+            remote_actor_uri,
+            target_uri,
+            interacting_object_uri,
+        );
+        let accept_payload = build_accept_quote_request_activity(
+            config,
+            requester,
+            &quote_request,
+            &authorization_uri,
+            remote_actor_uri,
+        )?;
+        let _ = queue_remote_actor_activity(db, requester.id(), remote_actor_uri, &accept_payload)
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn enqueue_quote_rejection_federation(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    requester: &cfwdon_domain::LocalAccount,
+    target_uri: &str,
+    interacting_object_uri: &str,
+    authorization_key: &str,
+    remote_quote_author_actor_uri: &str,
+) -> Result<()> {
+    let quote_request = build_quote_request_object(
+        &quote_request_uri(interacting_object_uri, authorization_key),
+        remote_quote_author_actor_uri,
+        target_uri,
+        interacting_object_uri,
+    );
+    let reject_payload = build_reject_quote_request_activity(
+        config,
+        requester,
+        &quote_request,
+        remote_quote_author_actor_uri,
+    )?;
+    let _ = queue_remote_actor_activity(
+        db,
+        requester.id(),
+        remote_quote_author_actor_uri,
+        &reject_payload,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn enqueue_quote_owner_decision_federation(
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    requester: &cfwdon_domain::LocalAccount,
+    action: OwnerQuoteAction,
+    target_status_id: &str,
+    target_uri: &str,
+    interacting_object_uri: &str,
+    authorization_key: &str,
+    local_quote_author: Option<&cfwdon_domain::LocalAccount>,
+    remote_quote_author_actor_uri: Option<&str>,
+) -> Result<()> {
+    match action {
+        OwnerQuoteAction::Approve => {
+            let follower_inboxes = list_follower_delivery_targets(db, requester.id()).await?;
+            enqueue_quote_approval_federation(
+                db,
+                config,
+                requester,
+                target_status_id,
+                target_uri,
+                interacting_object_uri,
+                authorization_key,
+                &follower_inboxes,
+                remote_quote_author_actor_uri,
+            )
+            .await?;
+            if let Some(quote_author) = local_quote_author {
+                let Some(updated_quote) = find_status_by_id(db, authorization_key).await? else {
+                    return Ok(());
+                };
+                enqueue_status_update_activity(db, config, quote_author, &updated_quote).await?;
+            }
+        }
+        OwnerQuoteAction::Reject => {
+            if let Some(remote_actor_uri) = remote_quote_author_actor_uri {
+                enqueue_quote_rejection_federation(
+                    db,
+                    config,
+                    requester,
+                    target_uri,
+                    interacting_object_uri,
+                    authorization_key,
+                    remote_actor_uri,
+                )
+                .await?;
+            } else if let Some(quote_author) = local_quote_author {
+                let Some(updated_quote) = find_status_by_id(db, authorization_key).await? else {
+                    return Ok(());
+                };
+                enqueue_status_update_activity(db, config, quote_author, &updated_quote).await?;
+            }
+        }
+        OwnerQuoteAction::Revoke => {}
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn approve_quote_response(
     req: Request,
     ctx: RouteContext<()>,
@@ -3748,7 +3903,7 @@ async fn quote_owner_action_response(
     else {
         return Response::error("status not found", 404);
     };
-    let (target_uri, _) = match &target_status {
+    let (target_uri, target_status_id) = match &target_status {
         crate::ResolvedStatus::Local(status) => {
             let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                 return Response::error("status not found", 404);
@@ -3758,7 +3913,7 @@ async fn quote_owner_action_response(
             {
                 return Response::error("status not found", 404);
             }
-            (local_status_target_uri(status), ())
+            (local_status_target_uri(status), status.id.clone())
         }
         crate::ResolvedStatus::Remote(_) => return Response::error("status not found", 404),
     };
@@ -3782,6 +3937,19 @@ async fn quote_owner_action_response(
                     .quote_state
                     .quote_state_after_owner_action(action),
                 &updated_at,
+            )
+            .await?;
+            enqueue_quote_owner_decision_federation(
+                &db,
+                &config,
+                &requester,
+                action,
+                &target_status_id,
+                &target_uri,
+                &local_status_target_uri(&updated_status),
+                &updated_status.id,
+                Some(&quote_author),
+                None,
             )
             .await?;
             let media = find_media_attachments_by_status_id(&db, &updated_status.id).await?;
@@ -3815,6 +3983,19 @@ async fn quote_owner_action_response(
                 quote_status
                     .quote_state
                     .quote_state_after_owner_action(action),
+            )
+            .await?;
+            enqueue_quote_owner_decision_federation(
+                &db,
+                &config,
+                &requester,
+                action,
+                &target_status_id,
+                &target_uri,
+                &quote_status.object_uri,
+                &quote_status.id,
+                None,
+                Some(&quote_author.actor_uri),
             )
             .await?;
             let response = build_remote_status_response(

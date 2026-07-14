@@ -1,9 +1,11 @@
 use super::{
     AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
-    classify_media_kind, count_poll_voters, find_media_attachments_by_status_id, find_status_by_id,
-    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_attachment_url, media_kind_label, status_has_active_quote,
+    classify_media_kind, count_poll_voters, find_account_by_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_status_by_id, find_status_poll_by_status_id,
+    is_iso_timestamp_in_past, list_status_poll_options, media_attachment_url, media_kind_label,
+    quote_authorization_uri, status_has_active_quote,
 };
+use cfwdon_domain::QuoteState;
 use worker::{D1Database, Result};
 
 pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
@@ -152,6 +154,12 @@ pub(crate) async fn build_activitypub_note(
         note["quoteUri"] = serde_json::json!(quote_uri);
         note["quoteUrl"] = serde_json::json!(quote_uri);
         note["_misskey_quote"] = serde_json::json!(quote_uri);
+        if status.effective_quote_state() == QuoteState::Accepted
+            && let Some(stamp_uri) =
+                quote_authorization_stamp_uri(db, config, status, quote_uri).await?
+        {
+            note["quoteAuthorization"] = serde_json::json!(stamp_uri);
+        }
     }
     if let Some(poll) = poll {
         let (options, voters_count) = futures_util::try_join!(
@@ -166,6 +174,25 @@ pub(crate) async fn build_activitypub_note(
     }
 
     Ok(note)
+}
+
+async fn quote_authorization_stamp_uri(
+    db: &D1Database,
+    config: &AppConfig,
+    quote_status: &StatusRow,
+    quote_target_uri: &str,
+) -> Result<Option<String>> {
+    let Some(target_status) = find_local_status_by_object_uri(db, config, quote_target_uri).await?
+    else {
+        return Ok(None);
+    };
+    let Some(target_account) = find_account_by_id(db, &target_status.account_id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(quote_authorization_uri(
+        &local_status_ap_id(config, &target_account, &target_status),
+        &quote_status.id,
+    )))
 }
 
 pub(crate) fn activitypub_media_attachment_type(content_type: &str) -> &'static str {

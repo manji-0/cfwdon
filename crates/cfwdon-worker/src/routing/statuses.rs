@@ -4,10 +4,10 @@ use crate::{
     mute_status_response, pin_status_response, reblog_status, reject_quote_response,
     revoke_quote_response, status_api_response, status_card_response, status_context_response,
     status_favourited_by_response, status_history_response, status_interaction_policy_response,
-    status_object_response, status_quotes_response, status_reblogged_by_response,
-    status_source_response, statuses_index_placeholder_response, translate_status_response,
-    unbookmark_status, unfavourite_status, unmute_status_response, unpin_status_response,
-    unreblog_status, update_status,
+    status_object_response, status_quote_authorization_object_response, status_quotes_response,
+    status_reblogged_by_response, status_source_response, statuses_index_placeholder_response,
+    translate_status_response, unbookmark_status, unfavourite_status, unmute_status_response,
+    unpin_status_response, unreblog_status, update_status,
 };
 use worker::Router;
 
@@ -70,6 +70,14 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
         .head_async("/users/:username/statuses/:id", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
+        .get_async(
+            "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
+            |_, ctx| async move { status_quote_authorization_object_response(ctx).await },
+        )
+        .head_async(
+            "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
+            |_req, _ctx| async move { static_head_response(ACTIVITYPUB_CONTENT_TYPE) },
+        )
         .post_async("/api/v1/statuses", |req, ctx| async move {
             create_status(req, ctx).await
         })

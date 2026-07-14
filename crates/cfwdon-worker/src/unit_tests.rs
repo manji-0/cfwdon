@@ -15,25 +15,27 @@ use super::{
     account_search_term, account_search_terms, activitypub_media_attachment_type,
     activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
     auth0_login_url, auth0_logout_url, authorize_interaction_document,
-    authorize_interaction_url_from_base, build_activitypub_actor_document,
-    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
-    build_announcements_document, build_app_verify_credentials_document,
-    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
-    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
-    build_donation_campaign_document, build_email_confirmation_html,
-    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
-    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
-    build_oauth_authorization_server_document, build_oauth_token_document,
-    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
-    build_remote_status_card_value, build_remove_featured_activity_with_id,
-    build_status_card_value, build_status_update_activity_with_id,
-    build_timeline_link_header_for_url, build_translation_document,
-    build_translation_document_for_language, build_translation_languages_document,
-    build_update_person_activity_with_id, classify_media_kind, configured_html_document,
-    context_async_refresh_id, derive_link_timeline_match_urls, describe_outbound_activity,
-    directory_order, effective_local_quote_approval_policy, effective_remote_status_quote_state,
+    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
+    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
+    build_add_featured_activity_with_id, build_announcements_document,
+    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
+    build_deepl_request_body, build_deepl_translation_languages_document,
+    build_delete_quote_authorization_activity, build_donation_campaign_document,
+    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
+    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
+    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
+    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    build_quote_authorization_object, build_quote_request_object,
+    build_reject_quote_request_activity_with_id, build_remote_status_card_value,
+    build_remove_featured_activity_with_id, build_status_card_value,
+    build_status_update_activity_with_id, build_timeline_link_header_for_url,
+    build_translation_document, build_translation_document_for_language,
+    build_translation_languages_document, build_update_person_activity_with_id,
+    classify_media_kind, configured_html_document, context_async_refresh_id,
+    derive_link_timeline_match_urls, describe_outbound_activity, directory_order,
+    effective_local_quote_approval_policy, effective_remote_status_quote_state,
     effective_search_v2_following, effective_search_v2_offset, effective_status_quote_state,
     extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
     extract_html_preview_metadata, extract_inbox_target_username, extract_mentions_from_text,
@@ -56,15 +58,16 @@ use super::{
     parse_lookup_handle, parse_media_focus, parse_media_id_fields,
     parse_remote_actor_profile_document, parse_signature_header, parse_status_search_query,
     parse_webfinger_resource, peer_authority_from_uri, pending_quote_document,
-    quote_document_with_state, quote_placeholder_document, quote_target_uri_from_object,
-    redirect_uri_matches_registered, remap_remote_poll_vote_positions, remote_account_rest_id,
-    remote_actor_uri_from_rest_id, remote_follow_base_url,
-    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
-    remote_poll_should_refresh, remote_quote_state_for_local_target,
-    remote_status_has_active_quote, remote_status_targets_local_viewer,
-    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
-    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
-    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    quote_authorization_uri, quote_document_with_state, quote_placeholder_document,
+    quote_target_uri_from_object, redirect_uri_matches_registered,
+    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
+    remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_quote_state_for_local_target, remote_status_has_active_quote,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
+    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
+    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
     status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
@@ -4176,6 +4179,105 @@ fn build_delete_quote_authorization_activity_uses_fep_044f_shape() {
         activity["id"],
         serde_json::json!(
             "https://social.example/users/alice/statuses/2/quote_authorizations/remote-status-1#delete"
+        )
+    );
+}
+
+#[test]
+fn build_accept_quote_request_activity_uses_fep_044f_shape() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test");
+    let account = actor_fixture_account();
+    let quote_request = build_quote_request_object(
+        "https://remote.example/users/bob/statuses/1/quote_requests/remote-status-1",
+        "https://remote.example/users/bob",
+        "https://social.example/users/alice/statuses/2",
+        "https://remote.example/users/bob/statuses/1",
+    );
+    let authorization_uri = quote_authorization_uri(
+        "https://social.example/users/alice/statuses/2",
+        "remote-status-1",
+    );
+
+    let activity = serde_json::from_str::<serde_json::Value>(
+        &build_accept_quote_request_activity_with_id(
+            &config,
+            &account,
+            &quote_request,
+            &authorization_uri,
+            "https://remote.example/users/bob",
+            "https://social.example/users/alice/accepts/quote_requests/test-1",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(activity["type"], serde_json::json!("Accept"));
+    assert_eq!(
+        activity["actor"],
+        serde_json::json!("https://social.example/users/alice")
+    );
+    assert_eq!(
+        activity["object"]["type"],
+        serde_json::json!("QuoteRequest")
+    );
+    assert_eq!(activity["result"], serde_json::json!(authorization_uri));
+    assert_eq!(
+        activity["to"],
+        serde_json::json!(["https://remote.example/users/bob"])
+    );
+}
+
+#[test]
+fn build_reject_quote_request_activity_uses_fep_044f_shape() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test");
+    let account = actor_fixture_account();
+    let quote_request = build_quote_request_object(
+        "https://remote.example/users/bob/statuses/1/quote_requests/remote-status-1",
+        "https://remote.example/users/bob",
+        "https://social.example/users/alice/statuses/2",
+        "https://remote.example/users/bob/statuses/1",
+    );
+
+    let activity = serde_json::from_str::<serde_json::Value>(
+        &build_reject_quote_request_activity_with_id(
+            &config,
+            &account,
+            &quote_request,
+            "https://remote.example/users/bob",
+            "https://social.example/users/alice/rejects/quote_requests/test-1",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(activity["type"], serde_json::json!("Reject"));
+    assert_eq!(
+        activity["actor"],
+        serde_json::json!("https://social.example/users/alice")
+    );
+    assert_eq!(
+        activity["object"]["type"],
+        serde_json::json!("QuoteRequest")
+    );
+}
+
+#[test]
+fn build_quote_authorization_object_is_dereferenceable_stamp() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test");
+    let account = actor_fixture_account();
+    let document = build_quote_authorization_object(
+        &config,
+        &account,
+        "https://remote.example/users/bob/statuses/1",
+        "https://social.example/users/alice/statuses/2",
+        "remote-status-1",
+    );
+
+    assert_eq!(document["type"], serde_json::json!("QuoteAuthorization"));
+    assert_eq!(
+        document["id"],
+        serde_json::json!(
+            "https://social.example/users/alice/statuses/2/quote_authorizations/remote-status-1"
         )
     );
 }

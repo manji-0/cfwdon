@@ -87,7 +87,7 @@ A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/f
 
 A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently.
 
-Quote owner approve, reject, and revoke API handlers in the worker now delegate quote-state transitions to [`OwnerQuoteAction`](../../crates/cfwdon-domain/src/quote.rs) and remote status upserts merge quote state through `merged_quote_state_for_remote_upsert`.
+Quote owner approve, reject, and revoke API handlers in the worker now delegate quote-state transitions to [`OwnerQuoteAction`](../../crates/cfwdon-domain/src/quote.rs) and remote status upserts merge quote state through `merged_quote_state_for_remote_upsert`. Approve and reject also emit FEP-044f `Accept`/`Reject` QuoteRequest activities to remote quote authors, fan out `Create QuoteAuthorization` to followers, and serve dereferenceable authorization stamps under `/users/:username/statuses/:id/quote_authorizations/:key`.
 
 Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdon-domain/src/account/registration.rs) values through [`Transition`](../../crates/cfwdon-domain/src/transition.rs), and a fourteenth model checks that validate and provision steps surface the expected events.
 

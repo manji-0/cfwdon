@@ -784,6 +784,82 @@ pub(crate) async fn status_object_response(
     )
 }
 
+pub(crate) async fn status_quote_authorization_object_response(
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    let username = ctx
+        .param("username")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let target_status_id = ctx
+        .param("id")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing status id route parameter".to_owned()))?;
+    let authorization_key = ctx
+        .param("authorization_key")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing authorization key route parameter".to_owned()))?;
+
+    let db = ctx.d1(&config.database_binding)?;
+    let Some(target_account) = find_account_by_username(&db, &username).await? else {
+        return Response::error("actor not found", 404);
+    };
+    let Some(target_status) = find_status_by_id(&db, &target_status_id).await? else {
+        return Response::error("status not found", 404);
+    };
+    if target_status.account_id != target_account.id() {
+        return Response::error("status not found", 404);
+    }
+    if !is_public_activitypub_visibility(target_status.visibility.as_str()) {
+        return Response::error("status not found", 404);
+    }
+
+    let target_uri = crate::local_status_target_uri(&target_status);
+    let (interacting_object_uri, quote_state) = if let Some(quote_status) =
+        find_status_by_id(&db, &authorization_key).await?
+    {
+        if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str()) {
+            return Response::error("quote authorization not found", 404);
+        }
+        (
+            crate::local_status_target_uri(&quote_status),
+            quote_status.effective_quote_state(),
+        )
+    } else if let Some(quote_status) = find_remote_status_by_id(&db, &authorization_key).await? {
+        if quote_status.quote_of_uri.as_deref() != Some(target_uri.as_str()) {
+            return Response::error("quote authorization not found", 404);
+        }
+        (
+            quote_status.object_uri.clone(),
+            quote_status.effective_quote_state(),
+        )
+    } else {
+        return Response::error("quote authorization not found", 404);
+    };
+
+    if quote_state != cfwdon_domain::QuoteState::Accepted {
+        return Response::error("quote authorization not found", 404);
+    }
+
+    let document = crate::build_quote_authorization_object(
+        &config,
+        &target_account,
+        &interacting_object_uri,
+        &target_uri,
+        &authorization_key,
+    );
+    cache_public_json_response(
+        &document,
+        "application/activity+json; charset=utf-8",
+        CACHE_TTL_FEDERATION,
+        &[("Cache-Tag", &format!("status-{target_status_id}"))],
+    )
+}
+
 pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {
     let accept = req.headers().get("Accept")?.unwrap_or_default();
     let accept = accept.to_ascii_lowercase();

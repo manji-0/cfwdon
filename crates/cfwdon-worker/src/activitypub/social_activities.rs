@@ -246,6 +246,181 @@ fn quote_authorization_context() -> serde_json::Value {
     ])
 }
 
+fn quote_request_context() -> serde_json::Value {
+    serde_json::json!([
+        "https://www.w3.org/ns/activitystreams",
+        {
+            "QuoteRequest": "https://w3id.org/fep/044f#QuoteRequest",
+        }
+    ])
+}
+
+pub(crate) fn quote_authorization_uri(
+    interaction_target_uri: &str,
+    authorization_key: &str,
+) -> String {
+    format!(
+        "{}/quote_authorizations/{}",
+        interaction_target_uri.trim_end_matches('/'),
+        authorization_key.trim()
+    )
+}
+
+pub(crate) fn quote_request_uri(interacting_object_uri: &str, authorization_key: &str) -> String {
+    format!(
+        "{}/quote_requests/{}",
+        interacting_object_uri.trim_end_matches('/'),
+        authorization_key.trim()
+    )
+}
+
+pub(crate) fn build_quote_authorization_object(
+    config: &AppConfig,
+    account: &LocalAccount,
+    interacting_object_uri: &str,
+    interaction_target_uri: &str,
+    authorization_key: &str,
+) -> serde_json::Value {
+    let actor = actor_url(config, account.username());
+    serde_json::json!({
+        "@context": quote_authorization_context(),
+        "type": "QuoteAuthorization",
+        "id": quote_authorization_uri(interaction_target_uri, authorization_key),
+        "attributedTo": actor,
+        "interactingObject": interacting_object_uri,
+        "interactionTarget": interaction_target_uri,
+    })
+}
+
+pub(crate) fn build_quote_request_object(
+    quote_request_uri: &str,
+    quote_author_actor_uri: &str,
+    interaction_target_uri: &str,
+    interacting_object_uri: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "@context": quote_request_context(),
+        "id": quote_request_uri,
+        "type": "QuoteRequest",
+        "actor": quote_author_actor_uri,
+        "object": interaction_target_uri,
+        "instrument": interacting_object_uri,
+    })
+}
+
+pub(crate) fn build_accept_quote_request_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    quote_request_object: &serde_json::Value,
+    authorization_uri: &str,
+    remote_actor_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    build_accept_quote_request_activity_with_id(
+        config,
+        account,
+        quote_request_object,
+        authorization_uri,
+        remote_actor_uri,
+        &format!("{actor}/accepts/quote_requests/{}", generate_entity_id(12)?),
+    )
+}
+
+pub(crate) fn build_accept_quote_request_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    quote_request_object: &serde_json::Value,
+    authorization_uri: &str,
+    remote_actor_uri: &str,
+    activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    let activity = serde_json::json!({
+        "@context": quote_request_context(),
+        "id": activity_id,
+        "type": "Accept",
+        "actor": actor,
+        "to": [remote_actor_uri],
+        "object": quote_request_object,
+        "result": authorization_uri,
+    });
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!(
+            "failed to serialize Accept QuoteRequest activity: {error}"
+        ))
+    })
+}
+
+pub(crate) fn build_reject_quote_request_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    quote_request_object: &serde_json::Value,
+    remote_actor_uri: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    build_reject_quote_request_activity_with_id(
+        config,
+        account,
+        quote_request_object,
+        remote_actor_uri,
+        &format!("{actor}/rejects/quote_requests/{}", generate_entity_id(12)?),
+    )
+}
+
+pub(crate) fn build_reject_quote_request_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    quote_request_object: &serde_json::Value,
+    remote_actor_uri: &str,
+    activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    let activity = serde_json::json!({
+        "@context": quote_request_context(),
+        "id": activity_id,
+        "type": "Reject",
+        "actor": actor,
+        "to": [remote_actor_uri],
+        "object": quote_request_object,
+    });
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!(
+            "failed to serialize Reject QuoteRequest activity: {error}"
+        ))
+    })
+}
+
+pub(crate) fn build_create_quote_authorization_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    interacting_object_uri: &str,
+    interaction_target_uri: &str,
+    authorization_key: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    let authorization = build_quote_authorization_object(
+        config,
+        account,
+        interacting_object_uri,
+        interaction_target_uri,
+        authorization_key,
+    );
+    let approval_id = quote_authorization_uri(interaction_target_uri, authorization_key);
+    let activity = serde_json::json!({
+        "@context": quote_authorization_context(),
+        "id": format!("{approval_id}#create"),
+        "type": "Create",
+        "actor": actor,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "object": authorization,
+    });
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!(
+            "failed to serialize Create QuoteAuthorization activity: {error}"
+        ))
+    })
+}
+
 pub(crate) fn build_delete_quote_authorization_activity(
     config: &AppConfig,
     account: &LocalAccount,
@@ -254,24 +429,20 @@ pub(crate) fn build_delete_quote_authorization_activity(
     authorization_key: &str,
 ) -> Result<String> {
     let actor = actor_url(config, account.username());
-    let approval_id = format!(
-        "{}/quote_authorizations/{}",
-        interaction_target_uri.trim_end_matches('/'),
-        authorization_key.trim()
-    );
+    let approval_id = quote_authorization_uri(interaction_target_uri, authorization_key);
     let activity = serde_json::json!({
         "@context": quote_authorization_context(),
         "id": format!("{approval_id}#delete"),
         "type": "Delete",
         "actor": actor,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "object": {
-            "id": approval_id,
-            "type": "QuoteAuthorization",
-            "attributedTo": actor,
-            "interactingObject": interacting_object_uri,
-            "interactionTarget": interaction_target_uri,
-        }
+        "object": build_quote_authorization_object(
+            config,
+            account,
+            interacting_object_uri,
+            interaction_target_uri,
+            authorization_key,
+        ),
     });
     serde_json::to_string(&activity).map_err(|error| {
         Error::RustError(format!(
