@@ -33,7 +33,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `outbound_follow` | `delivery` | `delivery.rs` | catalog only |
 | `concurrent_delivery` | `delivery` | `delivery.rs` | yes |
 | `outbox_delivery_pool` | `delivery` | `delivery.rs` | yes |
-| `outbox_pipeline` | `delivery` | `delivery.rs` | catalog only |
+| `outbox_pipeline` | `delivery` | `delivery.rs` | yes |
 | `local_follow_request` | `follow` | `follow_requests.rs` | catalog only |
 | `activitypub_visibility` | `remote` | `activitypub/objects.rs` | catalog only |
 | `status_draft_publish` | `status::draft` | `request_parsing`, `mutations` | catalog only |

@@ -1,7 +1,7 @@
 use cfwdon_domain::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, OutboxDeliveryRecordState,
-    generic_outbox_parent_state_after_expand, next_delivery_attempt_count,
-    outbox_delivery_state_after_attempt, outbox_expand_slot_count,
+    generic_outbox_has_follower_targets, generic_outbox_parent_state_after_expand,
+    next_delivery_attempt_count, outbox_delivery_state_after_attempt, outbox_expand_slot_count,
 };
 use stateright::{Checker, Model, Property};
 
@@ -11,17 +11,17 @@ const MAX_TARGET_SLOTS: usize = 2;
 pub(crate) struct OutboxPipelineModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct TargetSlotState {
-    active: bool,
-    state: OutboxDeliveryRecordState,
-    attempt_count: u32,
+pub(crate) struct TargetSlotState {
+    pub(crate) active: bool,
+    pub(crate) state: OutboxDeliveryRecordState,
+    pub(crate) attempt_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OutboxPipelineModelState {
-    generic_parent: OutboxDeliveryRecordState,
-    follower_target_count: u32,
-    targets: [TargetSlotState; MAX_TARGET_SLOTS],
+    pub(crate) generic_parent: OutboxDeliveryRecordState,
+    pub(crate) follower_target_count: u32,
+    pub(crate) targets: [TargetSlotState; MAX_TARGET_SLOTS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,27 +33,76 @@ pub(crate) enum OutboxPipelineAction {
     Target1Fails,
 }
 
+impl OutboxPipelineModelState {
+    pub(crate) fn generic_parent_queued(&self) -> bool {
+        self.generic_parent == OutboxDeliveryRecordState::Queued
+    }
+
+    pub(crate) fn target_queued(&self, index: usize) -> bool {
+        self.targets[index].active && self.targets[index].state == OutboxDeliveryRecordState::Queued
+    }
+
+    /// Mirrors `partition_generic_outbox_deliveries_by_targets` follower guard.
+    pub(crate) fn worker_has_follower_targets(&self) -> bool {
+        generic_outbox_has_follower_targets(self.follower_target_count as usize)
+    }
+}
+
+pub(crate) fn activate_outbox_pipeline_targets(state: &mut OutboxPipelineModelState) {
+    let slot_count =
+        outbox_expand_slot_count(state.follower_target_count, MAX_TARGET_SLOTS as u32) as usize;
+    for slot in state.targets.iter_mut().take(slot_count) {
+        slot.active = true;
+        slot.state = OutboxDeliveryRecordState::Queued;
+        slot.attempt_count = 0;
+    }
+}
+
+pub(crate) fn expand_outbox_pipeline_generic(state: &mut OutboxPipelineModelState) -> bool {
+    if state.generic_parent != OutboxDeliveryRecordState::Queued {
+        return false;
+    }
+    state.generic_parent = generic_outbox_parent_state_after_expand(state.follower_target_count);
+    if state.generic_parent == OutboxDeliveryRecordState::Expanded {
+        activate_outbox_pipeline_targets(state);
+    }
+    true
+}
+
+pub(crate) fn apply_outbox_pipeline_target_outcome(
+    slot: &mut TargetSlotState,
+    outcome: DeliveryAttemptOutcome,
+) -> bool {
+    if !slot.active || slot.state != OutboxDeliveryRecordState::Queued {
+        return false;
+    }
+    let next_attempt = next_delivery_attempt_count(slot.attempt_count as i32);
+    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+        slot.attempt_count = next_attempt;
+    }
+    slot.state = outbox_delivery_state_after_attempt(slot.state, next_attempt, outcome);
+    true
+}
+
 impl OutboxPipelineModel {
-    fn activate_targets(state: &mut OutboxPipelineModelState) {
-        let slot_count =
-            outbox_expand_slot_count(state.follower_target_count, MAX_TARGET_SLOTS as u32) as usize;
-        for slot in state.targets.iter_mut().take(slot_count) {
-            slot.active = true;
-            slot.state = OutboxDeliveryRecordState::Queued;
-            slot.attempt_count = 0;
+    fn target_action_index(action: OutboxPipelineAction) -> Option<usize> {
+        match action {
+            OutboxPipelineAction::Target0Succeeds | OutboxPipelineAction::Target0Fails => Some(0),
+            OutboxPipelineAction::Target1Succeeds | OutboxPipelineAction::Target1Fails => Some(1),
+            OutboxPipelineAction::ExpandGeneric => None,
         }
     }
 
-    fn apply_target_outcome(slot: &mut TargetSlotState, outcome: DeliveryAttemptOutcome) -> bool {
-        if !slot.active || slot.state != OutboxDeliveryRecordState::Queued {
-            return false;
+    fn target_outcome(action: OutboxPipelineAction) -> Option<DeliveryAttemptOutcome> {
+        match action {
+            OutboxPipelineAction::Target0Succeeds | OutboxPipelineAction::Target1Succeeds => {
+                Some(DeliveryAttemptOutcome::Success)
+            }
+            OutboxPipelineAction::Target0Fails | OutboxPipelineAction::Target1Fails => {
+                Some(DeliveryAttemptOutcome::Failure)
+            }
+            OutboxPipelineAction::ExpandGeneric => None,
         }
-        let next_attempt = next_delivery_attempt_count(slot.attempt_count as i32);
-        if matches!(outcome, DeliveryAttemptOutcome::Failure) {
-            slot.attempt_count = next_attempt;
-        }
-        slot.state = outbox_delivery_state_after_attempt(slot.state, next_attempt, outcome);
-        true
     }
 }
 
@@ -77,14 +126,14 @@ impl Model for OutboxPipelineModel {
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        if state.generic_parent == OutboxDeliveryRecordState::Queued {
+        if state.generic_parent_queued() {
             actions.push(OutboxPipelineAction::ExpandGeneric);
         }
-        if state.targets[0].active && state.targets[0].state == OutboxDeliveryRecordState::Queued {
+        if state.target_queued(0) {
             actions.push(OutboxPipelineAction::Target0Succeeds);
             actions.push(OutboxPipelineAction::Target0Fails);
         }
-        if state.targets[1].active && state.targets[1].state == OutboxDeliveryRecordState::Queued {
+        if state.target_queued(1) {
             actions.push(OutboxPipelineAction::Target1Succeeds);
             actions.push(OutboxPipelineAction::Target1Fails);
         }
@@ -95,50 +144,15 @@ impl Model for OutboxPipelineModel {
 
         match action {
             OutboxPipelineAction::ExpandGeneric => {
-                if next.generic_parent != OutboxDeliveryRecordState::Queued {
-                    return None;
-                }
-                next.generic_parent =
-                    generic_outbox_parent_state_after_expand(next.follower_target_count);
-                if next.generic_parent == OutboxDeliveryRecordState::Expanded {
-                    Self::activate_targets(&mut next);
-                }
+                expand_outbox_pipeline_generic(&mut next).then_some(next)
             }
-            OutboxPipelineAction::Target0Succeeds => {
-                if !Self::apply_target_outcome(
-                    &mut next.targets[0],
-                    DeliveryAttemptOutcome::Success,
-                ) {
-                    return None;
-                }
-            }
-            OutboxPipelineAction::Target0Fails => {
-                if !Self::apply_target_outcome(
-                    &mut next.targets[0],
-                    DeliveryAttemptOutcome::Failure,
-                ) {
-                    return None;
-                }
-            }
-            OutboxPipelineAction::Target1Succeeds => {
-                if !Self::apply_target_outcome(
-                    &mut next.targets[1],
-                    DeliveryAttemptOutcome::Success,
-                ) {
-                    return None;
-                }
-            }
-            OutboxPipelineAction::Target1Fails => {
-                if !Self::apply_target_outcome(
-                    &mut next.targets[1],
-                    DeliveryAttemptOutcome::Failure,
-                ) {
-                    return None;
-                }
+            _ => {
+                let index = Self::target_action_index(action)?;
+                let outcome = Self::target_outcome(action)?;
+                apply_outbox_pipeline_target_outcome(&mut next.targets[index], outcome)
+                    .then_some(next)
             }
         }
-
-        Some(next)
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

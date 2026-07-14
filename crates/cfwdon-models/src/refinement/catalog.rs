@@ -212,8 +212,27 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "outbox_pipeline",
         domain_module: "cfwdon_domain::delivery",
         implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
-        abstraction: "generic outbox row + target expansion",
-        operations: &[],
+        abstraction: "generic outbox parent row + expanded target slots",
+        operations: &[
+            OperationMapping {
+                model_action: "ExpandGeneric",
+                domain_call: "generic_outbox_parent_state_after_expand",
+                implementation_call: "partition_generic_outbox_deliveries_by_targets + mark_*_expanded",
+                worker_guard: "generic parent row queued",
+            },
+            OperationMapping {
+                model_action: "Target0Succeeds / Target1Succeeds",
+                domain_call: "outbox_delivery_state_after_attempt",
+                implementation_call: "mark_outbox_delivery_delivered",
+                worker_guard: "active target row queued",
+            },
+            OperationMapping {
+                model_action: "Target0Fails / Target1Fails",
+                domain_call: "outbox_delivery_state_after_attempt",
+                implementation_call: "reschedule_outbox_delivery or mark_outbox_delivery_terminal_failure",
+                worker_guard: "active target row queued",
+            },
+        ],
     },
     RefinementEntry {
         model: "local_follow_request",
