@@ -30,7 +30,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `registration_transition_events` | `account::registration` | `validate_account_registration_request` | yes |
 | `status_draft_transition_events` | `status::draft` | `request_parsing`, `insert_status` | yes |
 | `inbox_replay` | `federation::inbox` | `inbox/activity_store.rs`, `inbox.rs` | yes |
-| `outbound_follow` | `delivery` | `delivery.rs` | catalog only |
+| `outbound_follow` | `delivery` | `delivery.rs`, `outbound_state.rs`, inbox follow handlers | yes |
 | `concurrent_delivery` | `delivery` | `delivery.rs` | yes |
 | `outbox_delivery_pool` | `delivery` | `delivery.rs` | yes |
 | `outbox_pipeline` | `delivery` | `delivery.rs` | yes |

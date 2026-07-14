@@ -11,10 +11,10 @@ pub(crate) struct OutboundFollowModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OutboundFollowModelState {
-    outbound_state: OutboundActivityState,
-    follow_state: RemoteFollowState,
-    attempt_count: u32,
-    activity_is_follow: bool,
+    pub(crate) outbound_state: OutboundActivityState,
+    pub(crate) follow_state: RemoteFollowState,
+    pub(crate) attempt_count: u32,
+    pub(crate) activity_is_follow: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,6 +23,50 @@ pub(crate) enum OutboundFollowAction {
     DeliveryFails,
     ReceiveFollowAccept,
     ReceiveFollowReject,
+}
+
+impl OutboundFollowModelState {
+    pub(crate) fn outbound_queued(&self) -> bool {
+        self.outbound_state == OutboundActivityState::Queued
+    }
+}
+
+pub(crate) fn apply_outbound_follow_delivery_outcome(
+    state: &mut OutboundFollowModelState,
+    outcome: DeliveryAttemptOutcome,
+) -> bool {
+    if state.outbound_state != OutboundActivityState::Queued {
+        return false;
+    }
+    let next_attempt = next_delivery_attempt_count(state.attempt_count as i32);
+    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+        state.attempt_count = next_attempt;
+    }
+    state.outbound_state =
+        outbound_state_after_delivery_attempt(state.outbound_state, next_attempt, outcome);
+    if state.outbound_state == OutboundActivityState::Failed {
+        let activity_type = if state.activity_is_follow {
+            "Follow"
+        } else {
+            "Undo"
+        };
+        state.follow_state = reconcile_pending_follow_on_outbound_terminal_failure(
+            state.follow_state,
+            activity_type,
+        );
+    }
+    true
+}
+
+pub(crate) fn apply_outbound_follow_inbox_response(
+    state: &mut OutboundFollowModelState,
+    response: FollowInboxResponse,
+) -> bool {
+    if !state.activity_is_follow {
+        return false;
+    }
+    state.follow_state = follow_state_after_inbox_response(state.follow_state, response);
+    true
 }
 
 impl Model for OutboundFollowModel {
@@ -47,7 +91,7 @@ impl Model for OutboundFollowModel {
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        if state.outbound_state == OutboundActivityState::Queued {
+        if state.outbound_queued() {
             actions.push(OutboundFollowAction::DeliverySucceeds);
             actions.push(OutboundFollowAction::DeliveryFails);
         }
@@ -60,62 +104,22 @@ impl Model for OutboundFollowModel {
     fn next_state(&self, state: &Self::State, action: Self::Action) -> Option<Self::State> {
         let mut next = *state;
 
-        match action {
+        let applied = match action {
             OutboundFollowAction::DeliverySucceeds => {
-                if next.outbound_state != OutboundActivityState::Queued {
-                    return None;
-                }
-                let next_attempt = next_delivery_attempt_count(next.attempt_count as i32);
-                next.outbound_state = outbound_state_after_delivery_attempt(
-                    next.outbound_state,
-                    next_attempt,
-                    DeliveryAttemptOutcome::Success,
-                );
+                apply_outbound_follow_delivery_outcome(&mut next, DeliveryAttemptOutcome::Success)
             }
             OutboundFollowAction::DeliveryFails => {
-                if next.outbound_state != OutboundActivityState::Queued {
-                    return None;
-                }
-                let next_attempt = next_delivery_attempt_count(next.attempt_count as i32);
-                next.attempt_count = next_attempt;
-                next.outbound_state = outbound_state_after_delivery_attempt(
-                    next.outbound_state,
-                    next_attempt,
-                    DeliveryAttemptOutcome::Failure,
-                );
-                if next.outbound_state == OutboundActivityState::Failed {
-                    let activity_type = if next.activity_is_follow {
-                        "Follow"
-                    } else {
-                        "Undo"
-                    };
-                    next.follow_state = reconcile_pending_follow_on_outbound_terminal_failure(
-                        next.follow_state,
-                        activity_type,
-                    );
-                }
+                apply_outbound_follow_delivery_outcome(&mut next, DeliveryAttemptOutcome::Failure)
             }
             OutboundFollowAction::ReceiveFollowAccept => {
-                if !next.activity_is_follow {
-                    return None;
-                }
-                next.follow_state = follow_state_after_inbox_response(
-                    next.follow_state,
-                    FollowInboxResponse::Accept,
-                );
+                apply_outbound_follow_inbox_response(&mut next, FollowInboxResponse::Accept)
             }
             OutboundFollowAction::ReceiveFollowReject => {
-                if !next.activity_is_follow {
-                    return None;
-                }
-                next.follow_state = follow_state_after_inbox_response(
-                    next.follow_state,
-                    FollowInboxResponse::Reject,
-                );
+                apply_outbound_follow_inbox_response(&mut next, FollowInboxResponse::Reject)
             }
-        }
+        };
 
-        Some(next)
+        applied.then_some(next)
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

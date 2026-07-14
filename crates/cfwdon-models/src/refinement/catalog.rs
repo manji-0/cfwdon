@@ -164,9 +164,38 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
     RefinementEntry {
         model: "outbound_follow",
         domain_module: "cfwdon_domain::delivery",
-        implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
+        implementation_sites: &[
+            "crates/cfwdon-worker/src/delivery.rs",
+            "crates/cfwdon-worker/src/delivery/outbound_state.rs",
+            "crates/cfwdon-worker/src/inbox/follow_handlers.rs",
+        ],
         abstraction: "outbound activity state + remote follow state",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "DeliverySucceeds",
+                domain_call: "outbound_state_after_delivery_attempt",
+                implementation_call: "mark_outbound_activity_delivered",
+                worker_guard: "outbound row queued",
+            },
+            OperationMapping {
+                model_action: "DeliveryFails",
+                domain_call: "reconcile_pending_follow_on_outbound_terminal_failure",
+                implementation_call: "reconcile_outbound_activity_terminal_failure",
+                worker_guard: "outbound row queued",
+            },
+            OperationMapping {
+                model_action: "ReceiveFollowAccept",
+                domain_call: "follow_state_after_inbox_response",
+                implementation_call: "update_follow_state_from_response(Accept)",
+                worker_guard: "activity is Follow response",
+            },
+            OperationMapping {
+                model_action: "ReceiveFollowReject",
+                domain_call: "follow_state_after_inbox_response",
+                implementation_call: "update_follow_state_from_response(Reject)",
+                worker_guard: "activity is Follow response",
+            },
+        ],
     },
     RefinementEntry {
         model: "concurrent_delivery",

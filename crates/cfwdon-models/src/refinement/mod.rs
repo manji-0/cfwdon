@@ -3,6 +3,7 @@ mod concurrent_delivery;
 mod federation_dns;
 mod federation_request_policy;
 mod inbox_replay;
+mod outbound_follow;
 mod outbox_delivery_pool;
 mod outbox_pipeline;
 mod quote_approval;
@@ -22,6 +23,7 @@ pub(crate) fn verify_refinements() {
     outbox_delivery_pool::check_outbox_delivery_pool_refinement();
     concurrent_delivery::check_concurrent_delivery_refinement();
     outbox_pipeline::check_outbox_pipeline_refinement();
+    outbound_follow::check_outbound_follow_refinement();
 }
 
 #[cfg(test)]
