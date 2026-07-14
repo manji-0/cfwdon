@@ -358,9 +358,28 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
     RefinementEntry {
         model: "access_provision",
         domain_module: "cfwdon_domain::account::registration",
-        implementation_sites: &["crates/cfwdon-worker/src/meta_placeholder_routes.rs"],
+        implementation_sites: &["crates/cfwdon-worker/src/auth/account_store.rs"],
         abstraction: "OAuth email + username derivation",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "Resolve",
+                domain_call: "ComposingAccessProvision::resolve",
+                implementation_call: "resolve_local_account",
+                worker_guard: "authenticated user email not yet provisioned",
+            },
+            OperationMapping {
+                model_action: "Register",
+                domain_call: "AccessProvisionIntent::register",
+                implementation_call: "INSERT INTO accounts",
+                worker_guard: "resolved username and email",
+            },
+            OperationMapping {
+                model_action: "Provision",
+                domain_call: "RegisteringAccount::provision",
+                implementation_call: "store_account_private_key",
+                worker_guard: "account row inserted",
+            },
+        ],
     },
     RefinementEntry {
         model: "federation_dns_policy",

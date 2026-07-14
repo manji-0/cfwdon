@@ -1,3 +1,4 @@
+mod access_provision;
 mod activitypub_visibility;
 mod catalog;
 mod concurrent_delivery;
@@ -20,6 +21,7 @@ pub use catalog::{OperationMapping, REFINEMENT_CATALOG, RefinementEntry};
 
 pub(crate) fn verify_refinements() {
     quote_approval::check_quote_approval_refinement();
+    access_provision::check_access_provision_refinement();
     registration::check_registration_refinement();
     registration_pipeline::check_registration_pipeline_refinement();
     status_draft::check_status_draft_refinement();

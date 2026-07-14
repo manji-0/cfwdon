@@ -8,7 +8,7 @@ use stateright::{Checker, Model, Property};
 pub(crate) struct AccessProvisionModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum ProvisionStage {
+pub(crate) enum ProvisionStage {
     Composing,
     Resolved,
     ResolutionFailed,
@@ -17,7 +17,7 @@ enum ProvisionStage {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum EmailInput {
+pub(crate) enum EmailInput {
     Blank,
     Invalid,
     Standard,
@@ -27,9 +27,9 @@ enum EmailInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AccessProvisionModelState {
-    stage: ProvisionStage,
-    email: EmailInput,
-    base_username_taken: bool,
+    pub(crate) stage: ProvisionStage,
+    pub(crate) email: EmailInput,
+    pub(crate) base_username_taken: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,44 +43,31 @@ pub(crate) enum AccessProvisionAction {
 
 impl AccessProvisionModel {
     fn email_value(input: EmailInput) -> String {
-        match input {
-            EmailInput::Blank => String::new(),
-            EmailInput::Invalid => "not-an-email".to_owned(),
-            EmailInput::Standard => "alice@example.com".to_owned(),
-            EmailInput::DottedLocal => "alice.bob@example.com".to_owned(),
-            EmailInput::PlusLocal => "alice+foo@example.com".to_owned(),
-        }
+        access_provision_email_value(input)
     }
 
     fn composing_provision(state: &AccessProvisionModelState) -> ComposingAccessProvision {
-        ComposingAccessProvision {
-            email: Self::email_value(state.email),
-        }
+        access_provision_composing(state)
     }
 
     fn resolution_succeeds(state: &AccessProvisionModelState) -> bool {
-        AccessEmail::parse(&Self::email_value(state.email)).is_ok()
+        access_provision_resolution_succeeds(state)
     }
 
     fn sanitized_local_part(email: &AccessEmail) -> String {
-        Username::derive_from_email(email, false).into_inner()
+        access_provision_sanitized_local_part(email)
     }
 
     fn resolved_intent(state: &AccessProvisionModelState) -> cfwdon_domain::AccessProvisionIntent {
-        Self::composing_provision(state)
-            .resolve(state.base_username_taken)
-            .expect("resolved access provision")
+        access_provision_resolved_intent(state)
     }
 
     fn fixture_keys() -> AccountKeyMaterial {
-        AccountKeyMaterial {
-            private_key_jwk: r#"{"kty":"RSA"}"#.to_owned(),
-            public_key_pem: "pem-fixture".to_owned(),
-        }
+        access_provision_fixture_keys()
     }
 
     fn fixture_account_id() -> AccountId {
-        AccountId::new("acct-access").expect("fixture account id")
+        access_provision_fixture_account_id()
     }
 
     fn cycle_email(input: EmailInput) -> EmailInput {
@@ -94,11 +81,76 @@ impl AccessProvisionModel {
     }
 
     fn provisioned_account(state: &AccessProvisionModelState) -> LocalAccount {
-        Self::resolved_intent(state)
-            .register(Self::fixture_account_id(), Self::fixture_keys())
-            .provision("2026-01-01T00:00:00.000Z".to_owned())
-            .state
+        access_provision_provisioned_account(state)
     }
+}
+
+pub(crate) fn access_provision_email_value(input: EmailInput) -> String {
+    match input {
+        EmailInput::Blank => String::new(),
+        EmailInput::Invalid => "not-an-email".to_owned(),
+        EmailInput::Standard => "alice@example.com".to_owned(),
+        EmailInput::DottedLocal => "alice.bob@example.com".to_owned(),
+        EmailInput::PlusLocal => "alice+foo@example.com".to_owned(),
+    }
+}
+
+pub(crate) fn access_provision_composing(
+    state: &AccessProvisionModelState,
+) -> ComposingAccessProvision {
+    ComposingAccessProvision {
+        email: access_provision_email_value(state.email),
+    }
+}
+
+/// Mirrors `resolve_local_account` email resolution gate.
+pub(crate) fn access_provision_resolution_succeeds(state: &AccessProvisionModelState) -> bool {
+    access_provision_composing(state)
+        .resolve(state.base_username_taken)
+        .is_ok()
+}
+
+pub(crate) fn access_provision_sanitized_local_part(email: &AccessEmail) -> String {
+    Username::derive_from_email(email, false).into_inner()
+}
+
+pub(crate) fn apply_access_provision_resolve(state: &AccessProvisionModelState) -> ProvisionStage {
+    if access_provision_resolution_succeeds(state) {
+        ProvisionStage::Resolved
+    } else {
+        ProvisionStage::ResolutionFailed
+    }
+}
+
+pub(crate) fn access_provision_resolved_intent(
+    state: &AccessProvisionModelState,
+) -> cfwdon_domain::AccessProvisionIntent {
+    access_provision_composing(state)
+        .resolve(state.base_username_taken)
+        .expect("resolved access provision")
+}
+
+pub(crate) fn access_provision_fixture_keys() -> AccountKeyMaterial {
+    AccountKeyMaterial {
+        private_key_jwk: r#"{"kty":"RSA"}"#.to_owned(),
+        public_key_pem: "pem-fixture".to_owned(),
+    }
+}
+
+pub(crate) fn access_provision_fixture_account_id() -> AccountId {
+    AccountId::new("acct-access").expect("fixture account id")
+}
+
+pub(crate) fn access_provision_provisioned_account(
+    state: &AccessProvisionModelState,
+) -> LocalAccount {
+    access_provision_resolved_intent(state)
+        .register(
+            access_provision_fixture_account_id(),
+            access_provision_fixture_keys(),
+        )
+        .provision("2026-01-01T00:00:00.000Z".to_owned())
+        .state
 }
 
 impl Model for AccessProvisionModel {
@@ -164,11 +216,7 @@ impl Model for AccessProvisionModel {
                 if state.stage != ProvisionStage::Composing {
                     return None;
                 }
-                if Self::resolution_succeeds(state) {
-                    next.stage = ProvisionStage::Resolved;
-                } else {
-                    next.stage = ProvisionStage::ResolutionFailed;
-                }
+                next.stage = apply_access_provision_resolve(state);
             }
             AccessProvisionAction::Register => {
                 if state.stage != ProvisionStage::Resolved {
