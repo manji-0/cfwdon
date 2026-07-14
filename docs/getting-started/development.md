@@ -95,7 +95,7 @@ Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdo
 
 Status draft transitions now emit typed [`StatusDraftEvent`](../../crates/cfwdon-domain/src/status/draft.rs) values on validate and publish-intent resolution, and a fifteenth model checks those events are surfaced consistently.
 
-Refinement mappings in [`docs/reference/model-refinement.md`](../reference/model-refinement.md) link each model to domain symbols and worker call sites. Executable refinement checks for quote approval, registration, status-draft pipelines, federation inbox/DNS/request policy, and outbox delivery pools run inside `verify_models()`.
+Refinement mappings in [`docs/reference/model-refinement.md`](../reference/model-refinement.md) link each model to domain symbols and worker call sites. Executable refinement checks for quote approval, registration, status-draft pipelines, federation inbox/DNS/request policy, and delivery concurrency pools run inside `verify_models()`.
 
 ```sh
 cargo test -p cfwdon-models

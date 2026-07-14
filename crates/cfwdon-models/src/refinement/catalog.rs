@@ -172,8 +172,21 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "concurrent_delivery",
         domain_module: "cfwdon_domain::delivery",
         implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
-        abstraction: "two OutboundDeliverySlot values",
-        operations: &[],
+        abstraction: "two independent OutboundDeliverySlot values",
+        operations: &[
+            OperationMapping {
+                model_action: "SucceedSlot0 / SucceedSlot1",
+                domain_call: "outbound_delivery_slot_after_attempt",
+                implementation_call: "mark_*_delivered",
+                worker_guard: "slot row still queued",
+            },
+            OperationMapping {
+                model_action: "FailSlot0 / FailSlot1",
+                domain_call: "outbound_delivery_slot_after_attempt",
+                implementation_call: "reschedule_* or reconcile_*_terminal_failure",
+                worker_guard: "slot row still queued",
+            },
+        ],
     },
     RefinementEntry {
         model: "outbox_delivery_pool",

@@ -11,7 +11,7 @@ pub(crate) struct ConcurrentDeliveryModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ConcurrentDeliveryModelState {
-    slots: [OutboundDeliverySlot; SLOT_COUNT],
+    pub(crate) slots: [OutboundDeliverySlot; SLOT_COUNT],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,6 +20,12 @@ pub(crate) enum ConcurrentDeliveryAction {
     SucceedSlot1,
     FailSlot0,
     FailSlot1,
+}
+
+impl ConcurrentDeliveryModelState {
+    pub(crate) fn slot_is_queued(&self, index: usize) -> bool {
+        self.slots[index].state == OutboundActivityState::Queued
+    }
 }
 
 impl ConcurrentDeliveryModel {
@@ -40,19 +46,20 @@ impl ConcurrentDeliveryModel {
             }
         }
     }
+}
 
-    fn apply_action(
-        slots: &mut [OutboundDeliverySlot; SLOT_COUNT],
-        action: ConcurrentDeliveryAction,
-    ) -> bool {
-        let index = Self::slot_index(action);
-        let slot = &mut slots[index];
-        if slot.state != OutboundActivityState::Queued {
-            return false;
-        }
-        *slot = outbound_delivery_slot_after_attempt(*slot, Self::outcome(action));
-        true
+/// Shared two-slot transition used by the Stateright model and worker refinement checks.
+pub(crate) fn apply_concurrent_delivery_action(
+    slots: &mut [OutboundDeliverySlot; SLOT_COUNT],
+    action: ConcurrentDeliveryAction,
+) -> bool {
+    let index = ConcurrentDeliveryModel::slot_index(action);
+    let slot = &mut slots[index];
+    if slot.state != OutboundActivityState::Queued {
+        return false;
     }
+    *slot = outbound_delivery_slot_after_attempt(*slot, ConcurrentDeliveryModel::outcome(action));
+    true
 }
 
 impl Model for ConcurrentDeliveryModel {
@@ -66,11 +73,11 @@ impl Model for ConcurrentDeliveryModel {
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        if state.slots[0].state == OutboundActivityState::Queued {
+        if state.slot_is_queued(0) {
             actions.push(ConcurrentDeliveryAction::SucceedSlot0);
             actions.push(ConcurrentDeliveryAction::FailSlot0);
         }
-        if state.slots[1].state == OutboundActivityState::Queued {
+        if state.slot_is_queued(1) {
             actions.push(ConcurrentDeliveryAction::SucceedSlot1);
             actions.push(ConcurrentDeliveryAction::FailSlot1);
         }
@@ -78,11 +85,7 @@ impl Model for ConcurrentDeliveryModel {
 
     fn next_state(&self, state: &Self::State, action: Self::Action) -> Option<Self::State> {
         let mut next = *state;
-        if Self::apply_action(&mut next.slots, action) {
-            Some(next)
-        } else {
-            None
-        }
+        apply_concurrent_delivery_action(&mut next.slots, action).then_some(next)
     }
 
     fn properties(&self) -> Vec<Property<Self>> {

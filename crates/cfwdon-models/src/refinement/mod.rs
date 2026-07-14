@@ -1,4 +1,5 @@
 mod catalog;
+mod concurrent_delivery;
 mod federation_dns;
 mod federation_request_policy;
 mod inbox_replay;
@@ -18,6 +19,7 @@ pub(crate) fn verify_refinements() {
     inbox_replay::check_inbox_replay_refinement();
     federation_request_policy::check_federation_request_policy_refinement();
     outbox_delivery_pool::check_outbox_delivery_pool_refinement();
+    concurrent_delivery::check_concurrent_delivery_refinement();
 }
 
 #[cfg(test)]
