@@ -36,11 +36,6 @@ pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &
     status.effective_quote_state().as_str()
 }
 
-#[allow(dead_code)]
-pub(crate) fn remote_status_has_active_quote(status: &RemoteStatusRow) -> bool {
-    status.has_active_quote()
-}
-
 pub(crate) async fn find_remote_status_by_id(
     db: &D1Database,
     status_id: &str,
@@ -658,6 +653,18 @@ async fn resolve_remote_quote_resolution(
             policy_allows: policy.allows_quote(false, remote_actor_follows_owner),
         },
     ))
+}
+
+pub(crate) async fn clear_remote_status_quote(
+    db: &D1Database,
+    status: &RemoteStatusRow,
+) -> Result<RemoteStatusRow> {
+    update_remote_status_quote_state(
+        db,
+        &status.id,
+        QuoteState::quote_state_after_revoke(status.quote_state),
+    )
+    .await
 }
 
 pub(crate) async fn update_remote_status_quote_state(

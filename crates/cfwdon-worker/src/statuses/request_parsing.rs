@@ -176,30 +176,6 @@ fn parsed_status_draft_from_request(
     })
 }
 
-#[allow(dead_code)]
-fn validate_status_draft_inputs(
-    text: &str,
-    media_ids: &[String],
-    has_poll: bool,
-    quoted_status_id: Option<&str>,
-) -> std::result::Result<(), String> {
-    if text.is_empty() && media_ids.is_empty() && !has_poll {
-        return Err("status, media_ids, or poll must be present".to_owned());
-    }
-    if media_ids.len() > 4 {
-        return Err("a maximum of 4 media attachments is supported".to_owned());
-    }
-    if has_poll && !media_ids.is_empty() {
-        return Err("poll cannot be combined with media attachments yet".to_owned());
-    }
-    if quoted_status_id.is_some() && (has_poll || !media_ids.is_empty()) {
-        return Err(
-            "quoted statuses cannot be combined with media attachments or polls".to_owned(),
-        );
-    }
-    Ok(())
-}
-
 fn status_visibility_from_request(
     value: Option<&str>,
 ) -> std::result::Result<super::Visibility, String> {
@@ -414,32 +390,6 @@ mod tests {
             cfwdon_domain::Visibility::Unlisted
         );
         assert!(status_visibility_from_request(Some("friends")).is_err());
-    }
-
-    #[test]
-    fn validate_status_draft_inputs_rejects_empty_and_conflicting_payloads() {
-        assert!(validate_status_draft_inputs("", &[], false, None).is_err());
-        assert!(
-            validate_status_draft_inputs(
-                "",
-                &[
-                    "1".to_owned(),
-                    "2".to_owned(),
-                    "3".to_owned(),
-                    "4".to_owned(),
-                    "5".to_owned()
-                ],
-                false,
-                None,
-            )
-            .is_err()
-        );
-        assert!(validate_status_draft_inputs("", &["1".to_owned()], true, None).is_err());
-        assert!(
-            validate_status_draft_inputs("quote", &["1".to_owned()], false, Some("status-1"))
-                .is_err()
-        );
-        assert!(validate_status_draft_inputs("hello", &[], false, None).is_ok());
     }
 
     #[test]

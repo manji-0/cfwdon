@@ -192,7 +192,7 @@ pub(crate) fn registration_pipeline_finalize_allowed(
         && registration_pipeline_uniqueness_errors(state).is_empty()
 }
 
-/// Mirrors `validate_account_registration_request` success gate.
+/// Mirrors `account_registration_api_details` success gate.
 pub(crate) fn apply_registration_pipeline_validate(
     state: &RegistrationPipelineModelState,
 ) -> RegistrationStage {

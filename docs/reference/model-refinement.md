@@ -27,7 +27,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | --- | --- | --- | --- |
 | `quote` | `cfwdon_domain::quote` | `statuses/mutations`, publish intent | yes |
 | `quote_approval` | `cfwdon_domain::quote` | `quote_owner_action_response`, remote upsert | yes |
-| `registration_transition_events` | `account::registration` | `validate_account_registration_request` | yes |
+| `registration_transition_events` | `account::registration` | `account_registration_api_details` | yes |
 | `status_draft_transition_events` | `status::draft` | `request_parsing`, `insert_status` | yes |
 | `inbox_replay` | `federation::inbox` | `inbox/activity_store.rs`, `inbox.rs` | yes |
 | `outbound_follow` | `delivery` | `delivery.rs`, `outbound_state.rs`, inbox follow handlers | yes |

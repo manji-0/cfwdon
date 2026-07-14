@@ -30,7 +30,7 @@ impl RegistrationObservable {
         self.composing().validate().is_ok()
     }
 
-    /// Mirrors `validate_account_registration_request` in the worker: success means an empty
+    /// Mirrors `account_registration_api_details` in the worker: success means an empty
     /// error map, which happens exactly when domain validation succeeds.
     fn worker_validate_succeeds(self) -> bool {
         self.validation_succeeds()

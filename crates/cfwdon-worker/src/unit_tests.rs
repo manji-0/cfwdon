@@ -2,31 +2,31 @@ use base64::Engine;
 
 use super::is_cors_enabled_path;
 use super::{
-    AUTH_CONTEXT_LIMIT, AccountRegistrationValidation, AccountStatusesQuery,
-    CreateStatusPollRequest, HomeTimelineQuery, LinkTimelineQuery, MastodonAccountResponse,
-    MastodonMediaAttachmentResponse, MastodonReportResponse, NotificationEntry, NotificationsQuery,
-    OAuthAuthorizeRequest, PublicTimelineQuery, RemoteActorProfile, RemoteActorRow,
-    RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusPollVoteRow, RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode,
-    SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow, StreamingChannelValidationError,
-    TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery, TranslationProviderLanguageRow,
-    account_matches_search_terms, account_relationship_rank, account_search_is_complete_handle,
-    account_search_non_exact_limit, account_search_rank, account_search_sort_key,
-    account_search_term, account_search_terms, activitypub_media_attachment_type,
-    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
-    auth0_login_url, auth0_logout_url, authorize_interaction_document,
-    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
-    build_activitypub_actor_document, build_activitypub_delete_with_published_at,
-    build_add_featured_activity_with_id, build_announcements_document,
-    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
-    build_deepl_request_body, build_deepl_translation_languages_document,
-    build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
-    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    build_libretranslate_request_payload, build_nodeinfo_document, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    AUTH_CONTEXT_LIMIT, AccountStatusesQuery, CreateStatusPollRequest, HomeTimelineQuery,
+    LinkTimelineQuery, MastodonAccountResponse, MastodonMediaAttachmentResponse,
+    MastodonReportResponse, NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest,
+    PublicTimelineQuery, RemoteActorProfile, RemoteActorRow, RemotePollDraft,
+    RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow,
+    StatusPollRow, StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
+    TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
+    account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
+    account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
+    activitypub_media_attachment_type, activitypub_profile_attachments,
+    apply_activitypub_poll_fields, apply_html_preview_metadata, auth0_login_url, auth0_logout_url,
+    authorize_interaction_document, authorize_interaction_url_from_base,
+    build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
+    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
+    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
+    build_donation_campaign_document, build_email_confirmation_html,
+    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
+    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_quote_authorization_object, build_quote_request_object,
     build_reject_quote_request_activity_with_id, build_remote_status_card_value,
     build_remove_featured_activity_with_id, build_status_card_value,
@@ -63,7 +63,6 @@ use super::{
     remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
     remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
     remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_quote_state_for_local_target, remote_status_has_active_quote,
     remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
     remote_status_targets_local_viewer_followers, resolve_search_tag_name,
     scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
@@ -77,10 +76,9 @@ use super::{
     translation_cache_source_fingerprint, translation_provider_language_code,
     translation_provider_language_matches, translation_provider_supported_target_language,
     translation_target_language, trim_context_ancestors, trim_context_descendants,
-    validate_account_registration_request, validate_activitypub_signature_headers,
-    validate_poll_vote_submission, validate_scheduled_at_minimum_offset,
-    validate_streaming_channel_request, verify_account_password_hash,
-    visibility_from_activitypub_object,
+    validate_activitypub_signature_headers, validate_poll_vote_submission,
+    validate_scheduled_at_minimum_offset, validate_streaming_channel_request,
+    verify_account_password_hash, visibility_from_activitypub_object,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -3637,12 +3635,18 @@ fn streaming_channel_requires_auth_matches_user_scoped_streams() {
 
 #[test]
 fn validate_account_registration_request_requires_core_fields() {
-    let details = validate_account_registration_request(&AccountRegistrationValidation {
+    use cfwdon_domain::ComposingRegistration;
+
+    let details = ComposingRegistration {
         username: None,
         email: None,
         password_present: false,
         agreement: None,
-    });
+    }
+    .validate()
+    .err()
+    .map(|errors| errors.into_api_details())
+    .unwrap_or_default();
     assert_eq!(
         details.get("username"),
         Some(&vec!["can't be blank".to_owned()])
@@ -3663,12 +3667,18 @@ fn validate_account_registration_request_requires_core_fields() {
 
 #[test]
 fn validate_account_registration_request_rejects_invalid_username() {
-    let details = validate_account_registration_request(&AccountRegistrationValidation {
+    use cfwdon_domain::ComposingRegistration;
+
+    let details = ComposingRegistration {
         username: Some("alice-bob".to_owned()),
         email: Some("alice@example.com".to_owned()),
         password_present: true,
         agreement: Some(true),
-    });
+    }
+    .validate()
+    .err()
+    .map(|errors| errors.into_api_details())
+    .unwrap_or_default();
     assert_eq!(
         details.get("username"),
         Some(&vec![
@@ -3962,6 +3972,21 @@ fn local_quote_policy_allows_matches_policy_rules() {
 
 #[test]
 fn remote_quote_state_for_local_target_matches_policy_rules() {
+    use cfwdon_domain::QuoteState;
+
+    fn remote_quote_state_for_local_target(
+        status: &StatusRow,
+        remote_actor_follows_owner: bool,
+        blocked_by_owner: bool,
+    ) -> &'static str {
+        let policy = status.effective_quote_approval_policy();
+        QuoteState::remote_for_target(
+            blocked_by_owner,
+            policy.allows_quote(false, remote_actor_follows_owner),
+        )
+        .as_str()
+    }
+
     let mut status = StatusRow {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
@@ -4126,11 +4151,11 @@ fn remote_status_quote_helpers_follow_quote_state() {
     };
 
     assert_eq!(effective_remote_status_quote_state(&status), "accepted");
-    assert!(remote_status_has_active_quote(&status));
+    assert!(status.has_active_quote());
 
     status.quote_state = QuoteState::Revoked;
     assert_eq!(effective_remote_status_quote_state(&status), "revoked");
-    assert!(!remote_status_has_active_quote(&status));
+    assert!(!status.has_active_quote());
 }
 
 #[test]

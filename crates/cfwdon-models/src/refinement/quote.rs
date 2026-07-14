@@ -30,7 +30,7 @@ fn worker_apply_visibility_policy(visibility: Visibility) -> QuoteApprovalPolicy
     QuoteApprovalPolicy::for_status_visibility(visibility, None, ACCOUNT_DEFAULT_POLICY)
 }
 
-/// Mirrors `remote_quote_state_for_local_target` in the worker.
+/// Mirrors `QuoteState::remote_for_target` in the worker.
 fn worker_resolve_remote(state: QuoteModelState) -> QuoteState {
     let policy_allows = state.policy.allows_quote(state.is_owner, state.is_follower);
     QuoteState::remote_for_target(state.blocked_by_owner, policy_allows)

@@ -82,7 +82,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             OperationMapping {
                 model_action: "Revoke",
                 domain_call: "QuoteState::quote_state_after_revoke",
-                implementation_call: "revoke_quote_response",
+                implementation_call: "clear_local_status_quote / clear_remote_status_quote",
                 worker_guard: "requester is quote author",
             },
         ],
@@ -91,14 +91,14 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "registration_transition_events",
         domain_module: "cfwdon_domain::account::registration",
         implementation_sites: &[
-            "crates/cfwdon-worker/src/meta_placeholder_routes.rs::validate_account_registration_request",
+            "crates/cfwdon-worker/src/meta_placeholder_routes.rs::account_registration_api_details",
         ],
         abstraction: "registration field presence + pipeline stage",
         operations: &[
             OperationMapping {
                 model_action: "Validate",
                 domain_call: "ComposingRegistration::validate",
-                implementation_call: "validate_account_registration_request",
+                implementation_call: "account_registration_api_details",
                 worker_guard: "all required fields valid",
             },
             OperationMapping {
@@ -338,7 +338,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             OperationMapping {
                 model_action: "Validate",
                 domain_call: "ComposingRegistration::validate",
-                implementation_call: "validate_account_registration_request",
+                implementation_call: "account_registration_api_details",
                 worker_guard: "registration form submitted",
             },
             OperationMapping {

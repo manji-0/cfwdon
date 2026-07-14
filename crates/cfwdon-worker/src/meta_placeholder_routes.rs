@@ -16,22 +16,22 @@ use crate::{
     build_quote_request_object, build_reject_follow_activity, build_reject_quote_request_activity,
     build_relationship_for_target, build_remote_status_response,
     build_remote_status_response_with_timeline_preloads, cache_public_response,
-    can_view_local_status, clear_local_status_quote, collect_visible_notifications,
-    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
-    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
-    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
-    find_account_by_username, find_accounts_by_ids, find_authenticated_local_account,
-    find_conversation_for_account, find_conversation_id_by_status_id,
-    find_follower_follow_activity_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_actors_by_actor_uris,
-    find_remote_status_attachments_by_status_ids, find_remote_status_by_id, find_status_by_id,
-    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
-    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
-    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
-    list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    can_view_local_status, clear_local_status_quote, clear_remote_status_quote,
+    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
+    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
+    enqueue_targeted_outbox_activity, extract_hashtags_from_html, extract_hashtags_from_text,
+    filter_notification_entries_by_query, find_account_by_id, find_account_by_username,
+    find_accounts_by_ids, find_authenticated_local_account, find_conversation_for_account,
+    find_conversation_id_by_status_id, find_follower_follow_activity_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_media_attachments_by_status_ids, find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_actors_by_actor_uris, find_remote_status_attachments_by_status_ids,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
+    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
+    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
+    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
@@ -201,17 +201,6 @@ fn normalized_registration_username(value: Option<String>) -> Option<String> {
 
 fn normalized_registration_email(value: Option<String>) -> Option<String> {
     normalized_registration_field(value).map(|value| value.to_ascii_lowercase())
-}
-
-/// Field validation only; account creation uses `account_registration_api_details`.
-#[allow(dead_code)]
-pub(crate) fn validate_account_registration_request(
-    validation: &AccountRegistrationValidation,
-) -> BTreeMap<&'static str, Vec<String>> {
-    account_registration_api_details(
-        validation,
-        cfwdon_domain::RegistrationUniquenessFacts::default(),
-    )
 }
 
 fn account_registration_composing(
@@ -3888,15 +3877,22 @@ async fn quote_owner_action_response(
                 return Response::error("status not found", 404);
             };
             let updated_at = now_iso_string()?;
-            let updated_status = update_local_status_quote_state(
-                &db,
-                &quote_status,
-                quote_status
-                    .quote_state
-                    .quote_state_after_owner_action(action),
-                &updated_at,
-            )
-            .await?;
+            let updated_status = match action {
+                OwnerQuoteAction::Revoke => {
+                    clear_local_status_quote(&db, &quote_status, &updated_at).await?
+                }
+                OwnerQuoteAction::Approve | OwnerQuoteAction::Reject => {
+                    update_local_status_quote_state(
+                        &db,
+                        &quote_status,
+                        quote_status
+                            .quote_state
+                            .quote_state_after_owner_action(action),
+                        &updated_at,
+                    )
+                    .await?
+                }
+            };
             enqueue_quote_owner_decision_federation(
                 &db,
                 &config,
@@ -3935,14 +3931,19 @@ async fn quote_owner_action_response(
             else {
                 return Response::error("status not found", 404);
             };
-            let updated_status = update_remote_status_quote_state(
-                &db,
-                &quote_status.id,
-                quote_status
-                    .quote_state
-                    .quote_state_after_owner_action(action),
-            )
-            .await?;
+            let updated_status = match action {
+                OwnerQuoteAction::Revoke => clear_remote_status_quote(&db, &quote_status).await?,
+                OwnerQuoteAction::Reject | OwnerQuoteAction::Approve => {
+                    update_remote_status_quote_state(
+                        &db,
+                        &quote_status.id,
+                        quote_status
+                            .quote_state
+                            .quote_state_after_owner_action(action),
+                    )
+                    .await?
+                }
+            };
             enqueue_quote_owner_decision_federation(
                 &db,
                 &config,

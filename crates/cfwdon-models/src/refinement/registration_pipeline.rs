@@ -17,7 +17,7 @@ fn model_domain_step(
     RegistrationPipelineModel.next_state(&state, action)
 }
 
-/// Mirrors `validate_account_registration_request` success gate.
+/// Mirrors `account_registration_api_details` success gate.
 fn worker_validate_succeeds(state: RegistrationPipelineModelState) -> bool {
     registration_pipeline_validation_errors(&state).is_empty()
 }

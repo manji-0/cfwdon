@@ -55,7 +55,7 @@ pub(crate) use store_remote::*;
 pub(crate) use thread_mutes::*;
 pub(crate) use usecases::*;
 
-use cfwdon_domain::{LocalAccount, QuoteApprovalPolicy, QuoteState, StatusDraft, Visibility};
+use cfwdon_domain::{LocalAccount, QuoteApprovalPolicy, StatusDraft, Visibility};
 
 struct CreateStatusAccess {
     account: LocalAccount,
@@ -66,20 +66,6 @@ pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_followe
     QuoteApprovalPolicy::parse(policy)
         .map(|policy| policy.allows_quote(is_owner, is_follower))
         .unwrap_or(false)
-}
-
-#[allow(dead_code)]
-pub(crate) fn remote_quote_state_for_local_target(
-    status: &StatusRow,
-    remote_actor_follows_owner: bool,
-    blocked_by_owner: bool,
-) -> &'static str {
-    let policy = status.effective_quote_approval_policy();
-    QuoteState::remote_for_target(
-        blocked_by_owner,
-        policy.allows_quote(false, remote_actor_follows_owner),
-    )
-    .as_str()
 }
 
 async fn validate_local_quote_creation(
