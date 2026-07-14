@@ -535,13 +535,21 @@ pub(crate) async fn upsert_remote_reblog_status(
     remote_actor: &RemoteActorProfile,
     activity: &serde_json::Value,
 ) -> Result<()> {
+    let object_uri = activity
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::RustError("remote announce activity is missing id".to_owned()))?;
     let quote_of_uri = quote_target_uri_from_object(activity);
     let quote_resolution =
         resolve_remote_quote_resolution(db, config, remote_actor, quote_of_uri.as_deref()).await?;
     let status_id = StatusId::new(generate_entity_id(16)?)
         .map_err(|error| Error::RustError(error.to_string()))?;
-    let intent =
+    let mut intent =
         build_remote_reblog_store_intent(remote_actor, activity, status_id, quote_resolution)?;
+    if let Some(previous) = find_remote_status_by_object_uri(db, object_uri).await? {
+        intent.quote_state =
+            merged_quote_state_for_remote_upsert(previous.quote_state, intent.quote_state);
+    }
 
     upsert_remote_reblog_status_draft(db, &intent).await
 }
@@ -593,10 +601,7 @@ fn remote_reblog_upsert_sql() -> &'static str {
         visibility = excluded.visibility,
         sensitive = excluded.sensitive,
         language = excluded.language,
-        quote_state = CASE
-            WHEN remote_statuses.quote_state = 'revoked' THEN remote_statuses.quote_state
-            ELSE excluded.quote_state
-        END,
+        quote_state = excluded.quote_state,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
         updated_at = CURRENT_TIMESTAMP"
@@ -763,11 +768,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_reblog_upsert_sql_preserves_revoked_quote_state() {
+    fn remote_reblog_upsert_sql_writes_merged_quote_state() {
         let sql = remote_reblog_upsert_sql();
 
         assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
-        assert!(sql.contains("WHEN remote_statuses.quote_state = 'revoked'"));
+        assert!(sql.contains("quote_state = excluded.quote_state"));
         assert!(sql.contains("updated_at = CURRENT_TIMESTAMP"));
     }
 
