@@ -6,13 +6,33 @@ The project is still early software. The current focus is making the Mastodon AP
 
 ## Status
 
-- Rust workspace with `cfwdon-core`, `cfwdon-domain`, and `cfwdon-worker`
+- Rust workspace with `cfwdon-core`, `cfwdon-domain`, `cfwdon-models`, and `cfwdon-worker`
 - Cloudflare Worker deployment through `wrangler`
 - D1 migrations and R2 media bindings
 - Mastodon API compatibility inventory generated from upstream routes
 - ActivityPub actor, inbox, outbox, delivery, follow, status, poll, and interaction slices
 
 For the detailed route inventory, see [Mastodon API Compatibility](docs/mastodon-api-compat/README.md).
+
+## Formal Verification
+<!-- derived-from ./docs/reference/model-refinement.md -->
+<!-- constrained-by ./docs/getting-started/development.md#model-checking -->
+
+`cfwdon` keeps finite-state models in [`crates/cfwdon-models`](crates/cfwdon-models) and checks them with [Stateright](https://www.stateright.rs/). Transition steps call the same pure helpers in [`crates/cfwdon-domain`](crates/cfwdon-domain) that production code uses, so the checker does not duplicate business rules.
+
+| Area | Status |
+| --- | --- |
+| Stateright models | **16** models covering quote policy, quote approval, registration, status drafts, inbox replay, outbound delivery, follow requests, ActivityPub visibility, OAuth access provision, and federation request/DNS policy |
+| Refinement mapping | **16 / 16** executable checks link model actions to worker handlers and domain steps |
+| CI gate | `devbox run ci` runs `cargo test --workspace`, which includes `verify_models()` |
+
+`verify_models()` runs Stateright `always` / `sometimes` property checks and `refinement::verify_refinements()`. Refinement treats the worker as a restricted implementation: handlers may refuse transitions the model still explores, but allowed steps must match domain effects.
+
+```sh
+cargo test -p cfwdon-models
+```
+
+For the full catalog and worked examples, see [Model Refinement Mapping](docs/reference/model-refinement.md). For contributor workflow notes, see [Model Checking](docs/getting-started/development.md#model-checking).
 
 ## Requirements
 
@@ -47,6 +67,7 @@ Local routes that depend on D1, R2, or Auth0 need matching local or remote bindi
 - [Configuration Reference](docs/reference/configuration.md)
 - [Cloudflare Deploy Checklist](docs/operations/cloudflare-deploy.md)
 - [Architecture](docs/architecture/cfwdon-architecture.md)
+- [Model Refinement Mapping](docs/reference/model-refinement.md)
 - [Project TODO](docs/planning/full-todo.md)
 - [Mastodon API Compatibility](docs/mastodon-api-compat/README.md)
 
