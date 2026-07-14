@@ -1,6 +1,6 @@
 use cfwdon_domain::{
-    DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, OutboundActivityState,
-    next_delivery_attempt_count, outbound_state_after_delivery_attempt,
+    DeliveryAttemptOutcome, OutboundActivityState, OutboundDeliverySlot,
+    outbound_delivery_slot_after_attempt,
 };
 use stateright::{Checker, Model, Property};
 
@@ -10,14 +10,8 @@ const SLOT_COUNT: usize = 2;
 pub(crate) struct ConcurrentDeliveryModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct DeliverySlotState {
-    outbound_state: OutboundActivityState,
-    attempt_count: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ConcurrentDeliveryModelState {
-    slots: [DeliverySlotState; SLOT_COUNT],
+    slots: [OutboundDeliverySlot; SLOT_COUNT],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -48,22 +42,15 @@ impl ConcurrentDeliveryModel {
     }
 
     fn apply_action(
-        slots: &mut [DeliverySlotState; SLOT_COUNT],
+        slots: &mut [OutboundDeliverySlot; SLOT_COUNT],
         action: ConcurrentDeliveryAction,
     ) -> bool {
         let index = Self::slot_index(action);
         let slot = &mut slots[index];
-        if slot.outbound_state != OutboundActivityState::Queued {
+        if slot.state != OutboundActivityState::Queued {
             return false;
         }
-
-        let next_attempt = next_delivery_attempt_count(slot.attempt_count as i32);
-        let outcome = Self::outcome(action);
-        if matches!(outcome, DeliveryAttemptOutcome::Failure) {
-            slot.attempt_count = next_attempt;
-        }
-        slot.outbound_state =
-            outbound_state_after_delivery_attempt(slot.outbound_state, next_attempt, outcome);
+        *slot = outbound_delivery_slot_after_attempt(*slot, Self::outcome(action));
         true
     }
 }
@@ -74,19 +61,16 @@ impl Model for ConcurrentDeliveryModel {
 
     fn init_states(&self) -> Vec<Self::State> {
         vec![ConcurrentDeliveryModelState {
-            slots: [DeliverySlotState {
-                outbound_state: OutboundActivityState::Queued,
-                attempt_count: 0,
-            }; SLOT_COUNT],
+            slots: [OutboundDeliverySlot::queued(); SLOT_COUNT],
         }]
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        if state.slots[0].outbound_state == OutboundActivityState::Queued {
+        if state.slots[0].state == OutboundActivityState::Queued {
             actions.push(ConcurrentDeliveryAction::SucceedSlot0);
             actions.push(ConcurrentDeliveryAction::FailSlot0);
         }
-        if state.slots[1].outbound_state == OutboundActivityState::Queued {
+        if state.slots[1].state == OutboundActivityState::Queued {
             actions.push(ConcurrentDeliveryAction::SucceedSlot1);
             actions.push(ConcurrentDeliveryAction::FailSlot1);
         }
@@ -107,8 +91,8 @@ impl Model for ConcurrentDeliveryModel {
                 "each_slot_respects_retry_threshold",
                 |_, state: &ConcurrentDeliveryModelState| {
                     state.slots.iter().all(|slot| {
-                        slot.outbound_state != OutboundActivityState::Queued
-                            || slot.attempt_count < DELIVERY_MAX_ATTEMPTS
+                        slot.state != OutboundActivityState::Queued
+                            || slot.attempt_count < cfwdon_domain::DELIVERY_MAX_ATTEMPTS
                     })
                 },
             ),
@@ -116,8 +100,8 @@ impl Model for ConcurrentDeliveryModel {
                 "terminal_slot_requires_max_attempts",
                 |_, state: &ConcurrentDeliveryModelState| {
                     state.slots.iter().all(|slot| {
-                        slot.outbound_state != OutboundActivityState::Failed
-                            || slot.attempt_count >= DELIVERY_MAX_ATTEMPTS
+                        slot.state != OutboundActivityState::Failed
+                            || slot.attempt_count >= cfwdon_domain::DELIVERY_MAX_ATTEMPTS
                     })
                 },
             ),
@@ -127,7 +111,7 @@ impl Model for ConcurrentDeliveryModel {
                     let progressed = state
                         .slots
                         .iter()
-                        .filter(|slot| slot.outbound_state != OutboundActivityState::Queued)
+                        .filter(|slot| slot.state != OutboundActivityState::Queued)
                         .count();
                     progressed <= SLOT_COUNT
                 },
@@ -138,14 +122,14 @@ impl Model for ConcurrentDeliveryModel {
                     state
                         .slots
                         .iter()
-                        .all(|slot| slot.outbound_state == OutboundActivityState::Delivered)
+                        .all(|slot| slot.state == OutboundActivityState::Delivered)
                 },
             ),
             Property::sometimes(
                 "mixed_terminal_states_reachable",
                 |_, state: &ConcurrentDeliveryModelState| {
-                    state.slots[0].outbound_state == OutboundActivityState::Delivered
-                        && state.slots[1].outbound_state == OutboundActivityState::Failed
+                    state.slots[0].state == OutboundActivityState::Delivered
+                        && state.slots[1].state == OutboundActivityState::Failed
                 },
             ),
         ]

@@ -12,13 +12,12 @@ pub(crate) use outbox_enqueue::*;
 pub(crate) use store::*;
 pub(crate) use store_state::*;
 
-use cfwdon_domain::generic_outbox_has_follower_targets;
+use cfwdon_domain::{OUTBOX_DELIVERY_CONCURRENCY, generic_outbox_has_follower_targets};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub(crate) const OUTBOX_PROCESS_QUEUE_BINDING: &str = "OUTBOX_PROCESS_QUEUE";
-const OUTBOX_DELIVERY_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct OutboxProcessQueueMessage {

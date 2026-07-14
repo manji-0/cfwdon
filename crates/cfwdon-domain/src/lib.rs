@@ -19,13 +19,15 @@ pub use account::{
     RegistrationValidationErrors, Username, UsernameError,
 };
 pub use delivery::{
-    DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse, OutboundActivityState,
+    DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,
+    OUTBOX_DELIVERY_CONCURRENCY, OutboundActivityState, OutboundDeliverySlot,
     OutboxDeliveryRecordState, RemoteFollowState, delivery_retry_delay_modifier,
     follow_state_after_inbox_response, generic_outbox_has_follower_targets,
     generic_outbox_parent_state_after_expand, initial_remote_follow_state, is_delivery_terminal,
-    next_delivery_attempt_count, outbound_state_after_delivery_attempt,
-    outbound_terminal_failure_follow_state, outbox_delivery_state_after_attempt,
-    outbox_expand_slot_count, reconcile_pending_follow_on_outbound_terminal_failure,
+    next_delivery_attempt_count, outbound_delivery_slot_after_attempt,
+    outbound_state_after_delivery_attempt, outbound_terminal_failure_follow_state,
+    outbox_delivery_pool_size, outbox_delivery_state_after_attempt, outbox_expand_slot_count,
+    reconcile_pending_follow_on_outbound_terminal_failure,
 };
 pub use error::{
     IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RemoteStatusError,

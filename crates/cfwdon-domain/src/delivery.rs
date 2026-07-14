@@ -1,6 +1,7 @@
 //! Pure delivery retry and remote-follow reconciliation rules.
 
 pub const DELIVERY_MAX_ATTEMPTS: u32 = 5;
+pub const OUTBOX_DELIVERY_CONCURRENCY: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OutboxDeliveryRecordState {
@@ -110,6 +111,44 @@ pub fn outbound_state_after_delivery_attempt(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OutboundDeliverySlot {
+    pub state: OutboundActivityState,
+    pub attempt_count: u32,
+}
+
+impl OutboundDeliverySlot {
+    pub const fn queued() -> Self {
+        Self {
+            state: OutboundActivityState::Queued,
+            attempt_count: 0,
+        }
+    }
+}
+
+pub fn outbound_delivery_slot_after_attempt(
+    slot: OutboundDeliverySlot,
+    outcome: DeliveryAttemptOutcome,
+) -> OutboundDeliverySlot {
+    if slot.state != OutboundActivityState::Queued {
+        return slot;
+    }
+    let next_attempt = next_delivery_attempt_count(slot.attempt_count as i32);
+    let mut next = OutboundDeliverySlot {
+        state: slot.state,
+        attempt_count: slot.attempt_count,
+    };
+    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+        next.attempt_count = next_attempt;
+    }
+    next.state = outbound_state_after_delivery_attempt(slot.state, next_attempt, outcome);
+    next
+}
+
+pub fn outbox_delivery_pool_size(total_slots: u8, max_concurrency: usize) -> u8 {
+    total_slots.min(max_concurrency as u8)
+}
+
 pub fn outbound_terminal_failure_follow_state(activity_type: &str) -> Option<RemoteFollowState> {
     match activity_type {
         "Follow" => Some(RemoteFollowState::Failed),
@@ -172,6 +211,25 @@ impl RemoteFollowState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outbound_delivery_slot_transitions_match_retry_threshold() {
+        let mut slot = OutboundDeliverySlot::queued();
+        for _ in 0..(DELIVERY_MAX_ATTEMPTS - 1) {
+            slot = outbound_delivery_slot_after_attempt(slot, DeliveryAttemptOutcome::Failure);
+            assert_eq!(slot.state, OutboundActivityState::Queued);
+        }
+        slot = outbound_delivery_slot_after_attempt(slot, DeliveryAttemptOutcome::Failure);
+        assert_eq!(slot.state, OutboundActivityState::Failed);
+        assert_eq!(
+            outbound_delivery_slot_after_attempt(
+                OutboundDeliverySlot::queued(),
+                DeliveryAttemptOutcome::Success,
+            )
+            .state,
+            OutboundActivityState::Delivered
+        );
+    }
 
     #[test]
     fn delivery_retry_delay_modifier_steps_match_worker_schedule() {

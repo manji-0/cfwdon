@@ -85,6 +85,8 @@ An eleventh model covers shared inbox replay dedupe in [`crates/cfwdon-domain/sr
 
 A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/federation/`](../../crates/cfwdon-domain/src/federation/): ActivityPub signed-header requirements, actor keyId matching, static remote URL host policy, and request date skew bounds.
 
+A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently.
+
 ```sh
 cargo test -p cfwdon-models
 ```
