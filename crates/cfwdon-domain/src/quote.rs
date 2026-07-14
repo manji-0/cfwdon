@@ -123,6 +123,57 @@ impl QuoteState {
             Self::Pending
         }
     }
+
+    pub fn quote_state_for_local_publish(has_quote: bool, target_exists_locally: bool) -> Self {
+        Self::initial_for_quote_target(has_quote, target_exists_locally)
+    }
+
+    pub fn quote_state_for_remote_publish(
+        has_quote: bool,
+        target_exists_locally: bool,
+        blocked_by_owner: bool,
+        policy_allows: bool,
+    ) -> Self {
+        if !has_quote || !target_exists_locally {
+            Self::Accepted
+        } else {
+            Self::remote_for_target(blocked_by_owner, policy_allows)
+        }
+    }
+
+    pub fn quote_state_after_remote_upsert(current: Self, incoming: Self) -> Self {
+        if current == Self::Revoked {
+            current
+        } else {
+            incoming
+        }
+    }
+
+    pub fn quote_state_after_owner_approve(current: Self) -> Self {
+        match current {
+            Self::Pending => Self::Accepted,
+            other => other,
+        }
+    }
+
+    pub fn quote_state_after_owner_reject(current: Self) -> Self {
+        match current {
+            Self::Pending => Self::Rejected,
+            other => other,
+        }
+    }
+
+    pub fn quote_state_after_revoke(_current: Self) -> Self {
+        Self::Revoked
+    }
+
+    pub fn counts_in_accepted_quotes_timeline(self) -> bool {
+        self == Self::Accepted
+    }
+
+    pub fn shows_quote_placeholder(self) -> bool {
+        self == Self::Pending
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +196,30 @@ mod tests {
     fn quote_state_remote_for_blocked_target_is_rejected() {
         assert_eq!(
             QuoteState::remote_for_target(true, true),
+            QuoteState::Rejected
+        );
+    }
+
+    #[test]
+    fn remote_upsert_preserves_revoked_state() {
+        assert_eq!(
+            QuoteState::quote_state_after_remote_upsert(QuoteState::Revoked, QuoteState::Accepted,),
+            QuoteState::Revoked
+        );
+        assert_eq!(
+            QuoteState::quote_state_after_remote_upsert(QuoteState::Pending, QuoteState::Accepted,),
+            QuoteState::Accepted
+        );
+    }
+
+    #[test]
+    fn owner_approval_transitions_only_from_pending() {
+        assert_eq!(
+            QuoteState::quote_state_after_owner_approve(QuoteState::Pending),
+            QuoteState::Accepted
+        );
+        assert_eq!(
+            QuoteState::quote_state_after_owner_approve(QuoteState::Rejected),
             QuoteState::Rejected
         );
     }

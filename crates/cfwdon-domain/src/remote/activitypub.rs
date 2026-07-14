@@ -24,6 +24,27 @@ pub fn visibility_from_activitypub_audiences(
     }
 }
 
+/// Audience placement flags for locally emitted ActivityPub notes.
+///
+/// Matches worker `activitypub_audiences`: unlisted posts place Public in `cc`,
+/// while public, followers-only, and direct posts place Public in `to`.
+pub fn activitypub_audience_flags_for_visibility(visibility: Visibility) -> (bool, bool) {
+    match visibility {
+        Visibility::Unlisted => (false, true),
+        Visibility::Public | Visibility::FollowersOnly | Visibility::Direct => (true, false),
+    }
+}
+
+pub fn visibility_from_audience_lists(
+    to_audiences: &[String],
+    cc_audiences: &[String],
+) -> Visibility {
+    visibility_from_activitypub_audiences(
+        audience_values_contains_public(to_audiences),
+        audience_values_contains_public(cc_audiences),
+    )
+}
+
 pub fn is_public_activitypub_visibility(visibility: Visibility) -> bool {
     matches!(visibility, Visibility::Public | Visibility::Unlisted)
 }
@@ -60,6 +81,34 @@ mod tests {
         assert_eq!(
             visibility_from_activitypub_audiences(false, false),
             Visibility::FollowersOnly
+        );
+        assert_eq!(
+            visibility_from_activitypub_audiences(true, true),
+            Visibility::Public
+        );
+    }
+
+    #[test]
+    fn audience_flags_match_worker_activitypub_audiences() {
+        assert_eq!(
+            activitypub_audience_flags_for_visibility(Visibility::Public),
+            (true, false)
+        );
+        assert_eq!(
+            activitypub_audience_flags_for_visibility(Visibility::Unlisted),
+            (false, true)
+        );
+        assert_eq!(
+            activitypub_audience_flags_for_visibility(Visibility::FollowersOnly),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn visibility_from_audience_lists_honors_as_public_shortcut() {
+        assert_eq!(
+            visibility_from_audience_lists(&["as:Public".to_owned()], &[]),
+            Visibility::Public
         );
     }
 }

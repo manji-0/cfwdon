@@ -1,6 +1,7 @@
 pub mod account;
 pub mod delivery;
 pub mod error;
+pub mod follow;
 pub mod ids;
 pub mod instance;
 pub mod media;
@@ -18,14 +19,24 @@ pub use account::{
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse, OutboundActivityState,
-    RemoteFollowState, delivery_retry_delay_modifier, follow_state_after_inbox_response,
-    initial_remote_follow_state, is_delivery_terminal, next_delivery_attempt_count,
-    outbound_state_after_delivery_attempt, outbound_terminal_failure_follow_state,
-    reconcile_pending_follow_on_outbound_terminal_failure,
+    OutboxDeliveryRecordState, RemoteFollowState, delivery_retry_delay_modifier,
+    follow_state_after_inbox_response, generic_outbox_has_follower_targets,
+    generic_outbox_parent_state_after_expand, initial_remote_follow_state, is_delivery_terminal,
+    next_delivery_attempt_count, outbound_state_after_delivery_attempt,
+    outbound_terminal_failure_follow_state, outbox_delivery_state_after_attempt,
+    outbox_expand_slot_count, reconcile_pending_follow_on_outbound_terminal_failure,
 };
 pub use error::{
     IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RemoteStatusError,
     StatusDraftError, VisibilityError,
+};
+pub use follow::{
+    FollowRequestScenario, LocalFollowRequestState, LocalFollowState,
+    RemoteInboundFollowRequestState, authorize_local_follow_request,
+    initial_local_follow_request_state, initial_local_follow_state, local_follow_notification_type,
+    local_follow_state_after_authorize, reject_local_follow_request,
+    remote_inbound_request_after_authorize, remote_inbound_request_after_inbox_follow,
+    remote_inbound_request_after_reject,
 };
 pub use ids::{AccountId, MediaId, StatusId};
 pub use instance::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
@@ -34,9 +45,10 @@ pub use quote::{QuoteApprovalPolicy, QuoteState};
 pub use remote::{
     ActivityPubReblogInput, ActivityPubStatusInput, IncomingRemoteReblog, IncomingRemoteStatus,
     RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, RemoteStatusRecord,
-    StoredRemoteReblogIntent, StoredRemoteStatusIntent, audience_values_contains_public,
-    is_public_activitypub_visibility, is_public_audience_uri, quote_target_uri_from_fields,
-    remote_status_default_quote_state, visibility_from_activitypub_audiences,
+    StoredRemoteReblogIntent, StoredRemoteStatusIntent, activitypub_audience_flags_for_visibility,
+    audience_values_contains_public, is_public_activitypub_visibility, is_public_audience_uri,
+    quote_target_uri_from_fields, remote_status_default_quote_state,
+    visibility_from_activitypub_audiences, visibility_from_audience_lists,
 };
 pub use report::StoredReportIntent;
 pub use status::{

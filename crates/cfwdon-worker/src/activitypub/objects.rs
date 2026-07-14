@@ -32,9 +32,17 @@ pub(crate) fn activitypub_audiences(
     let public = serde_json::json!(["https://www.w3.org/ns/activitystreams#Public"]);
     let followers = serde_json::json!([format!("{}/followers", actor_url(config, username))]);
 
-    match visibility {
-        "unlisted" => (followers, public),
-        _ => (public, followers),
+    let visibility =
+        cfwdon_domain::Visibility::parse(visibility).unwrap_or(cfwdon_domain::Visibility::Public);
+    let (to_has_public, cc_has_public) =
+        cfwdon_domain::activitypub_audience_flags_for_visibility(visibility);
+
+    if to_has_public {
+        (public, followers)
+    } else if cc_has_public {
+        (followers, public)
+    } else {
+        (public, followers)
     }
 }
 

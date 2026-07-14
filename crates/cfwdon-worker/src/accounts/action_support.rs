@@ -4,42 +4,13 @@ use crate::{
     actor_url, parse_optional_bool, require_authenticated_local_account, resolve_account_reference,
     send_push_notification,
 };
+use cfwdon_domain::{LocalFollowState, initial_local_follow_state, local_follow_notification_type};
 use worker::d1::D1Type;
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct MuteAccountRequest {
     pub(crate) notifications: Option<bool>,
     pub(crate) duration: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LocalFollowState {
-    Pending,
-    Accepted,
-}
-
-impl LocalFollowState {
-    fn for_target(target: &LocalAccount) -> Self {
-        if target.is_locked() {
-            Self::Pending
-        } else {
-            Self::Accepted
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Accepted => "accepted",
-        }
-    }
-
-    fn notification_type(self) -> &'static str {
-        match self {
-            Self::Pending => "follow_request",
-            Self::Accepted => "follow",
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -64,7 +35,7 @@ impl LocalFollowUpsertDraft {
             follower_account_id: follower.id().to_owned(),
             target_account_id: target.id().to_owned(),
             target_actor_uri,
-            state: LocalFollowState::for_target(target),
+            state: initial_local_follow_state(target.is_locked()),
             show_reblogs: request.reblogs.unwrap_or(true),
             notify: request.notify.unwrap_or(false),
             languages_json: serialize_follow_languages(request)?,
@@ -210,7 +181,7 @@ pub(crate) async fn upsert_local_follow(
         db,
         config,
         &draft.target_account_id,
-        draft.state.notification_type(),
+        local_follow_notification_type(draft.state),
         local_follow_notification_payload(&draft),
     )
     .await;
@@ -374,7 +345,7 @@ mod tests {
         assert_eq!(draft.target_account_id, "target");
         assert_eq!(draft.target_actor_uri, "https://local.example/users/bob");
         assert_eq!(draft.state, LocalFollowState::Accepted);
-        assert_eq!(draft.state.notification_type(), "follow");
+        assert_eq!(local_follow_notification_type(draft.state), "follow");
         assert!(draft.show_reblogs);
         assert!(!draft.notify);
         assert_eq!(draft.languages_json, None);
@@ -398,7 +369,10 @@ mod tests {
         .expect("draft");
 
         assert_eq!(draft.state, LocalFollowState::Pending);
-        assert_eq!(draft.state.notification_type(), "follow_request");
+        assert_eq!(
+            local_follow_notification_type(draft.state),
+            "follow_request"
+        );
         assert!(!draft.show_reblogs);
         assert!(draft.notify);
         assert_eq!(draft.languages_json, Some("[\"en\",\"ja\"]".to_owned()));

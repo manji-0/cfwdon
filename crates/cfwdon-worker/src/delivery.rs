@@ -12,6 +12,7 @@ pub(crate) use outbox_enqueue::*;
 pub(crate) use store::*;
 pub(crate) use store_state::*;
 
+use cfwdon_domain::generic_outbox_has_follower_targets;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -308,7 +309,9 @@ fn partition_generic_outbox_deliveries_by_targets<'a>(
     let mut completed_without_targets = Vec::new();
     for delivery in deliveries {
         match targets_by_account.get(&delivery.account_id) {
-            Some(targets) if !targets.is_empty() => deliveries_with_targets.push(delivery),
+            Some(targets) if generic_outbox_has_follower_targets(targets.len()) => {
+                deliveries_with_targets.push(delivery)
+            }
             _ => completed_without_targets.push(delivery.id.clone()),
         }
     }

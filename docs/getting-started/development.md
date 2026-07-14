@@ -67,6 +67,14 @@ A second model covers outbound delivery retries, inbox `Accept`/`Reject` respons
 
 A third model checks that two concurrently processed outbound deliveries evolve independently while each slot still follows the same retry rules as production `buffer_unordered` processing.
 
+A fourth model covers quote approval lifecycle transitions in [`crates/cfwdon-domain/src/quote.rs`](../../crates/cfwdon-domain/src/quote.rs): local and remote publish, federation re-upsert with sticky `revoked`, and owner approve/reject/revoke paths.
+
+A fifth model covers local follow requests and inbound remote follow requests in [`crates/cfwdon-domain/src/follow.rs`](../../crates/cfwdon-domain/src/follow.rs), including locked-account `pending` queues and authorize/reject transitions.
+
+A sixth model covers generic outbox expansion and target delivery in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs): generic rows complete without targets or expand into per-inbox target deliveries with the same retry rules.
+
+A seventh model covers ActivityPub audience to visibility mapping in [`crates/cfwdon-domain/src/remote/activitypub.rs`](../../crates/cfwdon-domain/src/remote/activitypub.rs), including precedence of `to` over `cc` and quote-policy restrictions on private visibility.
+
 ```sh
 cargo test -p cfwdon-models
 ```

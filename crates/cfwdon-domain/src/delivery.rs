@@ -3,6 +3,50 @@
 pub const DELIVERY_MAX_ATTEMPTS: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutboxDeliveryRecordState {
+    Queued,
+    Expanded,
+    Delivered,
+    Failed,
+}
+
+pub fn generic_outbox_has_follower_targets(follower_target_count: usize) -> bool {
+    follower_target_count > 0
+}
+
+pub fn generic_outbox_parent_state_after_expand(
+    follower_target_count: u32,
+) -> OutboxDeliveryRecordState {
+    if follower_target_count == 0 {
+        OutboxDeliveryRecordState::Delivered
+    } else {
+        OutboxDeliveryRecordState::Expanded
+    }
+}
+
+pub fn outbox_delivery_state_after_attempt(
+    current: OutboxDeliveryRecordState,
+    next_attempt: u32,
+    outcome: DeliveryAttemptOutcome,
+) -> OutboxDeliveryRecordState {
+    match (current, outcome) {
+        (_, DeliveryAttemptOutcome::Success) => OutboxDeliveryRecordState::Delivered,
+        (OutboxDeliveryRecordState::Queued, DeliveryAttemptOutcome::Failure) => {
+            if is_delivery_terminal(next_attempt) {
+                OutboxDeliveryRecordState::Failed
+            } else {
+                OutboxDeliveryRecordState::Queued
+            }
+        }
+        (terminal, _) => terminal,
+    }
+}
+
+pub fn outbox_expand_slot_count(follower_target_count: u32, max_slots: u32) -> u32 {
+    follower_target_count.min(max_slots)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OutboundActivityState {
     Queued,
     Delivered,
@@ -195,6 +239,30 @@ mod tests {
                 FollowInboxResponse::Reject,
             ),
             RemoteFollowState::Rejected
+        );
+    }
+
+    #[test]
+    fn generic_outbox_without_targets_completes_as_delivered() {
+        assert_eq!(
+            generic_outbox_parent_state_after_expand(0),
+            OutboxDeliveryRecordState::Delivered
+        );
+        assert_eq!(
+            generic_outbox_parent_state_after_expand(2),
+            OutboxDeliveryRecordState::Expanded
+        );
+    }
+
+    #[test]
+    fn outbox_delivery_state_transitions_match_retry_threshold() {
+        assert_eq!(
+            outbox_delivery_state_after_attempt(
+                OutboxDeliveryRecordState::Queued,
+                DELIVERY_MAX_ATTEMPTS,
+                DeliveryAttemptOutcome::Failure,
+            ),
+            OutboxDeliveryRecordState::Failed
         );
     }
 
