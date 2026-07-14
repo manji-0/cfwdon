@@ -18,10 +18,9 @@ pub(crate) fn extract_remote_poll_draft(object: &serde_json::Value) -> Option<Re
     let (multiple, entries) =
         if let Some(entries) = object.get("anyOf").and_then(serde_json::Value::as_array) {
             (true, entries)
-        } else if let Some(entries) = object.get("oneOf").and_then(serde_json::Value::as_array) {
-            (false, entries)
         } else {
-            return None;
+            let entries = object.get("oneOf").and_then(serde_json::Value::as_array)?;
+            (false, entries)
         };
 
     let options = entries
