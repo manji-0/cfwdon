@@ -75,6 +75,8 @@ A sixth model covers generic outbox expansion and target delivery in [`crates/cf
 
 A seventh model covers ActivityPub audience to visibility mapping in [`crates/cfwdon-domain/src/remote/activitypub.rs`](../../crates/cfwdon-domain/src/remote/activitypub.rs), including precedence of `to` over `cc` and quote-policy restrictions on private visibility.
 
+An eighth model covers local status composition in [`crates/cfwdon-domain/src/status/draft.rs`](../../crates/cfwdon-domain/src/status/draft.rs): `ComposingStatus` validation, quote/media/poll constraints, and `PublishIntent` quote-policy and quote-state resolution.
+
 ```sh
 cargo test -p cfwdon-models
 ```
