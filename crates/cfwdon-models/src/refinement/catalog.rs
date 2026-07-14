@@ -268,7 +268,20 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         domain_module: "cfwdon_domain::follow",
         implementation_sites: &["crates/cfwdon-worker/src/follow_requests.rs"],
         abstraction: "local follow request + inbound remote request state",
-        operations: &[],
+        operations: &[
+            OperationMapping {
+                model_action: "Authorize",
+                domain_call: "authorize_local_follow_request",
+                implementation_call: "authorize_pending_follow_request",
+                worker_guard: "pending local follow or queued remote request",
+            },
+            OperationMapping {
+                model_action: "Reject",
+                domain_call: "reject_local_follow_request",
+                implementation_call: "reject_pending_follow_request",
+                worker_guard: "pending local follow or queued remote request",
+            },
+        ],
     },
     RefinementEntry {
         model: "activitypub_visibility",

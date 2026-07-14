@@ -14,6 +14,12 @@ pub(crate) enum LocalFollowRequestAction {
     Reject,
 }
 
+/// Mirrors `authorize_pending_follow_request` / `reject_pending_follow_request` guards.
+pub(crate) fn local_follow_request_action_allowed(state: &LocalFollowRequestState) -> bool {
+    state.local_follow == Some(LocalFollowState::Pending)
+        || state.remote_request == RemoteInboundFollowRequestState::Queued
+}
+
 impl Model for LocalFollowRequestModel {
     type State = LocalFollowRequestState;
     type Action = LocalFollowRequestAction;
@@ -36,35 +42,21 @@ impl Model for LocalFollowRequestModel {
     }
 
     fn actions(&self, state: &Self::State, actions: &mut Vec<Self::Action>) {
-        if state.local_follow == Some(LocalFollowState::Pending) {
-            actions.push(LocalFollowRequestAction::Authorize);
-            actions.push(LocalFollowRequestAction::Reject);
-        }
-        if state.remote_request == RemoteInboundFollowRequestState::Queued {
+        if local_follow_request_action_allowed(state) {
             actions.push(LocalFollowRequestAction::Authorize);
             actions.push(LocalFollowRequestAction::Reject);
         }
     }
 
     fn next_state(&self, state: &Self::State, action: Self::Action) -> Option<Self::State> {
-        match action {
-            LocalFollowRequestAction::Authorize => {
-                if state.local_follow != Some(LocalFollowState::Pending)
-                    && state.remote_request != RemoteInboundFollowRequestState::Queued
-                {
-                    return None;
-                }
-                Some(authorize_local_follow_request(*state))
-            }
-            LocalFollowRequestAction::Reject => {
-                if state.local_follow != Some(LocalFollowState::Pending)
-                    && state.remote_request != RemoteInboundFollowRequestState::Queued
-                {
-                    return None;
-                }
-                Some(reject_local_follow_request(*state))
-            }
+        if !local_follow_request_action_allowed(state) {
+            return None;
         }
+
+        Some(match action {
+            LocalFollowRequestAction::Authorize => authorize_local_follow_request(*state),
+            LocalFollowRequestAction::Reject => reject_local_follow_request(*state),
+        })
     }
 
     fn properties(&self) -> Vec<Property<Self>> {
