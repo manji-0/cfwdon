@@ -13,6 +13,7 @@ mod outbound_follow;
 mod outbox_pipeline;
 mod quote;
 mod quote_approval;
+mod registration_pipeline;
 mod status_draft_publish;
 
 /// Run every Stateright model in this crate. Panics when a property is violated.
@@ -25,4 +26,5 @@ pub fn verify_models() {
     outbox_pipeline::check_outbox_pipeline_model();
     activitypub_visibility::check_activitypub_visibility_model();
     status_draft_publish::check_status_draft_publish_model();
+    registration_pipeline::check_registration_pipeline_model();
 }

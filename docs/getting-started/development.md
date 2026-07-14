@@ -77,6 +77,8 @@ A seventh model covers ActivityPub audience to visibility mapping in [`crates/cf
 
 An eighth model covers local status composition in [`crates/cfwdon-domain/src/status/draft.rs`](../../crates/cfwdon-domain/src/status/draft.rs): `ComposingStatus` validation, quote/media/poll constraints, and `PublishIntent` quote-policy and quote-state resolution.
 
+A ninth model covers account registration in [`crates/cfwdon-domain/src/account/registration.rs`](../../crates/cfwdon-domain/src/account/registration.rs): field validation, `RegistrationIntent` assignment, and `LocalAccount` provisioning defaults.
+
 ```sh
 cargo test -p cfwdon-models
 ```
