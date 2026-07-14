@@ -79,6 +79,8 @@ An eighth model covers local status composition in [`crates/cfwdon-domain/src/st
 
 A ninth model covers account registration in [`crates/cfwdon-domain/src/account/registration.rs`](../../crates/cfwdon-domain/src/account/registration.rs): field validation, `RegistrationIntent` assignment, and `LocalAccount` provisioning defaults.
 
+A tenth model covers OAuth-style access provisioning in the same module: email resolution, username derivation with collision suffixing, and provisioning defaults for first-time authenticated users.
+
 ```sh
 cargo test -p cfwdon-models
 ```

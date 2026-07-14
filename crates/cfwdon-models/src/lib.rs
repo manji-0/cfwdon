@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+mod access_provision;
 mod activitypub_visibility;
 mod concurrent_delivery;
 mod local_follow_request;
@@ -27,4 +28,5 @@ pub fn verify_models() {
     activitypub_visibility::check_activitypub_visibility_model();
     status_draft_publish::check_status_draft_publish_model();
     registration_pipeline::check_registration_pipeline_model();
+    access_provision::check_access_provision_model();
 }
