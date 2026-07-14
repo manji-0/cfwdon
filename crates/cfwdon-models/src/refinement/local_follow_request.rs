@@ -1,8 +1,9 @@
 use cfwdon_domain::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,
     RemoteInboundFollowRequestState, authorize_local_follow_request,
-    initial_local_follow_request_state, initial_local_follow_state, reject_local_follow_request,
-    remote_inbound_request_after_inbox_follow,
+    initial_local_follow_request_state, initial_local_follow_state,
+    pending_local_follow_request_state, pending_remote_follow_request_state,
+    reject_local_follow_request, remote_inbound_request_after_inbox_follow,
 };
 
 use crate::local_follow_request::{
@@ -99,6 +100,31 @@ pub(crate) fn check_local_follow_request_refinement() {
     );
     assert_eq!(
         reject_local_follow_request(remote_queued).remote_request,
+        RemoteInboundFollowRequestState::Absent
+    );
+
+    let worker_local_pending = pending_local_follow_request_state(true);
+    assert_eq!(
+        authorize_local_follow_request(worker_local_pending).local_follow,
+        Some(LocalFollowState::Accepted)
+    );
+    assert_eq!(
+        reject_local_follow_request(worker_local_pending).local_follow,
+        None
+    );
+
+    let worker_remote_queued = pending_remote_follow_request_state(true);
+    let worker_authorized = authorize_local_follow_request(worker_remote_queued);
+    assert_eq!(
+        worker_authorized.local_follow,
+        Some(LocalFollowState::Accepted)
+    );
+    assert_eq!(
+        worker_authorized.remote_request,
+        RemoteInboundFollowRequestState::Fulfilled
+    );
+    assert_eq!(
+        reject_local_follow_request(worker_remote_queued).remote_request,
         RemoteInboundFollowRequestState::Absent
     );
 }

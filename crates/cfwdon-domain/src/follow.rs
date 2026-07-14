@@ -135,6 +135,26 @@ pub fn reject_local_follow_request(mut state: LocalFollowRequestState) -> LocalF
     state
 }
 
+/// Worker abstraction for a pending local follow row awaiting authorize/reject.
+pub fn pending_local_follow_request_state(target_locked: bool) -> LocalFollowRequestState {
+    LocalFollowRequestState {
+        scenario: FollowRequestScenario::LocalFollower,
+        target_locked,
+        local_follow: Some(LocalFollowState::Pending),
+        remote_request: RemoteInboundFollowRequestState::Absent,
+    }
+}
+
+/// Worker abstraction for a queued inbound remote follow request.
+pub fn pending_remote_follow_request_state(target_locked: bool) -> LocalFollowRequestState {
+    LocalFollowRequestState {
+        scenario: FollowRequestScenario::RemoteFollower,
+        target_locked,
+        local_follow: None,
+        remote_request: RemoteInboundFollowRequestState::Queued,
+    }
+}
+
 impl LocalFollowState {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -182,5 +202,22 @@ mod tests {
             initial_local_follow_request_state(FollowRequestScenario::LocalFollower, true);
         let rejected = reject_local_follow_request(initial);
         assert_eq!(rejected.local_follow, None);
+    }
+
+    #[test]
+    fn pending_follow_request_states_match_worker_entry_points() {
+        let local = pending_local_follow_request_state(true);
+        assert_eq!(local.local_follow, Some(LocalFollowState::Pending));
+        assert_eq!(
+            local.remote_request,
+            RemoteInboundFollowRequestState::Absent
+        );
+
+        let remote = pending_remote_follow_request_state(true);
+        assert_eq!(remote.local_follow, None);
+        assert_eq!(
+            remote.remote_request,
+            RemoteInboundFollowRequestState::Queued
+        );
     }
 }

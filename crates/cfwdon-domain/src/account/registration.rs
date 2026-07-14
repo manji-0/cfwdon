@@ -28,6 +28,79 @@ impl RegistrationValidationErrors {
             && self.password.is_none()
             && self.agreement.is_none()
     }
+
+    /// Mastodon-compatible field error messages for API validation responses.
+    pub fn into_api_details(self) -> std::collections::BTreeMap<&'static str, Vec<String>> {
+        let mut details = std::collections::BTreeMap::new();
+        if let Some(issue) = self.username {
+            details.insert(
+                "username",
+                vec![
+                    registration_field_issue_message(RegistrationValidationField::Username, issue)
+                        .to_owned(),
+                ],
+            );
+        }
+        if let Some(issue) = self.email {
+            details.insert(
+                "email",
+                vec![
+                    registration_field_issue_message(RegistrationValidationField::Email, issue)
+                        .to_owned(),
+                ],
+            );
+        }
+        if let Some(issue) = self.password {
+            details.insert(
+                "password",
+                vec![
+                    registration_field_issue_message(RegistrationValidationField::Password, issue)
+                        .to_owned(),
+                ],
+            );
+        }
+        if let Some(issue) = self.agreement {
+            details.insert(
+                "agreement",
+                vec![
+                    registration_field_issue_message(RegistrationValidationField::Agreement, issue)
+                        .to_owned(),
+                ],
+            );
+        }
+        details
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistrationValidationField {
+    Username,
+    Email,
+    Password,
+    Agreement,
+}
+
+pub fn registration_field_issue_message(
+    field: RegistrationValidationField,
+    issue: RegistrationFieldIssue,
+) -> &'static str {
+    match (field, issue) {
+        (RegistrationValidationField::Username, RegistrationFieldIssue::Blank) => "can't be blank",
+        (RegistrationValidationField::Username, RegistrationFieldIssue::InvalidFormat) => {
+            "must contain only letters, numbers and underscores"
+        }
+        (RegistrationValidationField::Email, RegistrationFieldIssue::Blank) => "can't be blank",
+        (RegistrationValidationField::Email, RegistrationFieldIssue::InvalidFormat) => "is invalid",
+        (RegistrationValidationField::Password, RegistrationFieldIssue::Blank) => "can't be blank",
+        (RegistrationValidationField::Password, RegistrationFieldIssue::InvalidFormat) => {
+            "is invalid"
+        }
+        (RegistrationValidationField::Agreement, RegistrationFieldIssue::Blank) => "can't be blank",
+        (RegistrationValidationField::Agreement, RegistrationFieldIssue::InvalidFormat) => {
+            "is invalid"
+        }
+        (_, RegistrationFieldIssue::MustBeAccepted) => "must be accepted",
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -253,6 +326,33 @@ mod tests {
         assert_eq!(
             errors.agreement,
             Some(RegistrationFieldIssue::MustBeAccepted)
+        );
+    }
+
+    #[test]
+    fn validation_errors_map_to_api_details() {
+        let details = RegistrationValidationErrors {
+            username: Some(RegistrationFieldIssue::InvalidFormat),
+            email: Some(RegistrationFieldIssue::Blank),
+            password: None,
+            agreement: Some(RegistrationFieldIssue::MustBeAccepted),
+        }
+        .into_api_details();
+
+        assert_eq!(
+            details.get("username"),
+            Some(&vec![
+                "must contain only letters, numbers and underscores".to_owned()
+            ])
+        );
+        assert_eq!(
+            details.get("email"),
+            Some(&vec!["can't be blank".to_owned()])
+        );
+        assert_eq!(details.get("password"), None);
+        assert_eq!(
+            details.get("agreement"),
+            Some(&vec!["must be accepted".to_owned()])
         );
     }
 

@@ -12,6 +12,11 @@ use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pag
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{
+    LocalFollowState, RemoteInboundFollowRequestState, authorize_local_follow_request,
+    pending_local_follow_request_state, pending_remote_follow_request_state,
+    reject_local_follow_request,
+};
 use serde::Deserialize;
 use url::Url;
 use worker::d1::D1Type;
@@ -489,21 +494,27 @@ async fn authorize_pending_follow_request(
             requester_account_id,
             ..
         } => {
-            let bindings = [
-                D1Type::Text(viewer.id()),
-                D1Type::Text(requester_account_id.as_str()),
-            ];
-            db.prepare(
-                "UPDATE follows
-                 SET state = 'accepted',
-                     updated_at = CURRENT_TIMESTAMP
-                 WHERE target_account_id = ?1
-                   AND follower_account_id = ?2
-                   AND state = 'pending'",
-            )
-            .bind_refs(bindings.iter())?
-            .run()
-            .await?;
+            let next = authorize_local_follow_request(pending_local_follow_request_state(
+                viewer.is_locked(),
+            ));
+            if next.local_follow == Some(LocalFollowState::Accepted) {
+                let bindings = [
+                    D1Type::Text(viewer.id()),
+                    D1Type::Text(requester_account_id.as_str()),
+                    D1Type::Text(LocalFollowState::Accepted.as_str()),
+                ];
+                db.prepare(
+                    "UPDATE follows
+                     SET state = ?3,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE target_account_id = ?1
+                       AND follower_account_id = ?2
+                       AND state = 'pending'",
+                )
+                .bind_refs(bindings.iter())?
+                .run()
+                .await?;
+            }
             let requester = find_account_by_id(db, requester_account_id)
                 .await?
                 .ok_or_else(|| worker::Error::RustError("follow requester not found".to_owned()))?;
@@ -519,36 +530,41 @@ async fn authorize_pending_follow_request(
             )?)
         }
         PendingFollowRequest::Remote { request, .. } => {
-            upsert_follower_by_inbox(
-                db,
-                viewer.id(),
-                &request.requester_actor_uri,
-                &request.requester_inbox_uri,
-                request.requester_shared_inbox_uri.as_deref(),
-                request.follow_activity_id.as_deref(),
-            )
-            .await?;
-            delete_remote_follow_request_by_actor(
-                db,
-                viewer.id(),
-                &request.requester_actor_uri,
-                &request.requester_actor_uri,
-            )
-            .await?;
-            if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
-                let payload = build_stored_accept_follow_activity(
-                    config,
-                    viewer,
-                    follow_activity_id,
-                    &request.requester_actor_uri,
-                )?;
-                let _ = crate::queue_remote_actor_activity_required(
+            let next = authorize_local_follow_request(pending_remote_follow_request_state(
+                viewer.is_locked(),
+            ));
+            if next.remote_request == RemoteInboundFollowRequestState::Fulfilled {
+                upsert_follower_by_inbox(
                     db,
                     viewer.id(),
                     &request.requester_actor_uri,
-                    &payload,
+                    &request.requester_inbox_uri,
+                    request.requester_shared_inbox_uri.as_deref(),
+                    request.follow_activity_id.as_deref(),
                 )
-                .await;
+                .await?;
+                delete_remote_follow_request_by_actor(
+                    db,
+                    viewer.id(),
+                    &request.requester_actor_uri,
+                    &request.requester_actor_uri,
+                )
+                .await?;
+                if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
+                    let payload = build_stored_accept_follow_activity(
+                        config,
+                        viewer,
+                        follow_activity_id,
+                        &request.requester_actor_uri,
+                    )?;
+                    let _ = crate::queue_remote_actor_activity_required(
+                        db,
+                        viewer.id(),
+                        &request.requester_actor_uri,
+                        &payload,
+                    )
+                    .await;
+                }
             }
             Ok(serde_json::to_value(
                 build_relationship_for_target(
@@ -575,19 +591,23 @@ async fn reject_pending_follow_request(
             requester_account_id,
             ..
         } => {
-            let bindings = [
-                D1Type::Text(viewer.id()),
-                D1Type::Text(requester_account_id.as_str()),
-            ];
-            db.prepare(
-                "DELETE FROM follows
-                 WHERE target_account_id = ?1
-                   AND follower_account_id = ?2
-                   AND state = 'pending'",
-            )
-            .bind_refs(bindings.iter())?
-            .run()
-            .await?;
+            let next =
+                reject_local_follow_request(pending_local_follow_request_state(viewer.is_locked()));
+            if next.local_follow.is_none() {
+                let bindings = [
+                    D1Type::Text(viewer.id()),
+                    D1Type::Text(requester_account_id.as_str()),
+                ];
+                db.prepare(
+                    "DELETE FROM follows
+                     WHERE target_account_id = ?1
+                       AND follower_account_id = ?2
+                       AND state = 'pending'",
+                )
+                .bind_refs(bindings.iter())?
+                .run()
+                .await?;
+            }
             let requester = find_account_by_id(db, requester_account_id)
                 .await?
                 .ok_or_else(|| worker::Error::RustError("follow requester not found".to_owned()))?;
@@ -603,27 +623,32 @@ async fn reject_pending_follow_request(
             )?)
         }
         PendingFollowRequest::Remote { request, .. } => {
-            delete_remote_follow_request_by_actor(
-                db,
-                viewer.id(),
-                &request.requester_actor_uri,
-                &request.requester_actor_uri,
-            )
-            .await?;
-            if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
-                let payload = build_reject_follow_activity(
-                    config,
-                    viewer,
-                    follow_activity_id,
-                    &request.requester_actor_uri,
-                )?;
-                let _ = crate::queue_remote_actor_activity_required(
+            let next = reject_local_follow_request(pending_remote_follow_request_state(
+                viewer.is_locked(),
+            ));
+            if next.remote_request == RemoteInboundFollowRequestState::Absent {
+                delete_remote_follow_request_by_actor(
                     db,
                     viewer.id(),
                     &request.requester_actor_uri,
-                    &payload,
+                    &request.requester_actor_uri,
                 )
-                .await;
+                .await?;
+                if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
+                    let payload = build_reject_follow_activity(
+                        config,
+                        viewer,
+                        follow_activity_id,
+                        &request.requester_actor_uri,
+                    )?;
+                    let _ = crate::queue_remote_actor_activity_required(
+                        db,
+                        viewer.id(),
+                        &request.requester_actor_uri,
+                        &payload,
+                    )
+                    .await;
+                }
             }
             Ok(serde_json::to_value(
                 build_relationship_for_target(

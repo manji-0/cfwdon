@@ -214,69 +214,8 @@ pub(crate) fn validate_account_registration_request(
     };
     match composing.validate() {
         Ok(_) => BTreeMap::new(),
-        Err(errors) => registration_validation_errors_to_details(errors),
+        Err(errors) => errors.into_api_details(),
     }
-}
-
-fn registration_validation_errors_to_details(
-    errors: cfwdon_domain::RegistrationValidationErrors,
-) -> BTreeMap<&'static str, Vec<String>> {
-    let mut details = BTreeMap::new();
-    if let Some(issue) = errors.username {
-        details.insert(
-            "username",
-            vec![
-                match issue {
-                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
-                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => {
-                        "must contain only letters, numbers and underscores"
-                    }
-                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
-                }
-                .to_owned(),
-            ],
-        );
-    }
-    if let Some(issue) = errors.email {
-        details.insert(
-            "email",
-            vec![
-                match issue {
-                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
-                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
-                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
-                }
-                .to_owned(),
-            ],
-        );
-    }
-    if let Some(issue) = errors.password {
-        details.insert(
-            "password",
-            vec![
-                match issue {
-                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
-                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
-                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
-                }
-                .to_owned(),
-            ],
-        );
-    }
-    if let Some(issue) = errors.agreement {
-        details.insert(
-            "agreement",
-            vec![
-                match issue {
-                    cfwdon_domain::RegistrationFieldIssue::Blank => "can't be blank",
-                    cfwdon_domain::RegistrationFieldIssue::InvalidFormat => "is invalid",
-                    cfwdon_domain::RegistrationFieldIssue::MustBeAccepted => "must be accepted",
-                }
-                .to_owned(),
-            ],
-        );
-    }
-    details
 }
 
 pub(crate) fn normalize_streaming_channel(value: Option<&str>) -> Option<String> {

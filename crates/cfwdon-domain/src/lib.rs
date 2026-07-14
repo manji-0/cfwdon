@@ -16,7 +16,8 @@ pub use account::{
     AccessEmail, AccessEmailError, AccessProvisionIntent, AccountHandle, AccountKeyMaterial,
     ComposingAccessProvision, ComposingRegistration, LocalAccount, LocalAccountRecord,
     ProfileField, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
-    RegistrationIntent, RegistrationValidationErrors, Username, UsernameError,
+    RegistrationIntent, RegistrationValidationErrors, RegistrationValidationField, Username,
+    UsernameError, registration_field_issue_message,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,
@@ -47,7 +48,8 @@ pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,
     RemoteInboundFollowRequestState, authorize_local_follow_request,
     initial_local_follow_request_state, initial_local_follow_state, local_follow_notification_type,
-    local_follow_state_after_authorize, reject_local_follow_request,
+    local_follow_state_after_authorize, pending_local_follow_request_state,
+    pending_remote_follow_request_state, reject_local_follow_request,
     remote_inbound_request_after_authorize, remote_inbound_request_after_inbox_follow,
     remote_inbound_request_after_reject,
 };
