@@ -292,6 +292,7 @@ async fn remote_account_statuses_json_response(
             remote_attachments_by_status_id
                 .remove(&status.id)
                 .unwrap_or_default(),
+            None,
         )
         .await?;
         if let Some(counts) = actor_social_counts {

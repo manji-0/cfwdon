@@ -1,6 +1,6 @@
 use super::{
-    CACHE_TTL_FEDERATION, Error, MastodonAccountResponse, Request, Response, Result, RouteContext,
-    build_activitypub_note, build_finished_context_async_refresh_header,
+    CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API, Error, MastodonAccountResponse, Request, Response,
+    Result, RouteContext, build_activitypub_note, build_finished_context_async_refresh_header,
     build_local_status_context, build_local_status_response, build_remote_status_context,
     build_remote_status_response, cache_public_json_response, cache_public_response_with_options,
     cache_status_api_response, cached_status_api_response, find_account_by_id,
@@ -981,6 +981,12 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
     .await?;
     if detail.viewer.is_none() {
         cache_status_api_response(&ctx, &detail.base.status_id, &response).await?;
+        return cache_public_json_response(
+            &response,
+            "application/json; charset=utf-8",
+            CACHE_TTL_STATUS_API,
+            &[("Cache-Tag", &format!("status-{}", detail.base.status_id))],
+        );
     }
     Response::from_json(&response)
 }

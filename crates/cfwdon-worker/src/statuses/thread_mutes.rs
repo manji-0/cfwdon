@@ -1,16 +1,79 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_local_status_response, find_status_by_id,
+    Error, Request, Response, Result, RouteContext, build_local_status_response,
     find_visible_local_status_response_subject, load_config, require_authenticated_local_account,
+    sql_placeholders, unique_ordered_refs,
 };
-use std::collections::HashSet;
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
+
+#[derive(Debug, Deserialize)]
+struct StatusReplyLinkRow {
+    id: String,
+    in_reply_to_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadRootStatusIdRow {
+    thread_root_status_id: String,
+}
 
 async fn resolve_thread_root_status_id(
     db: &worker::D1Database,
     status: &crate::StatusRow,
 ) -> Result<String> {
-    let mut current_id = status.id.clone();
-    let mut parent_id = status.in_reply_to_id.clone();
+    let roots = resolve_thread_root_status_ids(db, &[status]).await?;
+    roots.get(&status.id).cloned().ok_or_else(|| {
+        Error::RustError("failed to resolve thread root for local status".to_owned())
+    })
+}
+
+/// Resolve thread-root status ids for many local statuses with batched parent fetches.
+pub(crate) async fn resolve_thread_root_status_ids(
+    db: &worker::D1Database,
+    statuses: &[&crate::StatusRow],
+) -> Result<HashMap<String, String>> {
+    let mut parent_by_id = HashMap::new();
+    for status in statuses {
+        parent_by_id.insert(status.id.clone(), status.in_reply_to_id.clone());
+    }
+
+    loop {
+        let mut missing = Vec::new();
+        let mut seen_missing = HashSet::new();
+        for parent in parent_by_id.values().filter_map(|parent| parent.as_ref()) {
+            if !parent_by_id.contains_key(parent) && seen_missing.insert(parent.as_str()) {
+                missing.push(parent.clone());
+            }
+        }
+        if missing.is_empty() {
+            break;
+        }
+
+        let loaded = load_status_reply_links(db, &missing).await?;
+        for parent_id in missing {
+            if let Some(in_reply_to_id) = loaded.get(&parent_id) {
+                parent_by_id.insert(parent_id, in_reply_to_id.clone());
+            }
+            // Missing DB rows stay absent so walk stops at the child (legacy behavior).
+        }
+    }
+
+    let mut roots = HashMap::with_capacity(statuses.len());
+    for status in statuses {
+        roots.insert(
+            status.id.clone(),
+            thread_root_from_parent_map(&status.id, &parent_by_id)?,
+        );
+    }
+    Ok(roots)
+}
+
+fn thread_root_from_parent_map(
+    start_id: &str,
+    parent_by_id: &HashMap<String, Option<String>>,
+) -> Result<String> {
+    let mut current_id = start_id.to_owned();
     let mut seen = HashSet::new();
 
     loop {
@@ -19,15 +82,100 @@ async fn resolve_thread_root_status_id(
                 "detected cycle while resolving thread root".to_owned(),
             ));
         }
-        let Some(next_parent_id) = parent_id.as_deref() else {
+        let Some(parent_id) = parent_by_id
+            .get(&current_id)
+            .and_then(|parent| parent.as_ref())
+        else {
             return Ok(current_id);
         };
-        let Some(parent) = find_status_by_id(db, next_parent_id).await? else {
+        if !parent_by_id.contains_key(parent_id) {
             return Ok(current_id);
-        };
-        current_id = parent.id;
-        parent_id = parent.in_reply_to_id;
+        }
+        current_id = parent_id.clone();
     }
+}
+
+async fn load_status_reply_links(
+    db: &worker::D1Database,
+    status_ids: &[String],
+) -> Result<HashMap<String, Option<String>>> {
+    let ids = unique_ordered_refs(status_ids);
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = sql_placeholders(1, ids.len());
+    let sql = format!(
+        "SELECT id, in_reply_to_id
+         FROM statuses
+         WHERE id IN ({placeholders})"
+    );
+    let bindings = ids
+        .iter()
+        .map(|id| D1Type::Text(id.as_str()))
+        .collect::<Vec<_>>();
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<StatusReplyLinkRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.in_reply_to_id))
+        .collect())
+}
+
+async fn load_muted_thread_root_status_ids(
+    db: &worker::D1Database,
+    account_id: &str,
+    root_status_ids: &[String],
+) -> Result<HashSet<String>> {
+    let roots = unique_ordered_refs(root_status_ids);
+    if roots.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = sql_placeholders(2, roots.len());
+    let sql = format!(
+        "SELECT thread_root_status_id
+         FROM thread_mutes
+         WHERE account_id = ?1
+           AND thread_root_status_id IN ({placeholders})"
+    );
+    let mut bindings = Vec::with_capacity(roots.len() + 1);
+    bindings.push(D1Type::Text(account_id));
+    bindings.extend(roots.iter().map(|id| D1Type::Text(id.as_str())));
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+
+    Ok(result
+        .results::<ThreadRootStatusIdRow>()?
+        .into_iter()
+        .map(|row| row.thread_root_status_id)
+        .collect())
+}
+
+/// Return the subset of status ids whose thread root is muted by `account_id`.
+pub(crate) async fn local_status_ids_thread_muted_by(
+    db: &worker::D1Database,
+    account_id: &str,
+    statuses: &[&crate::StatusRow],
+) -> Result<HashSet<String>> {
+    if statuses.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let roots_by_status_id = resolve_thread_root_status_ids(db, statuses).await?;
+    let mut seen_roots = HashSet::new();
+    let root_ids = roots_by_status_id
+        .values()
+        .filter(|root| seen_roots.insert(root.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let muted_roots = load_muted_thread_root_status_ids(db, account_id, &root_ids).await?;
+
+    Ok(roots_by_status_id
+        .into_iter()
+        .filter(|(_, root)| muted_roots.contains(root))
+        .map(|(status_id, _)| status_id)
+        .collect())
 }
 
 pub(crate) async fn is_local_status_thread_muted_by(
@@ -35,23 +183,8 @@ pub(crate) async fn is_local_status_thread_muted_by(
     account_id: &str,
     status: &crate::StatusRow,
 ) -> Result<bool> {
-    let root_status_id = resolve_thread_root_status_id(db, status).await?;
-    let bindings = [
-        D1Type::Text(account_id),
-        D1Type::Text(root_status_id.as_str()),
-    ];
-    Ok(db
-        .prepare(
-            "SELECT thread_root_status_id
-             FROM thread_mutes
-             WHERE account_id = ?1
-               AND thread_root_status_id = ?2
-             LIMIT 1",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<serde_json::Value>(None)
-        .await?
-        .is_some())
+    let muted = local_status_ids_thread_muted_by(db, account_id, &[status]).await?;
+    Ok(muted.contains(&status.id))
 }
 
 pub(crate) async fn account_has_thread_mutes(
@@ -182,4 +315,48 @@ async fn thread_mute_status_response(
         preload.media,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thread_root_from_parent_map;
+    use std::collections::HashMap;
+
+    #[test]
+    fn thread_root_from_parent_map_walks_to_root() {
+        let parent_by_id = HashMap::from([
+            ("reply-2".to_owned(), Some("reply-1".to_owned())),
+            ("reply-1".to_owned(), Some("root".to_owned())),
+            ("root".to_owned(), None),
+        ]);
+
+        assert_eq!(
+            thread_root_from_parent_map("reply-2", &parent_by_id).unwrap(),
+            "root"
+        );
+        assert_eq!(
+            thread_root_from_parent_map("root", &parent_by_id).unwrap(),
+            "root"
+        );
+    }
+
+    #[test]
+    fn thread_root_from_parent_map_stops_when_parent_row_is_missing() {
+        let parent_by_id = HashMap::from([("reply".to_owned(), Some("missing-parent".to_owned()))]);
+
+        assert_eq!(
+            thread_root_from_parent_map("reply", &parent_by_id).unwrap(),
+            "reply"
+        );
+    }
+
+    #[test]
+    fn thread_root_from_parent_map_detects_cycles() {
+        let parent_by_id = HashMap::from([
+            ("a".to_owned(), Some("b".to_owned())),
+            ("b".to_owned(), Some("a".to_owned())),
+        ]);
+
+        assert!(thread_root_from_parent_map("a", &parent_by_id).is_err());
+    }
 }

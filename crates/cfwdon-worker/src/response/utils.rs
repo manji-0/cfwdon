@@ -8,6 +8,8 @@ pub(crate) const CACHE_TTL_TRENDS: u32 = 60;
 pub(crate) const CACHE_TTL_STATIC_METADATA: u32 = 300;
 pub(crate) const CACHE_TTL_OAUTH_DISCOVERY: u32 = 3600;
 pub(crate) const CACHE_TTL_OEMBED: u32 = 3600;
+pub(crate) const CACHE_TTL_STATUS_API: u32 = 30;
+pub(crate) const CACHE_TTL_ACCOUNT_API: u32 = 60;
 
 pub(crate) fn json_response<T>(
     value: &T,

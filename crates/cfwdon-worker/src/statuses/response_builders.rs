@@ -18,7 +18,8 @@ use super::{
     load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
     load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
     load_status_filtered, load_status_updated_at, local_status_identity_from_uri,
-    local_status_target_uri, resolve_local_status_response_subject, strip_html_tags,
+    local_status_ids_thread_muted_by, local_status_target_uri,
+    resolve_local_status_response_subject, strip_html_tags,
 };
 use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
@@ -261,6 +262,7 @@ pub(crate) struct LocalStatusViewerStatePreload {
     reblogged_target_uris: HashSet<String>,
     bookmarked_target_uris: HashSet<String>,
     pinned_status_ids: HashSet<String>,
+    muted_status_ids: HashSet<String>,
     has_thread_mutes: bool,
 }
 
@@ -284,8 +286,8 @@ impl LocalStatusViewerStatePreload {
         self.pinned_status_ids.contains(status_id)
     }
 
-    fn can_skip_thread_mute_lookup(&self) -> bool {
-        !self.has_thread_mutes
+    fn muted(&self, status_id: &str) -> bool {
+        self.has_thread_mutes && self.muted_status_ids.contains(status_id)
     }
 }
 
@@ -318,7 +320,7 @@ fn preloaded_local_status_response_viewer_state(
             reblogged: preload.reblogged(status),
             bookmarked: preload.bookmarked(status),
             pinned: preload.pinned(&status.id),
-            muted: preload.can_skip_thread_mute_lookup().then_some(false),
+            muted: Some(preload.muted(&status.id)),
         }),
         (None, _) => Some(LocalStatusPreloadedViewerState {
             muted: Some(false),
@@ -512,12 +514,18 @@ pub(crate) async fn preload_local_status_viewer_state(
             }
         },
     )?;
+    let muted_status_ids = if has_thread_mutes {
+        local_status_ids_thread_muted_by(db, account_id, statuses).await?
+    } else {
+        HashSet::new()
+    };
 
     Ok(LocalStatusViewerStatePreload {
         favourited_target_uris,
         reblogged_target_uris,
         bookmarked_target_uris,
         pinned_status_ids,
+        muted_status_ids,
         has_thread_mutes,
     })
 }
@@ -814,9 +822,74 @@ pub(crate) async fn build_status_mentions(
     config: &AppConfig,
     text: &str,
 ) -> Result<Vec<serde_json::Value>> {
+    build_status_mentions_with_preload(db, config, text, None).await
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct MentionAccountsPreload {
+    local_accounts: HashMap<String, LocalAccount>,
+    remote_actors: HashMap<(String, String), RemoteActorRow>,
+}
+
+pub(crate) async fn preload_mention_accounts_from_texts(
+    db: &D1Database,
+    config: &AppConfig,
+    texts: &[&str],
+) -> Result<MentionAccountsPreload> {
+    let mut local_usernames = Vec::new();
+    let mut remote_pairs = Vec::new();
+    let mut seen_local = HashSet::new();
+    let mut seen_remote = HashSet::new();
+
+    for text in texts {
+        let handles = crate::extract_account_handles_from_text(text, config);
+        let keys = mention_lookup_keys(&handles, &config.instance_domain);
+        for username in keys.local_usernames {
+            if seen_local.insert(username.clone()) {
+                local_usernames.push(username);
+            }
+        }
+        for pair in keys.remote_pairs {
+            if seen_remote.insert(pair.clone()) {
+                remote_pairs.push(pair);
+            }
+        }
+    }
+
+    let (local_accounts, remote_actors) = futures_util::try_join!(
+        load_mention_local_accounts(db, &local_usernames),
+        load_mention_remote_actors(db, &remote_pairs),
+    )?;
+
+    Ok(MentionAccountsPreload {
+        local_accounts,
+        remote_actors,
+    })
+}
+
+async fn build_status_mentions_with_preload(
+    db: &D1Database,
+    config: &AppConfig,
+    text: &str,
+    preload: Option<&MentionAccountsPreload>,
+) -> Result<Vec<serde_json::Value>> {
     let handles = crate::extract_account_handles_from_text(text, config);
     if handles.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if let Some(preload) = preload {
+        return Ok(handles
+            .iter()
+            .filter_map(|handle| {
+                mention_document_for_handle(
+                    handle,
+                    config,
+                    &preload.local_accounts,
+                    &preload.remote_actors,
+                )
+            })
+            .collect());
     }
 
     let lookup_keys = mention_lookup_keys(&handles, &config.instance_domain);
@@ -1067,6 +1140,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1100,6 +1174,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
         poll_preload,
         viewer_state_preload,
         application_preload,
+        None,
     )
     .await
 }
@@ -1118,6 +1193,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    mention_preload: Option<&MentionAccountsPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_local_status_response_inner(
         db,
@@ -1133,6 +1209,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
         poll_preload,
         viewer_state_preload,
         application_preload,
+        mention_preload,
         true,
     )
     .await
@@ -1152,6 +1229,7 @@ async fn build_local_status_response_inner(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -1194,6 +1272,7 @@ async fn build_local_status_response_inner(
         poll_preload,
         viewer_state_preload,
         application_preload,
+        mention_preload,
         include_quote,
     )
     .await?;
@@ -1214,6 +1293,7 @@ async fn load_local_status_response_details(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<LocalStatusResponseDetails> {
     let application =
@@ -1223,7 +1303,8 @@ async fn load_local_status_response_details(
         };
     let card = build_status_card_value(&status.text);
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
-    let mentions = build_status_mentions(db, config, &status.text).await?;
+    let mentions =
+        build_status_mentions_with_preload(db, config, &status.text, mention_preload).await?;
     let (favourites_count, reblogs_count) =
         local_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
@@ -1362,6 +1443,7 @@ pub(crate) async fn build_remote_status_response_with_preloads(
         None,
         None,
         None,
+        None,
         true,
     )
     .await
@@ -1380,6 +1462,7 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
     poll_preload: Option<&RemoteMastodonPollResponsePreload>,
     edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
     remote_attachments: Vec<RemoteStatusAttachmentRow>,
+    mention_preload: Option<&MentionAccountsPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_inner(
         db,
@@ -1394,6 +1477,7 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
         poll_preload,
         edit_updated_at_preload,
         Some(remote_attachments),
+        mention_preload,
         true,
     )
     .await
@@ -1412,6 +1496,7 @@ async fn build_remote_status_response_inner(
     poll_preload: Option<&RemoteMastodonPollResponsePreload>,
     edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
+    mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -1444,6 +1529,7 @@ async fn build_remote_status_response_inner(
         poll_preload,
         edit_updated_at_preload,
         remote_attachments,
+        mention_preload,
         include_quote,
     )
     .await?;
@@ -1465,6 +1551,7 @@ async fn load_remote_status_response_details(
     poll_preload: Option<&RemoteMastodonPollResponsePreload>,
     edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
+    mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<RemoteStatusResponseDetails> {
     let text_content = strip_html_tags(&status.content_html);
@@ -1474,7 +1561,8 @@ async fn load_remote_status_response_details(
     };
     let card = build_remote_status_card_value(&text_content, &remote_attachments);
     let media_attachments = remote_media_attachment_values(&remote_attachments);
-    let mentions = build_status_mentions(db, config, &text_content).await?;
+    let mentions =
+        build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?;
     let (favourites_count, reblogs_count) =
         remote_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
@@ -1915,6 +2003,7 @@ async fn build_local_reblog_embedded_response(
             poll_preload,
             viewer_state_preload,
             application_preload,
+            None,
             include_quote,
         ))
         .await?,
@@ -1947,6 +2036,7 @@ async fn build_remote_reblog_embedded_response(
             &actor,
             filter_matcher,
             counts_preload,
+            None,
             None,
             None,
             None,
@@ -2189,6 +2279,7 @@ mod tests {
             reblogged_target_uris: HashSet::new(),
             bookmarked_target_uris: HashSet::from([target_uri]),
             pinned_status_ids: HashSet::from(["status-1".to_owned()]),
+            muted_status_ids: HashSet::new(),
             has_thread_mutes: false,
         };
 
@@ -2208,7 +2299,7 @@ mod tests {
     }
 
     #[test]
-    fn preloaded_local_status_response_viewer_state_defers_mute_when_thread_mutes_exist() {
+    fn preloaded_local_status_response_viewer_state_resolves_mute_from_preloaded_ids() {
         let viewer = local_account_fixture();
         let status = status_row_fixture(
             "status-1",
@@ -2219,6 +2310,7 @@ mod tests {
             reblogged_target_uris: HashSet::new(),
             bookmarked_target_uris: HashSet::new(),
             pinned_status_ids: HashSet::new(),
+            muted_status_ids: HashSet::from(["status-1".to_owned()]),
             has_thread_mutes: true,
         };
 
@@ -2228,7 +2320,7 @@ mod tests {
         assert_eq!(
             state,
             Some(LocalStatusPreloadedViewerState {
-                muted: None,
+                muted: Some(true),
                 ..LocalStatusPreloadedViewerState::default()
             })
         );

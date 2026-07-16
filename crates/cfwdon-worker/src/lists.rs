@@ -11,9 +11,9 @@ use crate::remote::{
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{
-    build_local_status_response, build_remote_status_response, is_local_status_thread_muted_by,
-    list_local_public_timeline_statuses, list_remote_public_timeline_statuses,
-    load_in_reply_to_account_id,
+    build_local_status_response, build_remote_status_response, list_local_public_timeline_statuses,
+    list_remote_public_timeline_statuses, load_in_reply_to_account_id,
+    local_status_ids_thread_muted_by,
 };
 use crate::timelines::{
     TimelinePaginationQuery, build_timeline_link_header, resolve_timeline_cursor,
@@ -506,8 +506,15 @@ pub(crate) async fn list_timeline_response(
         .map(|row| row.target_account_ref)
         .collect::<HashSet<_>>();
     let mut entries = Vec::new();
+    let local_statuses = list_local_public_timeline_statuses(&db, &cursor, query_limit).await?;
+    let muted_local_status_ids = local_status_ids_thread_muted_by(
+        &db,
+        account.id(),
+        &local_statuses.iter().collect::<Vec<_>>(),
+    )
+    .await?;
 
-    for status in list_local_public_timeline_statuses(&db, &cursor, query_limit).await? {
+    for status in local_statuses {
         let Some(author) = find_account_by_id(&db, &status.account_id).await? else {
             continue;
         };
@@ -520,7 +527,7 @@ pub(crate) async fn list_timeline_response(
         if list.replies_policy == "none" && status.in_reply_to_id.is_some() {
             continue;
         }
-        if is_local_status_thread_muted_by(&db, account.id(), &status).await? {
+        if muted_local_status_ids.contains(&status.id) {
             continue;
         }
         let media = find_media_attachments_by_status_id(&db, &status.id).await?;

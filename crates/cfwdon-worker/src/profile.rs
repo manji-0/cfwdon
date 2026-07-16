@@ -6,10 +6,11 @@ pub(crate) use request_parsing::*;
 
 pub(crate) use self::request_parsing::{UpdateCredentialsField, UpdateCredentialsRequest};
 use super::{
-    AccountReference, AppConfig, Error, MastodonAccountResponse, ProfileField, Request, Response,
-    Result, RouteContext, app_bearer_token_from_request, apply_account_credentials_update,
-    apply_remote_actor_social_counts, cache_account_api_response, cached_account_api_response,
-    count_pending_follow_requests, enqueue_profile_update_activities, extract_authenticated_user,
+    AccountReference, AppConfig, CACHE_TTL_ACCOUNT_API, Error, MastodonAccountResponse,
+    ProfileField, Request, Response, Result, RouteContext, app_bearer_token_from_request,
+    apply_account_credentials_update, apply_remote_actor_social_counts, cache_account_api_response,
+    cache_public_json_response, cached_account_api_response, count_pending_follow_requests,
+    enqueue_profile_update_activities, extract_authenticated_user,
     fetch_remote_actor_profile_with_document, find_authenticated_local_account,
     find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
     load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
@@ -110,6 +111,12 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
                     );
             if cacheable_account_id {
                 cache_account_api_response(&ctx, &account_id, &response).await?;
+                return cache_public_json_response(
+                    &response,
+                    "application/json; charset=utf-8",
+                    CACHE_TTL_ACCOUNT_API,
+                    &[("Cache-Tag", &format!("account-{}", response.username))],
+                );
             }
             Response::from_json(&response)
         }

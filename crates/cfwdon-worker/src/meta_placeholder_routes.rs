@@ -3586,6 +3586,7 @@ pub(crate) async fn status_quotes_response(
                     remote_attachments_by_status_id
                         .remove(&quote.id)
                         .unwrap_or_default(),
+                    None,
                 )
                 .await?,
             )?,
