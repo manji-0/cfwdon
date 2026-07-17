@@ -49,7 +49,7 @@ use super::{
     nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    notification_sort_key, notification_timestamp_sort_token,
+    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
     oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
     object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
     paginate_tag_search_matches, parse_activitypub_request_date_ms,
@@ -1114,6 +1114,54 @@ fn build_notifications_v2_document_collects_accounts_statuses_and_groups() {
     assert_eq!(
         document["notification_groups"][1]["status_id"],
         serde_json::Value::Null
+    );
+
+    let mention_group = &document["notification_groups"][0];
+    let mention_entry = &entries[0];
+    let mention_api_id = notification_api_numeric_id(mention_entry);
+    assert_eq!(mention_group["most_recent_notification_id"], mention_api_id);
+    assert_eq!(
+        mention_group["page_min_id"],
+        mention_api_id.to_string()
+    );
+    assert_eq!(
+        mention_group["page_max_id"],
+        mention_api_id.to_string()
+    );
+    assert_eq!(
+        mention_group["latest_page_notification_at"],
+        "2026-04-19T00:00:00Z"
+    );
+}
+
+#[test]
+fn build_notifications_v2_document_uses_numeric_ids_for_remote_follow_notifications() {
+    let entry = NotificationEntry {
+        id: "follow-remote-r_aHR0cHM6Ly9ibG9nLmtvc3VpLm1lL3VzZXJzL2tvc3Vp".to_owned(),
+        created_at: "2024-05-10 05:16:13".to_owned(),
+        value: serde_json::json!({
+            "id": "follow-remote-r_aHR0cHM6Ly9ibG9nLmtvc3VpLm1lL3VzZXJzL2tvc3Vp",
+            "type": "follow",
+            "group_key": "follow-remote-r_aHR0cHM6Ly9ibG9nLmtvc3VpLm1lL3VzZXJzL2tvc3Vp",
+            "account": {
+                "id": "r_aHR0cHM6Ly9ibG9nLmtvc3VpLm1lL3VzZXJzL2tvc3Vp",
+                "acct": "kosui@blog.kosui.me"
+            }
+        }),
+    };
+
+    let document = build_notifications_v2_document(&[entry.clone()]);
+    let group = &document["notification_groups"][0];
+    assert!(group["most_recent_notification_id"].is_number());
+    assert_eq!(
+        group["most_recent_notification_id"],
+        notification_api_numeric_id(&entry)
+    );
+    assert!(group["page_min_id"].is_string());
+    assert!(group["page_max_id"].is_string());
+    assert_eq!(
+        group["latest_page_notification_at"],
+        "2024-05-10T05:16:13.000Z"
     );
 }
 
@@ -5415,7 +5463,7 @@ fn filter_notification_entries_by_query_applies_max_and_min_cursor() {
     );
 
     let newer_than_mid = filter_notification_entries_by_query(
-        entries,
+        entries.clone(),
         &NotificationsQuery {
             min_id: Some("notif-mid".to_owned()),
             ..NotificationsQuery::default()
@@ -5427,6 +5475,22 @@ fn filter_notification_entries_by_query_applies_max_and_min_cursor() {
             .map(|entry| entry.id)
             .collect::<Vec<_>>(),
         vec!["notif-new".to_owned()]
+    );
+
+    let mid_entry = &entries[1];
+    let older_than_mid_numeric = filter_notification_entries_by_query(
+        entries.clone(),
+        &NotificationsQuery {
+            max_id: Some(notification_api_numeric_id(mid_entry).to_string()),
+            ..NotificationsQuery::default()
+        },
+    );
+    assert_eq!(
+        older_than_mid_numeric
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec!["notif-old".to_owned()]
     );
 }
 

@@ -1,4 +1,7 @@
-use super::NotificationEntry;
+use super::{
+    NotificationEntry, notification_api_numeric_id, notification_api_numeric_id_string,
+};
+use crate::timestamp_to_mastodon_iso8601;
 
 pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> serde_json::Value {
     let mut accounts = Vec::new();
@@ -32,6 +35,8 @@ pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> 
             statuses.push(status);
         }
         let collection = entry.value.get("collection").cloned();
+        let api_notification_id = notification_api_numeric_id(entry);
+        let api_notification_id_string = notification_api_numeric_id_string(entry);
 
         let mut group = serde_json::json!({
             "group_key": entry
@@ -44,10 +49,10 @@ pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> 
                 .get("type")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default(),
-            "latest_page_notification_at": entry.created_at,
-            "most_recent_notification_id": entry.id,
-            "page_min_id": entry.id,
-            "page_max_id": entry.id,
+            "latest_page_notification_at": timestamp_to_mastodon_iso8601(&entry.created_at),
+            "most_recent_notification_id": api_notification_id,
+            "page_min_id": api_notification_id_string,
+            "page_max_id": api_notification_id_string,
             "notifications_count": 1,
             "sample_account_ids": account_id.into_iter().collect::<Vec<_>>(),
             "status_id": status_id,

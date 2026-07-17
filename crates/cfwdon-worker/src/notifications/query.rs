@@ -1,4 +1,7 @@
-use super::{NotificationEntry, NotificationsQuery, notification_sort_key};
+use super::{
+    NotificationEntry, NotificationsQuery, notification_entry_matches_cursor_id,
+    notification_sort_key,
+};
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
@@ -15,7 +18,7 @@ fn resolve_notification_cursor_key(
     let cursor_id = normalized_notification_cursor(cursor_id)?;
     entries
         .iter()
-        .find(|entry| entry.id == cursor_id)
+        .find(|entry| notification_entry_matches_cursor_id(entry, cursor_id))
         .map(notification_cursor_key)
 }
 
