@@ -1,6 +1,6 @@
 use cfwdon_domain::delivery_retry_delay_modifier;
 
-use super::{D1Database, Result};
+use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER, Result};
 use crate::sql_placeholders;
 use worker::d1::D1Type;
 
@@ -124,6 +124,22 @@ pub(crate) async fn reschedule_outbox_delivery(
            AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn requeue_stale_in_flight_outbox_deliveries(db: &D1Database) -> Result<()> {
+    let stale_before = D1Type::Text(OUTBOX_IN_FLIGHT_STALE_MODIFIER);
+    db.prepare(
+        "UPDATE outbox_deliveries
+         SET state = 'queued',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE state = 'in_flight'
+           AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)",
+    )
+    .bind_refs(&stale_before)?
     .run()
     .await?;
 

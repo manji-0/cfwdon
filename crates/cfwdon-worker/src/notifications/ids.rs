@@ -22,7 +22,10 @@ pub(crate) fn notification_api_numeric_id_string(entry: &NotificationEntry) -> S
     notification_api_numeric_id(entry).to_string()
 }
 
-pub(crate) fn notification_entry_matches_cursor_id(entry: &NotificationEntry, cursor_id: &str) -> bool {
+pub(crate) fn notification_entry_matches_cursor_id(
+    entry: &NotificationEntry,
+    cursor_id: &str,
+) -> bool {
     if entry.id == cursor_id {
         return true;
     }

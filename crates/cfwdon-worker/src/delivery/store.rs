@@ -47,8 +47,23 @@ pub(crate) async fn pending_outbox_work_exists(db: &D1Database) -> Result<bool> 
                     WHERE state = 'queued'
                       AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                 )
+                OR EXISTS (
+                    SELECT 1
+                    FROM outbox_deliveries
+                    WHERE state = 'in_flight'
+                      AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM outbound_activities
+                    WHERE state = 'in_flight'
+                      AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)
+                )
             ) AS has_pending",
         )
+        .bind_refs(&[D1Type::Text(
+            crate::delivery::OUTBOX_IN_FLIGHT_STALE_MODIFIER,
+        )])?
         .first::<PendingOutboxWorkRow>(None)
         .await?;
 

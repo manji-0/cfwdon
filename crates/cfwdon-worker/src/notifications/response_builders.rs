@@ -1,6 +1,4 @@
-use super::{
-    NotificationEntry, notification_api_numeric_id, notification_api_numeric_id_string,
-};
+use super::{NotificationEntry, notification_api_numeric_id, notification_api_numeric_id_string};
 use crate::timestamp_to_mastodon_iso8601;
 
 pub(crate) fn build_notifications_v2_document(entries: &[NotificationEntry]) -> serde_json::Value {

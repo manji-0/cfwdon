@@ -1,10 +1,40 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
+use url::Url;
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 
 use super::{parse_remote_http_url, validate_remote_fetch_url};
 
 const MAX_REMOTE_FETCH_REDIRECTS: usize = 5;
+
+pub(crate) fn resolve_remote_redirect_location(base: &Url, location: &str) -> Result<Url> {
+    let location = location.trim();
+    if location.is_empty() {
+        return Err(Error::RustError(
+            "remote fetch redirect Location header is empty".to_owned(),
+        ));
+    }
+
+    let resolved = if location.starts_with("http://") || location.starts_with("https://") {
+        Url::parse(location).map_err(|error| {
+            Error::RustError(format!("invalid remote redirect URL {location}: {error}"))
+        })?
+    } else {
+        base.join(location).map_err(|error| {
+            Error::RustError(format!(
+                "failed to resolve remote redirect {location} against {}: {error}",
+                base
+            ))
+        })?
+    };
+
+    match resolved.scheme() {
+        "http" | "https" => Ok(resolved),
+        scheme => Err(Error::RustError(format!(
+            "unsupported remote redirect URL scheme {scheme}"
+        ))),
+    }
+}
 
 pub(crate) async fn fetch_remote_http_json(url: &str, accept: &str) -> Result<serde_json::Value> {
     let mut current_url = parse_remote_http_url(url)?;
@@ -33,7 +63,7 @@ pub(crate) async fn fetch_remote_http_json(url: &str, accept: &str) -> Result<se
                     current_url
                 ))
             })?;
-            current_url = parse_remote_http_url(&location)?;
+            current_url = resolve_remote_redirect_location(&current_url, &location)?;
             validate_remote_fetch_url(&current_url).await?;
             continue;
         }
@@ -78,4 +108,44 @@ pub(crate) async fn validate_remote_actor_profile_url(
         return Ok(());
     }
     validate_remote_fetch_url(&parsed).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+
+    #[test]
+    fn resolve_redirect_joins_relative_path() {
+        let base = Url::parse("https://example.com/a/b").unwrap();
+        let resolved = resolve_remote_redirect_location(&base, "/c").unwrap();
+        assert_eq!(resolved.as_str(), "https://example.com/c");
+    }
+
+    #[test]
+    fn resolve_redirect_joins_sibling_relative_path() {
+        let base = Url::parse("https://example.com/a/b").unwrap();
+        let resolved = resolve_remote_redirect_location(&base, "c").unwrap();
+        assert_eq!(resolved.as_str(), "https://example.com/a/c");
+    }
+
+    #[test]
+    fn resolve_redirect_accepts_absolute_https_url() {
+        let base = Url::parse("https://example.com/a").unwrap();
+        let resolved =
+            resolve_remote_redirect_location(&base, "https://remote.example/object").unwrap();
+        assert_eq!(resolved.as_str(), "https://remote.example/object");
+    }
+
+    #[test]
+    fn resolve_redirect_rejects_empty_location() {
+        let base = Url::parse("https://example.com/a").unwrap();
+        assert!(resolve_remote_redirect_location(&base, "   ").is_err());
+    }
+
+    #[test]
+    fn resolve_redirect_rejects_unsupported_scheme() {
+        let base = Url::parse("https://example.com/a").unwrap();
+        assert!(resolve_remote_redirect_location(&base, "ftp://example.com/x").is_err());
+    }
 }

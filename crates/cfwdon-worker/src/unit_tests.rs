@@ -1120,14 +1120,8 @@ fn build_notifications_v2_document_collects_accounts_statuses_and_groups() {
     let mention_entry = &entries[0];
     let mention_api_id = notification_api_numeric_id(mention_entry);
     assert_eq!(mention_group["most_recent_notification_id"], mention_api_id);
-    assert_eq!(
-        mention_group["page_min_id"],
-        mention_api_id.to_string()
-    );
-    assert_eq!(
-        mention_group["page_max_id"],
-        mention_api_id.to_string()
-    );
+    assert_eq!(mention_group["page_min_id"], mention_api_id.to_string());
+    assert_eq!(mention_group["page_max_id"], mention_api_id.to_string());
     assert_eq!(
         mention_group["latest_page_notification_at"],
         "2026-04-19T00:00:00Z"
@@ -1150,7 +1144,7 @@ fn build_notifications_v2_document_uses_numeric_ids_for_remote_follow_notificati
         }),
     };
 
-    let document = build_notifications_v2_document(&[entry.clone()]);
+    let document = build_notifications_v2_document(std::slice::from_ref(&entry));
     let group = &document["notification_groups"][0];
     assert!(group["most_recent_notification_id"].is_number());
     assert_eq!(

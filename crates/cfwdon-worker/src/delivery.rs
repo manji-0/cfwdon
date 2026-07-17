@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub(crate) const OUTBOX_PROCESS_QUEUE_BINDING: &str = "OUTBOX_PROCESS_QUEUE";
+pub(crate) const OUTBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct OutboxProcessQueueMessage {
@@ -105,6 +106,8 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     config: &AppConfig,
 ) -> Result<OutboxProcessResponse> {
     let mut summary = OutboxProcessResponse::default();
+
+    requeue_stale_in_flight_deliveries(db).await?;
 
     process_generic_outbox_deliveries(db, &mut summary).await?;
 
@@ -244,6 +247,12 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     }
 
     Ok(summary)
+}
+
+async fn requeue_stale_in_flight_deliveries(db: &D1Database) -> Result<()> {
+    requeue_stale_in_flight_outbox_deliveries(db).await?;
+    requeue_stale_in_flight_outbound_activities(db).await?;
+    Ok(())
 }
 
 async fn process_generic_outbox_deliveries(
