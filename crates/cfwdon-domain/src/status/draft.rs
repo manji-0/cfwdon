@@ -78,22 +78,82 @@ impl ComposingStatus {
 /// Validated local status composition ready for scheduling or publication.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusDraft {
-    pub text: String,
-    pub visibility: Visibility,
-    pub spoiler_text: String,
-    pub sensitive: bool,
-    pub language: Option<String>,
-    pub quote_approval_policy: Option<QuoteApprovalPolicy>,
-    pub in_reply_to_id: Option<String>,
-    pub media_ids: Vec<String>,
-    pub poll: Option<PollDraft>,
+    text: String,
+    visibility: Visibility,
+    spoiler_text: String,
+    sensitive: bool,
+    language: Option<String>,
+    quote_approval_policy: Option<QuoteApprovalPolicy>,
+    in_reply_to_id: Option<String>,
+    media_ids: Vec<String>,
+    poll: Option<PollDraft>,
 }
 
 impl StatusDraft {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn visibility(&self) -> Visibility {
+        self.visibility
+    }
+
+    pub fn spoiler_text(&self) -> &str {
+        &self.spoiler_text
+    }
+
+    pub fn sensitive(&self) -> bool {
+        self.sensitive
+    }
+
+    pub fn language(&self) -> Option<&str> {
+        self.language.as_deref()
+    }
+
+    pub fn quote_approval_policy(&self) -> Option<QuoteApprovalPolicy> {
+        self.quote_approval_policy
+    }
+
+    pub fn in_reply_to_id(&self) -> Option<&str> {
+        self.in_reply_to_id.as_deref()
+    }
+
+    pub fn media_ids(&self) -> &[String] {
+        &self.media_ids
+    }
+
+    pub fn poll(&self) -> Option<&PollDraft> {
+        self.poll.as_ref()
+    }
+
+    pub fn from_persisted(
+        text: String,
+        visibility: Visibility,
+        spoiler_text: String,
+        sensitive: bool,
+        language: Option<String>,
+        quote_approval_policy: Option<QuoteApprovalPolicy>,
+        in_reply_to_id: Option<String>,
+        media_ids: Vec<String>,
+        poll: Option<PollDraft>,
+    ) -> Self {
+        Self {
+            text,
+            visibility,
+            spoiler_text,
+            sensitive,
+            language,
+            quote_approval_policy,
+            in_reply_to_id,
+            media_ids,
+            poll,
+        }
+    }
+
     pub fn effective_quote_policy(&self, account: &LocalAccount) -> QuoteApprovalPolicy {
         QuoteApprovalPolicy::for_status_visibility(
-            self.visibility,
-            self.quote_approval_policy,
+            self.visibility(),
+            self.quote_approval_policy(),
             account.resolved_default_quote_policy(),
         )
     }
@@ -152,8 +212,7 @@ pub struct PublishIntent {
 impl PublishIntent {
     pub fn in_reply_to_id(&self) -> Option<StatusId> {
         self.draft
-            .in_reply_to_id
-            .as_deref()
+            .in_reply_to_id()
             .map(StatusId::new)
             .transpose()
             .ok()
@@ -162,7 +221,7 @@ impl PublishIntent {
 
     pub fn media_ids(&self) -> impl Iterator<Item = Result<MediaId, crate::error::IdError>> + '_ {
         self.draft
-            .media_ids
+            .media_ids()
             .iter()
             .map(|value| MediaId::new(value.clone()))
     }

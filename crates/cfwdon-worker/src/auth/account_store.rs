@@ -20,7 +20,9 @@ pub(crate) async fn resolve_local_account(
         let email = cfwdon_domain::AccessEmail::parse(&user.email).map_err(|error| {
             Error::RustError(format!("authenticated user email is invalid: {error}"))
         })?;
-        let base = cfwdon_domain::Username::derive_from_email(&email, false);
+        let base = cfwdon_domain::Username::derive_from_email(&email, false).map_err(|error| {
+            Error::RustError(format!("authenticated user email is invalid: {error}"))
+        })?;
         find_account_by_username(db, base.as_str()).await?.is_some()
     };
     let provision = ComposingAccessProvision {

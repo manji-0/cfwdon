@@ -142,10 +142,9 @@ impl QuoteState {
     }
 
     pub fn quote_state_after_remote_upsert(current: Self, incoming: Self) -> Self {
-        if current == Self::Revoked {
-            current
-        } else {
-            incoming
+        match current {
+            Self::Rejected | Self::Revoked => current,
+            _ => incoming,
         }
     }
 
@@ -239,10 +238,14 @@ mod tests {
     }
 
     #[test]
-    fn remote_upsert_preserves_revoked_state() {
+    fn remote_upsert_preserves_owner_terminal_states() {
         assert_eq!(
             QuoteState::quote_state_after_remote_upsert(QuoteState::Revoked, QuoteState::Accepted,),
             QuoteState::Revoked
+        );
+        assert_eq!(
+            QuoteState::quote_state_after_remote_upsert(QuoteState::Rejected, QuoteState::Accepted,),
+            QuoteState::Rejected
         );
         assert_eq!(
             QuoteState::quote_state_after_remote_upsert(QuoteState::Pending, QuoteState::Accepted,),

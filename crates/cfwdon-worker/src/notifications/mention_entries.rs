@@ -53,6 +53,7 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteSta
         quote_state: mention.quote_state,
         published_at: mention.published_at.clone(),
     })
+    .expect("mention notification remote status record is valid")
 }
 
 pub(crate) async fn collect_mention_notification_entries(

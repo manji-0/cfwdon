@@ -26,13 +26,17 @@ impl Username {
         Ok(Self(value))
     }
 
-    pub fn derive_from_email(email: &AccessEmail, base_username_taken: bool) -> Self {
+    pub fn derive_from_email(
+        email: &AccessEmail,
+        base_username_taken: bool,
+    ) -> Result<Self, UsernameError> {
         let sanitized = sanitize_username_local_part(email.local_part());
-        if base_username_taken {
-            Self(format!("{sanitized}-{}", email.short_suffix()))
+        let candidate = if base_username_taken {
+            format!("{sanitized}_{}", email.short_suffix())
         } else {
-            Self(sanitized)
-        }
+            sanitized
+        };
+        Self::parse(&candidate)
     }
 
     pub fn as_str(&self) -> &str {
@@ -85,7 +89,7 @@ mod tests {
     #[test]
     fn username_derive_from_email_appends_suffix_when_taken() {
         let email = AccessEmail::parse("alice@example.com").unwrap();
-        let username = Username::derive_from_email(&email, true);
-        assert!(username.as_str().starts_with("alice-"));
+        let username = Username::derive_from_email(&email, true).unwrap();
+        assert!(username.as_str().starts_with("alice_"));
     }
 }

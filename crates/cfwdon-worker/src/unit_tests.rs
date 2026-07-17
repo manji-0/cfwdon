@@ -638,17 +638,17 @@ fn scheduled_status_document_matches_upstream_shape() {
 
 #[test]
 fn scheduled_status_document_with_params_reflects_draft_values() {
-    let draft = StatusDraft {
-        text: "scheduled hello".to_owned(),
-        visibility: Visibility::Unlisted,
-        spoiler_text: "cw".to_owned(),
-        sensitive: true,
-        language: Some("ja".to_owned()),
-        quote_approval_policy: None,
-        in_reply_to_id: Some("status-1".to_owned()),
-        media_ids: vec!["media-1".to_owned()],
-        poll: None,
-    };
+    let draft = StatusDraft::from_persisted(
+        "scheduled hello".to_owned(),
+        Visibility::Unlisted,
+        "cw".to_owned(),
+        true,
+        Some("ja".to_owned()),
+        None,
+        Some("status-1".to_owned()),
+        vec!["media-1".to_owned()],
+        None,
+    );
     let document =
         scheduled_status_document_with_params("sched-2", "2099-02-03T04:05:06Z", Some(&draft));
 
@@ -3962,21 +3962,28 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
 #[test]
 fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
     let account = actor_fixture_account();
-    let private_draft = cfwdon_domain::StatusDraft {
-        text: "hello".to_owned(),
-        visibility: cfwdon_domain::Visibility::FollowersOnly,
-        spoiler_text: String::new(),
-        sensitive: false,
-        language: Some("en".to_owned()),
-        quote_approval_policy: Some(cfwdon_domain::QuoteApprovalPolicy::Public),
-        in_reply_to_id: None,
-        media_ids: Vec::new(),
-        poll: None,
-    };
-    let direct_draft = cfwdon_domain::StatusDraft {
-        visibility: cfwdon_domain::Visibility::Direct,
-        ..private_draft.clone()
-    };
+    let private_draft = cfwdon_domain::StatusDraft::from_persisted(
+        "hello".to_owned(),
+        cfwdon_domain::Visibility::FollowersOnly,
+        String::new(),
+        false,
+        Some("en".to_owned()),
+        Some(cfwdon_domain::QuoteApprovalPolicy::Public),
+        None,
+        Vec::new(),
+        None,
+    );
+    let direct_draft = cfwdon_domain::StatusDraft::from_persisted(
+        private_draft.text().to_owned(),
+        cfwdon_domain::Visibility::Direct,
+        private_draft.spoiler_text().to_owned(),
+        private_draft.sensitive(),
+        private_draft.language().map(str::to_owned),
+        private_draft.quote_approval_policy(),
+        private_draft.in_reply_to_id().map(str::to_owned),
+        private_draft.media_ids().to_vec(),
+        private_draft.poll().cloned(),
+    );
 
     assert_eq!(
         private_draft.effective_quote_policy(&account).as_str(),
@@ -3994,17 +4001,17 @@ fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_i
     record.default_quote_policy = "followers".to_owned();
     record.default_language = Some("en".to_owned());
     let account = LocalAccount::from_record(record);
-    let draft = cfwdon_domain::StatusDraft {
-        text: "hello".to_owned(),
-        visibility: cfwdon_domain::Visibility::Public,
-        spoiler_text: String::new(),
-        sensitive: false,
-        language: Some("en".to_owned()),
-        quote_approval_policy: None,
-        in_reply_to_id: None,
-        media_ids: Vec::new(),
-        poll: None,
-    };
+    let draft = cfwdon_domain::StatusDraft::from_persisted(
+        "hello".to_owned(),
+        cfwdon_domain::Visibility::Public,
+        String::new(),
+        false,
+        Some("en".to_owned()),
+        None,
+        None,
+        Vec::new(),
+        None,
+    );
 
     assert_eq!(draft.effective_quote_policy(&account).as_str(), "followers");
 }

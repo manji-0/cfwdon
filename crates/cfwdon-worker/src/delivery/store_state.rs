@@ -65,7 +65,8 @@ pub(crate) async fn mark_outbox_delivery_delivered(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
+         WHERE id = ?2
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -91,7 +92,8 @@ pub(crate) async fn mark_outbox_delivery_terminal_failure(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
+         WHERE id = ?3
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -118,7 +120,8 @@ pub(crate) async fn reschedule_outbox_delivery(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = datetime(CURRENT_TIMESTAMP, ?2),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
+         WHERE id = ?3
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()

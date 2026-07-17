@@ -7,8 +7,13 @@ use cfwdon_domain::{LocalStatus, LocalStatusRecord, local_status_default_quote_s
 pub(crate) type StatusRecord = LocalStatusRecord;
 pub(crate) type StatusRow = LocalStatus;
 
-pub(crate) fn status_from_record(record: StatusRecord) -> StatusRow {
-    LocalStatus::from_record(record)
+pub(crate) fn status_from_record(record: StatusRecord) -> Result<StatusRow> {
+    LocalStatus::try_from_record(record)
+        .map_err(|error| worker::Error::RustError(error.to_string()))
+}
+
+pub(crate) fn statuses_from_records(records: Vec<StatusRecord>) -> Result<Vec<StatusRow>> {
+    records.into_iter().map(status_from_record).collect()
 }
 
 pub(crate) fn default_quote_state() -> String {

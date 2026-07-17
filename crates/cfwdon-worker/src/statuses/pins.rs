@@ -79,7 +79,7 @@ pub(crate) async fn list_pinned_statuses_for_account(
         .await?;
     result
         .results::<crate::StatusRecord>()
-        .map(|rows| rows.into_iter().map(crate::status_from_record).collect())
+        .and_then(crate::statuses_from_records)
 }
 
 async fn pinned_status_response(

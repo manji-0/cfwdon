@@ -33,6 +33,14 @@ pub enum PollDraftError {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+pub enum RecordHydrationError {
+    #[error(transparent)]
+    Visibility(#[from] VisibilityError),
+    #[error(transparent)]
+    QuoteState(#[from] QuoteStateError),
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum RemoteStatusError {
     #[error("remote status object is missing id")]
     MissingObjectId,

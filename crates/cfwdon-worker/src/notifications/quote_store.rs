@@ -1,6 +1,6 @@
 use super::{
-    RemoteStatusRecord, RemoteStatusRow, StatusRecord, StatusRow, remote_status_from_record,
-    status_from_record,
+    RemoteStatusRecord, RemoteStatusRow, StatusRecord, StatusRow, remote_statuses_from_records,
+    statuses_from_records,
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -52,7 +52,7 @@ pub(crate) async fn list_local_quote_notifications_for_account(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_quote_notifications_for_account(
@@ -78,7 +78,7 @@ pub(crate) async fn list_remote_quote_notifications_for_account(
 
     result
         .results::<RemoteStatusRecord>()
-        .map(|rows| rows.into_iter().map(remote_status_from_record).collect())
+        .and_then(remote_statuses_from_records)
 }
 
 pub(crate) async fn list_quoted_update_notifications_for_account(

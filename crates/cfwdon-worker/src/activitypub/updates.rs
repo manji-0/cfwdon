@@ -58,7 +58,7 @@ pub(crate) async fn build_status_update_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<String> {
-    let object = build_activitypub_note(db, config, account, status, false).await?;
+    let object = build_activitypub_note(db, config, account, status, false, None).await?;
     let object_id = object
         .get("id")
         .and_then(serde_json::Value::as_str)

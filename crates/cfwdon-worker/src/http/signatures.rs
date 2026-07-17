@@ -119,3 +119,21 @@ pub(crate) fn inbox_activity_id(activity: &serde_json::Value) -> Option<String> 
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
 }
+
+pub(crate) async fn inbox_activity_dedupe_id(
+    activity: &serde_json::Value,
+    remote_actor_uri: &str,
+    body: &[u8],
+) -> Result<String> {
+    if let Some(id) = inbox_activity_id(activity) {
+        return Ok(id);
+    }
+    let activity_type = activity
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Unknown");
+    let digest = sha256_http_digest(body).await?;
+    Ok(format!(
+        "derived:{remote_actor_uri}:{activity_type}:{digest}"
+    ))
+}

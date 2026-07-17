@@ -19,19 +19,26 @@ pub(crate) struct OutboundActivityRow {
     pub(crate) attempt_count: i32,
 }
 
-pub(crate) async fn list_pending_outbound_activities(
+pub(crate) async fn claim_pending_outbound_activities(
     db: &D1Database,
     limit: u32,
 ) -> Result<Vec<OutboundActivityRow>> {
     let limit = D1Type::Integer(limit as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, activity_id, activity_type, target_actor_uri, target_inbox, payload_json, attempt_count
-             FROM outbound_activities
-             WHERE state = 'queued'
-               AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-             ORDER BY created_at ASC
-             LIMIT ?1",
+            "UPDATE outbound_activities
+             SET state = 'in_flight',
+                 last_attempt_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id IN (
+                 SELECT id
+                 FROM outbound_activities
+                 WHERE state = 'queued'
+                   AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                 ORDER BY created_at ASC
+                 LIMIT ?1
+             )
+             RETURNING id, account_id, activity_id, activity_type, target_actor_uri, target_inbox, payload_json, attempt_count",
         )
         .bind_refs(&limit)?
         .all()
@@ -51,7 +58,8 @@ pub(crate) async fn mark_outbound_activity_delivered(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
+         WHERE id = ?2
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -77,7 +85,8 @@ pub(crate) async fn mark_outbound_activity_terminal_failure(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
+         WHERE id = ?3
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -143,7 +152,8 @@ pub(crate) async fn reschedule_outbound_activity(
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = datetime(CURRENT_TIMESTAMP, ?2),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
+         WHERE id = ?3
+           AND state = 'in_flight'",
     )
     .bind_refs(bindings.iter())?
     .run()

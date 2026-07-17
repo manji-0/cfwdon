@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     RemoteActorRow, RemoteStatusRecord, RemoteStatusRow, Result, StatusRecord, StatusRow,
-    remote_status_from_record, status_from_record,
+    remote_status_from_record, statuses_from_records,
 };
 use worker::D1Database;
 use worker::d1::D1Type;
@@ -191,6 +191,7 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatu
             .to_owned(),
         published_at: json_string(value, "published_at"),
     })
+    .expect("search remote status record is valid")
 }
 
 fn remote_search_rows_from_values(
@@ -285,7 +286,7 @@ pub(crate) async fn search_local_status_rows(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn search_remote_status_rows(

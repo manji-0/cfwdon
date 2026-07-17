@@ -24,8 +24,14 @@ pub(crate) type RemoteStatusRow = RemoteStatus;
 
 pub(crate) use cfwdon_domain::RemoteStatusRecord;
 
-pub(crate) fn remote_status_from_record(record: RemoteStatusRecord) -> RemoteStatusRow {
-    RemoteStatus::from_record(record)
+pub(crate) fn remote_status_from_record(record: RemoteStatusRecord) -> Result<RemoteStatusRow> {
+    RemoteStatus::try_from_record(record).map_err(|error| Error::RustError(error.to_string()))
+}
+
+pub(crate) fn remote_statuses_from_records(
+    records: Vec<RemoteStatusRecord>,
+) -> Result<Vec<RemoteStatusRow>> {
+    records.into_iter().map(remote_status_from_record).collect()
 }
 
 pub(crate) fn default_remote_quote_state() -> String {
@@ -50,7 +56,7 @@ pub(crate) async fn find_remote_status_by_id(
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
-    .map(|row| row.map(remote_status_from_record))
+    .and_then(|row| row.map(remote_status_from_record).transpose())
 }
 
 pub(crate) async fn find_remote_status_raw_object_by_id(
@@ -96,7 +102,7 @@ pub(crate) async fn find_remote_status_by_object_uri(
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
-    .map(|row| row.map(remote_status_from_record))
+    .and_then(|row| row.map(remote_status_from_record).transpose())
 }
 
 pub(crate) async fn find_remote_status_by_url_or_object_uri(
@@ -114,7 +120,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
-    .map(|row| row.map(remote_status_from_record))
+    .and_then(|row| row.map(remote_status_from_record).transpose())
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +133,7 @@ struct RemoteStatusEditStateRow {
 impl RemoteStatusEditStateRow {
     fn status_row(&self) -> RemoteStatusRow {
         remote_status_from_record(self.record.clone())
+            .expect("stored remote status record is valid")
     }
 }
 
@@ -300,7 +307,11 @@ fn remote_status_upsert_sql() -> &'static str {
         visibility = excluded.visibility,
         sensitive = excluded.sensitive,
         language = excluded.language,
-        quote_state = excluded.quote_state,
+        quote_state = CASE
+            WHEN remote_statuses.quote_state IN ('rejected', 'revoked')
+                THEN remote_statuses.quote_state
+            ELSE excluded.quote_state
+        END,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
         updated_at = ?16"
@@ -597,7 +608,11 @@ fn remote_reblog_upsert_sql() -> &'static str {
         visibility = excluded.visibility,
         sensitive = excluded.sensitive,
         language = excluded.language,
-        quote_state = excluded.quote_state,
+        quote_state = CASE
+            WHEN remote_statuses.quote_state IN ('rejected', 'revoked')
+                THEN remote_statuses.quote_state
+            ELSE excluded.quote_state
+        END,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
         updated_at = CURRENT_TIMESTAMP"
@@ -771,7 +786,8 @@ mod tests {
         let sql = remote_status_upsert_sql();
 
         assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
-        assert!(sql.contains("quote_state = excluded.quote_state"));
+        assert!(sql.contains("WHEN remote_statuses.quote_state IN ('rejected', 'revoked')"));
+        assert!(sql.contains("ELSE excluded.quote_state"));
         assert!(sql.contains("updated_at = ?16"));
     }
 
@@ -780,7 +796,8 @@ mod tests {
         let sql = remote_reblog_upsert_sql();
 
         assert!(sql.contains("ON CONFLICT(object_uri) DO UPDATE SET"));
-        assert!(sql.contains("quote_state = excluded.quote_state"));
+        assert!(sql.contains("WHEN remote_statuses.quote_state IN ('rejected', 'revoked')"));
+        assert!(sql.contains("ELSE excluded.quote_state"));
         assert!(sql.contains("updated_at = CURRENT_TIMESTAMP"));
     }
 

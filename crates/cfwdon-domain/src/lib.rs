@@ -13,12 +13,13 @@ pub mod status;
 pub mod transition;
 
 pub use account::{
-    AccessEmail, AccessEmailError, AccessProvisionIntent, AccountHandle, AccountKeyMaterial,
-    ComposingAccessProvision, ComposingRegistration, LocalAccount, LocalAccountRecord,
-    ProfileField, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
-    RegistrationIntent, RegistrationUniquenessFacts, RegistrationValidationErrors,
-    RegistrationValidationField, Username, UsernameError, finalize_registration_validation,
-    registration_field_issue_message, registration_uniqueness_errors,
+    AccessEmail, AccessEmailError, AccessProvisionError, AccessProvisionIntent, AccountHandle,
+    AccountKeyMaterial, ComposingAccessProvision, ComposingRegistration, LocalAccount,
+    LocalAccountRecord, ProfileField, RegisteringAccount, RegistrationEvent,
+    RegistrationFieldIssue, RegistrationIntent, RegistrationUniquenessFacts,
+    RegistrationValidationErrors, RegistrationValidationField, Username, UsernameError,
+    finalize_registration_validation, registration_field_issue_message,
+    registration_uniqueness_errors,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,
@@ -32,8 +33,8 @@ pub use delivery::{
     reconcile_pending_follow_on_outbound_terminal_failure,
 };
 pub use error::{
-    IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RemoteStatusError,
-    StatusDraftError, VisibilityError,
+    IdError, PollDraftError, QuoteApprovalPolicyError, QuoteStateError, RecordHydrationError,
+    RemoteStatusError, StatusDraftError, VisibilityError,
 };
 pub use federation::{
     ACTIVITYPUB_MAX_DATE_SKEW_MS, ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState,

@@ -1,3 +1,4 @@
+use crate::error::RecordHydrationError;
 use crate::quote::QuoteState;
 use crate::remote::record::RemoteStatusRecord;
 use crate::status::Visibility;
@@ -22,8 +23,8 @@ pub struct RemoteStatus {
 }
 
 impl RemoteStatus {
-    pub fn from_record(record: RemoteStatusRecord) -> Self {
-        Self {
+    pub fn try_from_record(record: RemoteStatusRecord) -> Result<Self, RecordHydrationError> {
+        Ok(Self {
             id: record.id,
             actor_uri: record.actor_uri,
             object_uri: record.object_uri,
@@ -33,12 +34,16 @@ impl RemoteStatus {
             quote_of_uri: record.quote_of_uri,
             content_html: record.content_html,
             spoiler_text: record.spoiler_text,
-            visibility: Visibility::parse(&record.visibility).unwrap_or(Visibility::Public),
+            visibility: Visibility::parse(&record.visibility)?,
             sensitive: record.sensitive != 0,
             language: record.language,
-            quote_state: QuoteState::parse(&record.quote_state).unwrap_or(QuoteState::Accepted),
+            quote_state: QuoteState::parse(&record.quote_state)?,
             published_at: record.published_at,
-        }
+        })
+    }
+
+    pub fn from_record(record: RemoteStatusRecord) -> Self {
+        Self::try_from_record(record).expect("valid remote status record")
     }
 
     pub fn to_record(&self) -> RemoteStatusRecord {

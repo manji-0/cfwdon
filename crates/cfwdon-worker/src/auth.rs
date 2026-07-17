@@ -141,7 +141,14 @@ fn oauth_access_token_allows_method_path(
             path,
             "/api/v1/accounts/verify_credentials" | "/api/v1/profile"
         )
-        && oauth_access_token_has_any_scope(token, &["profile"])
+        && oauth_access_token_has_any_scope(token, &["profile", "read:accounts", "read"])
+    {
+        return true;
+    }
+
+    if matches!(method, "PATCH" | "PUT" | "POST")
+        && path == "/api/v1/accounts/update_credentials"
+        && oauth_access_token_has_any_scope(token, &["write:accounts", "write"])
     {
         return true;
     }

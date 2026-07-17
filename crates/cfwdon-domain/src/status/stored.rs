@@ -46,14 +46,14 @@ impl PublishIntent {
             status_id: facts.status_id,
             account_id: facts.account_id,
             ap_id: facts.ap_id,
-            in_reply_to_id: self.draft.in_reply_to_id,
+            in_reply_to_id: self.draft.in_reply_to_id().map(str::to_owned),
             quote_of_uri: facts.quote_of_uri,
             content_html: facts.content_html,
-            text_content: self.draft.text,
-            spoiler_text: self.draft.spoiler_text,
-            visibility: self.draft.visibility,
-            sensitive: self.draft.sensitive,
-            language: self.draft.language,
+            text_content: self.draft.text().to_owned(),
+            spoiler_text: self.draft.spoiler_text().to_owned(),
+            visibility: self.draft.visibility(),
+            sensitive: self.draft.sensitive(),
+            language: self.draft.language().map(str::to_owned),
             quote_approval_policy: self.quote_policy,
             quote_state: self.quote_state,
             application_id: facts.application_id,
@@ -146,8 +146,8 @@ impl StoredLocalReblogIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ComposingStatus;
     use crate::QuoteTargetResolution;
-    use crate::StatusDraft;
     use crate::account::{LocalAccount, LocalAccountRecord};
 
     fn fixture_account() -> LocalAccount {
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn publish_intent_into_stored_intent_maps_persistence_fields() {
-        let draft = StatusDraft {
+        let draft = ComposingStatus {
             text: "hello".to_owned(),
             visibility: Visibility::Unlisted,
             spoiler_text: "cw".to_owned(),
@@ -168,7 +168,10 @@ mod tests {
             in_reply_to_id: Some("reply-1".to_owned()),
             media_ids: Vec::new(),
             poll: None,
-        };
+        }
+        .validate(None)
+        .expect("valid draft")
+        .state;
         let intent = draft
             .into_publish_intent(
                 &fixture_account(),

@@ -1,3 +1,4 @@
+use crate::error::RecordHydrationError;
 use crate::quote::{QuoteApprovalPolicy, QuoteState};
 use crate::status::record::LocalStatusRecord;
 use crate::status::visibility::Visibility;
@@ -25,8 +26,8 @@ pub struct LocalStatus {
 }
 
 impl LocalStatus {
-    pub fn from_record(record: LocalStatusRecord) -> Self {
-        Self {
+    pub fn try_from_record(record: LocalStatusRecord) -> Result<Self, RecordHydrationError> {
+        Ok(Self {
             id: record.id,
             account_id: record.account_id,
             ap_id: record.ap_id,
@@ -36,18 +37,22 @@ impl LocalStatus {
             content_html: record.content_html,
             text: record._text_content,
             spoiler_text: record.spoiler_text,
-            visibility: Visibility::parse(&record.visibility).unwrap_or(Visibility::Public),
+            visibility: Visibility::parse(&record.visibility)?,
             sensitive: record.sensitive != 0,
             language: record.language,
             quote_approval_policy: record
                 .quote_approval_policy
                 .as_deref()
                 .and_then(|value| QuoteApprovalPolicy::parse(value).ok()),
-            quote_state: QuoteState::parse(&record.quote_state).unwrap_or(QuoteState::Accepted),
+            quote_state: QuoteState::parse(&record.quote_state)?,
             application_id: record.application_id,
             created_at: record.created_at,
             updated_at: record.updated_at,
-        }
+        })
+    }
+
+    pub fn from_record(record: LocalStatusRecord) -> Self {
+        Self::try_from_record(record).expect("valid local status record")
     }
 
     pub fn to_record(&self) -> LocalStatusRecord {

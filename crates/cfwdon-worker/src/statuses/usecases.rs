@@ -1,15 +1,15 @@
 use super::{
     AppConfig, D1Database, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
     MediaAttachmentRow, Result, StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest,
-    apply_media_update, attach_media_to_status, build_local_status_response,
-    build_local_status_response_with_quote_count_preloads, delete_status_by_id,
-    enqueue_outbox_activity, enqueue_outbox_delete, enqueue_status_update_activity,
-    ensure_direct_conversation_for_status, extract_mentions_from_text, find_account_by_username,
-    find_media_attachments_by_status_id, find_owned_local_status, insert_status,
-    insert_status_edit_snapshot, load_account_filter_matcher, load_local_status_response_preload,
-    load_mastodon_poll_response, normalize_status_history_entry, now_iso_string,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses, preload_status_counts,
-    preload_status_quote_counts, replace_status_media, replace_status_poll, send_push_notification,
+    apply_media_update, attach_media_and_enqueue_outbox, build_local_status_response,
+    build_local_status_response_with_quote_count_preloads, delete_local_status_with_outbox,
+    enqueue_status_update_activity, ensure_direct_conversation_for_status,
+    extract_mentions_from_text, find_account_by_username, find_media_attachments_by_status_id,
+    find_owned_local_status, insert_status, insert_status_edit_snapshot,
+    load_account_filter_matcher, load_local_status_response_preload, load_mastodon_poll_response,
+    normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
+    preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
+    replace_status_media, replace_status_poll, send_push_notification,
     send_status_quote_notification, send_status_update_notifications, update_local_status,
 };
 use cfwdon_domain::{PollDraft, StatusDraft};
@@ -71,8 +71,7 @@ pub(crate) async fn delete_owned_local_status(
     );
     response.poll = load_mastodon_poll_response(db, &status.id, Some(requester)).await?;
 
-    enqueue_outbox_delete(db, config, requester, &status).await?;
-    delete_status_by_id(db, &status.id).await?;
+    delete_local_status_with_outbox(db, config, requester, &status).await?;
 
     Ok(Some(DeleteLocalStatusResult {
         response,
@@ -174,6 +173,7 @@ pub(crate) async fn create_published_status_and_response(
     config: &AppConfig,
     input: CreatePublishedStatusInput<'_>,
 ) -> Result<MastodonStatusResponse> {
+    let defer_outbox = !input.pending_media.is_empty();
     let status = insert_status(
         db,
         config,
@@ -181,12 +181,14 @@ pub(crate) async fn create_published_status_and_response(
         input.draft,
         input.application_id,
         input.quote_of_uri,
+        defer_outbox,
     )
     .await?;
     ensure_direct_conversation_for_status(db, config, input.account, input.draft, &status).await?;
-    attach_media_to_status(db, &status.id, input.pending_media).await?;
-    let response_preload = load_local_status_response_preload(db, &status).await?;
-    enqueue_outbox_activity(db, config, input.account, &status).await?;
+    if !input.pending_media.is_empty() {
+        attach_media_and_enqueue_outbox(db, config, input.account, &status, input.pending_media)
+            .await?;
+    }
     let _ = send_status_quote_notification(db, config, &status).await;
     if let Some(recipient_account_id) = input.in_reply_to_account_id.as_deref()
         && recipient_account_id != input.account.id()
@@ -221,6 +223,7 @@ pub(crate) async fn create_published_status_and_response(
             .await;
         }
     }
+    let response_preload = load_local_status_response_preload(db, &status).await?;
     let status_ids = vec![status.id.clone()];
     let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
     let status_refs = vec![&status];

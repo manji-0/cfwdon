@@ -31,6 +31,7 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Remot
         quote_state: status.quote_state.clone(),
         published_at: status.published_at.clone(),
     })
+    .expect("status notification remote status record is valid")
 }
 
 pub(crate) async fn collect_status_notification_entries(

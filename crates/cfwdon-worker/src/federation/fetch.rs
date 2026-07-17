@@ -2,9 +2,9 @@ use cfwdon_domain::AccountHandle;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use url::Url;
-use worker::{Error, Fetch, Headers, Method, Request, RequestInit, Result};
+use worker::{Error, Result};
 
-use super::validate_remote_fetch_url;
+use super::{fetch_remote_http_json, validate_remote_actor_profile_url};
 
 #[derive(Debug)]
 pub(crate) struct RemoteActorProfile {
@@ -47,20 +47,11 @@ pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
         domain, encoded_resource
     );
     let webfinger_url = parse_remote_http_url(&webfinger_url)?;
-    validate_remote_fetch_url(&webfinger_url).await?;
-
-    let request = Request::new(webfinger_url.as_str(), Method::Get)?;
-    let mut response = Fetch::Request(request).send().await?;
-    if response.status_code() / 100 != 2 {
-        return Err(Error::RustError(format!(
-            "failed to resolve remote account {}@{}: HTTP {}",
-            handle.username,
-            domain,
-            response.status_code()
-        )));
-    }
-
-    let webfinger: serde_json::Value = response.json().await?;
+    let webfinger: serde_json::Value = fetch_remote_http_json(
+        webfinger_url.as_str(),
+        "application/jrd+json, application/json",
+    )
+    .await?;
     let actor_uri = webfinger
         .get("links")
         .and_then(serde_json::Value::as_array)
@@ -258,67 +249,22 @@ fn remote_actor_profile_media(actor: &serde_json::Value) -> RemoteActorProfileMe
 }
 
 pub(crate) async fn validate_remote_actor_profile_urls(profile: &RemoteActorProfile) -> Result<()> {
-    let mut validated_hosts = HashSet::new();
-    validate_remote_actor_profile_url(&profile.actor_uri, &mut validated_hosts).await?;
-    validate_remote_actor_profile_url(&profile.inbox_uri, &mut validated_hosts).await?;
+    let mut validated_ip_hosts = HashSet::<IpAddr>::new();
+    validate_remote_actor_profile_url(&profile.actor_uri, &mut validated_ip_hosts).await?;
+    validate_remote_actor_profile_url(&profile.inbox_uri, &mut validated_ip_hosts).await?;
     if let Some(shared_inbox_uri) = profile.shared_inbox_uri.as_deref() {
-        validate_remote_actor_profile_url(shared_inbox_uri, &mut validated_hosts).await?;
+        validate_remote_actor_profile_url(shared_inbox_uri, &mut validated_ip_hosts).await?;
     }
-    validate_remote_actor_profile_url(&profile.public_key_id, &mut validated_hosts).await?;
-    Ok(())
-}
-
-async fn validate_remote_actor_profile_url(
-    raw_url: &str,
-    validated_hosts: &mut HashSet<String>,
-) -> Result<()> {
-    let parsed = parse_remote_http_url(raw_url)?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(Error::RustError(
-            "remote URL must not include user info".to_owned(),
-        ));
-    }
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| Error::RustError("remote URL must include host".to_owned()))?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") {
-        return Err(Error::RustError("localhost is not allowed".to_owned()));
-    }
-    if host.parse::<IpAddr>().is_ok() {
-        validate_remote_fetch_url(&parsed).await?;
-        return Ok(());
-    }
-    if validated_hosts.insert(host) {
-        validate_remote_fetch_url(&parsed).await?;
-    }
+    validate_remote_actor_profile_url(&profile.public_key_id, &mut validated_ip_hosts).await?;
     Ok(())
 }
 
 pub(crate) async fn fetch_remote_activitypub_document(url: &str) -> Result<serde_json::Value> {
-    let parsed = parse_remote_http_url(url)?;
-    validate_remote_fetch_url(&parsed).await?;
-
-    let headers = Headers::new();
-    headers.set(
-        "Accept",
+    fetch_remote_http_json(
+        url,
         "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
-    )?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let request = Request::new_with_init(parsed.as_str(), &init)?;
-    let mut response = Fetch::Request(request).send().await?;
-    if response.status_code() / 100 != 2 {
-        return Err(Error::RustError(format!(
-            "failed to fetch remote activitypub document {}: HTTP {}",
-            url,
-            response.status_code()
-        )));
-    }
-
-    response.json().await
+    )
+    .await
 }
 
 fn remote_actor_type_is_bot(value: Option<&serde_json::Value>) -> bool {

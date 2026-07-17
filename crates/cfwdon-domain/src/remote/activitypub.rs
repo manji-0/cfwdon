@@ -26,12 +26,13 @@ pub fn visibility_from_activitypub_audiences(
 
 /// Audience placement flags for locally emitted ActivityPub notes.
 ///
-/// Matches worker `activitypub_audiences`: unlisted posts place Public in `cc`,
-/// while public, followers-only, and direct posts place Public in `to`.
+/// Returns `(to_contains_public, cc_contains_public)`. Restricted visibilities must
+/// not place Public in either audience list.
 pub fn activitypub_audience_flags_for_visibility(visibility: Visibility) -> (bool, bool) {
     match visibility {
+        Visibility::Public => (true, false),
         Visibility::Unlisted => (false, true),
-        Visibility::Public | Visibility::FollowersOnly | Visibility::Direct => (true, false),
+        Visibility::FollowersOnly | Visibility::Direct => (false, false),
     }
 }
 
@@ -100,7 +101,11 @@ mod tests {
         );
         assert_eq!(
             activitypub_audience_flags_for_visibility(Visibility::FollowersOnly),
-            (true, false)
+            (false, false)
+        );
+        assert_eq!(
+            activitypub_audience_flags_for_visibility(Visibility::Direct),
+            (false, false)
         );
     }
 

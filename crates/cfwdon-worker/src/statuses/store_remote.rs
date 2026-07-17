@@ -1,7 +1,7 @@
 use super::{
     AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
-    ResolvedTimelineCursor, Result, normalize_hashtag, remote_status_from_record, sql_placeholders,
-    unique_ordered_refs,
+    ResolvedTimelineCursor, Result, normalize_hashtag, remote_status_from_record,
+    remote_statuses_from_records, sql_placeholders, unique_ordered_refs,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -823,7 +823,7 @@ async fn query_remote_status_rows(
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
     result
         .results::<RemoteStatusRecord>()
-        .map(|rows| rows.into_iter().map(remote_status_from_record).collect())
+        .and_then(remote_statuses_from_records)
 }
 
 fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
@@ -837,12 +837,13 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
         quote_of_uri: optional_json_string(value, "quote_of_uri"),
         content_html: json_string(value, "content_html"),
         spoiler_text: json_string(value, "spoiler_text"),
-        visibility: json_string(value, "visibility"),
+        visibility: json_string_or(value, "visibility", "public"),
         sensitive: json_i32(value, "sensitive"),
         language: optional_json_string(value, "language"),
         quote_state: json_string_or(value, "quote_state", "accepted"),
         published_at: json_string(value, "published_at"),
     })
+    .expect("remote status value is valid")
 }
 
 fn json_string(value: &serde_json::Value, key: &str) -> String {

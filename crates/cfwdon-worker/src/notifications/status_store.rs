@@ -1,4 +1,4 @@
-use super::{StatusRecord, StatusRow, status_from_record};
+use super::{StatusRecord, StatusRow, statuses_from_records};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
@@ -48,7 +48,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_status_notifications_for_account(

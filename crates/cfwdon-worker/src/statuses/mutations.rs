@@ -1,11 +1,12 @@
 use super::{
     StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string, find_local_status_by_object_uri,
-    generate_entity_id, now_iso_string, render_status_html, replace_local_status_hashtags,
+    generate_entity_id, now_iso_string, outbox_create_insert_statement,
+    outbox_delete_insert_statement, render_status_html, replace_local_status_hashtags,
     require_status_by_id, status_from_record,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    LocalAccount, LocalReblogPersistenceFacts, LocalStatusPersistenceFacts, PollDraft,
+    LocalAccount, LocalReblogPersistenceFacts, LocalStatus, LocalStatusPersistenceFacts, PollDraft,
     QuoteTargetResolution, StatusDraft, StoredLocalReblogIntent, StoredLocalStatusIntent,
     Visibility,
 };
@@ -33,6 +34,7 @@ pub(crate) async fn insert_status(
     draft: &StatusDraft,
     application_id: Option<i64>,
     quote_of_uri: Option<&str>,
+    defer_outbox: bool,
 ) -> Result<StatusRow> {
     let quote_resolution = quote_target_resolution(db, config, quote_of_uri).await?;
     let publish_intent = draft
@@ -51,13 +53,20 @@ pub(crate) async fn insert_status(
                 status_id
             ),
             quote_of_uri: quote_of_uri.map(str::to_owned),
-            content_html: render_status_html(&draft.text),
+            content_html: render_status_html(draft.text()),
             application_id,
             created_at: created_at.clone(),
         })
         .state;
 
-    insert_local_status_intent(db, &stored).await?;
+    let preview = LocalStatus::try_from_record(stored.to_record())
+        .map_err(|error| worker::Error::RustError(error.to_string()))?;
+    let outbox_statement = if defer_outbox {
+        None
+    } else {
+        outbox_create_insert_statement(db, config, account, &preview).await?
+    };
+    insert_local_status_intent(db, &stored, outbox_statement).await?;
 
     replace_local_status_hashtags(
         db,
@@ -68,7 +77,7 @@ pub(crate) async fn insert_status(
     )
     .await?;
 
-    if let Some(poll) = draft.poll.as_ref() {
+    if let Some(poll) = draft.poll() {
         insert_status_poll(db, &stored.status_id, poll, &stored.created_at).await?;
     }
 
@@ -78,11 +87,13 @@ pub(crate) async fn insert_status(
 async fn insert_local_status_intent(
     db: &D1Database,
     intent: &StoredLocalStatusIntent,
+    outbox_statement: Option<worker::d1::D1PreparedStatement>,
 ) -> Result<()> {
     let bindings = local_status_insert_bindings(intent);
 
-    db.prepare(
-        "INSERT INTO statuses (
+    let status_statement = db
+        .prepare(
+            "INSERT INTO statuses (
             id,
             account_id,
             ap_id,
@@ -119,10 +130,17 @@ async fn insert_local_status_intent(
             ?16,
             ?17
         )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?;
+
+    match outbox_statement {
+        Some(outbox_statement) => {
+            db.batch(vec![status_statement, outbox_statement]).await?;
+        }
+        None => {
+            status_statement.run().await?;
+        }
+    }
     Ok(())
 }
 
@@ -300,7 +318,7 @@ pub(crate) async fn find_reblog_wrapper_status_by_target_uri(
     .bind_refs(bindings.iter())?
     .first::<StatusRecord>(None)
     .await
-    .map(|row| row.map(status_from_record))
+    .and_then(|row| row.map(status_from_record).transpose())
 }
 
 pub(crate) async fn delete_reblog_wrapper_status_by_target_uri(
@@ -502,18 +520,45 @@ fn local_status_quote_policy_update_bindings<'a>(
     ]
 }
 
-pub(crate) async fn delete_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
-    delete_status_poll(db, status_id).await?;
+pub(crate) async fn delete_local_status_with_outbox(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> Result<()> {
+    let mut statements = Vec::new();
+    if let Some(statement) = outbox_delete_insert_statement(db, config, account, status).await? {
+        statements.push(statement);
+    }
 
-    let bindings = status_id_delete_bindings(status_id);
-    db.prepare(
-        "DELETE FROM statuses
-         WHERE id = ?1",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+    let bindings = status_id_delete_bindings(&status.id);
+    statements.push(
+        db.prepare(
+            "DELETE FROM status_poll_options
+             WHERE poll_id IN (
+                 SELECT id
+                 FROM status_polls
+                 WHERE status_id = ?1
+             )",
+        )
+        .bind_refs(bindings.iter())?,
+    );
+    statements.push(
+        db.prepare(
+            "DELETE FROM status_polls
+             WHERE status_id = ?1",
+        )
+        .bind_refs(bindings.iter())?,
+    );
+    statements.push(
+        db.prepare(
+            "DELETE FROM statuses
+             WHERE id = ?1",
+        )
+        .bind_refs(bindings.iter())?,
+    );
 
+    db.batch(statements).await?;
     Ok(())
 }
 

@@ -88,7 +88,7 @@ async fn validate_local_quote_creation(
         return Ok(Some("private mentions cannot be quoted"));
     }
     if status.visibility == Visibility::FollowersOnly
-        && draft.visibility != Visibility::FollowersOnly
+        && draft.visibility() != Visibility::FollowersOnly
     {
         return Ok(Some("private posts can only be quoted in private posts"));
     }
@@ -226,12 +226,12 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         }
         Err(error) => return Err(error),
     };
-    let pending_media = match resolve_attachable_media(&db, &access.account, &draft.media_ids).await
-    {
-        Ok(media) => media,
-        Err(message) => return Response::error(message, 422),
-    };
-    let in_reply_to_account_id = match draft.in_reply_to_id.as_deref() {
+    let pending_media =
+        match resolve_attachable_media(&db, &access.account, draft.media_ids()).await {
+            Ok(media) => media,
+            Err(message) => return Response::error(message, 422),
+        };
+    let in_reply_to_account_id = match draft.in_reply_to_id() {
         Some(status_id) => match find_local_status_owner_id(&db, status_id).await? {
             Some(account_id) => Some(account_id),
             None => return Response::error("in_reply_to_id references unknown local status", 422),

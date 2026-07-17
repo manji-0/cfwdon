@@ -130,7 +130,7 @@ pub(crate) fn check_access_provision_refinement() {
             if state.base_username_taken {
                 let base = access_provision_sanitized_local_part(&email);
                 assert!(
-                    intent.username.as_str().starts_with(&format!("{base}-")),
+                    intent.username.as_str().starts_with(&format!("{base}_")),
                     "suffix username for {state:?}"
                 );
             } else {

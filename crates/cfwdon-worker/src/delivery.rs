@@ -109,8 +109,8 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     process_generic_outbox_deliveries(db, &mut summary).await?;
 
     let (target_deliveries, outbound_deliveries) = futures_util::try_join!(
-        list_pending_target_outbox_deliveries(db, 32),
-        list_pending_outbound_activities(db, 32),
+        claim_pending_target_outbox_deliveries(db, 32),
+        claim_pending_outbound_activities(db, 32),
     )?;
     console_log!(
         "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",

@@ -513,6 +513,7 @@ fn remote_status_row_from_activitypub_object(
         quote_state: "accepted".to_owned(),
         published_at: remote_status_published_at(object),
     })
+    .expect("activitypub remote status record is valid")
 }
 
 fn remote_status_content_html(object: &serde_json::Value) -> String {
