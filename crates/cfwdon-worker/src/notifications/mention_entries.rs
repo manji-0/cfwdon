@@ -14,8 +14,10 @@ use super::{
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
 use worker::{D1Database, Result};
 
-fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
-    StatusRow {
+fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow> {
+    let visibility = Visibility::parse(&mention.visibility).ok()?;
+    let quote_state = QuoteState::parse(&mention.quote_state).ok()?;
+    Some(StatusRow {
         id: mention.id,
         account_id: mention.account_id.clone(),
         ap_id: mention.ap_id,
@@ -25,18 +27,18 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> StatusRow {
         content_html: mention.content_html,
         text: mention.text_content,
         spoiler_text: mention.spoiler_text,
-        visibility: Visibility::parse(&mention.visibility).unwrap_or(Visibility::Public),
+        visibility,
         sensitive: mention.sensitive != 0,
         language: mention.language,
         quote_approval_policy: None,
-        quote_state: QuoteState::parse(&mention.quote_state).unwrap_or(QuoteState::Accepted),
+        quote_state,
         application_id: None,
         created_at: mention.created_at.clone(),
         updated_at: None,
-    }
+    })
 }
 
-fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteStatusRow {
+fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: mention.id,
         actor_uri: mention.actor_uri.clone(),
@@ -53,7 +55,7 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> RemoteSta
         quote_state: mention.quote_state,
         published_at: mention.published_at.clone(),
     })
-    .expect("mention notification remote status record is valid")
+    .ok()
 }
 
 pub(crate) async fn collect_mention_notification_entries(
@@ -80,7 +82,9 @@ pub(crate) async fn collect_mention_notification_entries(
         let Some(actor) = find_account_by_id(db, &mention.account_id).await? else {
             continue;
         };
-        let status = local_mention_status_row(mention);
+        let Some(status) = local_mention_status_row(mention) else {
+            continue;
+        };
         if !can_view_local_status(db, &status, Some(viewer), &actor).await?
             || muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
                 .await?
@@ -139,7 +143,9 @@ pub(crate) async fn collect_mention_notification_entries(
         ) {
             continue;
         }
-        let status = remote_mention_status_row(mention);
+        let Some(status) = remote_mention_status_row(mention) else {
+            continue;
+        };
         let status_response =
             build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
         push_notification_entry(

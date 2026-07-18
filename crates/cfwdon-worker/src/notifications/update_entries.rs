@@ -37,7 +37,9 @@ pub(crate) async fn collect_update_notification_entries(
         ) {
             continue;
         }
-        let status = update.as_remote_status_row();
+        let Ok(status) = update.as_remote_status_row() else {
+            continue;
+        };
         let status_response =
             build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
         let update_token = notification_timestamp_sort_token(&update.remote_updated_at)

@@ -806,11 +806,10 @@ async fn query_remote_statuses_with_actor(
     let values = result.results::<serde_json::Value>()?;
     Ok(values
         .into_iter()
-        .map(|value| {
-            (
-                remote_status_row_from_value(&value),
-                RemoteActorRow::from_value(&value),
-            )
+        .filter_map(|value| {
+            remote_status_row_from_value(&value)
+                .ok()
+                .map(|row| (row, RemoteActorRow::from_value(&value)))
         })
         .collect())
 }
@@ -826,7 +825,7 @@ async fn query_remote_status_rows(
         .and_then(remote_statuses_from_records)
 }
 
-fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
+fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
@@ -843,7 +842,6 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> RemoteStatusRow {
         quote_state: json_string_or(value, "quote_state", "accepted"),
         published_at: json_string(value, "published_at"),
     })
-    .expect("remote status value is valid")
 }
 
 fn json_string(value: &serde_json::Value, key: &str) -> String {
@@ -1191,7 +1189,8 @@ mod tests {
             "language": "ja",
             "quote_state": "pending",
             "published_at": "2026-01-01T00:00:00Z"
-        }));
+        }))
+        .unwrap();
 
         assert_eq!(row.id, "status-1");
         assert_eq!(row.actor_uri, "https://remote.example/users/alice");
@@ -1223,7 +1222,7 @@ mod tests {
 
     #[test]
     fn remote_status_row_from_value_uses_empty_and_quote_state_defaults() {
-        let row = remote_status_row_from_value(&serde_json::json!({}));
+        let row = remote_status_row_from_value(&serde_json::json!({})).unwrap();
 
         assert_eq!(row.id, "");
         assert_eq!(row.actor_uri, "");

@@ -126,6 +126,33 @@ impl StatusDraft {
         self.poll.as_ref()
     }
 
+    pub fn try_from_persisted(
+        text: String,
+        visibility: Visibility,
+        spoiler_text: String,
+        sensitive: bool,
+        language: Option<String>,
+        quote_approval_policy: Option<QuoteApprovalPolicy>,
+        in_reply_to_id: Option<String>,
+        media_ids: Vec<String>,
+        poll: Option<PollDraft>,
+    ) -> Result<Self, StatusDraftError> {
+        ComposingStatus {
+            text,
+            visibility,
+            spoiler_text,
+            sensitive,
+            language,
+            quote_approval_policy,
+            in_reply_to_id,
+            media_ids,
+            poll,
+        }
+        .validate(None)
+        .map(|transition| transition.state)
+    }
+
+    #[cfg(test)]
     pub fn from_persisted(
         text: String,
         visibility: Visibility,
@@ -137,7 +164,7 @@ impl StatusDraft {
         media_ids: Vec<String>,
         poll: Option<PollDraft>,
     ) -> Self {
-        Self {
+        Self::try_from_persisted(
             text,
             visibility,
             spoiler_text,
@@ -147,7 +174,8 @@ impl StatusDraft {
             in_reply_to_id,
             media_ids,
             poll,
-        }
+        )
+        .expect("persisted status draft is valid")
     }
 
     pub fn effective_quote_policy(&self, account: &LocalAccount) -> QuoteApprovalPolicy {
@@ -321,5 +349,35 @@ mod tests {
             draft.into_publish_intent(&fixture_account(), QuoteTargetResolution::none());
 
         assert!(transition.has_event(&StatusDraftEvent::PublishIntentResolved));
+    }
+
+    #[test]
+    fn try_from_persisted_rejects_empty_payload() {
+        let draft = ComposingStatus {
+            text: String::new(),
+            visibility: Visibility::Public,
+            spoiler_text: String::new(),
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            in_reply_to_id: None,
+            media_ids: Vec::new(),
+            poll: None,
+        };
+        assert_eq!(
+            StatusDraft::try_from_persisted(
+                draft.text,
+                draft.visibility,
+                draft.spoiler_text,
+                draft.sensitive,
+                draft.language,
+                draft.quote_approval_policy,
+                draft.in_reply_to_id,
+                draft.media_ids,
+                draft.poll,
+            )
+            .unwrap_err(),
+            StatusDraftError::EmptyPayload
+        );
     }
 }

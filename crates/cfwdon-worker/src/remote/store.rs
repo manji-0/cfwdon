@@ -131,9 +131,8 @@ struct RemoteStatusEditStateRow {
 }
 
 impl RemoteStatusEditStateRow {
-    fn status_row(&self) -> RemoteStatusRow {
+    fn status_row(&self) -> Result<RemoteStatusRow> {
         remote_status_from_record(self.record.clone())
-            .expect("stored remote status record is valid")
     }
 }
 
@@ -251,7 +250,7 @@ async fn insert_previous_remote_status_snapshot(
         return Ok(());
     };
     let response =
-        build_remote_status_response(db, config, None, &previous.status_row(), &actor).await?;
+        build_remote_status_response(db, config, None, &previous.status_row()?, &actor).await?;
     let mut snapshot = serde_json::to_value(response).unwrap_or_else(|_| serde_json::json!({}));
     snapshot["created_at"] = serde_json::json!(revision_at);
     let snapshot = normalize_status_history_entry(snapshot);
@@ -440,7 +439,7 @@ pub(crate) async fn upsert_remote_status(
         build_remote_status_store_intent(actor, object, status_id, quote_resolution, revision_at)?;
     if let Some(ref previous) = previous {
         intent.quote_state = merged_quote_state_for_remote_upsert(
-            previous.status_row().quote_state,
+            previous.status_row()?.quote_state,
             intent.quote_state,
         );
     }

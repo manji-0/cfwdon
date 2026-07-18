@@ -133,7 +133,7 @@ pub(crate) async fn outbox_delete_insert_statement(
         return Ok(None);
     }
 
-    let activity = build_activitypub_delete(config, account, status)?;
+    let activity = build_activitypub_delete(db, config, account, status).await?;
     let activity_id = activity
         .get("id")
         .and_then(serde_json::Value::as_str)

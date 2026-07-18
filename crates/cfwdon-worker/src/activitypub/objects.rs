@@ -1,11 +1,14 @@
 use super::{
     AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, actor_url,
-    apply_activitypub_poll_fields, classify_media_kind, count_poll_voters, find_account_by_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_status_by_id,
-    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_attachment_url, media_kind_label, quote_authorization_uri, status_has_active_quote,
+    apply_activitypub_poll_fields, classify_media_kind, count_poll_voters,
+    extract_account_handles_from_text, find_account_by_id, find_account_by_username,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_remote_actor_by_username_domain, find_status_by_id, find_status_poll_by_status_id,
+    is_iso_timestamp_in_past, list_status_poll_options, media_attachment_url, media_kind_label,
+    quote_authorization_uri, status_has_active_quote,
 };
-use cfwdon_domain::QuoteState;
+use cfwdon_domain::{QuoteState, Visibility};
+use std::collections::HashSet;
 use worker::{D1Database, Result};
 
 pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
@@ -26,26 +29,80 @@ pub(crate) fn local_status_ap_id(
     })
 }
 
-pub(crate) fn activitypub_audiences(
+pub(crate) fn activitypub_audiences_for_visibility(
     config: &AppConfig,
     username: &str,
-    visibility: &str,
+    visibility: Visibility,
 ) -> (serde_json::Value, serde_json::Value) {
     let public = serde_json::json!(["https://www.w3.org/ns/activitystreams#Public"]);
     let followers = serde_json::json!([format!("{}/followers", actor_url(config, username))]);
 
-    let visibility =
-        cfwdon_domain::Visibility::parse(visibility).unwrap_or(cfwdon_domain::Visibility::Public);
-    let (to_has_public, cc_has_public) =
-        cfwdon_domain::activitypub_audience_flags_for_visibility(visibility);
-
-    if to_has_public {
-        (public, followers)
-    } else if cc_has_public {
-        (followers, public)
-    } else {
-        (followers, serde_json::json!([]))
+    match visibility {
+        Visibility::Public => (public, followers),
+        Visibility::Unlisted => (followers, public),
+        Visibility::FollowersOnly => (followers, serde_json::json!([])),
+        Visibility::Direct => (serde_json::json!([]), serde_json::json!([])),
     }
+}
+
+pub(crate) async fn activitypub_audiences_for_status(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> Result<(serde_json::Value, serde_json::Value)> {
+    if status.visibility == Visibility::Direct {
+        return direct_activitypub_audiences(db, config, account, status).await;
+    }
+
+    Ok(activitypub_audiences_for_visibility(
+        config,
+        account.username(),
+        status.visibility,
+    ))
+}
+
+async fn direct_activitypub_audiences(
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &StatusRow,
+) -> Result<(serde_json::Value, serde_json::Value)> {
+    let mut recipients = HashSet::new();
+
+    for handle in extract_account_handles_from_text(&status.text, config) {
+        if handle.is_local_to(&config.instance_domain) {
+            if let Some(account) = find_account_by_username(db, &handle.username).await?
+                && account.id() != author.id()
+            {
+                recipients.insert(actor_url(config, account.username()));
+            }
+            continue;
+        }
+
+        if let Some(domain) = handle.domain.as_deref()
+            && let Some(actor) =
+                find_remote_actor_by_username_domain(db, &handle.username, domain).await?
+        {
+            recipients.insert(actor.actor_uri);
+        }
+    }
+
+    if let Some(reply_id) = status.in_reply_to_id.as_deref()
+        && let Some(reply) = find_status_by_id(db, reply_id).await?
+        && let Some(reply_account) = find_account_by_id(db, &reply.account_id).await?
+        && reply_account.id() != author.id()
+    {
+        recipients.insert(actor_url(config, reply_account.username()));
+    }
+
+    let to = serde_json::Value::Array(
+        recipients
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect(),
+    );
+    Ok((to, serde_json::json!([])))
 }
 
 fn quote_context_mapping() -> serde_json::Value {
@@ -90,7 +147,7 @@ pub(crate) async fn build_activitypub_note(
 ) -> Result<serde_json::Value> {
     let actor = actor_url(config, account.username());
     let note_id = local_status_ap_id(config, account, status);
-    let audiences = activitypub_audiences(config, account.username(), status.visibility.as_str());
+    let audiences = activitypub_audiences_for_status(db, config, account, status).await?;
     let poll = find_status_poll_by_status_id(db, &status.id).await?;
     let reply_uri = match status.in_reply_to_id.as_deref() {
         Some(reply_id) => find_status_by_id(db, reply_id)
@@ -206,4 +263,31 @@ pub(crate) fn activitypub_media_attachment_type(content_type: &str) -> &'static 
             _ => None,
         })
         .unwrap_or("Document")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use cfwdon_core::AppConfig;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            instance_domain: "example.com".to_owned(),
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn activitypub_audiences_rejects_unknown_visibility() {
+        assert!(Visibility::parse("not-a-visibility").is_err());
+    }
+
+    #[test]
+    fn activitypub_audiences_for_visibility_maps_direct_without_followers() {
+        let config = test_config();
+        let (to, cc) = activitypub_audiences_for_visibility(&config, "alice", Visibility::Direct);
+        assert_eq!(to, serde_json::json!([]));
+        assert_eq!(cc, serde_json::json!([]));
+    }
 }

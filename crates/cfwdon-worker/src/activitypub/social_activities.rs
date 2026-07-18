@@ -1,4 +1,7 @@
-use super::{LocalAccount, activitypub_audiences, actor_url, generate_entity_id, now_iso_string};
+use super::{
+    LocalAccount, activitypub_audiences_for_visibility, actor_url, generate_entity_id,
+    now_iso_string,
+};
 use cfwdon_core::AppConfig;
 use worker::{Error, Result};
 
@@ -180,7 +183,12 @@ pub(crate) fn build_announce_activity(
     visibility: &str,
 ) -> Result<(String, String)> {
     let actor = actor_url(config, account.username());
-    let audiences = activitypub_audiences(config, account.username(), visibility);
+    let visibility = cfwdon_domain::Visibility::parse(visibility).map_err(|error| {
+        Error::RustError(format!(
+            "unsupported activity visibility {visibility}: {error}"
+        ))
+    })?;
+    let audiences = activitypub_audiences_for_visibility(config, account.username(), visibility);
     let activity_id = format!("{actor}/announces/{}", generate_entity_id(12)?);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -209,7 +217,12 @@ pub(crate) fn build_undo_announce_activity(
     visibility: &str,
 ) -> Result<(String, String)> {
     let actor = actor_url(config, account.username());
-    let audiences = activitypub_audiences(config, account.username(), visibility);
+    let visibility = cfwdon_domain::Visibility::parse(visibility).map_err(|error| {
+        Error::RustError(format!(
+            "unsupported activity visibility {visibility}: {error}"
+        ))
+    })?;
+    let audiences = activitypub_audiences_for_visibility(config, account.username(), visibility);
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{actor}/undo/{}", generate_entity_id(12)?),

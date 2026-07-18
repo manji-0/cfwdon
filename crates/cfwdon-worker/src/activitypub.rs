@@ -15,24 +15,27 @@ pub(crate) use social_activities::*;
 pub(crate) use updates::*;
 
 use cfwdon_core::AppConfig;
-use worker::Result;
+use worker::{D1Database, Result};
 
-pub(crate) fn build_activitypub_delete(
+pub(crate) async fn build_activitypub_delete(
+    db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<serde_json::Value> {
-    build_activitypub_delete_with_published_at(config, account, status, &now_iso_string()?)
+    build_activitypub_delete_with_published_at(db, config, account, status, &now_iso_string()?)
+        .await
 }
 
-pub(crate) fn build_activitypub_delete_with_published_at(
+pub(crate) async fn build_activitypub_delete_with_published_at(
+    db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
     published_at: &str,
 ) -> Result<serde_json::Value> {
     let note_id = local_status_ap_id(config, account, status);
-    let audiences = activitypub_audiences(config, account.username(), status.visibility.as_str());
+    let audiences = activitypub_audiences_for_status(db, config, account, status).await?;
     Ok(serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "type": "Delete",

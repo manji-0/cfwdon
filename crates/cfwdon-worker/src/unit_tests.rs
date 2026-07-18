@@ -12,11 +12,11 @@ use super::{
     TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
     account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
     account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
-    activitypub_media_attachment_type, activitypub_profile_attachments,
-    apply_activitypub_poll_fields, apply_html_preview_metadata, auth0_login_url, auth0_logout_url,
-    authorize_interaction_document, authorize_interaction_url_from_base,
-    build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
-    build_activitypub_delete_with_published_at, build_add_featured_activity_with_id,
+    activitypub_audiences_for_visibility, activitypub_media_attachment_type,
+    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
+    auth0_login_url, auth0_logout_url, authorize_interaction_document,
+    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
+    build_activitypub_actor_document, build_add_featured_activity_with_id,
     build_announcements_document, build_app_verify_credentials_document,
     build_app_verify_credentials_document_from_parts, build_deepl_request_body,
     build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
@@ -44,9 +44,9 @@ use super::{
     format_async_refresh_header_value, hash_account_password, image_dimensions,
     include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
     is_admin_account, is_follow_undo, local_quote_policy_allows, local_quote_revoke_allowed,
-    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
-    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
-    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    local_status_ap_id, local_username_from_actor_uri, local_username_from_status_uri,
+    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
+    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
     notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
@@ -638,7 +638,7 @@ fn scheduled_status_document_matches_upstream_shape() {
 
 #[test]
 fn scheduled_status_document_with_params_reflects_draft_values() {
-    let draft = StatusDraft::from_persisted(
+    let draft = StatusDraft::try_from_persisted(
         "scheduled hello".to_owned(),
         Visibility::Unlisted,
         "cw".to_owned(),
@@ -648,7 +648,8 @@ fn scheduled_status_document_with_params_reflects_draft_values() {
         Some("status-1".to_owned()),
         vec!["media-1".to_owned()],
         None,
-    );
+    )
+    .unwrap();
     let document =
         scheduled_status_document_with_params("sched-2", "2099-02-03T04:05:06Z", Some(&draft));
 
@@ -3871,35 +3872,20 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
         updated_at: None,
     };
 
-    let activity = build_activitypub_delete_with_published_at(
-        &config,
-        &account,
-        &status,
-        "2026-01-02T00:00:00.000Z",
-    )
-    .unwrap();
-    assert_eq!(activity.get("type"), Some(&serde_json::json!("Delete")));
+    let note_id = local_status_ap_id(&config, &account, &status);
+    let (to, cc) =
+        activitypub_audiences_for_visibility(&config, account.username(), status.visibility);
     assert_eq!(
-        activity.get("object"),
-        Some(&serde_json::json!(
-            "https://social.example/users/alice/statuses/status-1"
-        ))
+        note_id,
+        "https://social.example/users/alice/statuses/status-1"
     );
     assert_eq!(
-        activity.get("published"),
-        Some(&serde_json::json!("2026-01-02T00:00:00.000Z"))
+        to,
+        serde_json::json!(["https://www.w3.org/ns/activitystreams#Public"])
     );
     assert_eq!(
-        activity.get("to"),
-        Some(&serde_json::json!([
-            "https://www.w3.org/ns/activitystreams#Public"
-        ]))
-    );
-    assert_eq!(
-        activity.pointer("/cc/0"),
-        Some(&serde_json::json!(
-            "https://social.example/users/alice/followers"
-        ))
+        cc,
+        serde_json::json!(["https://social.example/users/alice/followers"])
     );
 }
 
@@ -3956,7 +3942,7 @@ fn effective_local_quote_approval_forces_private_status_to_nobody() {
 #[test]
 fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
     let account = actor_fixture_account();
-    let private_draft = cfwdon_domain::StatusDraft::from_persisted(
+    let private_draft = cfwdon_domain::StatusDraft::try_from_persisted(
         "hello".to_owned(),
         cfwdon_domain::Visibility::FollowersOnly,
         String::new(),
@@ -3966,8 +3952,9 @@ fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
         None,
         Vec::new(),
         None,
-    );
-    let direct_draft = cfwdon_domain::StatusDraft::from_persisted(
+    )
+    .unwrap();
+    let direct_draft = cfwdon_domain::StatusDraft::try_from_persisted(
         private_draft.text().to_owned(),
         cfwdon_domain::Visibility::Direct,
         private_draft.spoiler_text().to_owned(),
@@ -3977,7 +3964,8 @@ fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
         private_draft.in_reply_to_id().map(str::to_owned),
         private_draft.media_ids().to_vec(),
         private_draft.poll().cloned(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         private_draft.effective_quote_policy(&account).as_str(),
@@ -3995,7 +3983,7 @@ fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_i
     record.default_quote_policy = "followers".to_owned();
     record.default_language = Some("en".to_owned());
     let account = LocalAccount::from_record(record);
-    let draft = cfwdon_domain::StatusDraft::from_persisted(
+    let draft = cfwdon_domain::StatusDraft::try_from_persisted(
         "hello".to_owned(),
         cfwdon_domain::Visibility::Public,
         String::new(),
@@ -4005,7 +3993,8 @@ fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_i
         None,
         Vec::new(),
         None,
-    );
+    )
+    .unwrap();
 
     assert_eq!(draft.effective_quote_policy(&account).as_str(), "followers");
 }

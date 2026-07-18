@@ -51,7 +51,7 @@ pub(crate) async fn list_update_notifications_for_account(
 }
 
 impl UpdateNotificationRow {
-    pub(crate) fn as_remote_status_row(&self) -> RemoteStatusRow {
+    pub(crate) fn as_remote_status_row(&self) -> Result<RemoteStatusRow> {
         remote_status_from_record(RemoteStatusRecord {
             id: self.id.clone(),
             actor_uri: self.actor_uri.clone(),
@@ -68,6 +68,5 @@ impl UpdateNotificationRow {
             quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
         })
-        .expect("update notification remote status record is valid")
     }
 }

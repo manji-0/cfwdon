@@ -400,7 +400,9 @@ async fn load_transient_remote_actor_statuses(
         if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
             continue;
         }
-        let status = remote_status_row_from_activitypub_object(actor, object);
+        let Ok(status) = remote_status_row_from_activitypub_object(actor, object) else {
+            continue;
+        };
         if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
@@ -473,7 +475,7 @@ fn remote_status_actor_uri(
 fn remote_status_row_from_activitypub_object(
     actor: &RemoteActorRow,
     object: &serde_json::Value,
-) -> RemoteStatusRow {
+) -> Result<RemoteStatusRow> {
     let object_uri = object
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -513,7 +515,6 @@ fn remote_status_row_from_activitypub_object(
         quote_state: "accepted".to_owned(),
         published_at: remote_status_published_at(object),
     })
-    .expect("activitypub remote status record is valid")
 }
 
 fn remote_status_content_html(object: &serde_json::Value) -> String {

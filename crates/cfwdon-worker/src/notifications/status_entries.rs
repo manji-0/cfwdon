@@ -14,7 +14,7 @@ use super::{
 use cfwdon_domain::LocalAccount;
 use worker::{D1Database, Result};
 
-fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> RemoteStatusRow {
+fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: status.id.clone(),
         actor_uri: status.actor_uri.clone(),
@@ -31,7 +31,7 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Remot
         quote_state: status.quote_state.clone(),
         published_at: status.published_at.clone(),
     })
-    .expect("status notification remote status record is valid")
+    .ok()
 }
 
 pub(crate) async fn collect_status_notification_entries(
@@ -124,7 +124,9 @@ pub(crate) async fn collect_status_notification_entries(
         ) {
             continue;
         }
-        let status_row = remote_status_notification_row(&status);
+        let Some(status_row) = remote_status_notification_row(&status) else {
+            continue;
+        };
         let status_response =
             build_remote_status_response(db, config, Some(viewer), &status_row, actor).await?;
         push_notification_entry(

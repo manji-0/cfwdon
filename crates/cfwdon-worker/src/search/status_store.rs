@@ -167,7 +167,7 @@ fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> 
         .map(ToOwned::to_owned)
 }
 
-fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatusRow {
+fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
@@ -191,7 +191,6 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> RemoteStatu
             .to_owned(),
         published_at: json_string(value, "published_at"),
     })
-    .expect("search remote status record is valid")
 }
 
 fn remote_search_rows_from_values(
@@ -199,11 +198,10 @@ fn remote_search_rows_from_values(
 ) -> Vec<(RemoteStatusRow, RemoteActorRow)> {
     values
         .into_iter()
-        .map(|value| {
-            (
-                remote_status_row_from_search_value(&value),
-                RemoteActorRow::from_value(&value),
-            )
+        .filter_map(|value| {
+            remote_status_row_from_search_value(&value)
+                .ok()
+                .map(|row| (row, RemoteActorRow::from_value(&value)))
         })
         .collect()
 }
@@ -444,7 +442,7 @@ mod tests {
             "published_at": "2025-01-01T00:00:00Z"
         });
 
-        let row = remote_status_row_from_search_value(&value);
+        let row = remote_status_row_from_search_value(&value).unwrap();
 
         assert_eq!(row.id, "rs1");
         assert_eq!(row.quote_state, cfwdon_domain::QuoteState::Accepted);
