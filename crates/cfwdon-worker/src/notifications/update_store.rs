@@ -68,5 +68,6 @@ impl UpdateNotificationRow {
             quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
         })
+        .expect("update notification remote status record is valid")
     }
 }

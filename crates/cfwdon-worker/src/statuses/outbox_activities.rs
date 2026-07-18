@@ -11,7 +11,7 @@ pub(crate) async fn build_outbox_activities(
     let mut items = Vec::with_capacity(statuses.len());
 
     for status in statuses {
-        let note = build_activitypub_note(db, config, account, status, false).await?;
+        let note = build_activitypub_note(db, config, account, status, false, None).await?;
         let note_id = note
             .get("id")
             .and_then(serde_json::Value::as_str)

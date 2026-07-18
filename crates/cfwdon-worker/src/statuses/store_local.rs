@@ -1,6 +1,7 @@
 use super::{
     AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
-    local_status_identity_from_uri, sql_placeholders, status_from_record, unique_ordered_refs,
+    local_status_identity_from_uri, sql_placeholders, status_from_record, statuses_from_records,
+    unique_ordered_refs,
 };
 use std::collections::HashMap;
 use worker::d1::D1Type;
@@ -44,7 +45,7 @@ pub(crate) async fn find_status_by_id(
     .bind_refs(&status_id)?
     .first::<StatusRecord>(None)
     .await
-    .map(|row| row.map(status_from_record))
+    .and_then(|row| row.map(status_from_record).transpose())
 }
 
 pub(crate) async fn find_statuses_by_ids(
@@ -70,7 +71,7 @@ pub(crate) async fn find_statuses_by_ids(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn find_status_by_ap_id(
@@ -87,7 +88,7 @@ pub(crate) async fn find_status_by_ap_id(
     .bind_refs(&ap_id)?
     .first::<StatusRecord>(None)
     .await
-    .map(|row| row.map(status_from_record))
+    .and_then(|row| row.map(status_from_record).transpose())
 }
 
 pub(crate) async fn find_statuses_by_ap_ids(
@@ -113,7 +114,7 @@ pub(crate) async fn find_statuses_by_ap_ids(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn load_in_reply_to_account_id(
@@ -198,7 +199,7 @@ pub(crate) async fn list_public_outbox_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_account_statuses(
@@ -300,7 +301,7 @@ pub(crate) async fn list_account_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_public_account_statuses(
@@ -355,7 +356,7 @@ pub(crate) async fn list_public_account_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_direct_local_replies(
@@ -376,7 +377,7 @@ pub(crate) async fn list_direct_local_replies(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 pub(crate) fn local_status_target_uri(status: &StatusRow) -> String {

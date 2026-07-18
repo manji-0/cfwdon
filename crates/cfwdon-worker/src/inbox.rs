@@ -32,24 +32,18 @@ fn inbox_activity_type(activity: &serde_json::Value) -> &str {
 async fn begin_inbox_activity_if_needed(
     db: &D1Database,
     remote_actor: &RemoteActorProfile,
-    activity_id: Option<&str>,
+    activity_id: &str,
     activity_type: &str,
 ) -> Result<bool> {
-    let Some(activity_id) = activity_id else {
-        return Ok(true);
-    };
     begin_inbox_activity_processing(db, &remote_actor.actor_uri, activity_id, activity_type).await
 }
 
 async fn finish_inbox_activity_if_needed(
     db: &D1Database,
     remote_actor: &RemoteActorProfile,
-    activity_id: Option<&str>,
+    activity_id: &str,
     result: &Result<()>,
 ) -> Result<()> {
-    let Some(activity_id) = activity_id else {
-        return Ok(());
-    };
     match result {
         Ok(()) => mark_inbox_activity_processed(db, &remote_actor.actor_uri, activity_id).await?,
         Err(_) => {
@@ -192,11 +186,11 @@ pub(crate) async fn handle_inbox_request(
         Ok(remote_actor) => remote_actor,
         Err(_) => return Response::error("invalid activitypub signature", 401),
     };
-    let activity_id = inbox_activity_id(activity);
+    let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
     if !begin_inbox_activity_if_needed(
         db,
         &remote_actor,
-        activity_id.as_deref(),
+        &activity_id,
         inbox_activity_type(activity),
     )
     .await?
@@ -205,7 +199,7 @@ pub(crate) async fn handle_inbox_request(
     }
 
     let result = dispatch_inbox_activity(db, config, account, activity, &remote_actor).await;
-    finish_inbox_activity_if_needed(db, &remote_actor, activity_id.as_deref(), &result).await?;
+    finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
     inbox_result_response(result)
 }
 

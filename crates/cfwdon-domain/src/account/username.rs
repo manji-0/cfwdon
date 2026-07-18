@@ -26,13 +26,17 @@ impl Username {
         Ok(Self(value))
     }
 
-    pub fn derive_from_email(email: &AccessEmail, base_username_taken: bool) -> Self {
+    pub fn derive_from_email(
+        email: &AccessEmail,
+        base_username_taken: bool,
+    ) -> Result<Self, UsernameError> {
         let sanitized = sanitize_username_local_part(email.local_part());
-        if base_username_taken {
-            Self(format!("{sanitized}-{}", email.short_suffix()))
+        let candidate = if base_username_taken {
+            format!("{sanitized}_{}", email.short_suffix())
         } else {
-            Self(sanitized)
-        }
+            sanitized
+        };
+        Self::parse(&candidate)
     }
 
     pub fn as_str(&self) -> &str {
@@ -59,8 +63,11 @@ impl std::fmt::Display for Username {
 fn sanitize_username_local_part(local_part: &str) -> String {
     let sanitized: String = local_part
         .chars()
-        .map(|ch| ch.to_ascii_lowercase())
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+        .map(|ch| {
+            let ch = ch.to_ascii_lowercase();
+            if ch == '-' { '_' } else { ch }
+        })
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
         .collect();
     if sanitized.is_empty() {
         "user".to_owned()
@@ -85,7 +92,14 @@ mod tests {
     #[test]
     fn username_derive_from_email_appends_suffix_when_taken() {
         let email = AccessEmail::parse("alice@example.com").unwrap();
-        let username = Username::derive_from_email(&email, true);
-        assert!(username.as_str().starts_with("alice-"));
+        let username = Username::derive_from_email(&email, true).unwrap();
+        assert!(username.as_str().starts_with("alice_"));
+    }
+
+    #[test]
+    fn username_derive_from_email_normalizes_hyphenated_local_part() {
+        let email = AccessEmail::parse("alice-bob@example.com").unwrap();
+        let username = Username::derive_from_email(&email, false).unwrap();
+        assert_eq!(username.as_str(), "alice_bob");
     }
 }

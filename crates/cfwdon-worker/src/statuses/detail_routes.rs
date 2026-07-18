@@ -772,7 +772,7 @@ pub(crate) async fn status_object_response(
         );
     }
 
-    let note = build_activitypub_note(&db, &config, &account, &status, true).await?;
+    let note = build_activitypub_note(&db, &config, &account, &status, true, None).await?;
     cache_public_json_response(
         &note,
         "application/activity+json; charset=utf-8",

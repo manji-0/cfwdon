@@ -407,16 +407,16 @@ mod tests {
 
         let parsed = parsed_status_draft_from_request(request, Some(" key ".to_owned())).unwrap();
 
-        assert_eq!(parsed.draft.text, "hello");
-        assert_eq!(parsed.draft.in_reply_to_id.as_deref(), Some("reply-1"));
+        assert_eq!(parsed.draft.text(), "hello");
+        assert_eq!(parsed.draft.in_reply_to_id(), Some("reply-1"));
         assert_eq!(parsed.quoted_status_id.as_deref(), Some("quoted-1"));
-        assert_eq!(parsed.draft.spoiler_text, "spoiler");
-        assert!(parsed.draft.sensitive);
+        assert_eq!(parsed.draft.spoiler_text(), "spoiler");
+        assert!(parsed.draft.sensitive());
         assert_eq!(
-            parsed.draft.visibility,
+            parsed.draft.visibility(),
             cfwdon_domain::Visibility::FollowersOnly
         );
-        assert_eq!(parsed.draft.language.as_deref(), Some("ja"));
+        assert_eq!(parsed.draft.language(), Some("ja"));
         assert_eq!(parsed.idempotency_key.as_deref(), Some("key"));
     }
 

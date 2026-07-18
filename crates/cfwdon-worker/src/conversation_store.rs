@@ -27,11 +27,11 @@ pub(crate) async fn ensure_direct_conversation_for_status(
     draft: &StatusDraft,
     status: &StatusRow,
 ) -> Result<Option<String>> {
-    if draft.visibility.as_str() != "direct" {
+    if draft.visibility().as_str() != "direct" {
         return Ok(None);
     }
 
-    let conversation_id = match draft.in_reply_to_id.as_deref() {
+    let conversation_id = match draft.in_reply_to_id() {
         Some(in_reply_to_id) => {
             match find_conversation_id_by_status_id(db, in_reply_to_id).await? {
                 Some(conversation_id) => conversation_id,
@@ -46,7 +46,7 @@ pub(crate) async fn ensure_direct_conversation_for_status(
     for participant in list_conversation_participants(db, &conversation_id).await? {
         participants.insert(participant);
     }
-    for handle in extract_account_handles_from_text(&draft.text, config) {
+    for handle in extract_account_handles_from_text(draft.text(), config) {
         if handle.is_local_to(&config.instance_domain) {
             if let Some(account) = find_account_by_username(db, &handle.username).await? {
                 participants.insert(account.id().to_owned());

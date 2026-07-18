@@ -1,7 +1,7 @@
 use crate::error::PollDraftError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PollDraft {
     options: Vec<String>,
     expires_in_seconds: u64,

@@ -209,6 +209,15 @@ pub(crate) async fn upsert_remote_follow_request(
     Ok(())
 }
 
+pub(crate) async fn finalize_remote_follow_request_by_actor(
+    db: &D1Database,
+    account_id: &str,
+    requester_actor_uri: &str,
+) -> Result<()> {
+    delete_remote_follow_request_by_actor(db, account_id, requester_actor_uri, requester_actor_uri)
+        .await
+}
+
 pub(crate) async fn delete_remote_follow_request_by_actor(
     db: &D1Database,
     account_id: &str,
@@ -530,6 +539,24 @@ async fn authorize_pending_follow_request(
             )?)
         }
         PendingFollowRequest::Remote { request, .. } => {
+            let Some(pending) = find_pending_remote_follow_request_by_actor(
+                db,
+                viewer.id(),
+                &request.requester_actor_uri,
+            )
+            .await?
+            else {
+                return Ok(serde_json::to_value(
+                    build_relationship_for_target(
+                        db,
+                        config,
+                        viewer,
+                        &remote_account_rest_id(&request.requester_actor_uri),
+                        &request.requester_actor_uri,
+                    )
+                    .await?,
+                )?);
+            };
             let next = authorize_local_follow_request(pending_remote_follow_request_state(
                 viewer.is_locked(),
             ));
@@ -537,42 +564,41 @@ async fn authorize_pending_follow_request(
                 upsert_follower_by_inbox(
                     db,
                     viewer.id(),
-                    &request.requester_actor_uri,
-                    &request.requester_inbox_uri,
-                    request.requester_shared_inbox_uri.as_deref(),
-                    request.follow_activity_id.as_deref(),
+                    &pending.requester_actor_uri,
+                    &pending.requester_inbox_uri,
+                    pending.requester_shared_inbox_uri.as_deref(),
+                    pending.follow_activity_id.as_deref(),
                 )
                 .await?;
-                delete_remote_follow_request_by_actor(
-                    db,
-                    viewer.id(),
-                    &request.requester_actor_uri,
-                    &request.requester_actor_uri,
-                )
-                .await?;
-                if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
+                if let Some(follow_activity_id) = pending.follow_activity_id.as_deref() {
                     let payload = build_stored_accept_follow_activity(
                         config,
                         viewer,
                         follow_activity_id,
-                        &request.requester_actor_uri,
+                        &pending.requester_actor_uri,
                     )?;
-                    let _ = crate::queue_remote_actor_activity_required(
+                    crate::queue_remote_actor_activity_required(
                         db,
                         viewer.id(),
-                        &request.requester_actor_uri,
+                        &pending.requester_actor_uri,
                         &payload,
                     )
-                    .await;
+                    .await?;
                 }
+                finalize_remote_follow_request_by_actor(
+                    db,
+                    viewer.id(),
+                    &pending.requester_actor_uri,
+                )
+                .await?;
             }
             Ok(serde_json::to_value(
                 build_relationship_for_target(
                     db,
                     config,
                     viewer,
-                    &remote_account_rest_id(&request.requester_actor_uri),
-                    &request.requester_actor_uri,
+                    &remote_account_rest_id(&pending.requester_actor_uri),
+                    &pending.requester_actor_uri,
                 )
                 .await?,
             )?)
@@ -623,40 +649,57 @@ async fn reject_pending_follow_request(
             )?)
         }
         PendingFollowRequest::Remote { request, .. } => {
+            let Some(pending) = find_pending_remote_follow_request_by_actor(
+                db,
+                viewer.id(),
+                &request.requester_actor_uri,
+            )
+            .await?
+            else {
+                return Ok(serde_json::to_value(
+                    build_relationship_for_target(
+                        db,
+                        config,
+                        viewer,
+                        &remote_account_rest_id(&request.requester_actor_uri),
+                        &request.requester_actor_uri,
+                    )
+                    .await?,
+                )?);
+            };
             let next = reject_local_follow_request(pending_remote_follow_request_state(
                 viewer.is_locked(),
             ));
             if next.remote_request == RemoteInboundFollowRequestState::Absent {
-                delete_remote_follow_request_by_actor(
-                    db,
-                    viewer.id(),
-                    &request.requester_actor_uri,
-                    &request.requester_actor_uri,
-                )
-                .await?;
-                if let Some(follow_activity_id) = request.follow_activity_id.as_deref() {
+                if let Some(follow_activity_id) = pending.follow_activity_id.as_deref() {
                     let payload = build_reject_follow_activity(
                         config,
                         viewer,
                         follow_activity_id,
-                        &request.requester_actor_uri,
+                        &pending.requester_actor_uri,
                     )?;
-                    let _ = crate::queue_remote_actor_activity_required(
+                    crate::queue_remote_actor_activity_required(
                         db,
                         viewer.id(),
-                        &request.requester_actor_uri,
+                        &pending.requester_actor_uri,
                         &payload,
                     )
-                    .await;
+                    .await?;
                 }
+                finalize_remote_follow_request_by_actor(
+                    db,
+                    viewer.id(),
+                    &pending.requester_actor_uri,
+                )
+                .await?;
             }
             Ok(serde_json::to_value(
                 build_relationship_for_target(
                     db,
                     config,
                     viewer,
-                    &remote_account_rest_id(&request.requester_actor_uri),
-                    &request.requester_actor_uri,
+                    &remote_account_rest_id(&pending.requester_actor_uri),
+                    &pending.requester_actor_uri,
                 )
                 .await?,
             )?)

@@ -15,7 +15,13 @@ impl AccessEmail {
         if value.is_empty() {
             return Err(AccessEmailError::Blank);
         }
-        if !value.contains('@') {
+        let Some((local, domain)) = value.split_once('@') else {
+            return Err(AccessEmailError::Invalid);
+        };
+        if local.is_empty() || domain.is_empty() || domain.contains('@') {
+            return Err(AccessEmailError::Invalid);
+        }
+        if !domain.contains('.') || domain.starts_with('.') || domain.ends_with('.') {
             return Err(AccessEmailError::Invalid);
         }
         Ok(Self(value))

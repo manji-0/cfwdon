@@ -111,7 +111,9 @@ pub(crate) fn access_provision_resolution_succeeds(state: &AccessProvisionModelS
 }
 
 pub(crate) fn access_provision_sanitized_local_part(email: &AccessEmail) -> String {
-    Username::derive_from_email(email, false).into_inner()
+    Username::derive_from_email(email, false)
+        .expect("access provision sanitized local part")
+        .into_inner()
 }
 
 pub(crate) fn apply_access_provision_resolve(state: &AccessProvisionModelState) -> ProvisionStage {
@@ -300,7 +302,7 @@ impl Model for AccessProvisionModel {
                     let email =
                         AccessEmail::parse(&Self::email_value(state.email)).expect("valid email");
                     let base = Self::sanitized_local_part(&email);
-                    intent.username.as_str().starts_with(&format!("{base}-"))
+                    intent.username.as_str().starts_with(&format!("{base}_"))
                 },
             ),
             Property::always(

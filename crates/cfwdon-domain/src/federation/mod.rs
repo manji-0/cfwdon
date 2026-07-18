@@ -18,5 +18,5 @@ pub use signature::{
 };
 pub use url::{
     RemoteUrlPolicyIssue, is_blocked_ip_address, remote_http_url_scheme_allowed,
-    remote_url_policy_from_parts,
+    remote_url_policy_for_ip, remote_url_policy_from_parts,
 };

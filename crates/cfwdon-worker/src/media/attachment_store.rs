@@ -1,6 +1,6 @@
 use crate::{
-    D1Database, Error, LocalAccount, MediaAttachmentRow, OrphanMediaRow, Result,
-    UpdateMediaRequest, parse_media_focus,
+    AppConfig, D1Database, Error, LocalAccount, MediaAttachmentRow, OrphanMediaRow, Result,
+    UpdateMediaRequest, outbox_create_insert_statement_with_attachments, parse_media_focus,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -391,9 +391,11 @@ pub(crate) async fn resolve_attachable_media(
     Ok(media)
 }
 
-pub(crate) async fn attach_media_to_status(
+pub(crate) async fn attach_media_and_enqueue_outbox(
     db: &D1Database,
-    status_id: &str,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &crate::StatusRow,
     media: &[MediaAttachmentRow],
 ) -> Result<()> {
     if media.is_empty() {
@@ -415,14 +417,23 @@ pub(crate) async fn attach_media_to_status(
                   AND status_id IS NULL
            ) = ?{expected_count_param}"
     );
-    let mut bindings = media_status_bindings(status_id, media);
+    let mut bindings = media_status_bindings(&status.id, media);
     bindings.push(D1Type::Integer(media.len() as i32));
-    let result = db.prepare(sql).bind_refs(bindings.iter())?.run().await?;
+    let attach_statement = db.prepare(sql).bind_refs(bindings.iter())?;
 
-    if !d1_result_did_change(&result)? {
+    let outbox_statement =
+        outbox_create_insert_statement_with_attachments(db, config, account, status, Some(media))
+            .await?;
+
+    let attach_result = attach_statement.run().await?;
+    if !d1_result_did_change(&attach_result)? {
         return Err(Error::RustError(
             "one or more media attachments are no longer attachable".to_owned(),
         ));
+    }
+
+    if let Some(outbox_statement) = outbox_statement {
+        outbox_statement.run().await?;
     }
 
     Ok(())

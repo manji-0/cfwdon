@@ -7,10 +7,18 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::CryptoKey;
 use worker::{Error, Result};
 
-#[derive(Debug)]
 pub(crate) struct AccountKeyMaterial {
     pub(crate) private_key_jwk: String,
     pub(crate) public_key_pem: String,
+}
+
+impl std::fmt::Debug for AccountKeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountKeyMaterial")
+            .field("private_key_jwk", &"<redacted>")
+            .field("public_key_pem", &self.public_key_pem)
+            .finish()
+    }
 }
 
 pub(crate) async fn generate_account_key_material() -> Result<AccountKeyMaterial> {

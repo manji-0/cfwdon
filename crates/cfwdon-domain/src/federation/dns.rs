@@ -113,4 +113,13 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn dns_resolution_rejects_ipv4_mapped_loopback_answers() {
+        let ips = vec!["::ffff:127.0.0.1".parse().unwrap()];
+        assert_eq!(
+            remote_hostname_dns_resolution_allowed(&ips),
+            Err(RemoteDnsResolutionIssue::BlockedAddress)
+        );
+    }
 }

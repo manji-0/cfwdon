@@ -1,6 +1,6 @@
 use super::{
     D1Database, ResolvedTimelineCursor, Result, StatusRecord, StatusRow, normalize_hashtag,
-    status_from_record,
+    status_from_record, statuses_from_records,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -72,7 +72,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 async fn list_local_home_timeline_statuses_since(
@@ -119,7 +119,7 @@ async fn list_local_home_timeline_statuses_since(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 fn local_home_timeline_bindings<'a>(
@@ -189,7 +189,7 @@ pub(crate) async fn list_local_public_timeline_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 fn local_public_timeline_bindings<'a>(
@@ -270,7 +270,7 @@ async fn list_local_public_statuses_by_tags_indexed(
             .results::<StatusRecord>()?
             .into_iter()
             .map(status_from_record)
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
         tags,
     ))
 }
@@ -355,7 +355,7 @@ async fn list_local_public_statuses_by_tags_legacy(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
@@ -436,7 +436,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_link_patterns(urls: &[String]) -> Vec<String> {
@@ -542,7 +542,7 @@ pub(crate) async fn list_local_direct_timeline_statuses(
 
     result
         .results::<StatusRecord>()
-        .map(|rows| rows.into_iter().map(status_from_record).collect())
+        .and_then(statuses_from_records)
 }
 
 fn local_direct_timeline_bindings<'a>(

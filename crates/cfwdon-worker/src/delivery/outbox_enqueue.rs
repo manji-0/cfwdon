@@ -22,17 +22,77 @@ fn create_activity_context(status: &StatusRow) -> serde_json::Value {
     }
 }
 
-pub(crate) async fn enqueue_outbox_activity(
+const OUTBOX_DELIVERY_INSERT_SQL: &str = "INSERT INTO outbox_deliveries (
+    id,
+    account_id,
+    status_id,
+    activity_id,
+    activity_type,
+    target_inbox,
+    payload_json,
+    state,
+    attempt_count,
+    last_attempt_at,
+    next_attempt_at,
+    created_at,
+    updated_at
+) VALUES (
+    lower(hex(randomblob(16))),
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    NULL,
+    ?5,
+    'queued',
+    0,
+    NULL,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)";
+
+fn outbox_delivery_insert_statement(
+    db: &D1Database,
+    account_id: &str,
+    status_id: &str,
+    activity_id: &str,
+    activity_type: &str,
+    payload_json: &str,
+) -> Result<worker::d1::D1PreparedStatement> {
+    let bindings = [
+        D1Type::Text(account_id),
+        D1Type::Text(status_id),
+        D1Type::Text(activity_id),
+        D1Type::Text(activity_type),
+        D1Type::Text(payload_json),
+    ];
+    db.prepare(OUTBOX_DELIVERY_INSERT_SQL)
+        .bind_refs(bindings.iter())
+}
+
+pub(crate) async fn outbox_create_insert_statement(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
-) -> Result<()> {
+) -> Result<Option<worker::d1::D1PreparedStatement>> {
+    outbox_create_insert_statement_with_attachments(db, config, account, status, None).await
+}
+
+pub(crate) async fn outbox_create_insert_statement_with_attachments(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+    attachments_override: Option<&[crate::MediaAttachmentRow]>,
+) -> Result<Option<worker::d1::D1PreparedStatement>> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
-        return Ok(());
+        return Ok(None);
     }
 
-    let note = build_activitypub_note(db, config, account, status, false).await?;
+    let note =
+        build_activitypub_note(db, config, account, status, false, attachments_override).await?;
     let note_id = note
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -52,58 +112,25 @@ pub(crate) async fn enqueue_outbox_activity(
         Error::RustError(format!("failed to serialize queued activity: {error}"))
     })?;
 
-    let bindings = [
-        D1Type::Text(account.id()),
-        D1Type::Text(status.id.as_str()),
-        D1Type::Text(activity_id.as_str()),
-        D1Type::Text(payload_json.as_str()),
-    ];
-    db.prepare(
-        "INSERT INTO outbox_deliveries (
-            id,
-            account_id,
-            status_id,
-            activity_id,
-            activity_type,
-            target_inbox,
-            payload_json,
-            state,
-            attempt_count,
-            last_attempt_at,
-            next_attempt_at,
-            created_at,
-            updated_at
-        ) VALUES (
-            lower(hex(randomblob(16))),
-            ?1,
-            ?2,
-            ?3,
-            'Create',
-            NULL,
-            ?4,
-            'queued',
-            0,
-            NULL,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )",
+    outbox_delivery_insert_statement(
+        db,
+        account.id(),
+        &status.id,
+        &activity_id,
+        "Create",
+        &payload_json,
     )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-
-    Ok(())
+    .map(Some)
 }
 
-pub(crate) async fn enqueue_outbox_delete(
+pub(crate) async fn outbox_delete_insert_statement(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
-) -> Result<()> {
+) -> Result<Option<worker::d1::D1PreparedStatement>> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
-        return Ok(());
+        return Ok(None);
     }
 
     let activity = build_activitypub_delete(config, account, status)?;
@@ -115,48 +142,15 @@ pub(crate) async fn enqueue_outbox_delete(
         Error::RustError(format!("failed to serialize delete activity: {error}"))
     })?;
 
-    let bindings = [
-        D1Type::Text(account.id()),
-        D1Type::Text(status.id.as_str()),
-        D1Type::Text(activity_id),
-        D1Type::Text(payload_json.as_str()),
-    ];
-    db.prepare(
-        "INSERT INTO outbox_deliveries (
-            id,
-            account_id,
-            status_id,
-            activity_id,
-            activity_type,
-            target_inbox,
-            payload_json,
-            state,
-            attempt_count,
-            last_attempt_at,
-            next_attempt_at,
-            created_at,
-            updated_at
-        ) VALUES (
-            lower(hex(randomblob(16))),
-            ?1,
-            ?2,
-            ?3,
-            'Delete',
-            NULL,
-            ?4,
-            'queued',
-            0,
-            NULL,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )",
+    outbox_delivery_insert_statement(
+        db,
+        account.id(),
+        &status.id,
+        activity_id,
+        "Delete",
+        &payload_json,
     )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-
-    Ok(())
+    .map(Some)
 }
 
 pub(crate) async fn enqueue_targeted_outbox_activity(

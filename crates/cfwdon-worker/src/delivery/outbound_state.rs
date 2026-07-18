@@ -5,7 +5,18 @@ use cfwdon_domain::{
     RemoteFollowState, delivery_retry_delay_modifier, outbound_terminal_failure_follow_state,
 };
 
-use super::{D1Database, Result};
+use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER, Result};
+
+fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {
+    Ok(result
+        .meta()?
+        .and_then(|meta| {
+            meta.changed_db
+                .or_else(|| meta.changes.map(|changes| changes > 0))
+                .or_else(|| meta.rows_written.map(|rows_written| rows_written > 0))
+        })
+        .unwrap_or(false))
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OutboundActivityRow {
@@ -19,19 +30,26 @@ pub(crate) struct OutboundActivityRow {
     pub(crate) attempt_count: i32,
 }
 
-pub(crate) async fn list_pending_outbound_activities(
+pub(crate) async fn claim_pending_outbound_activities(
     db: &D1Database,
     limit: u32,
 ) -> Result<Vec<OutboundActivityRow>> {
     let limit = D1Type::Integer(limit as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, activity_id, activity_type, target_actor_uri, target_inbox, payload_json, attempt_count
-             FROM outbound_activities
-             WHERE state = 'queued'
-               AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-             ORDER BY created_at ASC
-             LIMIT ?1",
+            "UPDATE outbound_activities
+             SET state = 'in_flight',
+                 last_attempt_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id IN (
+                 SELECT id
+                 FROM outbound_activities
+                 WHERE state = 'queued'
+                   AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                 ORDER BY created_at ASC
+                 LIMIT ?1
+             )
+             RETURNING id, account_id, activity_id, activity_type, target_actor_uri, target_inbox, payload_json, attempt_count",
         )
         .bind_refs(&limit)?
         .all()
@@ -43,47 +61,51 @@ pub(crate) async fn list_pending_outbound_activities(
 pub(crate) async fn mark_outbound_activity_delivered(
     db: &D1Database,
     activity_id: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let bindings = [D1Type::Text("delivered"), D1Type::Text(activity_id)];
-    db.prepare(
-        "UPDATE outbound_activities
+    let result = db
+        .prepare(
+            "UPDATE outbound_activities
          SET state = ?1,
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+         WHERE id = ?2
+           AND state = 'in_flight'",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
-    Ok(())
+    d1_result_did_change(&result)
 }
 
 pub(crate) async fn mark_outbound_activity_terminal_failure(
     db: &D1Database,
     activity_id: &str,
     next_attempt: u32,
-) -> Result<()> {
+) -> Result<bool> {
     let bindings = [
         D1Type::Text("failed"),
         D1Type::Integer(next_attempt as i32),
         D1Type::Text(activity_id),
     ];
-    db.prepare(
-        "UPDATE outbound_activities
+    let result = db
+        .prepare(
+            "UPDATE outbound_activities
          SET state = ?1,
              attempt_count = ?2,
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+         WHERE id = ?3
+           AND state = 'in_flight'",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
-    Ok(())
+    d1_result_did_change(&result)
 }
 
 pub(crate) fn outbound_terminal_failure_follow_state_name(
@@ -129,23 +151,41 @@ pub(crate) async fn reschedule_outbound_activity(
     db: &D1Database,
     activity_id: &str,
     next_attempt: u32,
-) -> Result<()> {
+) -> Result<bool> {
     let delay = delivery_retry_delay_modifier(next_attempt);
     let bindings = [
         D1Type::Integer(next_attempt as i32),
         D1Type::Text(delay),
         D1Type::Text(activity_id),
     ];
-    db.prepare(
-        "UPDATE outbound_activities
+    let result = db
+        .prepare(
+            "UPDATE outbound_activities
          SET state = 'queued',
              attempt_count = ?1,
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = datetime(CURRENT_TIMESTAMP, ?2),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3",
+         WHERE id = ?3
+           AND state = 'in_flight'",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    d1_result_did_change(&result)
+}
+
+pub(crate) async fn requeue_stale_in_flight_outbound_activities(db: &D1Database) -> Result<()> {
+    let stale_before = D1Type::Text(OUTBOX_IN_FLIGHT_STALE_MODIFIER);
+    db.prepare(
+        "UPDATE outbound_activities
+         SET state = 'queued',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE state = 'in_flight'
+           AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)",
     )
-    .bind_refs(bindings.iter())?
+    .bind_refs(&stale_before)?
     .run()
     .await?;
 

@@ -6,11 +6,11 @@ mod username;
 pub use email::{AccessEmail, AccessEmailError};
 pub use record::LocalAccountRecord;
 pub use registration::{
-    AccessProvisionIntent, AccountKeyMaterial, ComposingAccessProvision, ComposingRegistration,
-    RegisteringAccount, RegistrationEvent, RegistrationFieldIssue, RegistrationIntent,
-    RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationValidationField,
-    finalize_registration_validation, registration_field_issue_message,
-    registration_uniqueness_errors,
+    AccessProvisionError, AccessProvisionIntent, AccountKeyMaterial, ComposingAccessProvision,
+    ComposingRegistration, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
+    RegistrationIntent, RegistrationUniquenessFacts, RegistrationValidationErrors,
+    RegistrationValidationField, finalize_registration_validation,
+    registration_field_issue_message, registration_uniqueness_errors,
 };
 pub use username::{Username, UsernameError};
 

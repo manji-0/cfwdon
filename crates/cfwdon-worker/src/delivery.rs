@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub(crate) const OUTBOX_PROCESS_QUEUE_BINDING: &str = "OUTBOX_PROCESS_QUEUE";
+pub(crate) const OUTBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct OutboxProcessQueueMessage {
@@ -106,11 +107,13 @@ pub(crate) async fn process_outbox_deliveries_for_config(
 ) -> Result<OutboxProcessResponse> {
     let mut summary = OutboxProcessResponse::default();
 
+    requeue_stale_in_flight_deliveries(db).await?;
+
     process_generic_outbox_deliveries(db, &mut summary).await?;
 
     let (target_deliveries, outbound_deliveries) = futures_util::try_join!(
-        list_pending_target_outbox_deliveries(db, 32),
-        list_pending_outbound_activities(db, 32),
+        claim_pending_target_outbox_deliveries(db, 32),
+        claim_pending_outbound_activities(db, 32),
     )?;
     console_log!(
         "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",
@@ -158,8 +161,15 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     while let Some((delivery, target_inbox, result)) = target_results.next().await {
         match result {
             Ok(()) => {
-                mark_outbox_delivery_delivered(db, &delivery.id).await?;
-                summary.delivered += 1;
+                if mark_outbox_delivery_delivered(db, &delivery.id).await? {
+                    summary.delivered += 1;
+                } else {
+                    console_error!(
+                        "outbox delivery mark delivered no-op: id={} target={}",
+                        delivery.id,
+                        target_inbox
+                    );
+                }
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
@@ -172,11 +182,13 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                     error
                 );
                 if is_delivery_terminal(next_attempt) {
-                    mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?;
-                } else {
-                    reschedule_outbox_delivery(db, &delivery.id, next_attempt).await?;
+                    if mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?
+                    {
+                        summary.failed += 1;
+                    }
+                } else if reschedule_outbox_delivery(db, &delivery.id, next_attempt).await? {
+                    summary.failed += 1;
                 }
-                summary.failed += 1;
             }
         }
     }
@@ -219,8 +231,15 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     while let Some((delivery, result)) = outbound_results.next().await {
         match result {
             Ok(()) => {
-                mark_outbound_activity_delivered(db, &delivery.id).await?;
-                summary.delivered += 1;
+                if mark_outbound_activity_delivered(db, &delivery.id).await? {
+                    summary.delivered += 1;
+                } else {
+                    console_error!(
+                        "outbound delivery mark delivered no-op: id={} target={}",
+                        delivery.id,
+                        delivery.target_inbox
+                    );
+                }
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
@@ -235,10 +254,10 @@ pub(crate) async fn process_outbox_deliveries_for_config(
                 if is_delivery_terminal(next_attempt) {
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
-                } else {
-                    reschedule_outbound_activity(db, &delivery.id, next_attempt).await?;
+                    summary.failed += 1;
+                } else if reschedule_outbound_activity(db, &delivery.id, next_attempt).await? {
+                    summary.failed += 1;
                 }
-                summary.failed += 1;
             }
         }
     }
@@ -246,11 +265,17 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     Ok(summary)
 }
 
+async fn requeue_stale_in_flight_deliveries(db: &D1Database) -> Result<()> {
+    requeue_stale_in_flight_outbox_deliveries(db).await?;
+    requeue_stale_in_flight_outbound_activities(db).await?;
+    Ok(())
+}
+
 async fn process_generic_outbox_deliveries(
     db: &D1Database,
     summary: &mut OutboxProcessResponse,
 ) -> Result<()> {
-    let deliveries = list_pending_generic_outbox_deliveries(db, 16).await?;
+    let deliveries = claim_pending_generic_outbox_deliveries(db, 16).await?;
     if deliveries.is_empty() {
         return Ok(());
     }

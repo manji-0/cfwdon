@@ -1,9 +1,9 @@
 use super::{
-    AppConfig, LocalAccount, StatusRow, actor_url, apply_activitypub_poll_fields,
-    classify_media_kind, count_poll_voters, find_account_by_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_status_by_id, find_status_poll_by_status_id,
-    is_iso_timestamp_in_past, list_status_poll_options, media_attachment_url, media_kind_label,
-    quote_authorization_uri, status_has_active_quote,
+    AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, actor_url,
+    apply_activitypub_poll_fields, classify_media_kind, count_poll_voters, find_account_by_id,
+    find_local_status_by_object_uri, find_media_attachments_by_status_id, find_status_by_id,
+    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
+    media_attachment_url, media_kind_label, quote_authorization_uri, status_has_active_quote,
 };
 use cfwdon_domain::QuoteState;
 use worker::{D1Database, Result};
@@ -44,7 +44,7 @@ pub(crate) fn activitypub_audiences(
     } else if cc_has_public {
         (followers, public)
     } else {
-        (public, followers)
+        (followers, serde_json::json!([]))
     }
 }
 
@@ -86,22 +86,23 @@ pub(crate) async fn build_activitypub_note(
     account: &LocalAccount,
     status: &StatusRow,
     include_context: bool,
+    attachment_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<serde_json::Value> {
     let actor = actor_url(config, account.username());
     let note_id = local_status_ap_id(config, account, status);
     let audiences = activitypub_audiences(config, account.username(), status.visibility.as_str());
-    let (poll, reply_uri, attachments) = futures_util::try_join!(
-        find_status_poll_by_status_id(db, &status.id),
-        async {
-            match status.in_reply_to_id.as_deref() {
-                Some(reply_id) => Ok(find_status_by_id(db, reply_id)
-                    .await?
-                    .and_then(|reply| reply.ap_id)),
-                None => Ok(None),
-            }
-        },
-        find_media_attachments_by_status_id(db, &status.id),
-    )?;
+    let poll = find_status_poll_by_status_id(db, &status.id).await?;
+    let reply_uri = match status.in_reply_to_id.as_deref() {
+        Some(reply_id) => find_status_by_id(db, reply_id)
+            .await?
+            .and_then(|reply| reply.ap_id),
+        None => None,
+    };
+    let attachments = if let Some(attachments) = attachment_override {
+        attachments.to_vec()
+    } else {
+        find_media_attachments_by_status_id(db, &status.id).await?
+    };
     let has_quote = status_has_active_quote(status);
 
     let mut note = serde_json::json!({

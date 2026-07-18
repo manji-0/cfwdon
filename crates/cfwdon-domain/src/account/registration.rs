@@ -265,10 +265,19 @@ impl RegistrationIntent {
 }
 
 /// Cryptographic identity assigned at registration time.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AccountKeyMaterial {
     pub private_key_jwk: String,
     pub public_key_pem: String,
+}
+
+impl std::fmt::Debug for AccountKeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountKeyMaterial")
+            .field("private_key_jwk", &"<redacted>")
+            .field("public_key_pem", &self.public_key_pem)
+            .finish()
+    }
 }
 
 /// Account with assigned identity and keys, ready to persist.
@@ -318,13 +327,21 @@ pub struct ComposingAccessProvision {
     pub email: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AccessProvisionError {
+    #[error(transparent)]
+    Email(#[from] AccessEmailError),
+    #[error(transparent)]
+    Username(#[from] UsernameError),
+}
+
 impl ComposingAccessProvision {
     pub fn resolve(
         self,
         base_username_taken: bool,
-    ) -> Result<AccessProvisionIntent, AccessEmailError> {
+    ) -> Result<AccessProvisionIntent, AccessProvisionError> {
         let email = AccessEmail::parse(&self.email)?;
-        let username = Username::derive_from_email(&email, base_username_taken);
+        let username = Username::derive_from_email(&email, base_username_taken)?;
         Ok(AccessProvisionIntent { email, username })
     }
 }

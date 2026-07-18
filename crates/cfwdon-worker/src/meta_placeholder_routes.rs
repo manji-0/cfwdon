@@ -4343,7 +4343,7 @@ async fn list_local_status_quotes_by_uri(
         .await?;
     result
         .results::<crate::StatusRecord>()
-        .map(|rows| rows.into_iter().map(crate::status_from_record).collect())
+        .and_then(crate::statuses_from_records)
 }
 
 async fn list_remote_status_quotes_by_uri(
@@ -4375,11 +4375,9 @@ async fn list_remote_status_quotes_by_uri(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<crate::RemoteStatusRecord>().map(|rows| {
-        rows.into_iter()
-            .map(crate::remote_status_from_record)
-            .collect()
-    })
+    result
+        .results::<crate::RemoteStatusRecord>()
+        .and_then(crate::remote_statuses_from_records)
 }
 
 fn quote_cursor_bindings<'a>(
