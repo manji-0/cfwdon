@@ -44,7 +44,7 @@ pub use federation::{
     host_is_ip_literal, inbox_activity_after_failure, inbox_activity_after_receive,
     inbox_activity_after_success, is_blocked_ip_address, parse_dns_answer_ips,
     remote_fetch_host_allowed, remote_hostname_dns_resolution_allowed,
-    remote_http_url_scheme_allowed, remote_url_policy_from_parts,
+    remote_http_url_scheme_allowed, remote_url_policy_for_ip, remote_url_policy_from_parts,
 };
 pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,

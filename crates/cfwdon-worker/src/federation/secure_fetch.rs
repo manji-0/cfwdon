@@ -93,21 +93,30 @@ pub(crate) async fn validate_remote_actor_profile_url(
             "remote URL must not include user info".to_owned(),
         ));
     }
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| Error::RustError("remote URL must include host".to_owned()))?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") {
-        return Err(Error::RustError("localhost is not allowed".to_owned()));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if validated_ip_hosts.insert(ip) {
-            validate_remote_fetch_url(&parsed).await?;
+    match parsed.host() {
+        None => Err(Error::RustError("remote URL must include host".to_owned())),
+        Some(url::Host::Domain(host)) => {
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            if host == "localhost" || host.ends_with(".localhost") {
+                return Err(Error::RustError("localhost is not allowed".to_owned()));
+            }
+            validate_remote_fetch_url(&parsed).await
         }
-        return Ok(());
+        Some(url::Host::Ipv4(v4)) => {
+            let ip = IpAddr::V4(v4);
+            if validated_ip_hosts.insert(ip) {
+                validate_remote_fetch_url(&parsed).await?;
+            }
+            Ok(())
+        }
+        Some(url::Host::Ipv6(v6)) => {
+            let ip = IpAddr::V6(v6);
+            if validated_ip_hosts.insert(ip) {
+                validate_remote_fetch_url(&parsed).await?;
+            }
+            Ok(())
+        }
     }
-    validate_remote_fetch_url(&parsed).await
 }
 
 #[cfg(test)]

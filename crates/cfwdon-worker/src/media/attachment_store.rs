@@ -425,15 +425,15 @@ pub(crate) async fn attach_media_and_enqueue_outbox(
         outbox_create_insert_statement_with_attachments(db, config, account, status, Some(media))
             .await?;
 
-    let mut statements = vec![attach_statement];
-    if let Some(outbox_statement) = outbox_statement {
-        statements.push(outbox_statement);
-    }
-    let results = db.batch(statements).await?;
-    if !d1_result_did_change(&results[0])? {
+    let attach_result = attach_statement.run().await?;
+    if !d1_result_did_change(&attach_result)? {
         return Err(Error::RustError(
             "one or more media attachments are no longer attachable".to_owned(),
         ));
+    }
+
+    if let Some(outbox_statement) = outbox_statement {
+        outbox_statement.run().await?;
     }
 
     Ok(())

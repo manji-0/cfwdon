@@ -70,20 +70,27 @@ pub(crate) async fn pending_outbox_work_exists(db: &D1Database) -> Result<bool> 
     Ok(row.is_some_and(|row| row.has_pending != 0))
 }
 
-pub(crate) async fn list_pending_generic_outbox_deliveries(
+pub(crate) async fn claim_pending_generic_outbox_deliveries(
     db: &D1Database,
     limit: u32,
 ) -> Result<Vec<OutboxDeliveryRow>> {
     let limit = D1Type::Integer(limit as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, status_id, activity_id, activity_type, target_inbox, payload_json, attempt_count
-             FROM outbox_deliveries
-             WHERE state = 'queued'
-               AND target_inbox IS NULL
-               AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
-             ORDER BY created_at ASC
-             LIMIT ?1",
+            "UPDATE outbox_deliveries
+             SET state = 'in_flight',
+                 last_attempt_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id IN (
+                 SELECT id
+                 FROM outbox_deliveries
+                 WHERE state = 'queued'
+                   AND target_inbox IS NULL
+                   AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+                 ORDER BY created_at ASC
+                 LIMIT ?1
+             )
+             RETURNING id, account_id, status_id, activity_id, activity_type, target_inbox, payload_json, attempt_count",
         )
         .bind_refs(&limit)?
         .all()

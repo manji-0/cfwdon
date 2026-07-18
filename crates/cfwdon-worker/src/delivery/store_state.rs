@@ -4,6 +4,17 @@ use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER, Result};
 use crate::sql_placeholders;
 use worker::d1::D1Type;
 
+fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {
+    Ok(result
+        .meta()?
+        .and_then(|meta| {
+            meta.changed_db
+                .or_else(|| meta.changes.map(|changes| changes > 0))
+                .or_else(|| meta.rows_written.map(|rows_written| rows_written > 0))
+        })
+        .unwrap_or(false))
+}
+
 pub(crate) async fn mark_outbox_deliveries_expanded(
     db: &D1Database,
     delivery_ids: &[String],
@@ -17,7 +28,8 @@ pub(crate) async fn mark_outbox_deliveries_expanded(
         "UPDATE outbox_deliveries
          SET state = 'expanded',
              updated_at = CURRENT_TIMESTAMP
-         WHERE id IN ({placeholders})"
+         WHERE id IN ({placeholders})
+           AND state = 'in_flight'"
     );
     let bindings = delivery_ids
         .iter()
@@ -57,36 +69,38 @@ pub(crate) async fn mark_outbox_deliveries_completed_without_targets(
 pub(crate) async fn mark_outbox_delivery_delivered(
     db: &D1Database,
     delivery_id: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let bindings = [D1Type::Text("delivered"), D1Type::Text(delivery_id)];
-    db.prepare(
-        "UPDATE outbox_deliveries
+    let result = db
+        .prepare(
+            "UPDATE outbox_deliveries
          SET state = ?1,
              last_attempt_at = CURRENT_TIMESTAMP,
              next_attempt_at = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2
            AND state = 'in_flight'",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
-    Ok(())
+    d1_result_did_change(&result)
 }
 
 pub(crate) async fn mark_outbox_delivery_terminal_failure(
     db: &D1Database,
     delivery_id: &str,
     next_attempt: u32,
-) -> Result<()> {
+) -> Result<bool> {
     let bindings = [
         D1Type::Text("failed"),
         D1Type::Integer(next_attempt as i32),
         D1Type::Text(delivery_id),
     ];
-    db.prepare(
-        "UPDATE outbox_deliveries
+    let result = db
+        .prepare(
+            "UPDATE outbox_deliveries
          SET state = ?1,
              attempt_count = ?2,
              last_attempt_at = CURRENT_TIMESTAMP,
@@ -94,27 +108,28 @@ pub(crate) async fn mark_outbox_delivery_terminal_failure(
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?3
            AND state = 'in_flight'",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
-    Ok(())
+    d1_result_did_change(&result)
 }
 
 pub(crate) async fn reschedule_outbox_delivery(
     db: &D1Database,
     delivery_id: &str,
     next_attempt: u32,
-) -> Result<()> {
+) -> Result<bool> {
     let delay = delivery_retry_delay_modifier(next_attempt);
     let bindings = [
         D1Type::Integer(next_attempt as i32),
         D1Type::Text(delay),
         D1Type::Text(delivery_id),
     ];
-    db.prepare(
-        "UPDATE outbox_deliveries
+    let result = db
+        .prepare(
+            "UPDATE outbox_deliveries
          SET state = 'queued',
              attempt_count = ?1,
              last_attempt_at = CURRENT_TIMESTAMP,
@@ -122,12 +137,12 @@ pub(crate) async fn reschedule_outbox_delivery(
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?3
            AND state = 'in_flight'",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
 
-    Ok(())
+    d1_result_did_change(&result)
 }
 
 pub(crate) async fn requeue_stale_in_flight_outbox_deliveries(db: &D1Database) -> Result<()> {

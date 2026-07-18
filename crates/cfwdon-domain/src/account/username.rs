@@ -63,8 +63,11 @@ impl std::fmt::Display for Username {
 fn sanitize_username_local_part(local_part: &str) -> String {
     let sanitized: String = local_part
         .chars()
-        .map(|ch| ch.to_ascii_lowercase())
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+        .map(|ch| {
+            let ch = ch.to_ascii_lowercase();
+            if ch == '-' { '_' } else { ch }
+        })
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
         .collect();
     if sanitized.is_empty() {
         "user".to_owned()
@@ -91,5 +94,12 @@ mod tests {
         let email = AccessEmail::parse("alice@example.com").unwrap();
         let username = Username::derive_from_email(&email, true).unwrap();
         assert!(username.as_str().starts_with("alice_"));
+    }
+
+    #[test]
+    fn username_derive_from_email_normalizes_hyphenated_local_part() {
+        let email = AccessEmail::parse("alice-bob@example.com").unwrap();
+        let username = Username::derive_from_email(&email, false).unwrap();
+        assert_eq!(username.as_str(), "alice_bob");
     }
 }
