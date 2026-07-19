@@ -1,7 +1,9 @@
 use crate::AccountReference;
 use crate::{
-    Result, find_account_by_username, find_remote_actor_by_username_domain, parse_lookup_handle,
-    resolve_account_reference,
+    RemoteCollectionFetchContext, Result, fetch_remote_actor_profile_with_context,
+    find_account_by_username, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    log_json_event, parse_lookup_handle, resolve_account_reference_with_fetch,
+    resolve_webfinger_actor_uri, upsert_remote_actor,
 };
 
 pub(crate) async fn resolve_requested_account_reference(
@@ -9,7 +11,14 @@ pub(crate) async fn resolve_requested_account_reference(
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Option<AccountReference>> {
-    if let Some(reference) = resolve_account_reference(db, account_id).await? {
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: None,
+    };
+    if let Some(reference) =
+        resolve_account_reference_with_fetch(db, account_id, Some(&fetch_context)).await?
+    {
         return Ok(Some(reference));
     }
 
@@ -27,8 +36,36 @@ pub(crate) async fn resolve_requested_account_reference(
     let Some(domain) = handle.domain.as_deref() else {
         return Ok(None);
     };
+    if let Some(actor) = find_remote_actor_by_username_domain(db, &handle.username, domain).await? {
+        return Ok(Some(AccountReference::Remote(actor)));
+    }
+
+    let actor_uri = match resolve_webfinger_actor_uri(&handle).await {
+        Ok(actor_uri) => actor_uri,
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "remote_account_reference_fetch_failed",
+                "acct": format!("{}@{}", handle.username, domain),
+                "error": error.to_string(),
+            }));
+            return Ok(None);
+        }
+    };
+    let fetched =
+        match fetch_remote_actor_profile_with_context(&actor_uri, Some(&fetch_context)).await {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                log_json_event(serde_json::json!({
+                    "event": "remote_account_reference_fetch_failed",
+                    "actor_uri": actor_uri,
+                    "error": error.to_string(),
+                }));
+                return Ok(None);
+            }
+        };
+    upsert_remote_actor(db, &fetched.profile).await?;
     Ok(
-        find_remote_actor_by_username_domain(db, &handle.username, domain)
+        find_remote_actor_by_actor_uri(db, &fetched.profile.actor_uri)
             .await?
             .map(AccountReference::Remote),
     )

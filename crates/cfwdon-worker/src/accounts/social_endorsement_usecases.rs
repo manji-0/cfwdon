@@ -38,7 +38,8 @@ pub(crate) async fn list_local_endorsement_accounts(
         }
 
         if let Some(actor) = find_remote_actor_by_actor_uri(db, &entry.target_actor_uri).await?
-            && let Some(account) = refreshed_remote_endorsement_account_response(db, &actor).await?
+            && let Some(account) =
+                refreshed_remote_endorsement_account_response(db, config, &actor).await?
         {
             accounts.push(account);
         }
@@ -275,7 +276,7 @@ async fn resolve_remote_endorsement_account(
     }
 
     if let Some(actor) = find_remote_actor_by_profile_url_or_actor_uri(db, reference).await? {
-        return refreshed_remote_endorsement_account_response(db, &actor).await;
+        return refreshed_remote_endorsement_account_response(db, config, &actor).await;
     }
 
     let profile = match crate::fetch_remote_actor_profile(reference).await {
@@ -287,9 +288,12 @@ async fn resolve_remote_endorsement_account(
 
 async fn refreshed_remote_endorsement_account_response(
     db: &D1Database,
+    config: &cfwdon_core::AppConfig,
     actor: &RemoteActorRow,
 ) -> Result<Option<MastodonAccountResponse>> {
-    Ok(Some(refreshed_remote_actor_response(db, actor).await?))
+    Ok(Some(
+        refreshed_remote_actor_response(db, config, actor, None).await?,
+    ))
 }
 
 impl RemoteEndorsementReference {

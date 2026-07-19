@@ -76,7 +76,6 @@ pub(crate) struct RemoteActorRow {
     #[serde(default)]
     pub(crate) statuses_count: u64,
     #[serde(default)]
-    #[allow(dead_code)]
     pub(crate) social_counts_updated_at: Option<String>,
 }
 

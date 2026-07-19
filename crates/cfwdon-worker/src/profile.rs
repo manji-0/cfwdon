@@ -10,14 +10,12 @@ use super::{
     ProfileField, RemoteCollectionFetchContext, Request, Response, Result, RouteContext,
     app_bearer_token_from_request, apply_account_credentials_update, cache_account_api_response,
     cache_public_json_response, cached_account_api_response, count_pending_follow_requests,
-    enqueue_profile_update_activities, extract_authenticated_user,
-    fetch_remote_actor_profile_with_document, find_authenticated_local_account,
+    enqueue_profile_update_activities, enrich_remote_account_response, extract_authenticated_user,
+    fetch_remote_actor_profile_with_context, find_authenticated_local_account,
     find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
     load_config, media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
-    oauth_bearer_token_hash, persist_and_apply_remote_actor_social_counts,
-    reconcile_remote_account_status_summary, render_profile_field_value_html,
-    resolve_account_reference, resolve_lookup_account_with_viewer, sql_placeholders,
-    upsert_remote_actor,
+    oauth_bearer_token_hash, render_profile_field_value_html, resolve_account_reference_with_fetch,
+    resolve_lookup_account_with_viewer, sql_placeholders, upsert_remote_actor,
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
@@ -98,7 +96,12 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
     {
         return Ok(response);
     }
-    match resolve_account_reference(&db, &account_id).await? {
+    let fetch_context = RemoteCollectionFetchContext {
+        config: &config,
+        db: &db,
+        signer: viewer.as_ref(),
+    };
+    match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
         Some(AccountReference::Local(account)) => {
             let stats = load_account_stats(&db, account.id()).await?;
             let settings = load_account_profile_settings(&db, account.id()).await?;
@@ -138,30 +141,53 @@ async fn remote_account_response(
     actor: &crate::RemoteActorRow,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
-        Ok(fetched) => fetched,
-        Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
-    };
-    let profile = fetched.profile;
-    upsert_remote_actor(db, &profile).await?;
-    let mut response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
-        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
-        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
-    };
     let fetch_context = RemoteCollectionFetchContext {
         config,
         db,
         signer: viewer,
     };
-    let _ = persist_and_apply_remote_actor_social_counts(
+    let fetched =
+        match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
+        {
+            Ok(fetched) => fetched,
+            Err(_) => {
+                let mut response = MastodonAccountResponse::from_remote_actor(actor);
+                if let Err(error) = crate::reconcile_remote_account_status_summary(
+                    db,
+                    &actor.actor_uri,
+                    &mut response,
+                )
+                .await
+                {
+                    crate::log_json_event(serde_json::json!({
+                        "event": "remote_account_enrichment_failed",
+                        "actor_uri": actor.actor_uri,
+                        "stage": "status_summary",
+                        "error": error.to_string(),
+                    }));
+                }
+                return Ok(response);
+            }
+        };
+    let profile = fetched.profile;
+    upsert_remote_actor(db, &profile).await?;
+    let cached = find_remote_actor_by_actor_uri(db, &profile.actor_uri).await?;
+    let social_counts_updated_at = cached
+        .as_ref()
+        .and_then(|row| row.social_counts_updated_at.clone());
+    let mut response = match cached {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    enrich_remote_account_response(
         db,
         &profile.actor_uri,
+        social_counts_updated_at.as_deref(),
         &mut response,
         &fetched.document,
         Some(&fetch_context),
     )
-    .await;
-    let _ = reconcile_remote_account_status_summary(db, &profile.actor_uri, &mut response).await;
+    .await?;
     Ok(response)
 }
 

@@ -3,9 +3,9 @@ use super::pagination::account_statuses_request_options;
 use super::remote::remote_account_statuses_response;
 use super::request::{required_account_status_route_param, required_account_status_username_param};
 use crate::{
-    AccountReference, AccountStatusesQuery, AppConfig, LocalAccount, Request, Response, Result,
-    RouteContext, find_account_by_username, find_authenticated_local_account, load_config,
-    resolve_account_reference,
+    AccountReference, AccountStatusesQuery, AppConfig, LocalAccount, RemoteCollectionFetchContext,
+    Request, Response, Result, RouteContext, find_account_by_username,
+    find_authenticated_local_account, load_config, resolve_account_reference_with_fetch,
 };
 use worker::D1Database;
 
@@ -51,10 +51,14 @@ async fn account_statuses_response_for_account_id(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let (viewer, account_ref) = futures_util::try_join!(
-        find_authenticated_local_account(&req, &db, &config),
-        resolve_account_reference(&db, &account_id),
-    )?;
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
+    let fetch_context = RemoteCollectionFetchContext {
+        config: &config,
+        db: &db,
+        signer: viewer.as_ref(),
+    };
+    let account_ref =
+        resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await?;
     account_statuses_response_for_reference(req, config, db, viewer, account_ref).await
 }
 

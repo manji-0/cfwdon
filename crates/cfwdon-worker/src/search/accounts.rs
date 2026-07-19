@@ -8,10 +8,9 @@ use crate::instance::{actor_url, instance_host, parse_lookup_handle};
 use crate::relationship::list_accepted_follow_target_uris;
 use crate::remote::{
     REMOTE_ACTOR_ROW_COLUMNS, REMOTE_ACTOR_ROW_COLUMNS_ALIASED, RemoteActorRow,
-    RemoteCollectionFetchContext, fetch_remote_actor_profile_with_document,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    load_remote_actor_status_summaries, persist_and_apply_remote_actor_social_counts,
-    upsert_remote_actor,
+    RemoteCollectionFetchContext, enrich_remote_account_response,
+    fetch_remote_actor_profile_with_context, find_remote_actor_by_actor_uri,
+    find_remote_actor_by_username_domain, load_remote_actor_status_summaries, upsert_remote_actor,
 };
 use crate::responses::MastodonAccountResponse;
 use cfwdon_core::AppConfig;
@@ -729,28 +728,35 @@ async fn fresh_remote_search_account_response(
     actor: &RemoteActorRow,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
-        Ok(fetched) => fetched,
-        Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
-    };
-    let profile = fetched.profile;
-    upsert_remote_actor(db, &profile).await?;
-    let mut response = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
-        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
-        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
-    };
     let fetch_context = RemoteCollectionFetchContext {
         config,
         db,
         signer: viewer,
     };
-    let _ = persist_and_apply_remote_actor_social_counts(
+    let fetched =
+        match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
+        {
+            Ok(fetched) => fetched,
+            Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
+        };
+    let profile = fetched.profile;
+    upsert_remote_actor(db, &profile).await?;
+    let cached = find_remote_actor_by_actor_uri(db, &profile.actor_uri).await?;
+    let social_counts_updated_at = cached
+        .as_ref()
+        .and_then(|row| row.social_counts_updated_at.clone());
+    let mut response = match cached {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
+    enrich_remote_account_response(
         db,
         &profile.actor_uri,
+        social_counts_updated_at.as_deref(),
         &mut response,
         &fetched.document,
         Some(&fetch_context),
     )
-    .await;
+    .await?;
     Ok(response)
 }

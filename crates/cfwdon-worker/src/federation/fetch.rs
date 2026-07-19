@@ -32,9 +32,15 @@ pub(crate) struct FetchedRemoteActorProfile {
     pub(crate) profile: RemoteActorProfile,
 }
 
+#[allow(dead_code)]
 pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
     handle: &AccountHandle,
 ) -> Result<FetchedRemoteActorProfile> {
+    let actor_uri = resolve_webfinger_actor_uri(handle).await?;
+    fetch_remote_actor_profile_with_document(&actor_uri).await
+}
+
+pub(crate) async fn resolve_webfinger_actor_uri(handle: &AccountHandle) -> Result<String> {
     let domain = handle
         .domain
         .as_deref()
@@ -52,21 +58,19 @@ pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
         "application/jrd+json, application/json",
     )
     .await?;
-    let actor_uri = webfinger
+    webfinger
         .get("links")
         .and_then(serde_json::Value::as_array)
         .and_then(|links| {
             links.iter().find_map(|link| {
                 let rel = link.get("rel").and_then(serde_json::Value::as_str)?;
                 let href = link.get("href").and_then(serde_json::Value::as_str)?;
-                (rel == "self").then_some(href)
+                (rel == "self").then_some(href.to_owned())
             })
         })
         .ok_or_else(|| {
             Error::RustError("webfinger response did not include a self link".to_owned())
-        })?;
-
-    fetch_remote_actor_profile_with_document(actor_uri).await
+        })
 }
 
 pub(crate) async fn fetch_remote_actor_profile(actor_uri: &str) -> Result<RemoteActorProfile> {

@@ -4094,7 +4094,14 @@ pub(crate) async fn accounts_index_response(
     let mut response = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {
-        match resolve_account_reference(&db, &account_id).await? {
+        let fetch_context = crate::RemoteCollectionFetchContext {
+            config: &config,
+            db: &db,
+            signer: viewer.as_ref(),
+        };
+        match crate::resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context))
+            .await?
+        {
             Some(AccountReference::Local(account)) => {
                 let stats = load_account_stats(&db, account.id()).await?;
                 response.push(crate::MastodonAccountResponse::from_account_with_stats(
@@ -4102,11 +4109,21 @@ pub(crate) async fn accounts_index_response(
                 ));
             }
             Some(AccountReference::Remote(actor)) => {
-                let fetched =
-                    crate::fetch_remote_actor_profile_with_document(&actor.actor_uri).await;
+                let fetched = crate::fetch_remote_actor_profile_with_context(
+                    &actor.actor_uri,
+                    Some(&fetch_context),
+                )
+                .await;
                 let mut account = match fetched.as_ref() {
                     Ok(fetched) => {
-                        let _ = crate::upsert_remote_actor(&db, &fetched.profile).await;
+                        if let Err(error) = crate::upsert_remote_actor(&db, &fetched.profile).await
+                        {
+                            crate::log_json_event(serde_json::json!({
+                                "event": "remote_actor_upsert_failed",
+                                "actor_uri": fetched.profile.actor_uri,
+                                "error": error.to_string(),
+                            }));
+                        }
                         match crate::find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
                             .await?
                         {
@@ -4118,27 +4135,43 @@ pub(crate) async fn accounts_index_response(
                             ),
                         }
                     }
-                    Err(_) => crate::MastodonAccountResponse::from_remote_actor(&actor),
+                    Err(error) => {
+                        crate::log_json_event(serde_json::json!({
+                            "event": "remote_actor_refresh_failed",
+                            "actor_uri": actor.actor_uri,
+                            "error": error.to_string(),
+                        }));
+                        crate::MastodonAccountResponse::from_remote_actor(&actor)
+                    }
                 };
                 if let Ok(fetched) = fetched.as_ref() {
-                    let fetch_context = crate::RemoteCollectionFetchContext {
-                        config: &config,
-                        db: &db,
-                        signer: viewer.as_ref(),
-                    };
-                    let _ = crate::persist_and_apply_remote_actor_social_counts(
+                    let social_counts_updated_at =
+                        crate::find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
+                            .await?
+                            .and_then(|row| row.social_counts_updated_at);
+                    crate::enrich_remote_account_response(
                         &db,
                         &fetched.profile.actor_uri,
+                        social_counts_updated_at.as_deref(),
                         &mut account,
                         &fetched.document,
                         Some(&fetch_context),
                     )
-                    .await;
+                    .await?;
+                } else if let Err(error) = crate::reconcile_remote_account_status_summary(
+                    &db,
+                    &actor.actor_uri,
+                    &mut account,
+                )
+                .await
+                {
+                    crate::log_json_event(serde_json::json!({
+                        "event": "remote_account_enrichment_failed",
+                        "actor_uri": actor.actor_uri,
+                        "stage": "status_summary",
+                        "error": error.to_string(),
+                    }));
                 }
-                let account_uri = account.uri.clone();
-                let _ =
-                    crate::reconcile_remote_account_status_summary(&db, &account_uri, &mut account)
-                        .await;
                 response.push(account);
             }
             None => {}

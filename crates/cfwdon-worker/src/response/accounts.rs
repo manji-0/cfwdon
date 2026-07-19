@@ -1,16 +1,19 @@
 use crate::{
-    AccountStats, AppConfig, LocalAccount, MastodonAccountResponse, MastodonAccountRole,
-    MastodonAccountSource, ProfileField, RemoteActorProfile, RemoteActorRow, actor_url,
-    escape_html, fetch_remote_activitypub_document, fetch_signed_activitypub_document,
-    load_remote_actor_status_summary, media_object_url, remote_account_rest_id,
-    update_remote_actor_social_counts,
+    AccountStats, AppConfig, FetchedRemoteActorProfile, LocalAccount, MastodonAccountResponse,
+    MastodonAccountRole, MastodonAccountSource, ProfileField, RemoteActorProfile, RemoteActorRow,
+    actor_url, escape_html, fetch_remote_activitypub_document, fetch_signed_activitypub_document,
+    load_remote_actor_status_summary, log_json_event, media_object_url,
+    parse_remote_actor_profile_document, remote_account_rest_id, update_remote_actor_social_counts,
+    validate_remote_actor_profile_urls,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
 use url::Url;
-use worker::{D1Database, Result};
+use worker::{D1Database, Error, Result};
 
 const REMOTE_ACTOR_COLLECTION_COUNT_CACHE_TTL_MS: f64 = 60.0 * 1000.0;
+/// Persist remote F/F/outbox totals for this long before re-fetching collections.
+pub(crate) const REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS: f64 = 60.0 * 60.0 * 1000.0;
 
 thread_local! {
     static REMOTE_ACTOR_COLLECTION_COUNT_CACHE: RefCell<HashMap<String, (u64, f64)>> =
@@ -36,13 +39,6 @@ pub(crate) struct RemoteCollectionFetchContext<'a> {
     pub(crate) config: &'a AppConfig,
     pub(crate) db: &'a D1Database,
     pub(crate) signer: Option<&'a LocalAccount>,
-}
-
-#[allow(dead_code)]
-pub(crate) async fn load_remote_actor_social_counts_from_document(
-    document: &serde_json::Value,
-) -> Result<RemoteActorSocialCounts> {
-    load_remote_actor_social_counts_from_document_with_context(document, None).await
 }
 
 pub(crate) async fn load_remote_actor_social_counts_from_document_with_context(
@@ -82,8 +78,58 @@ pub(crate) async fn persist_remote_actor_social_counts(
     Ok(true)
 }
 
-/// Prefer the larger of AP/DB `statuses_count` and locally cached remote statuses.
-/// When the local summary is higher, persist it so timeline embeds stay consistent.
+/// Refresh collection totals when missing or older than [`REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS`].
+pub(crate) async fn enrich_remote_account_social_counts(
+    db: &D1Database,
+    actor_uri: &str,
+    social_counts_updated_at: Option<&str>,
+    account: &mut MastodonAccountResponse,
+    document: &serde_json::Value,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
+) -> Result<()> {
+    if remote_actor_social_counts_are_fresh(social_counts_updated_at) {
+        return Ok(());
+    }
+    persist_and_apply_remote_actor_social_counts(db, actor_uri, account, document, fetch_context)
+        .await
+}
+
+pub(crate) fn remote_actor_social_counts_are_fresh(updated_at: Option<&str>) -> bool {
+    let Some(updated_at) = updated_at else {
+        return false;
+    };
+    let Some(updated_at_ms) = parse_sqlite_utc_timestamp_ms(updated_at) else {
+        return false;
+    };
+    let age_ms = js_sys::Date::now() - updated_at_ms;
+    (0.0..REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS).contains(&age_ms)
+}
+
+fn parse_sqlite_utc_timestamp_ms(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let iso = if value.contains('T') {
+        if value.ends_with('Z')
+            || value.contains('+')
+            || value.rfind('-').is_some_and(|idx| idx > 10)
+        {
+            value.to_owned()
+        } else {
+            format!("{value}Z")
+        }
+    } else if value.len() >= "YYYY-MM-DD HH:MM:SS".len() {
+        format!("{}T{}Z", &value[..10], &value[11..19])
+    } else {
+        return None;
+    };
+    let parsed = js_sys::Date::new(&iso.into()).get_time();
+    (!parsed.is_nan()).then_some(parsed)
+}
+
+/// Prefer AP/DB counts; raise response `statuses_count` from local inventory without
+/// persisting that ratchet (avoids locking embeds to an inflated local total).
 pub(crate) async fn reconcile_remote_account_status_summary(
     db: &D1Database,
     actor_uri: &str,
@@ -93,17 +139,82 @@ pub(crate) async fn reconcile_remote_account_status_summary(
     account.last_status_at = summary.last_status_at.clone();
     if summary.statuses_count > account.statuses_count {
         account.statuses_count = summary.statuses_count;
-        update_remote_actor_social_counts(
-            db,
-            actor_uri,
-            &RemoteActorSocialCounts {
-                statuses_count: Some(summary.statuses_count),
-                ..RemoteActorSocialCounts::default()
-            },
-        )
-        .await?;
     }
     Ok(())
+}
+
+pub(crate) async fn enrich_remote_account_response(
+    db: &D1Database,
+    actor_uri: &str,
+    social_counts_updated_at: Option<&str>,
+    account: &mut MastodonAccountResponse,
+    document: &serde_json::Value,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
+) -> Result<()> {
+    if let Err(error) = enrich_remote_account_social_counts(
+        db,
+        actor_uri,
+        social_counts_updated_at,
+        account,
+        document,
+        fetch_context,
+    )
+    .await
+    {
+        log_remote_account_enrichment_failure(actor_uri, "social_counts", &error);
+    }
+    if let Err(error) = reconcile_remote_account_status_summary(db, actor_uri, account).await {
+        log_remote_account_enrichment_failure(actor_uri, "status_summary", &error);
+    }
+    Ok(())
+}
+
+fn log_remote_account_enrichment_failure(actor_uri: &str, stage: &str, error: &Error) {
+    log_json_event(serde_json::json!({
+        "event": "remote_account_enrichment_failed",
+        "actor_uri": actor_uri,
+        "stage": stage,
+        "error": error.to_string(),
+    }));
+}
+
+pub(crate) fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
+    let message = error.to_string();
+    message.contains("HTTP 401")
+        || message.contains("HTTP 403")
+        || message.contains("private signing key is missing")
+}
+
+pub(crate) async fn fetch_activitypub_document_with_context(
+    url: &str,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
+) -> Result<serde_json::Value> {
+    if let Some(context) = fetch_context
+        && let Some(signer) = context.signer
+    {
+        match fetch_signed_activitypub_document(context.config, context.db, signer, url).await {
+            Ok(document) => return Ok(document),
+            Err(error) if signed_fetch_allows_unsigned_fallback(&error) => {
+                log_json_event(serde_json::json!({
+                    "event": "signed_remote_fetch_fallback",
+                    "url": url,
+                    "error": error.to_string(),
+                }));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    fetch_remote_activitypub_document(url).await
+}
+
+pub(crate) async fn fetch_remote_actor_profile_with_context(
+    actor_uri: &str,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
+) -> Result<FetchedRemoteActorProfile> {
+    let document = fetch_activitypub_document_with_context(actor_uri, fetch_context).await?;
+    let profile = parse_remote_actor_profile_document(&document, actor_uri)?;
+    validate_remote_actor_profile_urls(&profile).await?;
+    Ok(FetchedRemoteActorProfile { document, profile })
 }
 
 async fn remote_actor_collection_count(
@@ -125,7 +236,7 @@ async fn remote_actor_collection_count(
     if let Some(count) = remote_actor_collection_count_cache_hit(&collection_uri) {
         return Some(count);
     }
-    let collection = fetch_activitypub_document_for_counts(&collection_uri, fetch_context)
+    let collection = fetch_activitypub_document_with_context(&collection_uri, fetch_context)
         .await
         .ok()?;
     let count = resolve_fetched_collection_count(&collection, fetch_context).await?;
@@ -161,26 +272,12 @@ async fn resolve_collection_count_via_first(
     if let Some(count) = remote_actor_collection_count_cache_hit(&first_uri) {
         return Some(count);
     }
-    let page = fetch_activitypub_document_for_counts(&first_uri, fetch_context)
+    let page = fetch_activitypub_document_with_context(&first_uri, fetch_context)
         .await
         .ok()?;
     let count = activitypub_collection_total_items(&page)?;
     cache_remote_actor_collection_count(&first_uri, count);
     Some(count)
-}
-
-async fn fetch_activitypub_document_for_counts(
-    url: &str,
-    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
-) -> Result<serde_json::Value> {
-    if let Some(context) = fetch_context
-        && let Some(signer) = context.signer
-        && let Ok(document) =
-            fetch_signed_activitypub_document(context.config, context.db, signer, url).await
-    {
-        return Ok(document);
-    }
-    fetch_remote_activitypub_document(url).await
 }
 
 fn remote_actor_collection_count_cache_hit(collection_uri: &str) -> Option<u64> {
@@ -669,6 +766,26 @@ mod tests {
         assert_eq!(response.followers_count, 11);
         assert_eq!(response.following_count, 22);
         assert_eq!(response.statuses_count, 33);
+    }
+
+    #[test]
+    fn signed_fetch_allows_unsigned_fallback_for_auth_failures() {
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "failed to fetch signed remote document https://x: HTTP 401".to_owned()
+        )));
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "account private signing key is missing".to_owned()
+        )));
+        assert!(!signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "failed to fetch signed remote document https://x: HTTP 500".to_owned()
+        )));
+    }
+
+    #[test]
+    fn remote_actor_social_counts_are_fresh_rejects_missing_timestamp() {
+        assert!(!remote_actor_social_counts_are_fresh(None));
+        assert!(!remote_actor_social_counts_are_fresh(Some("")));
+        assert!(!remote_actor_social_counts_are_fresh(Some("not-a-date")));
     }
 
     #[test]

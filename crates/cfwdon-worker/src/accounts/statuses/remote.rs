@@ -6,16 +6,16 @@ use crate::{
     RemoteCollectionFetchContext, RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
     apply_remote_actor_social_counts, build_remote_status_response_with_timeline_preloads,
     escape_html, extract_remote_note_object, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile_with_document, find_follow_by_target,
-    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
-    find_remote_status_ids_with_media, is_public_activitypub_visibility,
-    list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
-    load_account_filter_matcher, load_remote_actor_social_counts_from_document_with_context,
+    fetch_remote_actor_profile_with_context, find_follow_by_target, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
+    is_public_activitypub_visibility, list_public_remote_statuses_by_actor_uri,
+    list_remote_statuses_by_actor_uri, load_account_filter_matcher,
+    load_remote_actor_social_counts_from_document_with_context, log_json_event,
     persist_remote_actor_social_counts, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
     preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
-    remote_status_from_record, upsert_remote_actor, upsert_remote_status,
-    visibility_from_activitypub_object,
+    remote_actor_social_counts_are_fresh, remote_status_from_record, upsert_remote_actor,
+    upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::D1Database;
 
@@ -155,26 +155,42 @@ async fn load_remote_account_status_page(
     if actor_social_counts.is_none()
         && !wants_html
         && !statuses.is_empty()
-        && let Ok(actor_document) = fetch_remote_activitypub_document(&actor.actor_uri).await
+        && !remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref())
     {
         let fetch_context = RemoteCollectionFetchContext {
             config,
             db,
             signer: viewer,
         };
-        let counts = load_remote_actor_social_counts_from_document_with_context(
-            &actor_document,
-            Some(&fetch_context),
-        )
-        .await
-        .ok()
-        .filter(|counts| counts.has_any());
-        if let Some(counts) = counts
-            && persist_remote_actor_social_counts(db, &actor.actor_uri, counts)
-                .await
-                .unwrap_or(false)
+        match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
-            actor_social_counts = Some(counts);
+            Ok(fetched) => {
+                let counts = load_remote_actor_social_counts_from_document_with_context(
+                    &fetched.document,
+                    Some(&fetch_context),
+                )
+                .await
+                .ok()
+                .filter(|counts| counts.has_any());
+                if let Some(counts) = counts {
+                    match persist_remote_actor_social_counts(db, &actor.actor_uri, counts).await {
+                        Ok(true) => actor_social_counts = Some(counts),
+                        Ok(false) => {}
+                        Err(error) => log_json_event(serde_json::json!({
+                            "event": "remote_account_enrichment_failed",
+                            "actor_uri": actor.actor_uri,
+                            "stage": "social_counts",
+                            "error": error.to_string(),
+                        })),
+                    }
+                }
+            }
+            Err(error) => log_json_event(serde_json::json!({
+                "event": "remote_account_enrichment_failed",
+                "actor_uri": actor.actor_uri,
+                "stage": "actor_document",
+                "error": error.to_string(),
+            })),
         }
     }
 
@@ -338,31 +354,48 @@ async fn refresh_remote_status_actor(
     include_social_counts: bool,
     status_fetch_limit: Option<u32>,
 ) -> Result<(RemoteActorRow, Option<crate::RemoteActorSocialCounts>)> {
-    let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
-        Ok(fetched) => fetched,
-        Err(_) => return Ok((actor, None)),
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
     };
+    let fetched =
+        match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
+        {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                log_json_event(serde_json::json!({
+                    "event": "remote_actor_refresh_failed",
+                    "actor_uri": actor.actor_uri,
+                    "error": error.to_string(),
+                }));
+                return Ok((actor, None));
+            }
+        };
     let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
-    if let Some(status_fetch_limit) = status_fetch_limit {
-        let _ = hydrate_remote_actor_statuses_from_outbox(
+    if let Some(status_fetch_limit) = status_fetch_limit
+        && let Err(error) = hydrate_remote_actor_statuses_from_outbox(
             db,
             config,
             &profile,
             &fetched.document,
             status_fetch_limit,
         )
-        .await;
+        .await
+    {
+        log_json_event(serde_json::json!({
+            "event": "remote_outbox_hydrate_failed",
+            "actor_uri": profile.actor_uri,
+            "error": error.to_string(),
+        }));
     }
     let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?
         .unwrap_or(actor);
-    let social_counts = if include_social_counts {
-        let fetch_context = RemoteCollectionFetchContext {
-            config,
-            db,
-            signer: viewer,
-        };
+    let social_counts = if include_social_counts
+        && !remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref())
+    {
         let counts = load_remote_actor_social_counts_from_document_with_context(
             &fetched.document,
             Some(&fetch_context),
@@ -370,12 +403,20 @@ async fn refresh_remote_status_actor(
         .await
         .ok()
         .filter(|counts| counts.has_any());
-        if let Some(counts) = counts
-            && persist_remote_actor_social_counts(db, &profile.actor_uri, counts)
-                .await
-                .unwrap_or(false)
-        {
-            Some(counts)
+        if let Some(counts) = counts {
+            match persist_remote_actor_social_counts(db, &profile.actor_uri, counts).await {
+                Ok(true) => Some(counts),
+                Ok(false) => None,
+                Err(error) => {
+                    log_json_event(serde_json::json!({
+                        "event": "remote_account_enrichment_failed",
+                        "actor_uri": profile.actor_uri,
+                        "stage": "social_counts",
+                        "error": error.to_string(),
+                    }));
+                    None
+                }
+            }
         } else {
             None
         }
@@ -424,29 +465,51 @@ async fn load_transient_remote_actor_statuses(
     Vec<MastodonStatusResponse>,
     Option<crate::RemoteActorSocialCounts>,
 )> {
-    let actor_document = fetch_remote_activitypub_document(&actor.actor_uri).await?;
     let fetch_context = RemoteCollectionFetchContext {
         config,
         db,
         signer: viewer,
     };
-    let social_counts = match load_remote_actor_social_counts_from_document_with_context(
-        &actor_document,
-        Some(&fetch_context),
-    )
-    .await
-    .ok()
-    .filter(|counts| counts.has_any())
-    {
-        Some(counts)
-            if persist_remote_actor_social_counts(db, &actor.actor_uri, counts)
-                .await
-                .unwrap_or(false) =>
-        {
-            Some(counts)
-        }
-        _ => None,
-    };
+    let fetched =
+        fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await?;
+    let actor_document = fetched.document;
+    let social_counts =
+        if remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref()) {
+            None
+        } else {
+            match load_remote_actor_social_counts_from_document_with_context(
+                &actor_document,
+                Some(&fetch_context),
+            )
+            .await
+            {
+                Ok(counts) if counts.has_any() => {
+                    match persist_remote_actor_social_counts(db, &actor.actor_uri, counts).await {
+                        Ok(true) => Some(counts),
+                        Ok(false) => None,
+                        Err(error) => {
+                            log_json_event(serde_json::json!({
+                                "event": "remote_account_enrichment_failed",
+                                "actor_uri": actor.actor_uri,
+                                "stage": "social_counts",
+                                "error": error.to_string(),
+                            }));
+                            None
+                        }
+                    }
+                }
+                Ok(_) => None,
+                Err(error) => {
+                    log_json_event(serde_json::json!({
+                        "event": "remote_account_enrichment_failed",
+                        "actor_uri": actor.actor_uri,
+                        "stage": "social_counts",
+                        "error": error.to_string(),
+                    }));
+                    None
+                }
+            }
+        };
     let Some(outbox) = remote_actor_outbox_page(&actor_document).await? else {
         return Ok((Vec::new(), social_counts));
     };

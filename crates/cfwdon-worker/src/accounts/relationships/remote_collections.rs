@@ -1,8 +1,9 @@
 use super::collections::CollectionAccountEntry;
 use crate::{
-    MastodonAccountResponse, RemoteActorProfile, Result, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_local_account_response_by_actor_uri,
-    find_remote_actor_by_actor_uri, is_activitypub_actor_type, parse_remote_actor_profile_document,
+    MastodonAccountResponse, RemoteActorProfile, Result, fetch_activitypub_document_with_context,
+    fetch_remote_activitypub_document, fetch_remote_actor_profile_with_context,
+    find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri,
+    is_activitypub_actor_type, parse_remote_actor_profile_document, upsert_remote_actor,
     upsert_remote_actors, validate_remote_actor_profile_urls,
 };
 use futures_util::{StreamExt, stream};
@@ -49,9 +50,14 @@ async fn resolve_remote_follow_collection_account(
                 profile_to_upsert: None,
             }));
         }
+        upsert_remote_actor(db, &profile).await?;
+        let account = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+            Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+            None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+        };
         return Ok(Some(ResolvedRemoteFollowAccount {
-            account: MastodonAccountResponse::from_remote_actor_profile(&profile),
-            profile_to_upsert: Some(profile),
+            account,
+            profile_to_upsert: None,
         }));
     }
 
@@ -65,17 +71,18 @@ async fn resolve_remote_follow_collection_account(
         }));
     }
 
-    let profile = match fetch_remote_actor_profile(actor_uri).await {
-        Ok(profile) => profile,
-        Err(_) => {
-            return Ok(find_remote_actor_by_actor_uri(db, actor_uri)
-                .await?
-                .map(|actor| ResolvedRemoteFollowAccount {
-                    account: MastodonAccountResponse::from_remote_actor(&actor),
-                    profile_to_upsert: None,
-                }));
-        }
+    if let Some(actor) = find_remote_actor_by_actor_uri(db, actor_uri).await? {
+        return Ok(Some(ResolvedRemoteFollowAccount {
+            account: MastodonAccountResponse::from_remote_actor(&actor),
+            profile_to_upsert: None,
+        }));
+    }
+
+    let fetched = match fetch_remote_actor_profile_with_context(actor_uri, None).await {
+        Ok(fetched) => fetched,
+        Err(_) => return Ok(None),
     };
+    let profile = fetched.profile;
     if let Some(account) =
         find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
     {
@@ -84,9 +91,14 @@ async fn resolve_remote_follow_collection_account(
             profile_to_upsert: None,
         }));
     }
+    upsert_remote_actor(db, &profile).await?;
+    let account = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(&profile),
+    };
     Ok(Some(ResolvedRemoteFollowAccount {
-        account: MastodonAccountResponse::from_remote_actor_profile(&profile),
-        profile_to_upsert: Some(profile),
+        account,
+        profile_to_upsert: None,
     }))
 }
 
@@ -99,7 +111,7 @@ pub(crate) async fn remote_follow_collection_entries(
     max_id: Option<i64>,
     since_id: Option<i64>,
 ) -> Result<Option<Vec<CollectionAccountEntry>>> {
-    let actor_document = match fetch_remote_activitypub_document(actor_uri).await {
+    let actor_document = match fetch_activitypub_document_with_context(actor_uri, None).await {
         Ok(document) => document,
         Err(_) => return Ok(None),
     };

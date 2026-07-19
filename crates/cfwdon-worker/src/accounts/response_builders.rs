@@ -1,8 +1,9 @@
 use crate::{
-    LocalAccount, MastodonAccountResponse, RemoteActorProfile, RemoteActorRow, Result,
-    fetch_remote_actor_profile, find_account_by_id, find_account_by_username,
+    LocalAccount, MastodonAccountResponse, RemoteActorProfile, RemoteActorRow,
+    RemoteCollectionFetchContext, Result, enrich_remote_account_response,
+    fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
     find_remote_actor_by_actor_uri, load_account_stats, local_username_from_actor_uri,
-    upsert_remote_actor,
+    log_json_event, upsert_remote_actor,
 };
 use worker::D1Database;
 
@@ -59,12 +60,61 @@ pub(crate) async fn upserted_remote_actor_response(
     )
 }
 
+pub(crate) async fn upserted_remote_actor_response_with_document(
+    db: &D1Database,
+    profile: &RemoteActorProfile,
+    document: &serde_json::Value,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
+) -> Result<MastodonAccountResponse> {
+    upsert_remote_actor(db, profile).await?;
+    let cached = find_remote_actor_by_actor_uri(db, &profile.actor_uri).await?;
+    let social_counts_updated_at = cached
+        .as_ref()
+        .and_then(|row| row.social_counts_updated_at.clone());
+    let mut response = match cached {
+        Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
+        None => MastodonAccountResponse::from_remote_actor_profile(profile),
+    };
+    enrich_remote_account_response(
+        db,
+        &profile.actor_uri,
+        social_counts_updated_at.as_deref(),
+        &mut response,
+        document,
+        fetch_context,
+    )
+    .await?;
+    Ok(response)
+}
+
 pub(crate) async fn refreshed_remote_actor_response(
     db: &D1Database,
+    config: &cfwdon_core::AppConfig,
     actor: &RemoteActorRow,
+    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    match fetch_remote_actor_profile(&actor.actor_uri).await {
-        Ok(profile) => upserted_remote_actor_response(db, &profile).await,
-        Err(_) => Ok(MastodonAccountResponse::from_remote_actor(actor)),
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
+    };
+    match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await {
+        Ok(fetched) => {
+            upserted_remote_actor_response_with_document(
+                db,
+                &fetched.profile,
+                &fetched.document,
+                Some(&fetch_context),
+            )
+            .await
+        }
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "remote_actor_refresh_failed",
+                "actor_uri": actor.actor_uri,
+                "error": error.to_string(),
+            }));
+            Ok(MastodonAccountResponse::from_remote_actor(actor))
+        }
     }
 }
