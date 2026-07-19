@@ -148,10 +148,11 @@ pub(crate) async fn shared_inbox_response(
         return handle_inbox_request(&req, &db, &config, None, &body, &activity).await;
     }
 
-    let Some(account) = resolve_inbox_target_account(&db, &config, None, &activity).await? else {
+    let accounts = resolve_shared_inbox_target_accounts(&db, &config, None, &activity).await?;
+    if accounts.is_empty() {
         return Ok(Response::empty()?.with_status(202));
-    };
-    handle_inbox_request(&req, &db, &config, Some(&account), &body, &activity).await
+    }
+    handle_inbox_request_for_accounts(&req, &db, &config, &accounts, &body, &activity).await
 }
 
 pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -166,9 +167,10 @@ pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> R
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
     let db = ctx.d1(&config.database_binding)?;
-    let Some(account) =
-        resolve_inbox_target_account(&db, &config, Some(username.as_str()), &activity).await?
-    else {
+    let accounts =
+        resolve_shared_inbox_target_accounts(&db, &config, Some(username.as_str()), &activity)
+            .await?;
+    let Some(account) = accounts.into_iter().next() else {
         return Response::error("actor not found", 404);
     };
     handle_inbox_request(&req, &db, &config, Some(&account), &body, &activity).await
@@ -179,6 +181,20 @@ pub(crate) async fn handle_inbox_request(
     db: &D1Database,
     config: &AppConfig,
     account: Option<&LocalAccount>,
+    body: &[u8],
+    activity: &serde_json::Value,
+) -> Result<Response> {
+    let accounts = account
+        .map(|account| vec![account.clone()])
+        .unwrap_or_default();
+    handle_inbox_request_for_accounts(req, db, config, &accounts, body, activity).await
+}
+
+pub(crate) async fn handle_inbox_request_for_accounts(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+    accounts: &[LocalAccount],
     body: &[u8],
     activity: &serde_json::Value,
 ) -> Result<Response> {
@@ -198,7 +214,22 @@ pub(crate) async fn handle_inbox_request(
         return Ok(Response::empty()?.with_status(202));
     }
 
-    let result = dispatch_inbox_activity(db, config, account, activity, &remote_actor).await;
+    let result = if accounts.is_empty() {
+        dispatch_inbox_activity(db, config, None, activity, &remote_actor).await
+    } else {
+        let mut outcome = Ok(());
+        for account in accounts {
+            match dispatch_inbox_activity(db, config, Some(account), activity, &remote_actor).await
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+            }
+        }
+        outcome
+    };
     finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
     inbox_result_response(result)
 }

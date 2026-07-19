@@ -178,14 +178,23 @@ pub(crate) async fn reschedule_outbound_activity(
 
 pub(crate) async fn requeue_stale_in_flight_outbound_activities(db: &D1Database) -> Result<()> {
     let stale_before = D1Type::Text(OUTBOX_IN_FLIGHT_STALE_MODIFIER);
+    let max_attempts = D1Type::Integer(cfwdon_domain::DELIVERY_MAX_ATTEMPTS as i32);
     db.prepare(
         "UPDATE outbound_activities
-         SET state = 'queued',
+         SET attempt_count = attempt_count + 1,
+             state = CASE
+                 WHEN attempt_count + 1 >= ?2 THEN 'failed'
+                 ELSE 'queued'
+             END,
+             next_attempt_at = CASE
+                 WHEN attempt_count + 1 >= ?2 THEN next_attempt_at
+                 ELSE CURRENT_TIMESTAMP
+             END,
              updated_at = CURRENT_TIMESTAMP
          WHERE state = 'in_flight'
            AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)",
     )
-    .bind_refs(&stale_before)?
+    .bind_refs(&[stale_before, max_attempts])?
     .run()
     .await?;
 

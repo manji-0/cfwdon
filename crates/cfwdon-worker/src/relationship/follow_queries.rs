@@ -167,12 +167,20 @@ pub(crate) async fn is_local_account_following_remote_actor(
     Ok(row.is_some())
 }
 
-pub(crate) async fn first_local_follower_for_remote_actor(
+pub(crate) async fn is_remote_actor_following_local_account(
+    db: &D1Database,
+    account_id: &str,
+    actor_uri: &str,
+) -> Result<bool> {
+    Ok(count_followers_by_actor(db, account_id, actor_uri).await? > 0)
+}
+
+pub(crate) async fn list_local_follower_accounts_for_remote_actor(
     db: &D1Database,
     actor_uri: &str,
-) -> Result<Option<LocalAccount>> {
+) -> Result<Vec<LocalAccount>> {
     let bindings = [D1Type::Text(actor_uri)];
-    let row = db
+    let result = db
         .prepare(
             "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at
              FROM follows f
@@ -180,14 +188,23 @@ pub(crate) async fn first_local_follower_for_remote_actor(
                ON a.id = f.follower_account_id
              WHERE f.target_actor_uri = ?1
                AND f.state = 'accepted'
-             ORDER BY f.created_at ASC
-             LIMIT 1",
+             ORDER BY f.created_at ASC",
         )
         .bind_refs(bindings.iter())?
-        .first::<AccountRow>(None)
+        .all()
         .await?;
+    let rows = result.results::<AccountRow>()?;
+    Ok(rows.into_iter().map(LocalAccount::from_record).collect())
+}
 
-    Ok(row.map(LocalAccount::from_record))
+pub(crate) async fn first_local_follower_for_remote_actor(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<Option<LocalAccount>> {
+    Ok(list_local_follower_accounts_for_remote_actor(db, actor_uri)
+        .await?
+        .into_iter()
+        .next())
 }
 
 pub(crate) async fn is_local_follower_authorized(

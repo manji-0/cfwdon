@@ -101,7 +101,9 @@ pub(crate) async fn send_signed_activity(
     inbox_url: &str,
     payload_json: &str,
 ) -> Result<()> {
-    let (host, path_and_query) = parse_http_url_parts(inbox_url)?;
+    let inbox = parse_remote_http_url(inbox_url)?;
+    validate_remote_fetch_url(&inbox).await?;
+    let (host, path_and_query) = parse_http_url_parts(inbox.as_str())?;
     let date = now_http_date_string()?;
     let digest = sha256_http_digest(payload_json.as_bytes()).await?;
     let signing_string = format!(
@@ -129,16 +131,22 @@ pub(crate) async fn send_signed_activity(
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(headers)
-        .with_body(Some(JsValue::from_str(payload_json)));
+        .with_body(Some(JsValue::from_str(payload_json)))
+        .with_redirect(RequestRedirect::Manual);
 
-    let request = Request::new_with_init(inbox_url, &init)?;
+    let request = Request::new_with_init(inbox.as_str(), &init)?;
     let response = Fetch::Request(request).send().await?;
-    if response.status_code() / 100 == 2 {
+    let status = response.status_code();
+    if (300..400).contains(&status) {
+        return Err(Error::RustError(format!(
+            "remote inbox redirected signed delivery with HTTP {status}"
+        )));
+    }
+    if status / 100 == 2 {
         Ok(())
     } else {
         Err(Error::RustError(format!(
-            "remote inbox rejected activity with HTTP {}",
-            response.status_code()
+            "remote inbox rejected activity with HTTP {status}"
         )))
     }
 }

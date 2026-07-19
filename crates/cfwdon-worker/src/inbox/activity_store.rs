@@ -2,12 +2,30 @@ use super::RemoteActorProfile;
 use worker::Result;
 use worker::d1::D1Type;
 
+pub(crate) const INBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
+
 pub(crate) async fn begin_inbox_activity_processing(
     db: &worker::D1Database,
     actor_uri: &str,
     activity_id: &str,
     activity_type: &str,
 ) -> Result<bool> {
+    let reclaim_bindings = [
+        D1Type::Text(actor_uri),
+        D1Type::Text(activity_id),
+        D1Type::Text(INBOX_IN_FLIGHT_STALE_MODIFIER),
+    ];
+    db.prepare(
+        "DELETE FROM inbox_activities
+         WHERE actor_uri = ?1
+           AND activity_id = ?2
+           AND processed_at IS NULL
+           AND created_at <= datetime(CURRENT_TIMESTAMP, ?3)",
+    )
+    .bind_refs(reclaim_bindings.iter())?
+    .run()
+    .await?;
+
     let bindings = [
         D1Type::Text(actor_uri),
         D1Type::Text(activity_id),
@@ -182,6 +200,23 @@ pub(crate) async fn delete_follower_by_actor(
     actor_uri: &str,
     canonical_actor_uri: &str,
 ) -> Result<()> {
+    let lookup = [
+        D1Type::Text(account_id),
+        D1Type::Text(actor_uri),
+        D1Type::Text(canonical_actor_uri),
+    ];
+    let inbox_row = db
+        .prepare(
+            "SELECT COALESCE(NULLIF(shared_inbox_uri, ''), inbox_uri) AS target_inbox
+             FROM followers
+             WHERE account_id = ?1
+               AND (actor_uri = ?2 OR actor_uri = ?3)
+             LIMIT 1",
+        )
+        .bind_refs(lookup.iter())?
+        .first::<serde_json::Value>(None)
+        .await?;
+
     let bindings = [
         D1Type::Text(account_id),
         D1Type::Text(actor_uri),
@@ -195,6 +230,16 @@ pub(crate) async fn delete_follower_by_actor(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+
+    if let Some(target_inbox) = inbox_row
+        .as_ref()
+        .and_then(|value| value.get("target_inbox"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        crate::cancel_pending_outbox_deliveries_for_inbox(db, account_id, target_inbox).await?;
+    }
 
     Ok(())
 }

@@ -92,6 +92,11 @@ pub(crate) async fn handle_inbox_poll_vote(
     if status.account_id != account.id() {
         return Ok(false);
     }
+    if !crate::remote_actor_may_interact_with_local_status(db, &status, &remote_actor.actor_uri)
+        .await?
+    {
+        return Ok(false);
+    }
     let Some(poll) = find_status_poll_by_status_id(db, &status.id).await? else {
         return Ok(false);
     };

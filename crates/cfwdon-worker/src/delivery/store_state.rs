@@ -147,16 +147,45 @@ pub(crate) async fn reschedule_outbox_delivery(
 
 pub(crate) async fn requeue_stale_in_flight_outbox_deliveries(db: &D1Database) -> Result<()> {
     let stale_before = D1Type::Text(OUTBOX_IN_FLIGHT_STALE_MODIFIER);
+    let max_attempts = D1Type::Integer(cfwdon_domain::DELIVERY_MAX_ATTEMPTS as i32);
     db.prepare(
         "UPDATE outbox_deliveries
-         SET state = 'queued',
+         SET attempt_count = attempt_count + 1,
+             state = CASE
+                 WHEN attempt_count + 1 >= ?2 THEN 'failed'
+                 ELSE 'queued'
+             END,
+             next_attempt_at = CASE
+                 WHEN attempt_count + 1 >= ?2 THEN next_attempt_at
+                 ELSE CURRENT_TIMESTAMP
+             END,
              updated_at = CURRENT_TIMESTAMP
          WHERE state = 'in_flight'
            AND last_attempt_at <= datetime(CURRENT_TIMESTAMP, ?1)",
     )
-    .bind_refs(&stale_before)?
+    .bind_refs(&[stale_before, max_attempts])?
     .run()
     .await?;
 
+    Ok(())
+}
+
+pub(crate) async fn cancel_pending_outbox_deliveries_for_inbox(
+    db: &D1Database,
+    account_id: &str,
+    target_inbox: &str,
+) -> Result<()> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(target_inbox)];
+    db.prepare(
+        "UPDATE outbox_deliveries
+         SET state = 'failed',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE account_id = ?1
+           AND target_inbox = ?2
+           AND state IN ('queued', 'expanded', 'in_flight')",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
     Ok(())
 }
