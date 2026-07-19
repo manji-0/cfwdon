@@ -364,8 +364,8 @@ mod tests {
                 name: "rust".to_owned(),
                 url: "https://example.test/tags/rust".to_owned(),
                 history: Vec::new(),
-                following: false,
-                featured: false,
+                following: None,
+                featuring: None,
             }],
             collections: vec![serde_json::json!({"id": "collection-1"})],
             ..MastodonSearchResponse::default()

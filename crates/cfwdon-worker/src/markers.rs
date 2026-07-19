@@ -77,16 +77,21 @@ async fn save_marker(
          VALUES (?1, ?2, ?3, 1, ?4)
          ON CONFLICT(account_id, scope) DO UPDATE SET
              last_read_id = excluded.last_read_id,
-             version = excluded.version,
+             version = timeline_markers.version + 1,
              updated_at = excluded.updated_at",
     )
     .bind_refs(bindings.iter())?
     .run()
     .await?;
 
+    let version = load_marker(db, account_id, scope)
+        .await?
+        .and_then(|marker| marker.get("version").and_then(serde_json::Value::as_i64))
+        .unwrap_or(1);
+
     Ok(serde_json::json!({
         "last_read_id": last_read_id,
-        "version": 1,
+        "version": version,
         "updated_at": updated_at,
     }))
 }

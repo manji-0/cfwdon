@@ -108,6 +108,8 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
                         settings.show_media,
                         settings.show_media_replies,
                         settings.show_featured,
+                        settings.avatar_description.clone(),
+                        settings.header_description.clone(),
                     );
             if cacheable_account_id {
                 cache_account_api_response(&ctx, &account_id, &response).await?;
@@ -744,6 +746,8 @@ fn build_credentials_document(
                 settings.show_media,
                 settings.show_media_replies,
                 settings.show_featured,
+                settings.avatar_description.clone(),
+                settings.header_description.clone(),
             ),
     )
     .unwrap_or_else(|_| serde_json::json!({}));

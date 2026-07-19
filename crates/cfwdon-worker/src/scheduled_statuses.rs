@@ -72,7 +72,7 @@ pub(crate) fn scheduled_status_document_with_params(
             "sensitive": sensitive,
             "visibility": visibility,
             "idempotency": serde_json::Value::Null,
-            "scheduled_at": scheduled_at,
+            "scheduled_at": serde_json::Value::Null,
             "spoiler_text": spoiler_text,
             "application_id": 0,
             "in_reply_to_id": in_reply_to_id,

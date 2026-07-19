@@ -4670,10 +4670,7 @@ fn local_media_response_uses_worker_route_without_public_media_base() {
         document.pointer("/preview_url"),
         Some(&serde_json::json!("https://social.example/media/media-1"))
     );
-    assert_eq!(
-        document.pointer("/text_url"),
-        Some(&serde_json::json!("https://social.example/media/media-1"))
-    );
+    assert_eq!(document.pointer("/text_url"), None);
     assert_eq!(
         document.pointer("/meta/original/width"),
         Some(&serde_json::json!(640))
@@ -4722,10 +4719,7 @@ fn local_media_response_uses_public_media_base_when_configured() {
             "https://media.example.com/media/acct-1/image/media-1"
         ))
     );
-    assert_eq!(
-        document.pointer("/text_url"),
-        Some(&serde_json::json!("https://social.example/media/media-1"))
-    );
+    assert_eq!(document.pointer("/text_url"), None);
 }
 
 #[test]
@@ -4779,15 +4773,23 @@ fn mastodon_report_response_serializes_forwarded_and_nullable_status_ids() {
         url: "https://social.example/@alice".to_owned(),
         avatar: String::new(),
         avatar_static: String::new(),
+        avatar_description: String::new(),
         header: String::new(),
         header_static: String::new(),
+        header_description: String::new(),
         emojis: Vec::new(),
         fields: Vec::new(),
-        roles: Vec::new(),
+        roles: Some(Vec::new()),
+        feature_approval: serde_json::json!({
+            "automatic": ["public"],
+            "manual": [],
+            "current_user": "automatic",
+        }),
         followers_count: 0,
         following_count: 0,
         statuses_count: 0,
         source: None,
+        role: None,
     };
     let response = MastodonReportResponse {
         id: "report-1".to_owned(),
@@ -4798,6 +4800,7 @@ fn mastodon_report_response_serializes_forwarded_and_nullable_status_ids() {
         forwarded: false,
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
         status_ids: None,
+        collection_ids: Some(Vec::new()),
         target_account,
         rule_ids: None,
     };
@@ -4862,7 +4865,7 @@ fn remote_account_response_uses_cached_profile_media() {
     assert_eq!(response.avatar, "https://cdn.remote.example/avatar.png");
     assert_eq!(response.header, "https://cdn.remote.example/header.png");
     assert_eq!(response.url, "https://remote.example/@alice");
-    assert_eq!(response.created_at, "2026-01-02T03:04:05.000Z");
+    assert_eq!(response.created_at, "2026-01-02T00:00:00.000Z");
     assert!(response.locked);
     assert!(response.bot);
     assert!(!response.discoverable);

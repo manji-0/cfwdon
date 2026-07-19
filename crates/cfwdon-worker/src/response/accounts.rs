@@ -1,7 +1,7 @@
 use crate::{
-    AccountStats, AppConfig, LocalAccount, MastodonAccountResponse, MastodonAccountSource,
-    ProfileField, RemoteActorProfile, RemoteActorRow, actor_url, escape_html,
-    fetch_remote_activitypub_document, media_object_url, remote_account_rest_id,
+    AccountStats, AppConfig, LocalAccount, MastodonAccountResponse, MastodonAccountRole,
+    MastodonAccountSource, ProfileField, RemoteActorProfile, RemoteActorRow, actor_url,
+    escape_html, fetch_remote_activitypub_document, media_object_url, remote_account_rest_id,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -131,6 +131,19 @@ pub(crate) fn mastodon_account_fields(fields: &[ProfileField]) -> Vec<serde_json
         .collect()
 }
 
+pub(crate) fn mastodon_account_source_fields(fields: &[ProfileField]) -> Vec<serde_json::Value> {
+    fields
+        .iter()
+        .map(|field| {
+            serde_json::json!({
+                "name": field.name,
+                "value": field.value,
+                "verified_at": serde_json::Value::Null,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn render_profile_field_value_html(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -156,21 +169,8 @@ pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::
         "posting:default:sensitive": account.default_sensitive(),
         "posting:default:language": account.default_language(),
         "posting:default:quote_policy": account.default_quote_policy().as_str(),
-        "posting:default:privacy": account.default_visibility().as_str(),
-        "posting:default:media_sensitive": account.default_sensitive(),
-        "posting:default:content_type": "text/plain",
         "reading:expand:media": "default",
         "reading:expand:spoilers": false,
-        "reading:autoplay:gifs": true,
-        "reading:display:media": "default",
-        "reading:display:expand_media": "default",
-        "reading:display:expand_spoilers": false,
-        "notifications:follow": true,
-        "notifications:favourite": true,
-        "notifications:reblog": true,
-        "notifications:mention": true,
-        "notifications:poll": true,
-        "web:theme": "default",
     })
 }
 
@@ -192,6 +192,22 @@ fn account_noindex(indexable: bool) -> Option<bool> {
     (!indexable).then_some(true)
 }
 
+fn local_feature_approval() -> serde_json::Value {
+    serde_json::json!({
+        "automatic": ["public"],
+        "manual": [],
+        "current_user": "automatic",
+    })
+}
+
+fn remote_feature_approval() -> serde_json::Value {
+    serde_json::json!({
+        "automatic": [],
+        "manual": [],
+        "current_user": "missing",
+    })
+}
+
 impl MastodonAccountResponse {
     pub(crate) fn with_profile_settings(
         mut self,
@@ -200,6 +216,8 @@ impl MastodonAccountResponse {
         show_media: bool,
         show_media_replies: bool,
         show_featured: bool,
+        avatar_description: String,
+        header_description: String,
     ) -> Self {
         self.indexable = indexable;
         self.noindex = account_noindex(indexable);
@@ -207,6 +225,8 @@ impl MastodonAccountResponse {
         self.show_media = Some(show_media);
         self.show_media_replies = Some(show_media_replies);
         self.show_featured = Some(show_featured);
+        self.avatar_description = avatar_description;
+        self.header_description = header_description;
         if let Some(source) = self.source.as_mut() {
             source.hide_collections = hide_collections;
             source.indexable = indexable;
@@ -242,20 +262,24 @@ impl MastodonAccountResponse {
             show_media_replies: Some(true),
             show_featured: Some(true),
             last_status_at: stats.last_status_at.clone(),
-            created_at: timestamp_to_mastodon_iso8601(account.created_at()),
+            created_at: timestamp_to_mastodon_account_created_at(account.created_at()),
             note: account.bio_html().to_owned(),
             url: profile_url,
             avatar: account_avatar_url(config, account),
             avatar_static: account_avatar_url(config, account),
+            avatar_description: String::new(),
             header: account_header_url(config, account),
             header_static: account_header_url(config, account),
+            header_description: String::new(),
             emojis: Vec::new(),
             fields: mastodon_account_fields(account.fields()),
-            roles: Vec::new(),
+            roles: Some(Vec::new()),
+            feature_approval: local_feature_approval(),
             followers_count: stats.followers_count,
             following_count: stats.following_count,
             statuses_count: stats.statuses_count,
             source: None,
+            role: None,
         }
     }
 
@@ -267,7 +291,7 @@ impl MastodonAccountResponse {
         let mut value = Self::from_account_with_stats(account, config, stats);
         value.source = Some(MastodonAccountSource {
             note: account.bio_text().to_owned(),
-            fields: mastodon_account_fields(account.fields()),
+            fields: mastodon_account_source_fields(account.fields()),
             attribution_domains: Vec::new(),
             privacy: account.default_visibility().as_str().to_owned(),
             sensitive: account.default_sensitive(),
@@ -277,6 +301,13 @@ impl MastodonAccountResponse {
             discoverable: Some(account.is_discoverable()),
             indexable: true,
             quote_policy: account.default_quote_policy().as_str().to_owned(),
+        });
+        value.role = Some(MastodonAccountRole {
+            id: "-99".to_owned(),
+            name: String::new(),
+            permissions: "0".to_owned(),
+            color: String::new(),
+            highlighted: false,
         });
         value
     }
@@ -291,7 +322,7 @@ impl MastodonAccountResponse {
         let created_at = if actor.created_at.trim().is_empty() {
             "1970-01-01T00:00:00.000Z".to_owned()
         } else {
-            timestamp_to_mastodon_iso8601(&actor.created_at)
+            timestamp_to_mastodon_account_created_at(&actor.created_at)
         };
 
         Self {
@@ -316,15 +347,19 @@ impl MastodonAccountResponse {
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
+            avatar_description: String::new(),
             header: header_url.clone(),
             header_static: header_url,
+            header_description: String::new(),
             emojis: Vec::new(),
             fields: Vec::new(),
-            roles: Vec::new(),
+            roles: None,
+            feature_approval: remote_feature_approval(),
             followers_count: 0,
             following_count: 0,
             statuses_count: 0,
             source: None,
+            role: None,
         }
     }
 
@@ -358,15 +393,19 @@ impl MastodonAccountResponse {
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
+            avatar_description: String::new(),
             header: header_url.clone(),
             header_static: header_url,
+            header_description: String::new(),
             emojis: Vec::new(),
             fields: Vec::new(),
-            roles: Vec::new(),
+            roles: None,
+            feature_approval: remote_feature_approval(),
             followers_count: 0,
             following_count: 0,
             statuses_count: 0,
             source: None,
+            role: None,
         }
     }
 }
@@ -380,4 +419,14 @@ pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
         return format!("{}T{}.000Z", &value[..10], &value[11..]);
     }
     value.to_owned()
+}
+
+pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
+    let normalized = timestamp_to_mastodon_iso8601(value);
+    let date = normalized.split(['T', ' ']).next().unwrap_or("1970-01-01");
+    if date.len() >= 10 {
+        format!("{}T00:00:00.000Z", &date[..10])
+    } else {
+        "1970-01-01T00:00:00.000Z".to_owned()
+    }
 }

@@ -12,7 +12,6 @@ pub(crate) struct MastodonMediaAttachmentResponse {
     pub(crate) url: String,
     pub(crate) preview_url: String,
     pub(crate) remote_url: Option<String>,
-    pub(crate) text_url: Option<String>,
     pub(crate) meta: MastodonMediaMeta,
     pub(crate) description: Option<String>,
     pub(crate) blurhash: Option<String>,
@@ -65,7 +64,6 @@ pub(crate) fn media_attachment_url(config: &AppConfig, media_id: &str, object_ke
 impl MastodonMediaAttachmentResponse {
     pub(crate) fn from_row(row: &MediaAttachmentRow, config: &AppConfig) -> Self {
         let url = media_attachment_url(config, &row.id, &row.object_key);
-        let fallback_url = media_fallback_url(config, &row.id);
         let aspect = row
             .width
             .zip(row.height)
@@ -87,7 +85,6 @@ impl MastodonMediaAttachmentResponse {
             url: url.clone(),
             preview_url: url,
             remote_url: None,
-            text_url: Some(fallback_url),
             meta: MastodonMediaMeta {
                 original: Some(MastodonMediaMetaDetails {
                     width: row.width,
@@ -128,7 +125,6 @@ impl MastodonMediaAttachmentResponse {
             url: url.clone(),
             preview_url,
             remote_url: Some(url),
-            text_url: None,
             meta: MastodonMediaMeta {
                 original: Some(MastodonMediaMetaDetails {
                     width: row.width,

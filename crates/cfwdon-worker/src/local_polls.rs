@@ -19,8 +19,10 @@ pub(crate) struct MastodonPollResponse {
     pub(crate) multiple: bool,
     pub(crate) votes_count: u64,
     pub(crate) voters_count: Option<u64>,
-    pub(crate) voted: bool,
-    pub(crate) own_votes: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) voted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) own_votes: Option<Vec<u32>>,
     pub(crate) options: Vec<MastodonPollOptionResponse>,
     pub(crate) emojis: Vec<serde_json::Value>,
 }
@@ -132,10 +134,15 @@ pub(crate) async fn preload_mastodon_poll_responses(
     let mut by_status_id = HashMap::new();
 
     for poll in polls {
+        let own_votes = if viewer.is_some() {
+            Some(own_votes_by_poll_id.remove(&poll.id).unwrap_or_default())
+        } else {
+            None
+        };
         let Some(response) = mastodon_poll_response_from_rows(
             &poll,
             options_by_poll_id.remove(&poll.id).unwrap_or_default(),
-            own_votes_by_poll_id.remove(&poll.id).unwrap_or_default(),
+            own_votes,
             voters_count_by_poll_id.get(&poll.id).copied(),
         ) else {
             continue;
@@ -293,7 +300,7 @@ async fn preload_voters_count_by_poll_id(
 fn mastodon_poll_response_from_rows(
     poll: &StatusPollRow,
     options: Vec<StatusPollOptionRow>,
-    own_votes: Vec<u32>,
+    own_votes: Option<Vec<u32>>,
     multiple_voters_count: Option<u64>,
 ) -> Option<MastodonPollResponse> {
     if options.is_empty() {
@@ -308,7 +315,11 @@ fn mastodon_poll_response_from_rows(
     let voters_count = if poll.multiple != 0 {
         reveal_totals.then_some(multiple_voters_count.unwrap_or(0))
     } else {
-        reveal_totals.then_some(votes_count)
+        None
+    };
+    let (voted, own_votes) = match own_votes {
+        Some(own_votes) => (Some(!own_votes.is_empty()), Some(own_votes)),
+        None => (None, None),
     };
     Some(MastodonPollResponse {
         id: poll.id.clone(),
@@ -317,7 +328,7 @@ fn mastodon_poll_response_from_rows(
         multiple: poll.multiple != 0,
         votes_count: if reveal_totals { votes_count } else { 0 },
         voters_count,
-        voted: !own_votes.is_empty(),
+        voted,
         own_votes,
         options: options
             .into_iter()
@@ -354,8 +365,10 @@ pub(crate) async fn build_mastodon_poll_response(
     let expired = is_iso_timestamp_in_past(&poll.expires_at).unwrap_or(false);
     let reveal_totals = expired || poll.hide_totals == 0;
     let own_votes = match viewer {
-        Some(viewer) => list_poll_vote_positions_for_account(db, &poll.id, viewer.id()).await?,
-        None => Vec::new(),
+        Some(viewer) => {
+            Some(list_poll_vote_positions_for_account(db, &poll.id, viewer.id()).await?)
+        }
+        None => None,
     };
     let multiple_voters_count = if poll.multiple != 0 {
         if reveal_totals {
@@ -457,15 +470,15 @@ mod tests {
         let response = mastodon_poll_response_from_rows(
             &poll_row(1, 1, "2099-01-01T00:00:00Z"),
             poll_options(),
-            vec![1],
+            Some(vec![1]),
             Some(2),
         )
         .expect("poll response");
 
         assert_eq!(response.votes_count, 0);
         assert_eq!(response.voters_count, None);
-        assert!(response.voted);
-        assert_eq!(response.own_votes, vec![1]);
+        assert_eq!(response.voted, Some(true));
+        assert_eq!(response.own_votes, Some(vec![1]));
         assert!(
             response
                 .options
@@ -479,14 +492,14 @@ mod tests {
         let response = mastodon_poll_response_from_rows(
             &poll_row(0, 0, "2099-01-01T00:00:00Z"),
             poll_options(),
-            Vec::new(),
+            Some(Vec::new()),
             None,
         )
         .expect("poll response");
 
         assert_eq!(response.votes_count, 5);
-        assert_eq!(response.voters_count, Some(5));
-        assert!(!response.voted);
+        assert_eq!(response.voters_count, None);
+        assert_eq!(response.voted, Some(false));
         assert_eq!(
             response
                 .options
@@ -495,5 +508,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(2), Some(3)]
         );
+    }
+
+    #[test]
+    fn mastodon_poll_response_omits_vote_fields_without_viewer() {
+        let response = mastodon_poll_response_from_rows(
+            &poll_row(0, 0, "2099-01-01T00:00:00Z"),
+            poll_options(),
+            None,
+            None,
+        )
+        .expect("poll response");
+
+        assert_eq!(response.voted, None);
+        assert_eq!(response.own_votes, None);
     }
 }

@@ -1311,7 +1311,11 @@ async fn load_local_status_response_details(
     let viewer_state =
         local_status_response_viewer_state(db, viewer, status, viewer_state_preload).await?;
     let edited_at = local_status_edited_at(db, status).await?;
-    let filtered = local_status_filtered_for_viewer(db, viewer, status, filter_matcher).await?;
+    let filtered = if viewer.is_some() {
+        Some(local_status_filtered_for_viewer(db, viewer, status, filter_matcher).await?)
+    } else {
+        None
+    };
     let quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
     let quote = if include_quote {
         build_quoted_status_value(
@@ -1328,6 +1332,7 @@ async fn load_local_status_response_details(
     } else {
         None
     };
+    let viewer_fields = local_viewer_interaction_fields(viewer, status, viewer_state);
 
     Ok(LocalStatusResponseDetails {
         application,
@@ -1337,16 +1342,58 @@ async fn load_local_status_response_details(
         favourites_count,
         reblogs_count,
         quotes_count,
-        favourited: viewer_state.favourited,
-        reblogged: viewer_state.reblogged,
-        muted: viewer_state.muted,
-        bookmarked: viewer_state.bookmarked,
-        pinned: viewer_state.pinned,
+        favourited: viewer_fields.favourited,
+        reblogged: viewer_fields.reblogged,
+        muted: viewer_fields.muted,
+        bookmarked: viewer_fields.bookmarked,
+        pinned: viewer_fields.pinned,
         edited_at,
         filtered,
         quote_approval,
         quote,
     })
+}
+
+fn local_status_is_pinnable(viewer: &LocalAccount, status: &StatusRow) -> bool {
+    viewer.id() == status.account_id
+        && status.boost_of_uri.is_none()
+        && matches!(
+            status.visibility,
+            cfwdon_domain::Visibility::Public
+                | cfwdon_domain::Visibility::Unlisted
+                | cfwdon_domain::Visibility::FollowersOnly
+        )
+}
+
+struct LocalViewerInteractionFields {
+    favourited: Option<bool>,
+    reblogged: Option<bool>,
+    muted: Option<bool>,
+    bookmarked: Option<bool>,
+    pinned: Option<bool>,
+}
+
+fn local_viewer_interaction_fields(
+    viewer: Option<&LocalAccount>,
+    status: &StatusRow,
+    viewer_state: LocalStatusResponseViewerState,
+) -> LocalViewerInteractionFields {
+    let Some(viewer) = viewer else {
+        return LocalViewerInteractionFields {
+            favourited: None,
+            reblogged: None,
+            muted: None,
+            bookmarked: None,
+            pinned: None,
+        };
+    };
+    LocalViewerInteractionFields {
+        favourited: Some(viewer_state.favourited),
+        reblogged: Some(viewer_state.reblogged),
+        muted: Some(viewer_state.muted),
+        bookmarked: Some(viewer_state.bookmarked),
+        pinned: local_status_is_pinnable(viewer, status).then_some(viewer_state.pinned),
+    }
 }
 
 async fn local_status_response_viewer_state(
@@ -1583,9 +1630,14 @@ async fn load_remote_status_response_details(
             }
         }
     };
-    let filtered =
-        remote_status_filtered_for_viewer(db, viewer, status, &text_content, filter_matcher)
-            .await?;
+    let filtered = if viewer.is_some() {
+        Some(
+            remote_status_filtered_for_viewer(db, viewer, status, &text_content, filter_matcher)
+                .await?,
+        )
+    } else {
+        None
+    };
     let quote_approval = Some(build_remote_quote_approval(status));
     let quote = if include_quote {
         build_quoted_status_value(
@@ -1602,6 +1654,18 @@ async fn load_remote_status_response_details(
     } else {
         None
     };
+    let (favourited, reblogged, muted, bookmarked) = if viewer.is_some() {
+        (
+            Some(viewer_state.favourited),
+            Some(viewer_state.reblogged),
+            Some(viewer_state.muted),
+            Some(viewer_state.bookmarked),
+        )
+    } else {
+        (None, None, None, None)
+    };
+    let in_reply_to_id =
+        resolve_remote_in_reply_to_status_id(db, config, status.in_reply_to_uri.as_deref()).await?;
 
     Ok(RemoteStatusResponseDetails {
         media_attachments,
@@ -1611,15 +1675,33 @@ async fn load_remote_status_response_details(
         favourites_count,
         reblogs_count,
         quotes_count,
-        favourited: viewer_state.favourited,
-        reblogged: viewer_state.reblogged,
-        muted: viewer_state.muted,
-        bookmarked: viewer_state.bookmarked,
+        favourited,
+        reblogged,
+        muted,
+        bookmarked,
+        in_reply_to_id,
         edited_at,
         filtered,
         quote_approval,
         quote,
     })
+}
+
+async fn resolve_remote_in_reply_to_status_id(
+    db: &D1Database,
+    config: &AppConfig,
+    in_reply_to_uri: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(in_reply_to_uri) = in_reply_to_uri.filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if let Some(status) = find_remote_status_by_url_or_object_uri(db, in_reply_to_uri).await? {
+        return Ok(Some(status.id));
+    }
+    if let Some(status) = find_local_status_by_object_uri(db, config, in_reply_to_uri).await? {
+        return Ok(Some(status.id));
+    }
+    Ok(None)
 }
 
 async fn remote_status_response_viewer_state(
@@ -1723,8 +1805,11 @@ async fn build_local_quoted_status_document(
         );
         response.card = build_status_card_value(&local_status.text);
         response.poll = load_mastodon_poll_response(db, &local_status.id, viewer).await?;
-        response.filtered =
-            local_status_filtered_for_viewer(db, viewer, &local_status, filter_matcher).await?;
+        response.filtered = if viewer.is_some() {
+            Some(local_status_filtered_for_viewer(db, viewer, &local_status, filter_matcher).await?)
+        } else {
+            None
+        };
         response.mentions = build_status_mentions(db, config, &local_status.text).await?;
         let (favourites_count, reblogs_count) =
             local_status_counts(db, counts_preload, &local_status.id).await?;
@@ -1732,11 +1817,12 @@ async fn build_local_quoted_status_document(
         response.reblogs_count = reblogs_count;
         let viewer_state =
             local_status_response_viewer_state(db, viewer, &local_status, None).await?;
-        response.favourited = viewer_state.favourited;
-        response.reblogged = viewer_state.reblogged;
-        response.bookmarked = viewer_state.bookmarked;
-        response.pinned = viewer_state.pinned;
-        response.muted = viewer_state.muted;
+        let viewer_fields = local_viewer_interaction_fields(viewer, &local_status, viewer_state);
+        response.favourited = viewer_fields.favourited;
+        response.reblogged = viewer_fields.reblogged;
+        response.bookmarked = viewer_fields.bookmarked;
+        response.pinned = viewer_fields.pinned;
+        response.muted = viewer_fields.muted;
         response.quote = None;
         let state = local_quoted_status_document_state(db, config, viewer, &local_account).await?;
         return Ok(Some(quote_document_from_response(state, response)));
@@ -1771,14 +1857,20 @@ async fn build_remote_quoted_status_document(
             find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
         response.card = build_remote_status_card_value(&text_content, &remote_attachments);
         response.media_attachments = remote_media_attachment_values(&remote_attachments);
-        response.filtered = remote_status_filtered_for_viewer(
-            db,
-            viewer,
-            &remote_status,
-            &text_content,
-            filter_matcher,
-        )
-        .await?;
+        response.filtered = if viewer.is_some() {
+            Some(
+                remote_status_filtered_for_viewer(
+                    db,
+                    viewer,
+                    &remote_status,
+                    &text_content,
+                    filter_matcher,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         response.mentions = build_status_mentions(db, config, &text_content).await?;
         let (favourites_count, reblogs_count) =
             remote_status_counts(db, counts_preload, &remote_status.id).await?;
@@ -1786,10 +1878,18 @@ async fn build_remote_quoted_status_document(
         response.reblogs_count = reblogs_count;
         let viewer_state =
             remote_status_response_viewer_state(db, viewer, &remote_status, &actor, None).await?;
-        response.favourited = viewer_state.favourited;
-        response.reblogged = viewer_state.reblogged;
-        response.bookmarked = viewer_state.bookmarked;
-        response.muted = viewer_state.muted;
+        if viewer.is_some() {
+            response.favourited = Some(viewer_state.favourited);
+            response.reblogged = Some(viewer_state.reblogged);
+            response.bookmarked = Some(viewer_state.bookmarked);
+            response.muted = Some(viewer_state.muted);
+        }
+        response.in_reply_to_id = resolve_remote_in_reply_to_status_id(
+            db,
+            config,
+            remote_status.in_reply_to_uri.as_deref(),
+        )
+        .await?;
         response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
         response.quote = None;
         let state = remote_quoted_status_document_state(db, viewer, &actor).await?;

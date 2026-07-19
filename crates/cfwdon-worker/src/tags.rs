@@ -435,8 +435,8 @@ fn build_tag_response_with_metrics(
                 accounts: metrics.accounts_count.to_string(),
             }]
         },
-        following: false,
-        featured: false,
+        following: None,
+        featuring: None,
     }
 }
 

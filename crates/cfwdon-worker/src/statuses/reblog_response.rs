@@ -15,7 +15,7 @@ pub(super) fn remote_reblog_wrapper_response_from_embedded(
     });
     response.id = wrapper_status.id.clone();
     response.created_at = wrapper_status.published_at.clone();
-    response.in_reply_to_id = wrapper_status.in_reply_to_uri.clone();
+    response.in_reply_to_id = None;
     response.in_reply_to_account_id = None;
     response.visibility = wrapper_status.visibility.as_str().to_owned();
     response.uri = wrapper_status.object_uri.clone();

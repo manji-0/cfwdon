@@ -59,8 +59,16 @@ pub(crate) struct MastodonTagResponse {
     pub(crate) name: String,
     pub(crate) url: String,
     pub(crate) history: Vec<MastodonTagHistoryEntry>,
-    pub(crate) following: bool,
-    pub(crate) featured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) following: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) featuring: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MastodonStatusTagResponse {
+    pub(crate) name: String,
+    pub(crate) url: String,
 }
 
 #[derive(Debug, Serialize)]

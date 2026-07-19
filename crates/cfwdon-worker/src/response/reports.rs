@@ -38,6 +38,7 @@ pub(crate) async fn build_report_response(
                 Some(status_ids)
             }
         },
+        collection_ids: Some(Vec::new()),
         target_account,
         rule_ids: None,
     })

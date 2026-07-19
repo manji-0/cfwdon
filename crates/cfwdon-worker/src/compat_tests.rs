@@ -114,7 +114,10 @@ fn compatibility_verify_credentials_shape_is_stable() {
         "/show_featured",
         "/roles",
         "/last_status_at",
-        "/last_status_at",
+        "/avatar_description",
+        "/header_description",
+        "/feature_approval/automatic/0",
+        "/feature_approval/current_user",
         "/fields/0/name",
         "/fields/0/value",
         "/source/privacy",
@@ -125,9 +128,19 @@ fn compatibility_verify_credentials_shape_is_stable() {
         "/source/discoverable",
         "/source/indexable",
         "/source/quote_policy",
+        "/role/id",
+        "/role/permissions",
     ] {
         assert_has_pointer(&value, pointer);
     }
+    assert_eq!(
+        value.pointer("/source/fields/0/value"),
+        Some(&serde_json::json!("https://example.com"))
+    );
+    assert_eq!(
+        value.pointer("/created_at"),
+        Some(&serde_json::json!("2026-01-01T00:00:00.000Z"))
+    );
 }
 
 #[test]
@@ -162,6 +175,10 @@ fn compatibility_public_account_shape_is_stable() {
         "/show_featured",
         "/roles",
         "/last_status_at",
+        "/avatar_description",
+        "/header_description",
+        "/feature_approval/automatic/0",
+        "/feature_approval/current_user",
         "/last_status_at",
     ] {
         assert_has_pointer(&value, pointer);
@@ -220,18 +237,23 @@ fn compatibility_status_shape_is_stable() {
         "/uri",
         "/url",
         "/content",
-        "/muted",
-        "/pinned",
         "/account/id",
         "/account/acct",
         "/media_attachments",
         "/mentions",
         "/tags/0/name",
+        "/tags/0/url",
         "/emojis",
         "/quote_approval",
     ] {
         assert_has_pointer(&value, pointer);
     }
+    assert_eq!(value.pointer("/favourited"), None);
+    assert_eq!(value.pointer("/pinned"), None);
+    assert_eq!(value.pointer("/text"), None);
+    assert_eq!(value.pointer("/filtered"), None);
+    assert_eq!(value.pointer("/tags/0/id"), None);
+    assert_eq!(value.pointer("/tags/0/history"), None);
 }
 
 #[test]
@@ -282,15 +304,13 @@ fn compatibility_preferences_shape_is_stable() {
         "/posting:default:sensitive",
         "/posting:default:language",
         "/posting:default:quote_policy",
-        "/posting:default:privacy",
-        "/posting:default:media_sensitive",
-        "/posting:default:content_type",
-        "/notifications:follow",
-        "/notifications:mention",
-        "/web:theme",
+        "/reading:expand:media",
+        "/reading:expand:spoilers",
     ] {
         assert_has_pointer(&value, pointer);
     }
+    assert_eq!(value.pointer("/posting:default:privacy"), None);
+    assert_eq!(value.pointer("/web:theme"), None);
 }
 
 #[test]

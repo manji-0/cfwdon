@@ -68,11 +68,11 @@ pub(crate) async fn build_remote_mastodon_poll_response(
         return Ok(None);
     }
     let own_votes = match viewer {
-        Some(viewer) => remap_remote_poll_vote_positions(
+        Some(viewer) => Some(remap_remote_poll_vote_positions(
             &options,
             &list_remote_poll_votes_for_account(db, &poll.id, viewer.id()).await?,
-        ),
-        None => Vec::new(),
+        )),
+        None => None,
     };
 
     Ok(remote_mastodon_poll_response_from_parts(
@@ -104,10 +104,16 @@ pub(crate) async fn preload_remote_mastodon_poll_responses(
 
     for poll in polls {
         let options = options_by_poll_id.remove(&poll.id).unwrap_or_default();
-        let own_votes = votes_by_poll_id
-            .get(&poll.id)
-            .map(|votes| remap_remote_poll_vote_positions(&options, votes))
-            .unwrap_or_default();
+        let own_votes = if viewer.is_some() {
+            Some(
+                votes_by_poll_id
+                    .get(&poll.id)
+                    .map(|votes| remap_remote_poll_vote_positions(&options, votes))
+                    .unwrap_or_default(),
+            )
+        } else {
+            None
+        };
         if let Some(response) = remote_mastodon_poll_response_from_parts(&poll, options, own_votes)
         {
             polls_by_status_id.insert(
@@ -238,11 +244,15 @@ async fn preload_remote_poll_votes_by_poll_id(
 fn remote_mastodon_poll_response_from_parts(
     poll: &RemoteStatusPollRow,
     options: Vec<RemoteStatusPollOptionRow>,
-    own_votes: Vec<u32>,
+    own_votes: Option<Vec<u32>>,
 ) -> Option<MastodonPollResponse> {
     if options.is_empty() {
         return None;
     }
+    let (voted, own_votes) = match own_votes {
+        Some(own_votes) => (Some(!own_votes.is_empty()), Some(own_votes)),
+        None => (None, None),
+    };
 
     Some(MastodonPollResponse {
         id: poll.id.clone(),
@@ -260,7 +270,7 @@ fn remote_mastodon_poll_response_from_parts(
         } else {
             None
         },
-        voted: !own_votes.is_empty(),
+        voted,
         own_votes,
         options: options
             .into_iter()

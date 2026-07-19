@@ -178,7 +178,7 @@ async fn build_authenticated_tag_response(
 ) -> Result<serde_json::Value> {
     let mut value = serde_json::to_value(build_tag_response(db, config, tag).await?)?;
     value["following"] = serde_json::json!(is_following_tag(db, account_id, tag).await?);
-    value["featured"] = serde_json::json!(is_featured_tag(db, account_id, tag).await?);
+    value["featuring"] = serde_json::json!(is_featured_tag(db, account_id, tag).await?);
     Ok(value)
 }
 

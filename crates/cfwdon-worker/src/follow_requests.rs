@@ -356,15 +356,23 @@ async fn build_follow_request_remote_account_response(
         url: actor_uri.to_owned(),
         avatar: String::new(),
         avatar_static: String::new(),
+        avatar_description: String::new(),
         header: String::new(),
         header_static: String::new(),
+        header_description: String::new(),
         emojis: Vec::new(),
         fields: Vec::new(),
-        roles: Vec::new(),
+        roles: None,
+        feature_approval: serde_json::json!({
+            "automatic": [],
+            "manual": [],
+            "current_user": "missing",
+        }),
         followers_count: 0,
         following_count: 0,
         statuses_count: status_summary.statuses_count,
         source: None,
+        role: None,
     }))
 }
 

@@ -1,8 +1,7 @@
 use crate::{
     AppConfig, LocalAccount, MastodonMediaAttachmentResponse, MastodonStatusResponse,
-    MastodonTagResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusRow, StatusRow, actor_url,
-    extract_hashtags_from_html, extract_hashtags_from_text, strip_html_tags, tag_history_stub,
-    tag_rest_id, tag_url,
+    MastodonStatusTagResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusRow, StatusRow,
+    actor_url, extract_hashtags_from_html, extract_hashtags_from_text, tag_url,
 };
 
 pub(crate) struct LocalStatusResponseDetails {
@@ -13,13 +12,13 @@ pub(crate) struct LocalStatusResponseDetails {
     pub(crate) favourites_count: u64,
     pub(crate) reblogs_count: u64,
     pub(crate) quotes_count: u64,
-    pub(crate) favourited: bool,
-    pub(crate) reblogged: bool,
-    pub(crate) muted: bool,
-    pub(crate) bookmarked: bool,
-    pub(crate) pinned: bool,
+    pub(crate) favourited: Option<bool>,
+    pub(crate) reblogged: Option<bool>,
+    pub(crate) muted: Option<bool>,
+    pub(crate) bookmarked: Option<bool>,
+    pub(crate) pinned: Option<bool>,
     pub(crate) edited_at: Option<String>,
-    pub(crate) filtered: Vec<serde_json::Value>,
+    pub(crate) filtered: Option<Vec<serde_json::Value>>,
     pub(crate) quote_approval: Option<serde_json::Value>,
     pub(crate) quote: Option<serde_json::Value>,
 }
@@ -32,14 +31,30 @@ pub(crate) struct RemoteStatusResponseDetails {
     pub(crate) favourites_count: u64,
     pub(crate) reblogs_count: u64,
     pub(crate) quotes_count: u64,
-    pub(crate) favourited: bool,
-    pub(crate) reblogged: bool,
-    pub(crate) muted: bool,
-    pub(crate) bookmarked: bool,
+    pub(crate) favourited: Option<bool>,
+    pub(crate) reblogged: Option<bool>,
+    pub(crate) muted: Option<bool>,
+    pub(crate) bookmarked: Option<bool>,
+    pub(crate) in_reply_to_id: Option<String>,
     pub(crate) edited_at: Option<String>,
-    pub(crate) filtered: Vec<serde_json::Value>,
+    pub(crate) filtered: Option<Vec<serde_json::Value>>,
     pub(crate) quote_approval: Option<serde_json::Value>,
     pub(crate) quote: Option<serde_json::Value>,
+}
+
+fn status_tag_values(
+    config: &AppConfig,
+    tags: impl IntoIterator<Item = String>,
+) -> Vec<serde_json::Value> {
+    tags.into_iter()
+        .map(|tag| {
+            serde_json::to_value(MastodonStatusTagResponse {
+                name: tag.clone(),
+                url: tag_url(config, &tag),
+            })
+            .unwrap_or(serde_json::Value::Null)
+        })
+        .collect()
 }
 
 impl MastodonStatusResponse {
@@ -73,13 +88,13 @@ impl MastodonStatusResponse {
             reblogs_count: 0,
             favourites_count: 0,
             quotes_count: 0,
-            favourited: false,
-            reblogged: false,
-            muted: false,
-            bookmarked: false,
-            pinned: false,
+            favourited: None,
+            reblogged: None,
+            muted: None,
+            bookmarked: None,
+            pinned: None,
             content: row.content_html.clone(),
-            text: Some(row.text.clone()),
+            text: None,
             reblog: None,
             application: None,
             account: crate::MastodonAccountResponse::from_account(account, config),
@@ -91,26 +106,13 @@ impl MastodonStatusResponse {
                 })
                 .collect(),
             mentions: Vec::new(),
-            tags: extract_hashtags_from_text(&row.text)
-                .into_iter()
-                .map(|tag| {
-                    serde_json::to_value(MastodonTagResponse {
-                        id: tag_rest_id(&tag),
-                        name: tag.clone(),
-                        url: tag_url(config, &tag),
-                        history: tag_history_stub(),
-                        following: false,
-                        featured: false,
-                    })
-                    .unwrap_or(serde_json::Value::Null)
-                })
-                .collect(),
+            tags: status_tag_values(config, extract_hashtags_from_text(&row.text)),
             emojis: Vec::new(),
             quote_approval: None,
             card: None,
             poll: None,
             edited_at: None,
-            filtered: Vec::new(),
+            filtered: None,
             quote: None,
         }
     }
@@ -129,6 +131,7 @@ impl MastodonStatusResponse {
             in_reply_to_account_id,
             media_attachments,
         );
+        response.content = String::new();
         response.text = Some(row.text.clone());
         response
     }
@@ -144,7 +147,7 @@ impl MastodonStatusResponse {
         Self {
             id: row.id.clone(),
             created_at: row.published_at.clone(),
-            in_reply_to_id: row.in_reply_to_uri.clone(),
+            in_reply_to_id: None,
             in_reply_to_account_id: None,
             sensitive: row.sensitive,
             spoiler_text: row.spoiler_text.clone(),
@@ -156,38 +159,25 @@ impl MastodonStatusResponse {
             reblogs_count: 0,
             favourites_count: 0,
             quotes_count: 0,
-            favourited: false,
-            reblogged: false,
-            muted: false,
-            bookmarked: false,
-            pinned: false,
+            favourited: None,
+            reblogged: None,
+            muted: None,
+            bookmarked: None,
+            pinned: None,
             content: row.content_html.clone(),
-            text: Some(strip_html_tags(&row.content_html)),
+            text: None,
             reblog: None,
             application: None,
             account: crate::MastodonAccountResponse::from_remote_actor(actor),
             media_attachments: Vec::new(),
             mentions: Vec::new(),
-            tags: extract_hashtags_from_html(&row.content_html)
-                .into_iter()
-                .map(|tag| {
-                    serde_json::to_value(MastodonTagResponse {
-                        id: tag_rest_id(&tag),
-                        name: tag.clone(),
-                        url: tag_url(config, &tag),
-                        history: tag_history_stub(),
-                        following: false,
-                        featured: false,
-                    })
-                    .unwrap_or(serde_json::Value::Null)
-                })
-                .collect(),
+            tags: status_tag_values(config, extract_hashtags_from_html(&row.content_html)),
             emojis: Vec::new(),
             quote_approval: None,
             card: None,
             poll: None,
             edited_at: None,
-            filtered: Vec::new(),
+            filtered: None,
             quote: None,
         }
     }
@@ -223,6 +213,7 @@ impl MastodonStatusResponse {
         self.reblogged = details.reblogged;
         self.muted = details.muted;
         self.bookmarked = details.bookmarked;
+        self.in_reply_to_id = details.in_reply_to_id;
         self.edited_at = details.edited_at;
         self.filtered = details.filtered;
         self.quote_approval = details.quote_approval;

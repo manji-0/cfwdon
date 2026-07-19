@@ -28,16 +28,30 @@ pub(crate) struct MastodonAccountResponse {
     pub(crate) url: String,
     pub(crate) avatar: String,
     pub(crate) avatar_static: String,
+    pub(crate) avatar_description: String,
     pub(crate) header: String,
     pub(crate) header_static: String,
+    pub(crate) header_description: String,
     pub(crate) emojis: Vec<serde_json::Value>,
     pub(crate) fields: Vec<serde_json::Value>,
-    pub(crate) roles: Vec<serde_json::Value>,
+    pub(crate) roles: Option<Vec<serde_json::Value>>,
+    pub(crate) feature_approval: serde_json::Value,
     pub(crate) followers_count: u64,
     pub(crate) following_count: u64,
     pub(crate) statuses_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) source: Option<MastodonAccountSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) role: Option<MastodonAccountRole>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct MastodonAccountRole {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) permissions: String,
+    pub(crate) color: String,
+    pub(crate) highlighted: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -71,15 +85,21 @@ pub(crate) struct MastodonStatusResponse {
     pub(crate) reblogs_count: u64,
     pub(crate) favourites_count: u64,
     pub(crate) quotes_count: u64,
-    pub(crate) favourited: bool,
-    pub(crate) reblogged: bool,
-    pub(crate) muted: bool,
-    pub(crate) bookmarked: bool,
-    pub(crate) pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) favourited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reblogged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) muted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) bookmarked: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pinned: Option<bool>,
     pub(crate) content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) text: Option<String>,
     pub(crate) reblog: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) application: Option<serde_json::Value>,
     pub(crate) account: MastodonAccountResponse,
     pub(crate) media_attachments: Vec<serde_json::Value>,
@@ -89,10 +109,9 @@ pub(crate) struct MastodonStatusResponse {
     pub(crate) quote_approval: Option<serde_json::Value>,
     pub(crate) card: Option<serde_json::Value>,
     pub(crate) poll: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) edited_at: Option<String>,
-    pub(crate) filtered: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) filtered: Option<Vec<serde_json::Value>>,
     pub(crate) quote: Option<serde_json::Value>,
 }
 
@@ -106,6 +125,7 @@ pub(crate) struct MastodonReportResponse {
     pub(crate) forwarded: bool,
     pub(crate) created_at: String,
     pub(crate) status_ids: Option<Vec<String>>,
+    pub(crate) collection_ids: Option<Vec<String>>,
     pub(crate) target_account: MastodonAccountResponse,
     pub(crate) rule_ids: Option<Vec<String>>,
 }
