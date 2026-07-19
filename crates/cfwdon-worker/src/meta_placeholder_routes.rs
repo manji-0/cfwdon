@@ -1,8 +1,8 @@
 use crate::auth::find_account_by_email;
 use crate::crypto_keys::generate_account_key_material;
 use crate::timelines::{
-    TimelinePaginationQuery, build_timeline_link_header, matches_tag_timeline_filters,
-    resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
+    TimelinePaginationQuery, matches_tag_timeline_filters, resolve_timeline_cursor,
+    timeline_fetch_limit,
 };
 use crate::{
     AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
@@ -12,42 +12,36 @@ use crate::{
     build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_create_quote_authorization_activity,
     build_delete_quote_authorization_activity, build_local_status_response,
-    build_local_status_response_with_quote_count_preloads, build_oauth_token_document,
-    build_quote_request_object, build_reject_follow_activity, build_reject_quote_request_activity,
-    build_relationship_for_target, build_remote_status_response,
-    build_remote_status_response_with_timeline_preloads, cache_public_response,
-    can_view_local_status, clear_local_status_quote, clear_remote_status_quote,
-    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, enqueue_status_update_activity,
-    enqueue_targeted_outbox_activity, extract_hashtags_from_html, extract_hashtags_from_text,
-    filter_notification_entries_by_query, find_account_by_id, find_account_by_username,
-    find_accounts_by_ids, find_authenticated_local_account, find_conversation_for_account,
+    build_oauth_token_document, build_quote_request_object, build_reject_follow_activity,
+    build_reject_quote_request_activity, build_relationship_for_target,
+    build_remote_status_response, cache_public_response, can_view_local_status,
+    clear_local_status_quote, clear_remote_status_quote, collect_visible_notifications,
+    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
+    enqueue_status_update_activity, enqueue_targeted_outbox_activity, extract_hashtags_from_html,
+    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
     find_conversation_id_by_status_id, find_follower_follow_activity_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_media_attachments_by_status_ids, find_oauth_access_token_with_account_by_bearer_token,
-    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
-    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
-    find_remote_actors_by_actor_uris, find_remote_status_attachments_by_status_ids,
-    find_remote_status_by_id, find_status_by_id, generate_entity_id, insert_status_edit_snapshot,
-    instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
-    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
-    list_followed_tag_names, list_follower_delivery_targets, list_local_direct_timeline_statuses,
+    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
+    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
+    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
+    generate_entity_id, insert_status_edit_snapshot, instance_base_url,
+    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
+    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
+    list_follower_delivery_targets, list_local_direct_timeline_statuses,
     list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
     list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
     load_announcement_reaction_state, load_config, load_config_from_env,
-    load_in_reply_to_account_id, load_in_reply_to_account_ids, load_latest_filter_updated_at,
-    load_remote_status_updated_at, load_status_updated_at, local_quote_revoke_allowed,
-    local_status_ap_id, local_status_target_uri, media_object_url, normalize_status_history_entry,
-    now_iso_string, oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
-    parse_optional_bool, parse_relationship_query_ids, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    queue_remote_actor_activity, queue_remote_actor_activity_required, quote_authorization_uri,
-    quote_request_uri, remote_account_rest_id, remote_status_has_media, resolve_account_reference,
+    load_in_reply_to_account_id, load_latest_filter_updated_at, load_remote_status_updated_at,
+    load_status_updated_at, local_quote_revoke_allowed, local_status_ap_id,
+    local_status_target_uri, media_object_url, normalize_status_history_entry, now_iso_string,
+    oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
+    parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity,
+    queue_remote_actor_activity_required, quote_authorization_uri, quote_request_uri,
+    remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
     store_account_private_key, streaming_batch_from_entries, update_local_status_quote_state,
     update_remote_status_quote_state,
@@ -73,28 +67,6 @@ struct OembedQuery {
     url: String,
     maxwidth: Option<u32>,
     maxheight: Option<u32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct QuotesQuery {
-    limit: Option<u32>,
-    #[serde(rename = "max_id")]
-    max_id: Option<String>,
-    #[serde(rename = "since_id")]
-    since_id: Option<String>,
-    #[serde(rename = "min_id")]
-    min_id: Option<String>,
-}
-
-impl QuotesQuery {
-    fn pagination(&self) -> TimelinePaginationQuery {
-        TimelinePaginationQuery {
-            limit: self.limit,
-            max_id: self.max_id.clone(),
-            since_id: self.since_id.clone(),
-            min_id: self.min_id.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3176,6 +3148,137 @@ async fn run_streaming_websocket(
     let _ = websocket.close(Some(1000), Some("stream closed"));
 }
 
+enum StreamingAuthOutcome {
+    Viewer(Option<cfwdon_domain::LocalAccount>),
+    InvalidToken,
+}
+
+fn streaming_channel_supports_live_events(stream: &str) -> bool {
+    matches!(
+        stream,
+        "public"
+            | "public:media"
+            | "public:local"
+            | "public:local:media"
+            | "public:remote"
+            | "public:remote:media"
+            | "hashtag"
+            | "hashtag:local"
+            | "user"
+            | "user:notification"
+            | "list"
+            | "direct"
+    )
+}
+
+async fn resolve_streaming_auth(
+    req: &Request,
+    db: &worker::D1Database,
+    config: &cfwdon_core::AppConfig,
+    query_access_token: Option<&str>,
+    websocket_protocol_token: Option<&str>,
+) -> Result<StreamingAuthOutcome> {
+    match authenticate_local_api_request(req, db, config).await? {
+        LocalApiAuthentication::Auth0(viewer) => Ok(StreamingAuthOutcome::Viewer(Some(viewer))),
+        LocalApiAuthentication::OAuthToken(auth) => {
+            Ok(StreamingAuthOutcome::Viewer(Some(auth.account)))
+        }
+        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
+            Ok(StreamingAuthOutcome::InvalidToken)
+        }
+        LocalApiAuthentication::None => {
+            let token = query_access_token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| websocket_protocol_token.map(ToOwned::to_owned));
+            match token {
+                Some(token) => {
+                    let Some(auth) =
+                        find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
+                    else {
+                        return Ok(StreamingAuthOutcome::InvalidToken);
+                    };
+                    if !oauth_access_token_has_any_scope(
+                        &auth.token,
+                        &["read", "read:statuses", "read:notifications"],
+                    ) {
+                        return Ok(StreamingAuthOutcome::InvalidToken);
+                    }
+                    Ok(StreamingAuthOutcome::Viewer(auth.account))
+                }
+                None => Ok(StreamingAuthOutcome::Viewer(None)),
+            }
+        }
+    }
+}
+
+fn streaming_websocket_upgrade_response(
+    db: worker::D1Database,
+    config: cfwdon_core::AppConfig,
+    initial_stream: Option<String>,
+    tag: Option<String>,
+    list: Option<String>,
+    viewer: Option<cfwdon_domain::LocalAccount>,
+    websocket_protocol_token: Option<&str>,
+) -> Result<Response> {
+    let pair = WebSocketPair::new()?;
+    pair.server.accept()?;
+    let websocket = pair.server.clone();
+    spawn_local(async move {
+        run_streaming_websocket(websocket, db, config, initial_stream, tag, list, viewer).await;
+    });
+    let mut response = Response::from_websocket(pair.client)?;
+    if let Some(protocol) = websocket_protocol_token {
+        response
+            .headers_mut()
+            .set("Sec-WebSocket-Protocol", protocol)?;
+    }
+    Ok(response)
+}
+
+fn streaming_sse_response(
+    db: worker::D1Database,
+    config: cfwdon_core::AppConfig,
+    stream: String,
+    tag: Option<String>,
+    list: Option<String>,
+    viewer: Option<cfwdon_domain::LocalAccount>,
+) -> Result<Response> {
+    if streaming_channel_supports_live_events(&stream) {
+        let stream_body = build_streaming_event_stream(db, config, stream, tag, list, viewer);
+        let mut response = Response::from_stream(stream_body)?;
+        response
+            .headers_mut()
+            .set("Content-Type", "text/event-stream")?;
+        response.headers_mut().set("Cache-Control", "no-cache")?;
+        return Ok(response);
+    }
+
+    let mut body = format!(": cfwdon-placeholder stream={stream}\n");
+    if let Some(tag) = tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body.push_str(&format!(": tag={tag}\n"));
+    }
+    if let Some(list) = list
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body.push_str(&format!(": list={list}\n"));
+    }
+    body.push('\n');
+    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?;
+    response
+        .headers_mut()
+        .set("Content-Type", "text/event-stream")?;
+    response.headers_mut().set("Cache-Control", "no-cache")?;
+    Ok(response)
+}
+
 pub(crate) async fn streaming_placeholder_response(
     req: Request,
     ctx: RouteContext<()>,
@@ -3211,38 +3314,17 @@ pub(crate) async fn streaming_placeholder_response(
     };
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let authenticated = match authenticate_local_api_request(&req, &db, &config).await? {
-        LocalApiAuthentication::Auth0(viewer) => Some(viewer),
-        LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
-        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-            return invalid_access_token_response();
-        }
-        LocalApiAuthentication::None => {
-            let token = query
-                .access_token
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-                .or(websocket_protocol_token.clone());
-            match token {
-                Some(token) => {
-                    let Some(auth) =
-                        find_oauth_access_token_with_account_by_bearer_token(&db, &token).await?
-                    else {
-                        return invalid_access_token_response();
-                    };
-                    if !oauth_access_token_has_any_scope(
-                        &auth.token,
-                        &["read", "read:statuses", "read:notifications"],
-                    ) {
-                        return invalid_access_token_response();
-                    }
-                    auth.account
-                }
-                None => None,
-            }
-        }
+    let authenticated = match resolve_streaming_auth(
+        &req,
+        &db,
+        &config,
+        query.access_token.as_deref(),
+        websocket_protocol_token.as_deref(),
+    )
+    .await?
+    {
+        StreamingAuthOutcome::InvalidToken => return invalid_access_token_response(),
+        StreamingAuthOutcome::Viewer(viewer) => viewer,
     };
 
     if initial_stream
@@ -3254,34 +3336,15 @@ pub(crate) async fn streaming_placeholder_response(
     }
 
     if wants_websocket {
-        let pair = WebSocketPair::new()?;
-        pair.server.accept()?;
-        let websocket = pair.server.clone();
-        let db_for_ws = db;
-        let config_for_ws = config.clone();
-        let stream_name = initial_stream.clone();
-        let tag_for_ws = query.tag.clone();
-        let list_for_ws = query.list.clone();
-        let viewer_for_ws = authenticated.clone();
-        spawn_local(async move {
-            run_streaming_websocket(
-                websocket,
-                db_for_ws,
-                config_for_ws,
-                stream_name,
-                tag_for_ws,
-                list_for_ws,
-                viewer_for_ws,
-            )
-            .await;
-        });
-        let mut response = Response::from_websocket(pair.client)?;
-        if let Some(protocol) = websocket_protocol_token.as_deref() {
-            response
-                .headers_mut()
-                .set("Sec-WebSocket-Protocol", protocol)?;
-        }
-        return Ok(response);
+        return streaming_websocket_upgrade_response(
+            db,
+            config,
+            initial_stream,
+            query.tag.clone(),
+            query.list.clone(),
+            authenticated,
+            websocket_protocol_token.as_deref(),
+        );
     }
 
     let Some(stream) = initial_stream else {
@@ -3290,61 +3353,7 @@ pub(crate) async fn streaming_placeholder_response(
         );
     };
 
-    if matches!(
-        stream.as_str(),
-        "public"
-            | "public:media"
-            | "public:local"
-            | "public:local:media"
-            | "public:remote"
-            | "public:remote:media"
-            | "hashtag"
-            | "hashtag:local"
-            | "user"
-            | "user:notification"
-            | "list"
-            | "direct"
-    ) {
-        let stream_body = build_streaming_event_stream(
-            db,
-            config,
-            stream.clone(),
-            query.tag.clone(),
-            query.list.clone(),
-            authenticated.clone(),
-        );
-        let mut response = Response::from_stream(stream_body)?;
-        response
-            .headers_mut()
-            .set("Content-Type", "text/event-stream")?;
-        response.headers_mut().set("Cache-Control", "no-cache")?;
-        Ok(response)
-    } else {
-        let mut body = format!(": cfwdon-placeholder stream={stream}\n");
-        if let Some(tag) = query
-            .tag
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            body.push_str(&format!(": tag={tag}\n"));
-        }
-        if let Some(list) = query
-            .list
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            body.push_str(&format!(": list={list}\n"));
-        }
-        body.push('\n');
-        let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?;
-        response
-            .headers_mut()
-            .set("Content-Type", "text/event-stream")?;
-        response.headers_mut().set("Cache-Control", "no-cache")?;
-        Ok(response)
-    }
+    streaming_sse_response(db, config, stream, query.tag, query.list, authenticated)
 }
 
 pub(crate) async fn statuses_index_placeholder_response(
@@ -3402,216 +3411,6 @@ pub(crate) async fn statuses_index_placeholder_response(
     }
 
     Response::from_json(&response)
-}
-
-pub(crate) async fn status_quotes_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let query: QuotesQuery = req.query().unwrap_or_default();
-    let pagination = query.pagination();
-    let limit = timeline_limit(&pagination);
-    let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
-
-    let Some(status_id) = ctx
-        .param("id")
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    else {
-        return Response::error("missing status id route parameter", 400);
-    };
-
-    let Some(status) = resolve_status_reference(&db, &config, &status_id).await? else {
-        return Response::error("status not found", 404);
-    };
-
-    let target_uri = match status {
-        crate::ResolvedStatus::Local(status) => {
-            let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-                return Response::error("status not found", 404);
-            };
-            if !can_view_local_status(&db, &status, viewer.as_ref(), &account).await? {
-                return Response::error("status not found", 404);
-            }
-            local_status_target_uri(&status)
-        }
-        crate::ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(status.visibility.as_str()) {
-                return Response::error("status not found", 404);
-            }
-            status.object_uri
-        }
-    };
-
-    let local_quotes =
-        list_local_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await?;
-    let remote_quotes =
-        list_remote_status_quotes_by_uri(&db, &target_uri, &cursor, query_limit).await?;
-    let local_status_ids = local_quotes
-        .iter()
-        .map(|quote| quote.id.clone())
-        .collect::<Vec<_>>();
-    let local_account_ids = local_quotes
-        .iter()
-        .map(|quote| quote.account_id.clone())
-        .collect::<Vec<_>>();
-    let remote_status_ids = remote_quotes
-        .iter()
-        .map(|quote| quote.id.clone())
-        .collect::<Vec<_>>();
-    let remote_actor_uris = remote_quotes
-        .iter()
-        .map(|quote| quote.actor_uri.clone())
-        .collect::<Vec<_>>();
-    let quote_uris = local_quotes
-        .iter()
-        .map(local_status_target_uri)
-        .chain(remote_quotes.iter().map(|quote| quote.object_uri.clone()))
-        .collect::<Vec<_>>();
-    let local_quote_refs = local_quotes.iter().collect::<Vec<_>>();
-
-    let (
-        local_accounts_by_id,
-        mut local_media_by_status_id,
-        local_in_reply_to_account_ids,
-        counts_preload,
-        quote_counts_preload,
-        local_poll_preload,
-        local_viewer_state_preload,
-        application_preload,
-        remote_actors_by_uri,
-        mut remote_attachments_by_status_id,
-        remote_poll_preload,
-        remote_edit_updated_at_preload,
-    ) = futures_util::try_join!(
-        find_accounts_by_ids(&db, &local_account_ids),
-        find_media_attachments_by_status_ids(&db, &local_status_ids),
-        load_in_reply_to_account_ids(&db, &local_quotes),
-        preload_status_counts(&db, &local_status_ids, &remote_status_ids),
-        preload_status_quote_counts(&db, &quote_uris),
-        preload_mastodon_poll_responses(&db, &local_status_ids, viewer.as_ref()),
-        async {
-            match viewer.as_ref() {
-                Some(viewer) => {
-                    preload_local_status_viewer_state(&db, viewer.id(), &local_quote_refs, None)
-                        .await
-                }
-                None => Ok(Default::default()),
-            }
-        },
-        preload_status_applications(&db, &config, &local_quote_refs),
-        find_remote_actors_by_actor_uris(&db, &remote_actor_uris),
-        find_remote_status_attachments_by_status_ids(&db, &remote_status_ids),
-        preload_remote_mastodon_poll_responses(&db, &remote_status_ids, viewer.as_ref()),
-        preload_remote_status_edit_updated_at(&db, &remote_status_ids),
-    )?;
-    let remote_quote_refs = remote_quotes
-        .iter()
-        .filter_map(|quote| {
-            remote_actors_by_uri
-                .get(&quote.actor_uri)
-                .map(|actor| (quote, actor))
-        })
-        .collect::<Vec<_>>();
-    let remote_viewer_state_preload = match viewer.as_ref() {
-        Some(viewer) => {
-            preload_remote_status_viewer_state(&db, viewer.id(), &remote_quote_refs).await?
-        }
-        None => Default::default(),
-    };
-
-    let mut quotes: Vec<(String, String, serde_json::Value)> = Vec::new();
-
-    for quote in local_quotes {
-        let Some(account) = local_accounts_by_id.get(&quote.account_id) else {
-            continue;
-        };
-        if !can_view_local_status(&db, &quote, viewer.as_ref(), account).await? {
-            continue;
-        }
-        let media = local_media_by_status_id
-            .remove(&quote.id)
-            .unwrap_or_default();
-        quotes.push((
-            quote.created_at.clone(),
-            quote.id.clone(),
-            serde_json::to_value(
-                build_local_status_response_with_quote_count_preloads(
-                    &db,
-                    &config,
-                    viewer.as_ref(),
-                    &quote,
-                    account,
-                    local_in_reply_to_account_ids.get(&quote.id).cloned(),
-                    media,
-                    None,
-                    Some(&counts_preload),
-                    Some(&quote_counts_preload),
-                    Some(&local_poll_preload),
-                    Some(&local_viewer_state_preload),
-                    Some(&application_preload),
-                )
-                .await?,
-            )?,
-        ));
-    }
-
-    for quote in remote_quotes {
-        if !is_public_activitypub_visibility(quote.visibility.as_str()) {
-            continue;
-        }
-        let Some(actor) = remote_actors_by_uri.get(&quote.actor_uri) else {
-            continue;
-        };
-        quotes.push((
-            quote.published_at.clone(),
-            quote.id.clone(),
-            serde_json::to_value(
-                build_remote_status_response_with_timeline_preloads(
-                    &db,
-                    &config,
-                    viewer.as_ref(),
-                    &quote,
-                    actor,
-                    None,
-                    Some(&counts_preload),
-                    Some(&quote_counts_preload),
-                    Some(&remote_viewer_state_preload),
-                    Some(&remote_poll_preload),
-                    Some(&remote_edit_updated_at_preload),
-                    remote_attachments_by_status_id
-                        .remove(&quote.id)
-                        .unwrap_or_default(),
-                    None,
-                )
-                .await?,
-            )?,
-        ));
-    }
-
-    quotes.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let first_id = quotes
-        .first()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let last_id = quotes
-        .last()
-        .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
-    let values = quotes
-        .into_iter()
-        .take(limit as usize)
-        .map(|(_, _, value)| value)
-        .collect::<Vec<_>>();
-    let mut builder = Response::from_json(&values)?;
-    if let Some(link) =
-        build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?
-    {
-        builder.headers_mut().set("Link", &link)?;
-    }
-    Ok(builder)
 }
 
 async fn enqueue_quote_revocation_federation(
@@ -4359,95 +4158,6 @@ pub(crate) async fn remove_from_followers_response(
     }
 }
 
-async fn list_local_status_quotes_by_uri(
-    db: &worker::D1Database,
-    status_uri: &str,
-    cursor: &crate::ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<Vec<crate::StatusRow>> {
-    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
-    let result = db
-        .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
-             FROM statuses
-             WHERE quote_of_uri = ?1
-               AND quote_state = 'accepted'
-               AND (
-                    ?2 IS NULL
-                    OR created_at < ?2
-                    OR (created_at = ?2 AND id < ?3)
-               )
-               AND (
-                    ?4 IS NULL
-                    OR created_at > ?4
-                    OR (created_at = ?4 AND id > ?5)
-               )
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?6",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-    result
-        .results::<crate::StatusRecord>()
-        .and_then(crate::statuses_from_records)
-}
-
-async fn list_remote_status_quotes_by_uri(
-    db: &worker::D1Database,
-    status_uri: &str,
-    cursor: &crate::ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<Vec<crate::RemoteStatusRow>> {
-    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
-    let result = db
-        .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
-             FROM remote_statuses
-             WHERE quote_of_uri = ?1
-               AND quote_state = 'accepted'
-               AND (
-                    ?2 IS NULL
-                    OR published_at < ?2
-                    OR (published_at = ?2 AND id < ?3)
-               )
-               AND (
-                    ?4 IS NULL
-                    OR published_at > ?4
-                    OR (published_at = ?4 AND id > ?5)
-               )
-             ORDER BY published_at DESC, id DESC
-             LIMIT ?6",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-    result
-        .results::<crate::RemoteStatusRecord>()
-        .and_then(crate::remote_statuses_from_records)
-}
-
-fn quote_cursor_bindings<'a>(
-    status_uri: &'a str,
-    cursor: &'a crate::ResolvedTimelineCursor,
-    limit: u32,
-) -> [D1Type<'a>; 6] {
-    [
-        D1Type::Text(status_uri),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4546,6 +4256,14 @@ mod tests {
             validate_streaming_channel_request(None, Some("rust"), None, Some("hashtag")).unwrap(),
             "hashtag"
         );
+    }
+
+    #[test]
+    fn streaming_channel_supports_live_events_for_validated_channels() {
+        assert!(streaming_channel_supports_live_events("public"));
+        assert!(streaming_channel_supports_live_events("user:notification"));
+        assert!(streaming_channel_supports_live_events("direct"));
+        assert!(!streaming_channel_supports_live_events("unknown"));
     }
 
     #[test]
