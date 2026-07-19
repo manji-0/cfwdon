@@ -4,6 +4,7 @@ use super::helpers::{
 use crate::accounts::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
 use crate::auth::find_account_by_username;
 use crate::content_helpers::strip_html_tags;
+use crate::ensure_remote_actor_username_matches_handle;
 use crate::instance::{actor_url, instance_host, parse_lookup_handle};
 use crate::relationship::list_accepted_follow_target_uris;
 use crate::remote::{
@@ -593,7 +594,15 @@ async fn remote_search_account_response(
         return Ok(None);
     };
 
-    let mut response = match fresh_remote_search_account_response(db, config, actor, viewer).await {
+    let mut response = match fresh_remote_search_account_response(
+        db,
+        config,
+        actor,
+        &actor.username,
+        viewer,
+    )
+    .await
+    {
         Ok(fresh_response) => fresh_response,
         Err(_) => fallback_response,
     };
@@ -699,7 +708,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         else {
             return Ok(None);
         };
-        fresh_remote_search_account_response(db, config, &actor, viewer).await?
+        fresh_remote_search_account_response(db, config, &actor, &handle.username, viewer).await?
     };
 
     if following_only {
@@ -726,6 +735,7 @@ async fn fresh_remote_search_account_response(
     db: &D1Database,
     config: &AppConfig,
     actor: &RemoteActorRow,
+    expected_username: &str,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
     let fetch_context = RemoteCollectionFetchContext {
@@ -739,6 +749,9 @@ async fn fresh_remote_search_account_response(
             Ok(fetched) => fetched,
             Err(_) => return Ok(MastodonAccountResponse::from_remote_actor(actor)),
         };
+    if ensure_remote_actor_username_matches_handle(&fetched.profile, expected_username).is_err() {
+        return Ok(MastodonAccountResponse::from_remote_actor(actor));
+    }
     let profile = fetched.profile;
     upsert_remote_actor(db, &profile).await?;
     let cached = find_remote_actor_by_actor_uri(db, &profile.actor_uri).await?;

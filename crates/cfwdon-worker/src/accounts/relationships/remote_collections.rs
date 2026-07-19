@@ -1,21 +1,14 @@
 use super::collections::CollectionAccountEntry;
 use crate::{
-    MastodonAccountResponse, RemoteActorProfile, Result, fetch_activitypub_document_with_context,
+    MastodonAccountResponse, Result, fetch_activitypub_document_with_context,
     fetch_remote_activitypub_document, fetch_remote_actor_profile_with_context,
     find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri, upsert_remote_actor,
-    upsert_remote_actors,
 };
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
 
 const REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT: usize = 8;
 const REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY: usize = 8;
-
-#[derive(Debug)]
-struct ResolvedRemoteFollowAccount {
-    account: MastodonAccountResponse,
-    profile_to_upsert: Option<RemoteActorProfile>,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 enum RemoteFollowCollectionReference {
@@ -26,20 +19,14 @@ async fn resolve_remote_follow_collection_account(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
-) -> Result<Option<ResolvedRemoteFollowAccount>> {
+) -> Result<Option<MastodonAccountResponse>> {
     let RemoteFollowCollectionReference::Uri(actor_uri) = reference;
     if let Some(account) = find_local_account_response_by_actor_uri(db, config, actor_uri).await? {
-        return Ok(Some(ResolvedRemoteFollowAccount {
-            account,
-            profile_to_upsert: None,
-        }));
+        return Ok(Some(account));
     }
 
     if let Some(actor) = find_remote_actor_by_actor_uri(db, actor_uri).await? {
-        return Ok(Some(ResolvedRemoteFollowAccount {
-            account: MastodonAccountResponse::from_remote_actor(&actor),
-            profile_to_upsert: None,
-        }));
+        return Ok(Some(MastodonAccountResponse::from_remote_actor(&actor)));
     }
 
     let fetched = match fetch_remote_actor_profile_with_context(actor_uri, None).await {
@@ -50,20 +37,14 @@ async fn resolve_remote_follow_collection_account(
     if let Some(account) =
         find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
     {
-        return Ok(Some(ResolvedRemoteFollowAccount {
-            account,
-            profile_to_upsert: None,
-        }));
+        return Ok(Some(account));
     }
     upsert_remote_actor(db, &profile).await?;
     let account = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
         Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
         None => MastodonAccountResponse::from_remote_actor_profile(&profile),
     };
-    Ok(Some(ResolvedRemoteFollowAccount {
-        account,
-        profile_to_upsert: None,
-    }))
+    Ok(Some(account))
 }
 
 pub(crate) async fn remote_follow_collection_entries(
@@ -94,30 +75,22 @@ pub(crate) async fn remote_follow_collection_entries(
     ))
     .map(|(cursor_id, reference)| async move {
         let resolved = resolve_remote_follow_collection_account(db, config, &reference).await?;
-        Ok::<_, worker::Error>(resolved.map(|resolved| (cursor_id, resolved)))
+        Ok::<_, worker::Error>(resolved.map(|account| (cursor_id, account)))
     })
     .buffered(REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY)
     .collect::<Vec<_>>()
     .await;
 
     let mut entries = Vec::new();
-    let mut profiles_to_upsert = Vec::new();
-    let mut seen_profile_uris = HashSet::new();
     for entry in resolved_entries {
-        if let Some((cursor_id, resolved)) = entry? {
-            if let Some(profile) = resolved.profile_to_upsert
-                && seen_profile_uris.insert(profile.actor_uri.clone())
-            {
-                profiles_to_upsert.push(profile);
-            }
+        if let Some((cursor_id, account)) = entry? {
             entries.push(CollectionAccountEntry {
                 cursor_id,
                 created_at: String::new(),
-                account: resolved.account,
+                account,
             });
         }
     }
-    upsert_remote_actors(db, &profiles_to_upsert).await?;
     Ok(Some(entries))
 }
 

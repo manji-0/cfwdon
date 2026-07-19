@@ -109,6 +109,11 @@ ON CONFLICT(actor_uri) DO UPDATE SET
     header_url = excluded.header_url,
     updated_at = CURRENT_TIMESTAMP";
 
+const CLEAR_CONFLICTING_REMOTE_ACTOR_HANDLES_SQL: &str = "DELETE FROM remote_actors
+         WHERE lower(username) = ?1
+           AND lower(domain) = ?2
+           AND actor_uri != ?3";
+
 fn remote_actor_bindings(actor: &RemoteActorProfile) -> [D1Type<'_>; 16] {
     [
         D1Type::Text(actor.actor_uri.as_str()),
@@ -142,58 +147,30 @@ fn remote_actor_bindings(actor: &RemoteActorProfile) -> [D1Type<'_>; 16] {
     ]
 }
 
+fn conflicting_handle_bindings<'a>(
+    username: &'a str,
+    domain: &'a str,
+    actor_uri: &'a str,
+) -> [D1Type<'a>; 3] {
+    [
+        D1Type::Text(username),
+        D1Type::Text(domain),
+        D1Type::Text(actor_uri),
+    ]
+}
+
 pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProfile) -> Result<()> {
-    clear_conflicting_remote_actor_handles(db, actor).await?;
-    let bindings = remote_actor_bindings(actor);
-    db.prepare(UPSERT_REMOTE_ACTOR_SQL)
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
-
-    Ok(())
-}
-
-pub(crate) async fn upsert_remote_actors(
-    db: &D1Database,
-    actors: &[RemoteActorProfile],
-) -> Result<()> {
-    if actors.is_empty() {
-        return Ok(());
-    }
-
-    for actor in actors {
-        clear_conflicting_remote_actor_handles(db, actor).await?;
-    }
-
-    let bindings = actors.iter().map(remote_actor_bindings).collect::<Vec<_>>();
-    let statements = db
-        .prepare(UPSERT_REMOTE_ACTOR_SQL)
-        .batch_bind(bindings.iter().map(|binding| binding.iter()))?;
-    db.batch(statements).await?;
-
-    Ok(())
-}
-
-async fn clear_conflicting_remote_actor_handles(
-    db: &D1Database,
-    actor: &RemoteActorProfile,
-) -> Result<()> {
     let username = actor.username.to_ascii_lowercase();
     let domain = actor.domain.to_ascii_lowercase();
-    let bindings = [
-        D1Type::Text(&username),
-        D1Type::Text(&domain),
-        D1Type::Text(actor.actor_uri.as_str()),
-    ];
-    db.prepare(
-        "DELETE FROM remote_actors
-         WHERE lower(username) = ?1
-           AND lower(domain) = ?2
-           AND actor_uri != ?3",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+    let clear_bindings = conflicting_handle_bindings(&username, &domain, &actor.actor_uri);
+    let upsert_bindings = remote_actor_bindings(actor);
+    let clear = db
+        .prepare(CLEAR_CONFLICTING_REMOTE_ACTOR_HANDLES_SQL)
+        .bind_refs(clear_bindings.iter())?;
+    let upsert = db
+        .prepare(UPSERT_REMOTE_ACTOR_SQL)
+        .bind_refs(upsert_bindings.iter())?;
+    db.batch(vec![clear, upsert]).await?;
     Ok(())
 }
 

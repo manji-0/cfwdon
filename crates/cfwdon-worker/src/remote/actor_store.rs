@@ -321,15 +321,26 @@ pub(crate) async fn find_remote_actor_by_username_domain(
     let username = username.to_ascii_lowercase();
     let domain = domain.to_ascii_lowercase();
     let bindings = [D1Type::Text(&username), D1Type::Text(&domain)];
-    db.prepare(format!(
-        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
-         FROM remote_actors
-         WHERE lower(username) = ?1
-           AND lower(domain) = ?2
-         ORDER BY updated_at DESC, actor_uri ASC
-         LIMIT 1"
-    ))
-    .bind_refs(bindings.iter())?
-    .first::<RemoteActorRow>(None)
-    .await
+    let row = db
+        .prepare(format!(
+            "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
+             FROM remote_actors
+             WHERE lower(username) = ?1
+               AND lower(domain) = ?2
+             ORDER BY updated_at DESC, actor_uri ASC
+             LIMIT 1"
+        ))
+        .bind_refs(bindings.iter())?
+        .first::<RemoteActorRow>(None)
+        .await?;
+
+    Ok(row.filter(|actor| {
+        cfwdon_domain::remote_actor_cached_handle_allowed(
+            &actor.actor_uri,
+            &actor.username,
+            &actor.domain,
+            &username,
+            &domain,
+        )
+    }))
 }

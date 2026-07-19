@@ -1,7 +1,8 @@
 use cfwdon_domain::{
     AccountHandle, RemoteActorAuthorityIssue, remote_actor_id_authority_allowed,
     remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
-    remote_http_authority, webfinger_link_is_activitypub_type,
+    remote_actor_uri_matches_acct_domain, remote_http_authority,
+    webfinger_link_is_activitypub_type,
 };
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -69,13 +70,12 @@ pub(crate) async fn resolve_webfinger_actor_uri(handle: &AccountHandle) -> Resul
         .ok_or_else(|| {
             Error::RustError("webfinger response did not include a self link".to_owned())
         })?;
-    let actor_authority = remote_http_authority(&actor_uri).ok_or_else(|| {
-        Error::RustError("webfinger self link is not a valid http(s) URL".to_owned())
-    })?;
-    let expected_domain = domain.trim_end_matches('.').to_ascii_lowercase();
-    if actor_authority != expected_domain
-        && !actor_authority.starts_with(&format!("{expected_domain}:"))
-    {
+    if remote_http_authority(&actor_uri).is_none() {
+        return Err(Error::RustError(
+            "webfinger self link is not a valid http(s) URL".to_owned(),
+        ));
+    }
+    if !remote_actor_uri_matches_acct_domain(&actor_uri, domain) {
         return Err(Error::RustError(
             "webfinger self link authority did not match account domain".to_owned(),
         ));
@@ -447,4 +447,65 @@ pub(crate) fn parse_http_url_parts(url: &str) -> Result<(String, String)> {
         None => url.path().to_owned(),
     };
     Ok((host, path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_webfinger_self_link_prefers_activitypub_type() {
+        let links = vec![
+            serde_json::json!({
+                "rel": "self",
+                "type": "text/html",
+                "href": "https://remote.example/@alice"
+            }),
+            serde_json::json!({
+                "rel": "self",
+                "type": "application/activity+json",
+                "href": "https://remote.example/users/alice"
+            }),
+        ];
+        assert_eq!(
+            select_webfinger_self_link(&links).as_deref(),
+            Some("https://remote.example/users/alice")
+        );
+    }
+
+    #[test]
+    fn select_webfinger_self_link_falls_back_to_untyped_self() {
+        let links = vec![serde_json::json!({
+            "rel": "self",
+            "href": "https://remote.example/users/alice"
+        })];
+        assert_eq!(
+            select_webfinger_self_link(&links).as_deref(),
+            Some("https://remote.example/users/alice")
+        );
+    }
+
+    #[test]
+    fn ensure_remote_actor_username_matches_handle_is_case_insensitive() {
+        let profile = RemoteActorProfile {
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            username: "alice".to_owned(),
+            domain: "remote.example".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            inbox_uri: "https://remote.example/users/alice/inbox".to_owned(),
+            shared_inbox_uri: None,
+            public_key_id: "https://remote.example/users/alice#main-key".to_owned(),
+            public_key_pem: "pem".to_owned(),
+            display_name: "Alice".to_owned(),
+            summary_html: String::new(),
+            profile_url: None,
+            avatar_url: None,
+            header_url: None,
+        };
+        assert!(ensure_remote_actor_username_matches_handle(&profile, "Alice").is_ok());
+        assert!(ensure_remote_actor_username_matches_handle(&profile, "bob").is_err());
+    }
 }

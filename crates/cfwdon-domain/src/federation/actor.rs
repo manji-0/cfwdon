@@ -22,9 +22,7 @@ pub fn remote_http_authority(url: &str) -> Option<String> {
         return None;
     };
 
-    let authority_end = rest
-        .find(|ch| matches!(ch, '/' | '?' | '#'))
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     if authority_end == 0 {
         return None;
     }
@@ -130,6 +128,41 @@ pub fn webfinger_link_is_activitypub_type(link_type: Option<&str>) -> bool {
     lower.starts_with("application/activity+json") || lower.starts_with("application/ld+json")
 }
 
+/// True when `actor_uri` authority matches an acct domain (`host` or `host:port`).
+///
+/// Non-default ports on the actor URI are accepted when `acct_domain` is host-only
+/// (for example `remote.example` matches `https://remote.example:8443/...`).
+pub fn remote_actor_uri_matches_acct_domain(actor_uri: &str, acct_domain: &str) -> bool {
+    let Some(authority) = remote_http_authority(actor_uri) else {
+        return false;
+    };
+    let expected = acct_domain.trim_end_matches('.').to_ascii_lowercase();
+    if expected.is_empty() {
+        return false;
+    }
+    authority == expected || authority.starts_with(&format!("{expected}:"))
+}
+
+/// Cached remote actor rows must bind `username@domain` to an on-authority `actor_uri`.
+pub fn remote_actor_cached_handle_allowed(
+    actor_uri: &str,
+    stored_username: &str,
+    stored_domain: &str,
+    expected_username: &str,
+    expected_domain: &str,
+) -> bool {
+    let expected_username = expected_username.trim().to_ascii_lowercase();
+    let stored_username = stored_username.trim().to_ascii_lowercase();
+    if expected_username.is_empty()
+        || stored_username != expected_username
+        || !remote_actor_uri_matches_acct_domain(actor_uri, expected_domain)
+        || !remote_actor_uri_matches_acct_domain(actor_uri, stored_domain)
+    {
+        return false;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +233,50 @@ mod tests {
         )));
         assert!(!webfinger_link_is_activitypub_type(Some("text/html")));
         assert!(!webfinger_link_is_activitypub_type(None));
+    }
+
+    #[test]
+    fn actor_uri_matches_acct_domain_allows_same_host_and_port() {
+        assert!(remote_actor_uri_matches_acct_domain(
+            "https://Remote.Example/users/alice",
+            "remote.example"
+        ));
+        assert!(remote_actor_uri_matches_acct_domain(
+            "https://remote.example:8443/users/alice",
+            "remote.example"
+        ));
+        assert!(!remote_actor_uri_matches_acct_domain(
+            "https://evil.example/users/alice",
+            "remote.example"
+        ));
+        assert!(!remote_actor_uri_matches_acct_domain(
+            "https://remote.example.evil/users/alice",
+            "remote.example"
+        ));
+    }
+
+    #[test]
+    fn cached_handle_rejects_cross_authority_or_username_mismatch() {
+        assert!(remote_actor_cached_handle_allowed(
+            "https://remote.example/users/alice",
+            "alice",
+            "remote.example",
+            "Alice",
+            "remote.example",
+        ));
+        assert!(!remote_actor_cached_handle_allowed(
+            "https://evil.example/users/alice",
+            "alice",
+            "victim.social",
+            "alice",
+            "victim.social",
+        ));
+        assert!(!remote_actor_cached_handle_allowed(
+            "https://remote.example/users/alice",
+            "bob",
+            "remote.example",
+            "alice",
+            "remote.example",
+        ));
     }
 }

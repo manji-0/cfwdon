@@ -5,8 +5,9 @@ mod signature;
 mod url;
 
 pub use actor::{
-    RemoteActorAuthorityIssue, remote_actor_id_authority_allowed,
-    remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
+    RemoteActorAuthorityIssue, remote_actor_cached_handle_allowed,
+    remote_actor_id_authority_allowed, remote_actor_public_key_owner_allowed,
+    remote_actor_related_uri_authority_allowed, remote_actor_uri_matches_acct_domain,
     remote_http_authorities_match, remote_http_authority, webfinger_link_is_activitypub_type,
 };
 pub use dns::{
