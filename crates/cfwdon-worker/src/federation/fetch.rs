@@ -1,4 +1,8 @@
-use cfwdon_domain::AccountHandle;
+use cfwdon_domain::{
+    AccountHandle, RemoteActorAuthorityIssue, remote_actor_id_authority_allowed,
+    remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
+    remote_http_authority, webfinger_link_is_activitypub_type,
+};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use url::Url;
@@ -58,19 +62,41 @@ pub(crate) async fn resolve_webfinger_actor_uri(handle: &AccountHandle) -> Resul
         "application/jrd+json, application/json",
     )
     .await?;
-    webfinger
+    let actor_uri = webfinger
         .get("links")
         .and_then(serde_json::Value::as_array)
-        .and_then(|links| {
-            links.iter().find_map(|link| {
-                let rel = link.get("rel").and_then(serde_json::Value::as_str)?;
-                let href = link.get("href").and_then(serde_json::Value::as_str)?;
-                (rel == "self").then_some(href.to_owned())
-            })
-        })
+        .and_then(|links| select_webfinger_self_link(links))
         .ok_or_else(|| {
             Error::RustError("webfinger response did not include a self link".to_owned())
+        })?;
+    let actor_authority = remote_http_authority(&actor_uri).ok_or_else(|| {
+        Error::RustError("webfinger self link is not a valid http(s) URL".to_owned())
+    })?;
+    let expected_domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    if actor_authority != expected_domain
+        && !actor_authority.starts_with(&format!("{expected_domain}:"))
+    {
+        return Err(Error::RustError(
+            "webfinger self link authority did not match account domain".to_owned(),
+        ));
+    }
+    Ok(actor_uri)
+}
+
+fn select_webfinger_self_link(links: &[serde_json::Value]) -> Option<String> {
+    let typed = links.iter().find_map(|link| {
+        let rel = link.get("rel").and_then(serde_json::Value::as_str)?;
+        let href = link.get("href").and_then(serde_json::Value::as_str)?;
+        let link_type = link.get("type").and_then(serde_json::Value::as_str);
+        (rel == "self" && webfinger_link_is_activitypub_type(link_type)).then(|| href.to_owned())
+    });
+    typed.or_else(|| {
+        links.iter().find_map(|link| {
+            let rel = link.get("rel").and_then(serde_json::Value::as_str)?;
+            let href = link.get("href").and_then(serde_json::Value::as_str)?;
+            (rel == "self").then(|| href.to_owned())
         })
+    })
 }
 
 pub(crate) async fn fetch_remote_actor_profile(actor_uri: &str) -> Result<RemoteActorProfile> {
@@ -91,13 +117,30 @@ pub(crate) async fn fetch_remote_actor_profile_with_document(
 
 pub(crate) fn parse_remote_actor_profile_document(
     actor: &serde_json::Value,
-    fallback_actor_uri: &str,
+    fetched_actor_uri: &str,
 ) -> Result<RemoteActorProfile> {
-    let canonical_actor_uri = remote_actor_canonical_uri(actor, fallback_actor_uri);
+    let canonical_actor_uri = remote_actor_canonical_uri(actor, fetched_actor_uri);
+    remote_actor_id_authority_allowed(fetched_actor_uri, &canonical_actor_uri)
+        .map_err(remote_actor_authority_error)?;
     let actor_url = parse_remote_http_url(&canonical_actor_uri)?;
     let (public_key_id, public_key_pem) = remote_actor_public_key(actor)?;
+    let public_key_owner = actor
+        .get("publicKey")
+        .and_then(|value| value.get("owner"))
+        .and_then(serde_json::Value::as_str);
+    remote_actor_public_key_owner_allowed(&canonical_actor_uri, public_key_owner)
+        .map_err(remote_actor_authority_error)?;
     let flags = remote_actor_profile_flags(actor);
     let media = remote_actor_profile_media(actor);
+    let inbox_uri =
+        required_remote_actor_string(actor, "inbox", "remote actor document is missing inbox")?;
+    let shared_inbox_uri = remote_actor_shared_inbox_uri(actor);
+    ensure_remote_actor_endpoint_authorities(
+        &canonical_actor_uri,
+        &inbox_uri,
+        shared_inbox_uri.as_deref(),
+        &public_key_id,
+    )?;
 
     Ok(RemoteActorProfile {
         actor_uri: canonical_actor_uri,
@@ -107,12 +150,8 @@ pub(crate) fn parse_remote_actor_profile_document(
         bot: flags.bot,
         discoverable: flags.discoverable,
         indexable: flags.indexable,
-        inbox_uri: required_remote_actor_string(
-            actor,
-            "inbox",
-            "remote actor document is missing inbox",
-        )?,
-        shared_inbox_uri: remote_actor_shared_inbox_uri(actor),
+        inbox_uri,
+        shared_inbox_uri,
         public_key_id,
         public_key_pem,
         display_name: remote_actor_optional_string(actor, "name"),
@@ -121,6 +160,78 @@ pub(crate) fn parse_remote_actor_profile_document(
         avatar_url: media.avatar_url,
         header_url: media.header_url,
     })
+}
+
+fn ensure_remote_actor_endpoint_authorities(
+    actor_uri: &str,
+    inbox_uri: &str,
+    shared_inbox_uri: Option<&str>,
+    public_key_id: &str,
+) -> Result<()> {
+    remote_actor_related_uri_authority_allowed(
+        actor_uri,
+        inbox_uri,
+        RemoteActorAuthorityIssue::CrossAuthorityInbox,
+    )
+    .map_err(remote_actor_authority_error)?;
+    if let Some(shared_inbox_uri) = shared_inbox_uri {
+        remote_actor_related_uri_authority_allowed(
+            actor_uri,
+            shared_inbox_uri,
+            RemoteActorAuthorityIssue::CrossAuthoritySharedInbox,
+        )
+        .map_err(remote_actor_authority_error)?;
+    }
+    remote_actor_related_uri_authority_allowed(
+        actor_uri,
+        public_key_id,
+        RemoteActorAuthorityIssue::CrossAuthorityPublicKey,
+    )
+    .map_err(remote_actor_authority_error)?;
+    Ok(())
+}
+
+fn remote_actor_authority_error(issue: RemoteActorAuthorityIssue) -> Error {
+    Error::RustError(match issue {
+        RemoteActorAuthorityIssue::InvalidActorUri => {
+            "remote actor URI is missing a valid http(s) authority".to_owned()
+        }
+        RemoteActorAuthorityIssue::InvalidRelatedUri => {
+            "remote actor related URI is missing a valid http(s) authority".to_owned()
+        }
+        RemoteActorAuthorityIssue::CrossAuthorityId => {
+            "remote actor document id authority did not match fetched URI".to_owned()
+        }
+        RemoteActorAuthorityIssue::CrossAuthorityInbox => {
+            "remote actor inbox authority did not match actor URI".to_owned()
+        }
+        RemoteActorAuthorityIssue::CrossAuthoritySharedInbox => {
+            "remote actor sharedInbox authority did not match actor URI".to_owned()
+        }
+        RemoteActorAuthorityIssue::CrossAuthorityPublicKey => {
+            "remote actor publicKey.id authority did not match actor URI".to_owned()
+        }
+        RemoteActorAuthorityIssue::PublicKeyOwnerMismatch => {
+            "remote actor publicKey.owner did not match actor URI".to_owned()
+        }
+    })
+}
+
+/// Prefer webfinger username when present; reject document preferredUsername mismatch.
+pub(crate) fn ensure_remote_actor_username_matches_handle(
+    profile: &RemoteActorProfile,
+    expected_username: &str,
+) -> Result<()> {
+    let expected = expected_username.trim().to_ascii_lowercase();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    if profile.username != expected {
+        return Err(Error::RustError(
+            "remote actor preferredUsername did not match looked-up handle".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn remote_actor_canonical_uri(actor: &serde_json::Value, fallback_actor_uri: &str) -> String {

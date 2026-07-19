@@ -1,20 +1,17 @@
 use crate::{
     CursorAccountCollection, MastodonAccountResponse, RemoteActorRow, find_local_account_response,
     find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, is_activitypub_actor_type,
-    list_endorsed_accounts_for_owner, parse_remote_actor_profile_document,
+    find_remote_actor_by_profile_url_or_actor_uri, list_endorsed_accounts_for_owner,
     refreshed_remote_actor_response, upserted_remote_actor_response,
-    validate_remote_actor_profile_urls,
 };
 use std::collections::HashSet;
-use worker::{D1Database, Error, Result};
+use worker::{D1Database, Result};
 
 const REMOTE_ENDORSEMENT_PAGE_FETCH_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, PartialEq)]
 enum RemoteEndorsementReference {
     Uri(String),
-    EmbeddedActor(serde_json::Value),
 }
 
 pub(crate) async fn list_local_endorsement_accounts(
@@ -223,16 +220,9 @@ fn extract_remote_endorsement_reference(value: Option<&serde_json::Value>) -> Op
 fn extract_remote_endorsement_item_reference(
     value: Option<&serde_json::Value>,
 ) -> Option<RemoteEndorsementReference> {
+    // Never trust embedded actor documents; resolve by URI only.
     match value? {
         serde_json::Value::Object(map) => {
-            if is_activitypub_actor_type(map.get("type").and_then(serde_json::Value::as_str))
-                && map.get("inbox").is_some()
-                && map.get("publicKey").is_some()
-            {
-                return Some(RemoteEndorsementReference::EmbeddedActor(
-                    serde_json::Value::Object(map.clone()),
-                ));
-            }
             if let Some(reference) = extract_remote_endorsement_item_reference(map.get("object")) {
                 return Some(reference);
             }
@@ -247,30 +237,7 @@ async fn resolve_remote_endorsement_account(
     config: &cfwdon_core::AppConfig,
     reference: &RemoteEndorsementReference,
 ) -> Result<Option<MastodonAccountResponse>> {
-    if let RemoteEndorsementReference::EmbeddedActor(actor_document) = reference {
-        let fallback_actor_uri = extract_remote_endorsement_reference(Some(actor_document))
-            .ok_or_else(|| {
-                Error::RustError("embedded actor endorsement is missing id".to_owned())
-            })?;
-        let profile = match parse_remote_actor_profile_document(actor_document, &fallback_actor_uri)
-        {
-            Ok(profile) => profile,
-            Err(_) => return Ok(None),
-        };
-        if validate_remote_actor_profile_urls(&profile).await.is_err() {
-            return Ok(None);
-        }
-        if let Some(account) =
-            find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
-        {
-            return Ok(Some(account));
-        }
-        return Ok(Some(upserted_remote_actor_response(db, &profile).await?));
-    }
-
-    let RemoteEndorsementReference::Uri(reference) = reference else {
-        return Ok(None);
-    };
+    let RemoteEndorsementReference::Uri(reference) = reference;
     if let Some(account) = find_local_account_response_by_actor_uri(db, config, reference).await? {
         return Ok(Some(account));
     }
@@ -300,9 +267,6 @@ impl RemoteEndorsementReference {
     fn key(&self) -> String {
         match self {
             Self::Uri(uri) => format!("uri:{uri}"),
-            Self::EmbeddedActor(actor) => extract_remote_endorsement_reference(Some(actor))
-                .map(|uri| format!("actor:{uri}"))
-                .unwrap_or_else(|| format!("actor:{actor}")),
         }
     }
 }
@@ -353,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_endorsement_item_references_preserve_embedded_actor_objects() {
+    fn remote_endorsement_item_references_resolve_embedded_actors_to_uris() {
         let collection = serde_json::json!({
             "orderedItems": [
                 {
@@ -382,19 +346,13 @@ mod tests {
             ]
         });
 
-        let references = extract_remote_endorsement_item_references(&collection);
-        assert!(matches!(
-            references.first(),
-            Some(RemoteEndorsementReference::EmbeddedActor(actor))
-                if actor.get("id").and_then(serde_json::Value::as_str)
-                    == Some("https://remote.example/users/dana")
-        ));
-        assert!(matches!(
-            references.get(1),
-            Some(RemoteEndorsementReference::EmbeddedActor(actor))
-                if actor.get("id").and_then(serde_json::Value::as_str)
-                    == Some("https://remote.example/actors/app")
-        ));
+        assert_eq!(
+            extract_remote_endorsement_item_references(&collection),
+            vec![
+                RemoteEndorsementReference::Uri("https://remote.example/users/dana".to_owned()),
+                RemoteEndorsementReference::Uri("https://remote.example/actors/app".to_owned()),
+            ]
+        );
     }
 
     #[test]

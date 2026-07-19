@@ -143,6 +143,7 @@ fn remote_actor_bindings(actor: &RemoteActorProfile) -> [D1Type<'_>; 16] {
 }
 
 pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProfile) -> Result<()> {
+    clear_conflicting_remote_actor_handles(db, actor).await?;
     let bindings = remote_actor_bindings(actor);
     db.prepare(UPSERT_REMOTE_ACTOR_SQL)
         .bind_refs(bindings.iter())?
@@ -160,12 +161,39 @@ pub(crate) async fn upsert_remote_actors(
         return Ok(());
     }
 
+    for actor in actors {
+        clear_conflicting_remote_actor_handles(db, actor).await?;
+    }
+
     let bindings = actors.iter().map(remote_actor_bindings).collect::<Vec<_>>();
     let statements = db
         .prepare(UPSERT_REMOTE_ACTOR_SQL)
         .batch_bind(bindings.iter().map(|binding| binding.iter()))?;
     db.batch(statements).await?;
 
+    Ok(())
+}
+
+async fn clear_conflicting_remote_actor_handles(
+    db: &D1Database,
+    actor: &RemoteActorProfile,
+) -> Result<()> {
+    let username = actor.username.to_ascii_lowercase();
+    let domain = actor.domain.to_ascii_lowercase();
+    let bindings = [
+        D1Type::Text(&username),
+        D1Type::Text(&domain),
+        D1Type::Text(actor.actor_uri.as_str()),
+    ];
+    db.prepare(
+        "DELETE FROM remote_actors
+         WHERE lower(username) = ?1
+           AND lower(domain) = ?2
+           AND actor_uri != ?3",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
     Ok(())
 }
 

@@ -1,8 +1,8 @@
 use super::{
     D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
-    has_any_local_followers_for_remote_actor, is_activitypub_actor_type,
-    is_local_account_following_remote_actor, parse_remote_actor_profile_document,
-    upsert_remote_actor, validate_remote_actor_profile_urls,
+    fetch_remote_actor_profile, has_any_local_followers_for_remote_actor,
+    is_activitypub_actor_type, is_local_account_following_remote_actor,
+    parse_remote_actor_profile_document, upsert_remote_actor, validate_remote_actor_profile_urls,
 };
 
 pub(crate) async fn handle_inbox_actor_update(
@@ -38,5 +38,32 @@ pub(crate) async fn handle_inbox_actor_update(
 
     let refreshed = parse_remote_actor_profile_document(object, &remote_actor.actor_uri)?;
     validate_remote_actor_profile_urls(&refreshed).await?;
-    upsert_remote_actor(db, &refreshed).await
+    let profile = if remote_actor_delivery_identity_changed(remote_actor, &refreshed) {
+        // Confirm key/inbox changes against the canonical actor document.
+        let confirmed = fetch_remote_actor_profile(&refreshed.actor_uri).await?;
+        if confirmed.actor_uri != refreshed.actor_uri
+            || confirmed.public_key_pem != refreshed.public_key_pem
+            || confirmed.public_key_id != refreshed.public_key_id
+            || confirmed.inbox_uri != refreshed.inbox_uri
+            || confirmed.shared_inbox_uri != refreshed.shared_inbox_uri
+        {
+            return Err(worker::Error::RustError(
+                "remote actor Update identity fields did not match canonical fetch".to_owned(),
+            ));
+        }
+        confirmed
+    } else {
+        refreshed
+    };
+    upsert_remote_actor(db, &profile).await
+}
+
+fn remote_actor_delivery_identity_changed(
+    previous: &RemoteActorProfile,
+    refreshed: &RemoteActorProfile,
+) -> bool {
+    previous.public_key_pem != refreshed.public_key_pem
+        || previous.public_key_id != refreshed.public_key_id
+        || previous.inbox_uri != refreshed.inbox_uri
+        || previous.shared_inbox_uri != refreshed.shared_inbox_uri
 }

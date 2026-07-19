@@ -232,6 +232,7 @@ pub(crate) async fn find_remote_actor_by_profile_url_or_actor_uri(
          FROM remote_actors
          WHERE actor_uri = ?1
             OR profile_url = ?1
+         ORDER BY CASE WHEN actor_uri = ?1 THEN 0 ELSE 1 END, updated_at DESC
          LIMIT 1"
     ))
     .bind_refs(&value)?
@@ -325,6 +326,7 @@ pub(crate) async fn find_remote_actor_by_username_domain(
          FROM remote_actors
          WHERE lower(username) = ?1
            AND lower(domain) = ?2
+         ORDER BY updated_at DESC, actor_uri ASC
          LIMIT 1"
     ))
     .bind_refs(bindings.iter())?

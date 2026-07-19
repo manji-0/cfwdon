@@ -1,7 +1,8 @@
 use crate::{
     AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteCollectionFetchContext,
     RemoteStatusRow, account_search_is_complete_handle, enrich_remote_account_response,
-    extract_remote_note_object, fetch_remote_activitypub_document, fetch_remote_actor_profile,
+    ensure_remote_actor_username_matches_handle, extract_remote_note_object,
+    fetch_remote_activitypub_document, fetch_remote_actor_profile,
     fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
     find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
     find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
@@ -113,6 +114,7 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
     let actor_uri = resolve_webfinger_actor_uri(&handle).await?;
     let fetched = fetch_remote_actor_profile_with_context(&actor_uri, Some(&fetch_context)).await?;
     let profile = fetched.profile;
+    ensure_remote_actor_username_matches_handle(&profile, &handle.username)?;
     upsert_remote_actor(db, &profile).await?;
     let actor = find_remote_actor_by_actor_uri(db, &profile.actor_uri)
         .await?

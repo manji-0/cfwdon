@@ -1,9 +1,10 @@
 use crate::AccountReference;
 use crate::{
-    RemoteCollectionFetchContext, Result, fetch_remote_actor_profile_with_context,
-    find_account_by_username, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    log_json_event, parse_lookup_handle, resolve_account_reference_with_fetch,
-    resolve_webfinger_actor_uri, upsert_remote_actor,
+    RemoteCollectionFetchContext, Result, ensure_remote_actor_username_matches_handle,
+    fetch_remote_actor_profile_with_context, find_account_by_username,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, log_json_event,
+    parse_lookup_handle, resolve_account_reference_with_fetch, resolve_webfinger_actor_uri,
+    upsert_remote_actor,
 };
 
 pub(crate) async fn resolve_requested_account_reference(
@@ -63,6 +64,14 @@ pub(crate) async fn resolve_requested_account_reference(
                 return Ok(None);
             }
         };
+    if ensure_remote_actor_username_matches_handle(&fetched.profile, &handle.username).is_err() {
+        log_json_event(serde_json::json!({
+            "event": "remote_account_reference_fetch_failed",
+            "actor_uri": actor_uri,
+            "error": "preferredUsername did not match looked-up handle",
+        }));
+        return Ok(None);
+    }
     upsert_remote_actor(db, &fetched.profile).await?;
     Ok(
         find_remote_actor_by_actor_uri(db, &fetched.profile.actor_uri)

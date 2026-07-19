@@ -2,9 +2,8 @@ use super::collections::CollectionAccountEntry;
 use crate::{
     MastodonAccountResponse, RemoteActorProfile, Result, fetch_activitypub_document_with_context,
     fetch_remote_activitypub_document, fetch_remote_actor_profile_with_context,
-    find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri,
-    is_activitypub_actor_type, parse_remote_actor_profile_document, upsert_remote_actor,
-    upsert_remote_actors, validate_remote_actor_profile_urls,
+    find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri, upsert_remote_actor,
+    upsert_remote_actors,
 };
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
@@ -21,7 +20,6 @@ struct ResolvedRemoteFollowAccount {
 #[derive(Clone, Debug, PartialEq)]
 enum RemoteFollowCollectionReference {
     Uri(String),
-    EmbeddedActor(serde_json::Value),
 }
 
 async fn resolve_remote_follow_collection_account(
@@ -29,41 +27,7 @@ async fn resolve_remote_follow_collection_account(
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
 ) -> Result<Option<ResolvedRemoteFollowAccount>> {
-    if let RemoteFollowCollectionReference::EmbeddedActor(actor_document) = reference {
-        let fallback_actor_uri = extract_remote_follow_collection_reference(Some(actor_document))
-            .ok_or_else(|| {
-            worker::Error::RustError("embedded remote follow actor is missing id".to_owned())
-        })?;
-        let profile = match parse_remote_actor_profile_document(actor_document, &fallback_actor_uri)
-        {
-            Ok(profile) => profile,
-            Err(_) => return Ok(None),
-        };
-        if validate_remote_actor_profile_urls(&profile).await.is_err() {
-            return Ok(None);
-        }
-        if let Some(account) =
-            find_local_account_response_by_actor_uri(db, config, &profile.actor_uri).await?
-        {
-            return Ok(Some(ResolvedRemoteFollowAccount {
-                account,
-                profile_to_upsert: None,
-            }));
-        }
-        upsert_remote_actor(db, &profile).await?;
-        let account = match find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? {
-            Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
-            None => MastodonAccountResponse::from_remote_actor_profile(&profile),
-        };
-        return Ok(Some(ResolvedRemoteFollowAccount {
-            account,
-            profile_to_upsert: None,
-        }));
-    }
-
-    let RemoteFollowCollectionReference::Uri(actor_uri) = reference else {
-        return Ok(None);
-    };
+    let RemoteFollowCollectionReference::Uri(actor_uri) = reference;
     if let Some(account) = find_local_account_response_by_actor_uri(db, config, actor_uri).await? {
         return Ok(Some(ResolvedRemoteFollowAccount {
             account,
@@ -259,16 +223,9 @@ fn extract_remote_follow_collection_item_references(
 fn extract_remote_follow_collection_item_reference(
     value: Option<&serde_json::Value>,
 ) -> Option<RemoteFollowCollectionReference> {
+    // Never persist embedded actor documents from collections; only resolve by URI.
     match value? {
         serde_json::Value::Object(map) => {
-            if is_activitypub_actor_type(map.get("type").and_then(serde_json::Value::as_str))
-                && map.get("inbox").is_some()
-                && map.get("publicKey").is_some()
-            {
-                return Some(RemoteFollowCollectionReference::EmbeddedActor(
-                    serde_json::Value::Object(map.clone()),
-                ));
-            }
             if let Some(reference) =
                 extract_remote_follow_collection_item_reference(map.get("object"))
             {
@@ -313,9 +270,6 @@ impl RemoteFollowCollectionReference {
     fn key(&self) -> String {
         match self {
             Self::Uri(uri) => format!("uri:{uri}"),
-            Self::EmbeddedActor(actor) => extract_remote_follow_collection_reference(Some(actor))
-                .map(|uri| format!("actor:{uri}"))
-                .unwrap_or_else(|| format!("actor:{actor}")),
         }
     }
 }
@@ -350,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_follow_collection_references_preserve_embedded_actor_objects() {
+    fn remote_follow_collection_references_resolve_embedded_actors_to_uris() {
         let collection = serde_json::json!({
             "items": [
                 {
@@ -379,19 +333,17 @@ mod tests {
             ]
         });
 
-        let references = extract_remote_follow_collection_item_references(&collection);
-        assert!(matches!(
-            references.first(),
-            Some(RemoteFollowCollectionReference::EmbeddedActor(actor))
-                if actor.get("id").and_then(serde_json::Value::as_str)
-                    == Some("https://remote.example/users/dana")
-        ));
-        assert!(matches!(
-            references.get(1),
-            Some(RemoteFollowCollectionReference::EmbeddedActor(actor))
-                if actor.get("id").and_then(serde_json::Value::as_str)
-                    == Some("https://remote.example/actors/app")
-        ));
+        assert_eq!(
+            extract_remote_follow_collection_item_references(&collection),
+            vec![
+                RemoteFollowCollectionReference::Uri(
+                    "https://remote.example/users/dana".to_owned()
+                ),
+                RemoteFollowCollectionReference::Uri(
+                    "https://remote.example/actors/app".to_owned()
+                ),
+            ]
+        );
     }
 
     #[test]

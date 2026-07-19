@@ -5058,6 +5058,7 @@ fn parse_remote_actor_profile_document_extracts_profile_fields() {
         },
         "publicKey": {
             "id": "https://remote.example/users/alice#main-key",
+            "owner": "https://remote.example/users/alice",
             "publicKeyPem": "pem"
         },
         "url": "https://remote.example/@alice",
@@ -5107,6 +5108,40 @@ fn parse_remote_actor_profile_document_extracts_profile_fields() {
     assert!(profile.bot);
     assert!(profile.discoverable);
     assert!(profile.indexable);
+}
+
+#[test]
+fn parse_remote_actor_profile_document_rejects_cross_authority_id() {
+    let actor = serde_json::json!({
+        "id": "https://victim.social/users/alice",
+        "type": "Person",
+        "inbox": "https://evil.example/users/alice/inbox",
+        "publicKey": {
+            "id": "https://evil.example/users/alice#main-key",
+            "publicKeyPem": "pem"
+        }
+    });
+
+    let error =
+        parse_remote_actor_profile_document(&actor, "https://evil.example/fake").unwrap_err();
+    assert!(error.to_string().contains("authority"));
+}
+
+#[test]
+fn parse_remote_actor_profile_document_rejects_cross_authority_inbox() {
+    let actor = serde_json::json!({
+        "id": "https://remote.example/users/alice",
+        "type": "Person",
+        "inbox": "https://evil.example/inbox",
+        "publicKey": {
+            "id": "https://remote.example/users/alice#main-key",
+            "publicKeyPem": "pem"
+        }
+    });
+
+    let error = parse_remote_actor_profile_document(&actor, "https://remote.example/users/alice")
+        .unwrap_err();
+    assert!(error.to_string().contains("inbox"));
 }
 
 #[test]

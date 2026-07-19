@@ -38,13 +38,16 @@ pub use error::{
 };
 pub use federation::{
     ACTIVITYPUB_MAX_DATE_SKEW_MS, ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState,
-    RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue, RemoteUrlPolicyIssue,
-    activitypub_date_within_skew, activitypub_key_id_matches_actor,
+    RemoteActorAuthorityIssue, RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue,
+    RemoteUrlPolicyIssue, activitypub_date_within_skew, activitypub_key_id_matches_actor,
     activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
     host_is_ip_literal, inbox_activity_after_failure, inbox_activity_after_receive,
     inbox_activity_after_success, is_blocked_ip_address, parse_dns_answer_ips,
-    remote_fetch_host_allowed, remote_hostname_dns_resolution_allowed,
+    remote_actor_id_authority_allowed, remote_actor_public_key_owner_allowed,
+    remote_actor_related_uri_authority_allowed, remote_fetch_host_allowed,
+    remote_hostname_dns_resolution_allowed, remote_http_authorities_match, remote_http_authority,
     remote_http_url_scheme_allowed, remote_url_policy_for_ip, remote_url_policy_from_parts,
+    webfinger_link_is_activitypub_type,
 };
 pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,
