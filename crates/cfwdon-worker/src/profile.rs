@@ -7,16 +7,17 @@ pub(crate) use request_parsing::*;
 pub(crate) use self::request_parsing::{UpdateCredentialsField, UpdateCredentialsRequest};
 use super::{
     AccountReference, AppConfig, CACHE_TTL_ACCOUNT_API, Error, MastodonAccountResponse,
-    ProfileField, Request, Response, Result, RouteContext, app_bearer_token_from_request,
-    apply_account_credentials_update, apply_remote_actor_social_counts, cache_account_api_response,
+    ProfileField, RemoteCollectionFetchContext, Request, Response, Result, RouteContext,
+    app_bearer_token_from_request, apply_account_credentials_update, cache_account_api_response,
     cache_public_json_response, cached_account_api_response, count_pending_follow_requests,
     enqueue_profile_update_activities, extract_authenticated_user,
     fetch_remote_actor_profile_with_document, find_authenticated_local_account,
     find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
-    load_config, load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
-    media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
-    oauth_bearer_token_hash, render_profile_field_value_html, resolve_account_reference,
-    resolve_lookup_account, sql_placeholders, upsert_remote_actor,
+    load_config, media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
+    oauth_bearer_token_hash, persist_and_apply_remote_actor_social_counts,
+    reconcile_remote_account_status_summary, render_profile_field_value_html,
+    resolve_account_reference, resolve_lookup_account_with_viewer, sql_placeholders,
+    upsert_remote_actor,
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
@@ -81,7 +82,7 @@ struct AccountPreferencesSubject {
     settings: AccountProfileSettings,
 }
 
-pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let account_id = ctx
         .param("id")
@@ -90,6 +91,7 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = ctx.d1(&config.database_binding)?;
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cacheable_account_id = account_api_cache_candidate(&account_id);
     if cacheable_account_id
         && let Some(response) = cached_account_api_response(&ctx, &account_id).await?
@@ -123,7 +125,7 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            let response = remote_account_response(&db, &actor).await?;
+            let response = remote_account_response(&db, &config, &actor, viewer.as_ref()).await?;
             Response::from_json(&response)
         }
         None => Response::error("account not found", 404),
@@ -132,7 +134,9 @@ pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> 
 
 async fn remote_account_response(
     db: &D1Database,
+    config: &AppConfig,
     actor: &crate::RemoteActorRow,
+    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
     let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
         Ok(fetched) => fetched,
@@ -144,15 +148,20 @@ async fn remote_account_response(
         Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
         None => MastodonAccountResponse::from_remote_actor_profile(&profile),
     };
-    if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
-        apply_remote_actor_social_counts(&mut response, counts);
-    }
-    if let Ok(summary) = load_remote_actor_status_summary(db, &profile.actor_uri).await {
-        if summary.statuses_count > 0 {
-            response.statuses_count = summary.statuses_count;
-        }
-        response.last_status_at = summary.last_status_at;
-    }
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
+    };
+    let _ = persist_and_apply_remote_actor_social_counts(
+        db,
+        &profile.actor_uri,
+        &mut response,
+        &fetched.document,
+        Some(&fetch_context),
+    )
+    .await;
+    let _ = reconcile_remote_account_status_summary(db, &profile.actor_uri, &mut response).await;
     Ok(response)
 }
 
@@ -163,13 +172,13 @@ fn account_api_cache_candidate(account_id: &str) -> bool {
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(_) => {}
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
-    }
+    };
 
     let query: AccountLookupQuery = req.query()?;
-    match resolve_lookup_account(&db, &config, &query.acct).await {
+    match resolve_lookup_account_with_viewer(&db, &config, &query.acct, Some(&viewer)).await {
         Ok(account) => Response::from_json(&account),
         Err(_) => Response::error("account not found", 404),
     }

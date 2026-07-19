@@ -3,7 +3,11 @@ use std::collections::HashMap;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
 
-use crate::{sql_placeholders, unique_ordered_refs};
+use crate::{RemoteActorSocialCounts, sql_placeholders, unique_ordered_refs};
+
+pub(crate) const REMOTE_ACTOR_ROW_COLUMNS: &str = "actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url, followers_count, following_count, statuses_count, social_counts_updated_at";
+
+pub(crate) const REMOTE_ACTOR_ROW_COLUMNS_ALIASED: &str = "ra.actor_uri, ra.username, ra.domain, ra.created_at, ra.locked, ra.bot, ra.discoverable, ra.indexable, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url, ra.followers_count, ra.following_count, ra.statuses_count, ra.social_counts_updated_at";
 
 fn json_boolish(value: Option<&serde_json::Value>) -> bool {
     value
@@ -21,6 +25,28 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(json_boolish(Some(&value)))
+}
+
+fn json_u64(value: Option<&serde_json::Value>) -> u64 {
+    value
+        .and_then(|field| {
+            field
+                .as_u64()
+                .or_else(|| {
+                    field
+                        .as_i64()
+                        .filter(|number| *number >= 0)
+                        .map(|number| number as u64)
+                })
+                .or_else(|| {
+                    field
+                        .as_f64()
+                        .filter(|number| *number >= 0.0 && number.fract() == 0.0)
+                        .map(|number| number as u64)
+                })
+                .or_else(|| field.as_str().and_then(|raw| raw.trim().parse().ok()))
+        })
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +69,15 @@ pub(crate) struct RemoteActorRow {
     pub(crate) profile_url: Option<String>,
     pub(crate) avatar_url: Option<String>,
     pub(crate) header_url: Option<String>,
+    #[serde(default)]
+    pub(crate) followers_count: u64,
+    #[serde(default)]
+    pub(crate) following_count: u64,
+    #[serde(default)]
+    pub(crate) statuses_count: u64,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(crate) social_counts_updated_at: Option<String>,
 }
 
 impl RemoteActorRow {
@@ -94,8 +129,54 @@ impl RemoteActorRow {
                 .get("header_url")
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
+            followers_count: json_u64(value.get("followers_count")),
+            following_count: json_u64(value.get("following_count")),
+            statuses_count: json_u64(value.get("statuses_count")),
+            social_counts_updated_at: value
+                .get("social_counts_updated_at")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
         }
     }
+}
+
+fn d1_optional_count(count: Option<u64>) -> D1Type<'static> {
+    match count {
+        Some(value) if value <= i32::MAX as u64 => D1Type::Integer(value as i32),
+        // D1Type::Integer is i32; keep large totals via REAL instead of silent clamp.
+        Some(value) => D1Type::Real(value as f64),
+        None => D1Type::Null,
+    }
+}
+
+pub(crate) async fn update_remote_actor_social_counts(
+    db: &D1Database,
+    actor_uri: &str,
+    counts: &RemoteActorSocialCounts,
+) -> Result<()> {
+    if !counts.has_any() {
+        return Ok(());
+    }
+
+    let bindings = [
+        D1Type::Text(actor_uri),
+        d1_optional_count(counts.followers_count),
+        d1_optional_count(counts.following_count),
+        d1_optional_count(counts.statuses_count),
+    ];
+    db.prepare(
+        "UPDATE remote_actors
+         SET followers_count = COALESCE(?2, followers_count),
+             following_count = COALESCE(?3, following_count),
+             statuses_count = COALESCE(?4, statuses_count),
+             social_counts_updated_at = CURRENT_TIMESTAMP
+         WHERE actor_uri = ?1",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+
+    Ok(())
 }
 
 pub(crate) async fn find_remote_actor_by_actor_uri(
@@ -103,12 +184,12 @@ pub(crate) async fn find_remote_actor_by_actor_uri(
     actor_uri: &str,
 ) -> Result<Option<RemoteActorRow>> {
     let actor_uri = D1Type::Text(actor_uri);
-    db.prepare(
-        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+    db.prepare(format!(
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE actor_uri = ?1
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(&actor_uri)?
     .first::<RemoteActorRow>(None)
     .await
@@ -125,7 +206,7 @@ pub(crate) async fn find_remote_actors_by_actor_uris(
 
     let placeholders = sql_placeholders(1, uris.len());
     let sql = format!(
-        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE actor_uri IN ({placeholders})"
     );
@@ -147,13 +228,13 @@ pub(crate) async fn find_remote_actor_by_profile_url_or_actor_uri(
     value: &str,
 ) -> Result<Option<RemoteActorRow>> {
     let value = D1Type::Text(value);
-    db.prepare(
-        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+    db.prepare(format!(
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE actor_uri = ?1
             OR profile_url = ?1
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(&value)?
     .first::<RemoteActorRow>(None)
     .await
@@ -240,13 +321,13 @@ pub(crate) async fn find_remote_actor_by_username_domain(
     let username = username.to_ascii_lowercase();
     let domain = domain.to_ascii_lowercase();
     let bindings = [D1Type::Text(&username), D1Type::Text(&domain)];
-    db.prepare(
-        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+    db.prepare(format!(
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE lower(username) = ?1
            AND lower(domain) = ?2
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(bindings.iter())?
     .first::<RemoteActorRow>(None)
     .await

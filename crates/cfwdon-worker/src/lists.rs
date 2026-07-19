@@ -835,6 +835,10 @@ mod tests {
             profile_url: None,
             avatar_url: None,
             header_url: None,
+            followers_count: 0,
+            following_count: 0,
+            statuses_count: 0,
+            social_counts_updated_at: None,
         };
         assert_eq!(
             list_membership_variants_for_remote_actor(&actor),

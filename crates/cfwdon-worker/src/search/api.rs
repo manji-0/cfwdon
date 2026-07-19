@@ -6,7 +6,8 @@ use crate::accounts::{
 };
 use crate::auth::find_authenticated_local_account;
 use crate::remote::{
-    find_remote_actor_by_actor_uri, load_remote_actor_status_summary, resolve_search_account,
+    find_remote_actor_by_actor_uri, load_remote_actor_status_summary,
+    resolve_search_account_with_viewer,
 };
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
@@ -123,7 +124,8 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
 
     if query.resolve.unwrap_or(false)
         && results.is_empty()
-        && let Some(account) = resolve_search_account(&db, &config, q).await?
+        && let Some(account) =
+            resolve_search_account_with_viewer(&db, &config, q, Some(&viewer)).await?
     {
         results.push(account);
     }

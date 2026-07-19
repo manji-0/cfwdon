@@ -1,15 +1,14 @@
 use crate::{
-    AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteStatusRow,
-    account_search_is_complete_handle, apply_remote_actor_social_counts,
-    extract_remote_note_object, fetch_remote_account_profile_by_handle_with_document,
-    fetch_remote_activitypub_document, fetch_remote_actor_profile, find_account_by_id,
-    find_account_by_username, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, find_remote_status_by_object_uri,
-    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
-    load_remote_actor_social_counts_from_document, load_remote_actor_status_summary,
-    local_username_from_actor_uri, parse_lookup_handle, parse_remote_http_url,
-    remote_actor_uri_from_rest_id, upsert_remote_actor, upsert_remote_status,
-    visibility_from_activitypub_object,
+    AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteCollectionFetchContext,
+    RemoteStatusRow, account_search_is_complete_handle, extract_remote_note_object,
+    fetch_remote_account_profile_by_handle_with_document, fetch_remote_activitypub_document,
+    fetch_remote_actor_profile, find_account_by_id, find_account_by_username,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
+    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
+    parse_lookup_handle, parse_remote_http_url, persist_and_apply_remote_actor_social_counts,
+    reconcile_remote_account_status_summary, remote_actor_uri_from_rest_id, upsert_remote_actor,
+    upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::{D1Database, Error, Result};
 
@@ -35,10 +34,20 @@ pub(crate) async fn resolve_account_reference(
     Ok(None)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn resolve_lookup_account(
     db: &D1Database,
     config: &AppConfig,
     acct: &str,
+) -> Result<MastodonAccountResponse> {
+    resolve_lookup_account_with_viewer(db, config, acct, None).await
+}
+
+pub(crate) async fn resolve_lookup_account_with_viewer(
+    db: &D1Database,
+    config: &AppConfig,
+    acct: &str,
+    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
     let handle = parse_lookup_handle(acct, config)?;
     if handle.is_local_to(&config.instance_domain) {
@@ -58,15 +67,20 @@ pub(crate) async fn resolve_lookup_account(
         .await?
         .ok_or_else(|| Error::RustError("remote account could not be cached".to_owned()))?;
     let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-    if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
-        apply_remote_actor_social_counts(&mut response, counts);
-    }
-    if let Ok(summary) = load_remote_actor_status_summary(db, &profile.actor_uri).await {
-        if summary.statuses_count > 0 {
-            response.statuses_count = summary.statuses_count;
-        }
-        response.last_status_at = summary.last_status_at;
-    }
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
+    };
+    let _ = persist_and_apply_remote_actor_social_counts(
+        db,
+        &profile.actor_uri,
+        &mut response,
+        &fetched.document,
+        Some(&fetch_context),
+    )
+    .await;
+    let _ = reconcile_remote_account_status_summary(db, &profile.actor_uri, &mut response).await;
     Ok(response)
 }
 
@@ -75,13 +89,22 @@ pub(crate) async fn resolve_search_account(
     config: &AppConfig,
     query: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
+    resolve_search_account_with_viewer(db, config, query, None).await
+}
+
+pub(crate) async fn resolve_search_account_with_viewer(
+    db: &D1Database,
+    config: &AppConfig,
+    query: &str,
+    viewer: Option<&LocalAccount>,
+) -> Result<Option<MastodonAccountResponse>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(None);
     }
 
     if account_search_is_complete_handle(query, config)
-        && let Ok(account) = resolve_lookup_account(db, config, query).await
+        && let Ok(account) = resolve_lookup_account_with_viewer(db, config, query, viewer).await
     {
         return Ok(Some(account));
     }
@@ -101,12 +124,7 @@ pub(crate) async fn resolve_search_account(
 
     if let Some(actor) = find_remote_actor_by_profile_url_or_actor_uri(db, query).await? {
         let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-        if let Ok(summary) = load_remote_actor_status_summary(db, &actor.actor_uri).await {
-            if summary.statuses_count > 0 {
-                response.statuses_count = summary.statuses_count;
-            }
-            response.last_status_at = summary.last_status_at;
-        }
+        let _ = reconcile_remote_account_status_summary(db, &actor.actor_uri, &mut response).await;
         return Ok(Some(response));
     }
 
@@ -115,9 +133,13 @@ pub(crate) async fn resolve_search_account(
         Err(_) => return Ok(None),
     };
     upsert_remote_actor(db, &profile).await?;
-    Ok(find_remote_actor_by_actor_uri(db, &profile.actor_uri)
-        .await?
-        .map(|actor| MastodonAccountResponse::from_remote_actor(&actor)))
+    let Some(actor) = find_remote_actor_by_actor_uri(db, &profile.actor_uri).await? else {
+        return Ok(None);
+    };
+    let mut response = MastodonAccountResponse::from_remote_actor(&actor);
+    // Profile-only fetch has no collection document here; counts stay at DB values.
+    let _ = reconcile_remote_account_status_summary(db, &actor.actor_uri, &mut response).await;
+    Ok(Some(response))
 }
 
 pub(crate) async fn resolve_remote_status_by_url(

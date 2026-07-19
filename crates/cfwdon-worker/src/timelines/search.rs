@@ -6,9 +6,10 @@ use crate::{
     LocalAccount, MastodonAccountResponse, MastodonStatusResponse, MastodonTagResponse,
     SearchCategoryFlags, SearchUrlQueryMode, SearchV2ExecutionPlan, SearchV2Query,
     account_search_non_exact_limit, effective_search_v2_following,
-    oauth_access_token_has_any_scope, resolve_cached_exact_search_account, resolve_search_account,
-    resolve_search_status, search_cached_accounts, search_statuses_for_v2,
-    search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
+    oauth_access_token_has_any_scope, resolve_cached_exact_search_account,
+    resolve_search_account_with_viewer, resolve_search_status, search_cached_accounts,
+    search_statuses_for_v2, search_v2_type_allows_url_resource, search_v2_unauthenticated_error,
+    search_v2_url_query_mode,
 };
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -242,7 +243,8 @@ async fn search_accounts_for_response(
     accounts.truncate(plan.limit as usize);
     if plan.resolve_enabled
         && accounts.is_empty()
-        && let Some(account) = resolve_search_account(db, config, query_text).await?
+        && let Some(account) =
+            resolve_search_account_with_viewer(db, config, query_text, viewer).await?
     {
         accounts.push(account);
         accounts.truncate(plan.limit as usize);
@@ -319,7 +321,7 @@ async fn resolve_search_url_only_response(
         return Ok(response);
     }
 
-    if let Some(account) = resolve_search_account(db, config, query).await? {
+    if let Some(account) = resolve_search_account_with_viewer(db, config, query, viewer).await? {
         if search_flags.accounts && search_v2_type_allows_url_resource(search_type, "accounts") {
             response.accounts.push(account);
         }

@@ -3,11 +3,12 @@ use super::reblog_response::{
 };
 use super::{
     AccountFilterMatcher, AccountRow, AppConfig, LocalAccount, LocalStatusResponseDetails,
-    MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow, RemoteActorRow,
-    RemoteMastodonPollResponsePreload, RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusResponseDetails, RemoteStatusRow, StatusCountsPreload, StatusRow,
-    account_has_thread_mutes, actor_url, build_remote_status_card_value, build_status_card_value,
-    count_rows, effective_remote_status_quote_state, effective_status_quote_state,
+    MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow,
+    REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow, RemoteMastodonPollResponsePreload,
+    RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusResponseDetails,
+    RemoteStatusRow, StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
+    build_remote_status_card_value, build_status_card_value, count_rows,
+    effective_remote_status_quote_state, effective_status_quote_state,
     find_local_status_by_object_uri, find_oauth_app_by_id, find_oauth_apps_by_ids,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
     find_remote_status_by_url_or_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids,
@@ -1023,7 +1024,7 @@ async fn load_mention_remote_actors(
         .collect::<Vec<_>>()
         .join(" OR ");
     let sql = format!(
-        "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE {clauses}"
     );
@@ -2580,6 +2581,10 @@ mod tests {
             profile_url: Some("https://remote.example/@alice".to_owned()),
             avatar_url: None,
             header_url: None,
+            followers_count: 0,
+            following_count: 0,
+            statuses_count: 0,
+            social_counts_updated_at: None,
         }
     }
 

@@ -68,10 +68,10 @@ use super::{
     scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
     search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
-    set_instance_translation_enabled, status_has_active_quote, status_is_searchable_by_scope,
-    status_matches_search_metadata, status_matches_search_scope, status_matches_search_syntax,
-    status_matches_search_timestamp, status_search_query_terms, status_search_rank,
-    streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
+    set_instance_translation_enabled, signed_get_signing_string, status_has_active_quote,
+    status_is_searchable_by_scope, status_matches_search_metadata, status_matches_search_scope,
+    status_matches_search_syntax, status_matches_search_timestamp, status_search_query_terms,
+    status_search_rank, streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
     tag_search_sort_key, text_mentions_search_library_viewer, timeline_fetch_limit, timeline_limit,
     translation_cache_source_fingerprint, translation_provider_language_code,
     translation_provider_language_matches, translation_provider_supported_target_language,
@@ -1815,6 +1815,18 @@ fn parse_http_url_parts_adds_root_for_bare_query() {
     let (host, path) = parse_http_url_parts("https://remote.example?foo=bar").unwrap();
     assert_eq!(host, "remote.example");
     assert_eq!(path, "/?foo=bar");
+}
+
+#[test]
+fn signed_get_signing_string_uses_get_request_target() {
+    assert_eq!(
+        signed_get_signing_string(
+            "/users/alice/followers",
+            "remote.example",
+            "Sun, 19 Jul 2026 12:00:00 GMT"
+        ),
+        "(request-target): get /users/alice/followers\nhost: remote.example\ndate: Sun, 19 Jul 2026 12:00:00 GMT"
+    );
 }
 
 #[test]
@@ -4859,6 +4871,10 @@ fn remote_account_response_uses_cached_profile_media() {
         profile_url: Some("https://remote.example/@alice".to_owned()),
         avatar_url: Some("https://cdn.remote.example/avatar.png".to_owned()),
         header_url: Some("https://cdn.remote.example/header.png".to_owned()),
+        followers_count: 0,
+        following_count: 0,
+        statuses_count: 0,
+        social_counts_updated_at: None,
     };
 
     let response = MastodonAccountResponse::from_remote_actor(&actor);
@@ -4888,6 +4904,10 @@ fn remote_account_response_uses_valid_created_at_fallback() {
         profile_url: None,
         avatar_url: None,
         header_url: None,
+        followers_count: 0,
+        following_count: 0,
+        statuses_count: 0,
+        social_counts_updated_at: None,
     };
 
     let response = MastodonAccountResponse::from_remote_actor(&actor);

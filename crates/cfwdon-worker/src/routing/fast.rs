@@ -144,8 +144,8 @@ fn account_router() -> Router<'static, ()> {
         .get_async("/api/v1/accounts/:id/statuses", |req, ctx| async move {
             account_statuses_response(req, ctx).await
         })
-        .get_async("/api/v1/accounts/:id", |_req, ctx| async move {
-            account_response(ctx).await
+        .get_async("/api/v1/accounts/:id", |req, ctx| async move {
+            account_response(req, ctx).await
         })
         .get_async("/api/v1/blocks", |req, ctx| async move {
             blocks_response(req, ctx).await

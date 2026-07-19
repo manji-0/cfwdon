@@ -7,9 +7,10 @@ use crate::content_helpers::strip_html_tags;
 use crate::instance::{actor_url, instance_host, parse_lookup_handle};
 use crate::relationship::list_accepted_follow_target_uris;
 use crate::remote::{
-    RemoteActorRow, apply_remote_actor_social_counts, fetch_remote_actor_profile_with_document,
+    REMOTE_ACTOR_ROW_COLUMNS, REMOTE_ACTOR_ROW_COLUMNS_ALIASED, RemoteActorRow,
+    RemoteCollectionFetchContext, fetch_remote_actor_profile_with_document,
     find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    load_remote_actor_social_counts_from_document, load_remote_actor_status_summaries,
+    load_remote_actor_status_summaries, persist_and_apply_remote_actor_social_counts,
     upsert_remote_actor,
 };
 use crate::responses::MastodonAccountResponse;
@@ -391,7 +392,7 @@ pub(crate) async fn search_remote_accounts(
     };
     let sql = if following_only {
         format!(
-            "SELECT ra.actor_uri, ra.username, ra.domain, ra.created_at, ra.locked, ra.bot, ra.discoverable, ra.indexable, ra.display_name, ra.summary_html, ra.profile_url, ra.avatar_url, ra.header_url
+            "SELECT {REMOTE_ACTOR_ROW_COLUMNS_ALIASED}
          FROM remote_actors ra
          JOIN follows f
            ON f.target_actor_uri = ra.actor_uri
@@ -406,7 +407,7 @@ pub(crate) async fn search_remote_accounts(
         )
     } else {
         format!(
-            "SELECT actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url
+            "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
          WHERE ({search_clause_list})
          ORDER BY username ASC, domain ASC
@@ -454,7 +455,6 @@ pub(crate) async fn search_cached_accounts(
     offset: u32,
     following_only: bool,
 ) -> Result<Vec<MastodonAccountResponse>> {
-    let viewer_account_id = viewer.map(|account| account.id());
     let query_limit = account_cache_query_limit(limit, offset);
     let search_terms = account_search_terms(query, config);
     let rank_query = account_search_term(query, config);
@@ -462,10 +462,10 @@ pub(crate) async fn search_cached_accounts(
     let accounts = load_cached_account_search_candidates(
         db,
         config,
+        viewer,
         query,
         query_limit,
         following_only,
-        viewer_account_id,
         &search_terms,
     )
     .await?;
@@ -482,12 +482,13 @@ fn account_cache_query_limit(limit: u32, offset: u32) -> u32 {
 async fn load_cached_account_search_candidates(
     db: &D1Database,
     config: &AppConfig,
+    viewer: Option<&LocalAccount>,
     query: &str,
     query_limit: u32,
     following_only: bool,
-    viewer_account_id: Option<&str>,
     search_terms: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
+    let viewer_account_id = viewer.map(|account| account.id());
     let (local_accounts, remote_actors) = futures_util::try_join!(
         search_local_accounts(
             db,
@@ -535,6 +536,8 @@ async fn load_cached_account_search_candidates(
     for actor in remote_actors {
         if let Some(response) = remote_search_account_response(
             db,
+            config,
+            viewer,
             &actor,
             remote_stats.get(&actor.actor_uri),
             search_terms,
@@ -567,6 +570,8 @@ fn local_search_account_response(
 
 async fn remote_search_account_response(
     db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
     actor: &RemoteActorRow,
     stats: Option<&crate::RemoteActorStatusSummary>,
     search_terms: &[String],
@@ -589,7 +594,7 @@ async fn remote_search_account_response(
         return Ok(None);
     };
 
-    let mut response = match fresh_remote_search_account_response(db, actor).await {
+    let mut response = match fresh_remote_search_account_response(db, config, actor, viewer).await {
         Ok(fresh_response) => fresh_response,
         Err(_) => fallback_response,
     };
@@ -695,7 +700,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         else {
             return Ok(None);
         };
-        fresh_remote_search_account_response(db, &actor).await?
+        fresh_remote_search_account_response(db, config, &actor, viewer).await?
     };
 
     if following_only {
@@ -720,7 +725,9 @@ pub(crate) async fn resolve_cached_exact_search_account(
 
 async fn fresh_remote_search_account_response(
     db: &D1Database,
+    config: &AppConfig,
     actor: &RemoteActorRow,
+    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
     let fetched = match fetch_remote_actor_profile_with_document(&actor.actor_uri).await {
         Ok(fetched) => fetched,
@@ -732,8 +739,18 @@ async fn fresh_remote_search_account_response(
         Some(actor) => MastodonAccountResponse::from_remote_actor(&actor),
         None => MastodonAccountResponse::from_remote_actor_profile(&profile),
     };
-    if let Ok(counts) = load_remote_actor_social_counts_from_document(&fetched.document).await {
-        apply_remote_actor_social_counts(&mut response, counts);
-    }
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
+    };
+    let _ = persist_and_apply_remote_actor_social_counts(
+        db,
+        &profile.actor_uri,
+        &mut response,
+        &fetched.document,
+        Some(&fetch_context),
+    )
+    .await;
     Ok(response)
 }

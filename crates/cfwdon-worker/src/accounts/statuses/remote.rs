@@ -3,17 +3,18 @@ use super::html::{account_statuses_html_response, remote_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::{
     AccountStatusesQuery, AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow,
-    RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
+    RemoteCollectionFetchContext, RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
     apply_remote_actor_social_counts, build_remote_status_response_with_timeline_preloads,
     escape_html, extract_remote_note_object, fetch_remote_activitypub_document,
     fetch_remote_actor_profile_with_document, find_follow_by_target,
     find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
     find_remote_status_ids_with_media, is_public_activitypub_visibility,
     list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
-    load_account_filter_matcher, load_remote_actor_social_counts_from_document,
-    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
-    preload_remote_status_viewer_state, preload_status_counts, preload_status_quote_counts,
-    remote_account_rest_id, remote_status_from_record, upsert_remote_actor, upsert_remote_status,
+    load_account_filter_matcher, load_remote_actor_social_counts_from_document_with_context,
+    persist_remote_actor_social_counts, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
+    preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
+    remote_status_from_record, upsert_remote_actor, upsert_remote_status,
     visibility_from_activitypub_object,
 };
 use worker::D1Database;
@@ -133,7 +134,7 @@ async fn load_remote_account_status_page(
         && !query.only_media.unwrap_or(false)
     {
         let (refreshed_actor, counts) =
-            refresh_remote_status_actor(db, config, actor, true, Some(limit)).await?;
+            refresh_remote_status_actor(db, config, viewer, actor, true, Some(limit)).await?;
         actor = refreshed_actor;
         actor_social_counts = counts;
         statuses = list_remote_statuses_by_actor_uri(
@@ -145,7 +146,7 @@ async fn load_remote_account_status_page(
     }
     let transient_statuses = if !is_following_remote_actor && !wants_html {
         let (statuses, counts) =
-            load_transient_remote_actor_statuses(config, &actor, query, limit).await?;
+            load_transient_remote_actor_statuses(db, config, viewer, &actor, query, limit).await?;
         actor_social_counts = counts;
         statuses
     } else {
@@ -156,9 +157,25 @@ async fn load_remote_account_status_page(
         && !statuses.is_empty()
         && let Ok(actor_document) = fetch_remote_activitypub_document(&actor.actor_uri).await
     {
-        actor_social_counts = load_remote_actor_social_counts_from_document(&actor_document)
-            .await
-            .ok();
+        let fetch_context = RemoteCollectionFetchContext {
+            config,
+            db,
+            signer: viewer,
+        };
+        let counts = load_remote_actor_social_counts_from_document_with_context(
+            &actor_document,
+            Some(&fetch_context),
+        )
+        .await
+        .ok()
+        .filter(|counts| counts.has_any());
+        if let Some(counts) = counts
+            && persist_remote_actor_social_counts(db, &actor.actor_uri, counts)
+                .await
+                .unwrap_or(false)
+        {
+            actor_social_counts = Some(counts);
+        }
     }
 
     Ok(RemoteAccountStatusPage {
@@ -295,13 +312,17 @@ async fn remote_account_statuses_json_response(
             None,
         )
         .await?;
-        if let Some(counts) = actor_social_counts {
+        if let Some(counts) = actor_social_counts
+            && counts.has_any()
+        {
             apply_remote_actor_social_counts(&mut status_response.account, counts);
         }
         response.push(status_response);
     }
     for mut status_response in transient_statuses {
-        if let Some(counts) = actor_social_counts {
+        if let Some(counts) = actor_social_counts
+            && counts.has_any()
+        {
             apply_remote_actor_social_counts(&mut status_response.account, counts);
         }
         response.push(status_response);
@@ -312,6 +333,7 @@ async fn remote_account_statuses_json_response(
 async fn refresh_remote_status_actor(
     db: &D1Database,
     config: &AppConfig,
+    viewer: Option<&LocalAccount>,
     actor: RemoteActorRow,
     include_social_counts: bool,
     status_fetch_limit: Option<u32>,
@@ -336,9 +358,27 @@ async fn refresh_remote_status_actor(
         .await?
         .unwrap_or(actor);
     let social_counts = if include_social_counts {
-        load_remote_actor_social_counts_from_document(&fetched.document)
-            .await
-            .ok()
+        let fetch_context = RemoteCollectionFetchContext {
+            config,
+            db,
+            signer: viewer,
+        };
+        let counts = load_remote_actor_social_counts_from_document_with_context(
+            &fetched.document,
+            Some(&fetch_context),
+        )
+        .await
+        .ok()
+        .filter(|counts| counts.has_any());
+        if let Some(counts) = counts
+            && persist_remote_actor_social_counts(db, &profile.actor_uri, counts)
+                .await
+                .unwrap_or(false)
+        {
+            Some(counts)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -374,7 +414,9 @@ async fn hydrate_remote_actor_statuses_from_outbox(
 }
 
 async fn load_transient_remote_actor_statuses(
+    db: &D1Database,
     config: &AppConfig,
+    viewer: Option<&LocalAccount>,
     actor: &RemoteActorRow,
     query: &AccountStatusesQuery,
     limit: u32,
@@ -383,9 +425,28 @@ async fn load_transient_remote_actor_statuses(
     Option<crate::RemoteActorSocialCounts>,
 )> {
     let actor_document = fetch_remote_activitypub_document(&actor.actor_uri).await?;
-    let social_counts = load_remote_actor_social_counts_from_document(&actor_document)
-        .await
-        .ok();
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
+    };
+    let social_counts = match load_remote_actor_social_counts_from_document_with_context(
+        &actor_document,
+        Some(&fetch_context),
+    )
+    .await
+    .ok()
+    .filter(|counts| counts.has_any())
+    {
+        Some(counts)
+            if persist_remote_actor_social_counts(db, &actor.actor_uri, counts)
+                .await
+                .unwrap_or(false) =>
+        {
+            Some(counts)
+        }
+        _ => None,
+    };
     let Some(outbox) = remote_actor_outbox_page(&actor_document).await? else {
         return Ok((Vec::new(), social_counts));
     };

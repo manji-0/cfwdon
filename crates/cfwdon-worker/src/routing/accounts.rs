@@ -161,7 +161,7 @@ pub(crate) fn add_account_routes(router: Router<'static, ()>) -> Router<'static,
             "/api/v1/accounts/:id/identity_proofs",
             |req, ctx| async move { identity_proofs_response(req, ctx).await },
         )
-        .get_async("/api/v1/accounts/:id", |_req, ctx| async move {
-            account_response(ctx).await
+        .get_async("/api/v1/accounts/:id", |req, ctx| async move {
+            account_response(req, ctx).await
         })
 }

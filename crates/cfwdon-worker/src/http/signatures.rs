@@ -5,13 +5,94 @@ use super::{
     verify_http_signature_bytes,
 };
 use crate::auth::load_account_private_key_jwk;
-use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts};
+use crate::federation::{
+    RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts, parse_remote_http_url,
+    resolve_remote_redirect_location, validate_remote_fetch_url,
+};
 use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use wasm_bindgen::JsValue;
-use worker::{D1Database, Error, Fetch, Headers, Method, Request, RequestInit, Result};
+use worker::{
+    D1Database, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result,
+};
+
+const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
+const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
+
+pub(crate) fn signed_get_signing_string(path_and_query: &str, host: &str, date: &str) -> String {
+    format!("(request-target): get {path_and_query}\nhost: {host}\ndate: {date}")
+}
+
+pub(crate) async fn fetch_signed_activitypub_document(
+    config: &AppConfig,
+    db: &D1Database,
+    account: &LocalAccount,
+    url: &str,
+) -> Result<serde_json::Value> {
+    let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
+        .await?
+        .ok_or_else(|| Error::RustError("account private signing key is missing".to_owned()))?;
+    let key_id = public_key_id(config, account.username());
+    let mut current_url = parse_remote_http_url(url)?;
+    validate_remote_fetch_url(&current_url).await?;
+
+    for redirect_count in 0..=MAX_SIGNED_REMOTE_FETCH_REDIRECTS {
+        let (host, path_and_query) = parse_http_url_parts(current_url.as_str())?;
+        let date = now_http_date_string()?;
+        let signing_string = signed_get_signing_string(&path_and_query, &host, &date);
+        let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes()).await?;
+
+        let headers = Headers::new();
+        headers.set("Accept", ACTIVITYPUB_ACCEPT)?;
+        headers.set("Date", &date)?;
+        headers.set(
+            "Signature",
+            &format!(
+                "keyId=\"{key_id}\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date\",signature=\"{signature}\""
+            ),
+        )?;
+
+        let mut init = RequestInit::new();
+        init.with_method(Method::Get)
+            .with_headers(headers)
+            .with_redirect(RequestRedirect::Manual);
+        let request = Request::new_with_init(current_url.as_str(), &init)?;
+        let mut response = Fetch::Request(request).send().await?;
+        let status = response.status_code();
+
+        if (300..400).contains(&status) {
+            if redirect_count == MAX_SIGNED_REMOTE_FETCH_REDIRECTS {
+                return Err(Error::RustError(format!(
+                    "signed remote fetch exceeded redirect limit for {url}"
+                )));
+            }
+            let location = response.headers().get("Location")?.ok_or_else(|| {
+                Error::RustError(format!(
+                    "signed remote fetch redirect missing Location header for {}",
+                    current_url
+                ))
+            })?;
+            current_url = resolve_remote_redirect_location(&current_url, &location)?;
+            validate_remote_fetch_url(&current_url).await?;
+            continue;
+        }
+
+        if status / 100 != 2 {
+            return Err(Error::RustError(format!(
+                "failed to fetch signed remote document {}: HTTP {}",
+                current_url, status
+            )));
+        }
+
+        return response.json().await;
+    }
+
+    Err(Error::RustError(format!(
+        "signed remote fetch exceeded redirect limit for {url}"
+    )))
+}
 
 pub(crate) async fn send_signed_activity(
     config: &AppConfig,

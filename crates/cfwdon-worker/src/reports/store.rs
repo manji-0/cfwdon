@@ -193,6 +193,10 @@ mod tests {
             profile_url: Some("https://remote.example/@bob".to_owned()),
             avatar_url: None,
             header_url: None,
+            followers_count: 0,
+            following_count: 0,
+            statuses_count: 0,
+            social_counts_updated_at: None,
         }
     }
 

@@ -4090,6 +4090,7 @@ pub(crate) async fn accounts_index_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {
@@ -4106,25 +4107,38 @@ pub(crate) async fn accounts_index_response(
                 let mut account = match fetched.as_ref() {
                     Ok(fetched) => {
                         let _ = crate::upsert_remote_actor(&db, &fetched.profile).await;
-                        crate::MastodonAccountResponse::from_remote_actor_profile(&fetched.profile)
+                        match crate::find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
+                            .await?
+                        {
+                            Some(cached) => {
+                                crate::MastodonAccountResponse::from_remote_actor(&cached)
+                            }
+                            None => crate::MastodonAccountResponse::from_remote_actor_profile(
+                                &fetched.profile,
+                            ),
+                        }
                     }
                     Err(_) => crate::MastodonAccountResponse::from_remote_actor(&actor),
                 };
-                if let Ok(fetched) = fetched
-                    && let Ok(counts) =
-                        crate::load_remote_actor_social_counts_from_document(&fetched.document)
-                            .await
-                {
-                    crate::apply_remote_actor_social_counts(&mut account, counts);
+                if let Ok(fetched) = fetched.as_ref() {
+                    let fetch_context = crate::RemoteCollectionFetchContext {
+                        config: &config,
+                        db: &db,
+                        signer: viewer.as_ref(),
+                    };
+                    let _ = crate::persist_and_apply_remote_actor_social_counts(
+                        &db,
+                        &fetched.profile.actor_uri,
+                        &mut account,
+                        &fetched.document,
+                        Some(&fetch_context),
+                    )
+                    .await;
                 }
-                if let Ok(summary) =
-                    crate::load_remote_actor_status_summary(&db, &account.uri).await
-                {
-                    if summary.statuses_count > 0 {
-                        account.statuses_count = summary.statuses_count;
-                    }
-                    account.last_status_at = summary.last_status_at;
-                }
+                let account_uri = account.uri.clone();
+                let _ =
+                    crate::reconcile_remote_account_status_summary(&db, &account_uri, &mut account)
+                        .await;
                 response.push(account);
             }
             None => {}
