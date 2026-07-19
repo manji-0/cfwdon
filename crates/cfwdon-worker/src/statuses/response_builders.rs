@@ -14,22 +14,24 @@ use super::{
     MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow,
     MentionAccountsPreload, RemoteActorRow, RemoteMastodonPollResponsePreload,
     RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusResponseDetails,
-    RemoteStatusRow, StatusCountsPreload, StatusRow, account_has_thread_mutes, actor_url,
-    build_remote_status_card_value, build_status_card_value, build_status_mentions,
-    build_status_mentions_with_preload, count_rows, effective_remote_status_quote_state,
-    effective_status_quote_state, find_local_status_by_object_uri, find_oauth_app_by_id,
-    find_oauth_apps_by_ids, find_remote_actor_by_actor_uri,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
-    find_statuses_by_ap_ids, find_statuses_by_ids, has_remote_status_edit_snapshots,
-    is_blocking_actor, is_local_follower_authorized, is_local_status_bookmarked_by,
-    is_local_status_favourited_by, is_local_status_pinned_by, is_local_status_reblogged_by,
-    is_local_status_thread_muted_by, is_muted_actor, is_remote_status_bookmarked_by,
-    is_remote_status_favourited_by, is_remote_status_reblogged_by, load_local_status_counts,
-    load_local_status_response_preload, load_mastodon_poll_response,
+    RemoteStatusRow, StatusCountsPreload, StatusRow, accepted_quote_document_state,
+    account_has_thread_mutes, actor_url, build_remote_status_card_value, build_status_card_value,
+    build_status_mentions, build_status_mentions_with_preload, count_rows,
+    effective_remote_status_quote_state, effective_status_quote_state,
+    find_local_status_by_object_uri, find_oauth_app_by_id, find_oauth_apps_by_ids,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
+    find_remote_status_by_url_or_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids,
+    has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
+    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
+    load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
     load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
     load_status_filtered, load_status_updated_at, local_status_identity_from_uri,
-    local_status_ids_thread_muted_by, local_status_target_uri,
-    resolve_local_status_response_subject, strip_html_tags,
+    local_status_ids_thread_muted_by, local_status_target_uri, pending_quote_document,
+    quote_document_for_local_state, quote_document_from_response,
+    remote_quote_visibility_is_embeddable, resolve_local_status_response_subject, strip_html_tags,
+    unauthorized_quote_document,
 };
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
@@ -162,55 +164,6 @@ fn local_status_edited_at_from_updated_at(
     updated_at: Option<String>,
 ) -> Option<String> {
     updated_at.filter(|updated_at| updated_at != created_at)
-}
-
-pub(crate) fn quote_document_with_state(
-    state: &str,
-    quoted_status: serde_json::Value,
-) -> serde_json::Value {
-    serde_json::json!({
-        "state": state,
-        "quoted_status": quoted_status,
-    })
-}
-
-pub(crate) fn pending_quote_document() -> serde_json::Value {
-    quote_placeholder_document("pending")
-}
-
-pub(crate) fn quote_placeholder_document(state: &str) -> serde_json::Value {
-    serde_json::json!({
-        "state": state,
-        "quoted_status": serde_json::Value::Null,
-    })
-}
-
-fn unauthorized_quote_document() -> serde_json::Value {
-    quote_placeholder_document("unauthorized")
-}
-
-fn quote_state_uses_placeholder(state: &str) -> bool {
-    matches!(state, "revoked" | "rejected" | "unauthorized" | "deleted")
-}
-
-fn quote_document_for_local_state(local_quote_state: Option<&str>) -> Option<serde_json::Value> {
-    match local_quote_state {
-        Some("pending") => Some(pending_quote_document()),
-        Some(state) if quote_state_uses_placeholder(state) => {
-            Some(quote_placeholder_document(state))
-        }
-        _ => None,
-    }
-}
-
-fn quote_document_from_response(
-    state: &str,
-    response: MastodonStatusResponse,
-) -> serde_json::Value {
-    quote_document_with_state(
-        state,
-        serde_json::to_value(response).unwrap_or(serde_json::Value::Null),
-    )
 }
 
 fn accepted_status_quotes_count_sql() -> &'static str {
@@ -718,14 +671,6 @@ fn remote_media_attachment_values(
             .unwrap_or(serde_json::Value::Null)
         })
         .collect()
-}
-
-fn remote_quote_visibility_is_embeddable(visibility: &str) -> bool {
-    matches!(visibility, "public" | "unlisted")
-}
-
-fn accepted_quote_document_state() -> &'static str {
-    "accepted"
 }
 
 async fn local_quoted_status_document_state(
@@ -2007,39 +1952,8 @@ mod tests {
     }
 
     #[test]
-    fn quote_state_uses_placeholder_for_terminal_states() {
-        assert!(quote_state_uses_placeholder("revoked"));
-        assert!(quote_state_uses_placeholder("rejected"));
-        assert!(quote_state_uses_placeholder("unauthorized"));
-        assert!(quote_state_uses_placeholder("deleted"));
-        assert!(!quote_state_uses_placeholder("pending"));
-        assert!(!quote_state_uses_placeholder("accepted"));
-    }
-
-    #[test]
     fn remote_media_attachment_values_allows_empty_attachments() {
         assert!(remote_media_attachment_values(&[]).is_empty());
-    }
-
-    #[test]
-    fn remote_quote_visibility_is_embeddable_for_public_timelines() {
-        assert!(remote_quote_visibility_is_embeddable("public"));
-        assert!(remote_quote_visibility_is_embeddable("unlisted"));
-        assert!(!remote_quote_visibility_is_embeddable("private"));
-        assert!(!remote_quote_visibility_is_embeddable("direct"));
-    }
-
-    #[test]
-    fn accepted_quote_document_state_matches_mastodon_state_name() {
-        assert_eq!(accepted_quote_document_state(), "accepted");
-    }
-
-    #[test]
-    fn unauthorized_quote_document_uses_placeholder_shape() {
-        let document = unauthorized_quote_document();
-
-        assert_eq!(document["state"], serde_json::json!("unauthorized"));
-        assert_eq!(document["quoted_status"], serde_json::Value::Null);
     }
 
     #[test]
