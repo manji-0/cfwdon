@@ -442,7 +442,7 @@ async fn hydrate_remote_actor_statuses_from_outbox(
     };
     let mut inserted = 0usize;
     let mut pages_fetched = 0usize;
-    while inserted < limit && pages_fetched < TRANSIENT_OUTBOX_MAX_PAGES {
+    while inserted < limit && pages_fetched < TRANSIENT_OUTBOX_COLLECT_MAX_PAGES {
         pages_fetched += 1;
         for item in activitypub_collection_items(&page) {
             if inserted >= limit {
@@ -546,10 +546,9 @@ async fn load_transient_remote_actor_statuses(
     let limit = limit.clamp(1, 20) as usize;
     let max_id = query.max_id.as_deref();
     let mut response = Vec::new();
-    let mut pages_fetched = 0usize;
-    let mut passed_max_id = max_id.is_none();
-    while response.len() < limit && pages_fetched < TRANSIENT_OUTBOX_MAX_PAGES {
-        pages_fetched += 1;
+    let mut walk = TransientOutboxWalkState::new(max_id.is_none());
+    while response.len() < limit && walk.can_fetch_page() {
+        walk.begin_page();
         for item in activitypub_collection_items(&page) {
             if response.len() >= limit {
                 break;
@@ -563,14 +562,9 @@ async fn load_transient_remote_actor_statuses(
             let Ok(status) = remote_status_row_from_activitypub_object(actor, object) else {
                 continue;
             };
-            if let Some(max_id) = max_id {
-                if status.id == max_id {
-                    passed_max_id = true;
-                    continue;
-                }
-                if !passed_max_id {
-                    continue;
-                }
+            if !transient_outbox_should_collect_status(&status.id, max_id, &mut walk.passed_max_id)
+            {
+                continue;
             }
             if let Some(min_id) = min_id
                 && status.id == min_id
@@ -655,7 +649,56 @@ fn transient_mastodon_status_response(
     response
 }
 
-const TRANSIENT_OUTBOX_MAX_PAGES: usize = 5;
+const TRANSIENT_OUTBOX_COLLECT_MAX_PAGES: usize = 5;
+const TRANSIENT_OUTBOX_SEEK_MAX_PAGES: usize = 40;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TransientOutboxWalkState {
+    passed_max_id: bool,
+    seek_pages: usize,
+    collect_pages: usize,
+}
+
+impl TransientOutboxWalkState {
+    fn new(passed_max_id: bool) -> Self {
+        Self {
+            passed_max_id,
+            seek_pages: 0,
+            collect_pages: 0,
+        }
+    }
+
+    fn can_fetch_page(&self) -> bool {
+        if !self.passed_max_id {
+            self.seek_pages < TRANSIENT_OUTBOX_SEEK_MAX_PAGES
+        } else {
+            self.collect_pages < TRANSIENT_OUTBOX_COLLECT_MAX_PAGES
+        }
+    }
+
+    fn begin_page(&mut self) {
+        if !self.passed_max_id {
+            self.seek_pages += 1;
+        } else {
+            self.collect_pages += 1;
+        }
+    }
+}
+
+fn transient_outbox_should_collect_status(
+    status_id: &str,
+    max_id: Option<&str>,
+    passed_max_id: &mut bool,
+) -> bool {
+    match max_id {
+        Some(max_id) if status_id == max_id => {
+            *passed_max_id = true;
+            false
+        }
+        Some(_) if !*passed_max_id => false,
+        _ => true,
+    }
+}
 
 async fn remote_actor_outbox_page(
     actor_document: &serde_json::Value,
@@ -778,4 +821,61 @@ fn remote_status_published_at(object: &serde_json::Value) -> String {
 fn remote_account_status_visible(status: &RemoteStatusRow, is_following_actor: bool) -> bool {
     is_public_activitypub_visibility(status.visibility.as_str())
         || (is_following_actor && status.visibility == cfwdon_domain::Visibility::FollowersOnly)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TRANSIENT_OUTBOX_COLLECT_MAX_PAGES, TRANSIENT_OUTBOX_SEEK_MAX_PAGES,
+        TransientOutboxWalkState, transient_outbox_should_collect_status,
+    };
+
+    #[test]
+    fn transient_outbox_seek_pages_do_not_consume_collect_budget() {
+        let mut walk = TransientOutboxWalkState::new(false);
+        for _ in 0..10 {
+            assert!(walk.can_fetch_page());
+            walk.begin_page();
+        }
+        assert_eq!(walk.seek_pages, 10);
+        assert_eq!(walk.collect_pages, 0);
+
+        assert!(!transient_outbox_should_collect_status(
+            "cursor",
+            Some("cursor"),
+            &mut walk.passed_max_id
+        ));
+        assert!(walk.passed_max_id);
+
+        for _ in 0..TRANSIENT_OUTBOX_COLLECT_MAX_PAGES {
+            assert!(walk.can_fetch_page());
+            walk.begin_page();
+        }
+        assert_eq!(walk.collect_pages, TRANSIENT_OUTBOX_COLLECT_MAX_PAGES);
+        assert!(!walk.can_fetch_page());
+    }
+
+    #[test]
+    fn transient_outbox_seek_budget_caps_unmatched_max_id_walk() {
+        let mut walk = TransientOutboxWalkState::new(false);
+        for _ in 0..TRANSIENT_OUTBOX_SEEK_MAX_PAGES {
+            assert!(walk.can_fetch_page());
+            walk.begin_page();
+        }
+        assert!(!walk.can_fetch_page());
+        assert!(!walk.passed_max_id);
+    }
+
+    #[test]
+    fn transient_outbox_collects_after_max_id_without_prior_seek_when_absent() {
+        let mut walk = TransientOutboxWalkState::new(true);
+        assert!(transient_outbox_should_collect_status(
+            "a",
+            None,
+            &mut walk.passed_max_id
+        ));
+        walk.begin_page();
+        assert_eq!(walk.collect_pages, 1);
+        assert_eq!(walk.seek_pages, 0);
+    }
 }

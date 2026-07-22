@@ -1,13 +1,15 @@
 use super::collections::CollectionAccountEntry;
 use crate::{
-    MastodonAccountResponse, Result, fetch_activitypub_document_with_context,
-    fetch_remote_activitypub_document, fetch_remote_actor_profile_with_context,
+    LocalAccount, MastodonAccountResponse, RemoteCollectionFetchContext, Result,
+    fetch_activitypub_document_with_context, fetch_remote_actor_profile_with_context,
     find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri, upsert_remote_actor,
 };
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
 
-const REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT: usize = 8;
+/// Absolute-position cursors stay stable across lazy page fetches.
+const REMOTE_FOLLOW_CURSOR_BASE: i64 = i64::MAX / 4;
+const REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT: usize = 40;
 const REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY: usize = 8;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,10 +17,51 @@ enum RemoteFollowCollectionReference {
     Uri(String),
 }
 
+fn remote_follow_collection_cursor_id(index: usize) -> i64 {
+    REMOTE_FOLLOW_CURSOR_BASE - index as i64
+}
+
+fn remote_follow_collection_reference_in_page(
+    cursor_id: i64,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> bool {
+    max_id.is_none_or(|value| cursor_id < value) && since_id.is_none_or(|value| cursor_id > value)
+}
+
+fn select_remote_follow_collection_page(
+    references: impl IntoIterator<Item = RemoteFollowCollectionReference>,
+    start_index: usize,
+    limit: u32,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+) -> (usize, Vec<(i64, RemoteFollowCollectionReference)>, bool) {
+    let mut absolute_index = start_index;
+    let mut selected = Vec::new();
+    let mut exhausted_lower_bound = false;
+    for reference in references {
+        let cursor_id = remote_follow_collection_cursor_id(absolute_index);
+        absolute_index += 1;
+        if since_id.is_some_and(|value| cursor_id <= value) {
+            exhausted_lower_bound = true;
+            break;
+        }
+        if !remote_follow_collection_reference_in_page(cursor_id, max_id, since_id) {
+            continue;
+        }
+        selected.push((cursor_id, reference));
+        if selected.len() >= limit as usize {
+            break;
+        }
+    }
+    (absolute_index, selected, exhausted_lower_bound)
+}
+
 async fn resolve_remote_follow_collection_account(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Result<Option<MastodonAccountResponse>> {
     let RemoteFollowCollectionReference::Uri(actor_uri) = reference;
     if let Some(account) = find_local_account_response_by_actor_uri(db, config, actor_uri).await? {
@@ -29,7 +72,7 @@ async fn resolve_remote_follow_collection_account(
         return Ok(Some(MastodonAccountResponse::from_remote_actor(&actor)));
     }
 
-    let fetched = match fetch_remote_actor_profile_with_context(actor_uri, None).await {
+    let fetched = match fetch_remote_actor_profile_with_context(actor_uri, fetch_context).await {
         Ok(fetched) => fetched,
         Err(_) => return Ok(None),
     };
@@ -50,36 +93,52 @@ async fn resolve_remote_follow_collection_account(
 pub(crate) async fn remote_follow_collection_entries(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     collection_field: &str,
     limit: u32,
     max_id: Option<i64>,
     since_id: Option<i64>,
 ) -> Result<Option<Vec<CollectionAccountEntry>>> {
-    let actor_document = match fetch_activitypub_document_with_context(actor_uri, None).await {
-        Ok(document) => document,
-        Err(_) => return Ok(None),
-    };
+    let fetch_context = viewer.map(|signer| RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: Some(signer),
+    });
+    let fetch_context = fetch_context.as_ref();
+    let actor_document =
+        match fetch_activitypub_document_with_context(actor_uri, fetch_context).await {
+            Ok(document) => document,
+            Err(_) => return Ok(None),
+        };
     let Some(collection_uri) =
         extract_remote_follow_collection_reference(actor_document.get(collection_field))
     else {
         return Ok(Some(Vec::new()));
     };
-    let references = match fetch_remote_follow_collection_item_references(&collection_uri).await {
+    let references = match fetch_remote_follow_collection_page_references(
+        &collection_uri,
+        fetch_context,
+        limit,
+        max_id,
+        since_id,
+    )
+    .await
+    {
         Ok(references) => references,
         Err(_) => return Ok(None),
     };
 
-    let resolved_entries = stream::iter(page_remote_follow_collection_references(
-        references, limit, max_id, since_id,
-    ))
-    .map(|(cursor_id, reference)| async move {
-        let resolved = resolve_remote_follow_collection_account(db, config, &reference).await?;
-        Ok::<_, worker::Error>(resolved.map(|account| (cursor_id, account)))
-    })
-    .buffered(REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY)
-    .collect::<Vec<_>>()
-    .await;
+    let resolved_entries = stream::iter(references)
+        .map(|(cursor_id, reference)| async move {
+            let resolved =
+                resolve_remote_follow_collection_account(db, config, &reference, fetch_context)
+                    .await?;
+            Ok::<_, worker::Error>(resolved.map(|account| (cursor_id, account)))
+        })
+        .buffered(REMOTE_FOLLOW_ACCOUNT_RESOLVE_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
 
     let mut entries = Vec::new();
     for entry in resolved_entries {
@@ -94,38 +153,34 @@ pub(crate) async fn remote_follow_collection_entries(
     Ok(Some(entries))
 }
 
-fn page_remote_follow_collection_references(
-    references: Vec<RemoteFollowCollectionReference>,
+async fn fetch_remote_follow_collection_page_references(
+    collection_uri: &str,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
     limit: u32,
     max_id: Option<i64>,
     since_id: Option<i64>,
-) -> Vec<(i64, RemoteFollowCollectionReference)> {
-    let total = references.len() as i64;
-    references
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, reference)| {
-            let cursor_id = total - index as i64;
-            if max_id.is_some_and(|value| cursor_id >= value)
-                || since_id.is_some_and(|value| cursor_id <= value)
-            {
-                return None;
-            }
-            Some((cursor_id, reference))
-        })
-        .take(limit as usize)
-        .collect()
-}
-
-async fn fetch_remote_follow_collection_item_references(
-    collection_uri: &str,
-) -> Result<Vec<RemoteFollowCollectionReference>> {
-    let collection = fetch_remote_activitypub_document(collection_uri).await?;
+) -> Result<Vec<(i64, RemoteFollowCollectionReference)>> {
+    let collection = fetch_activitypub_document_with_context(collection_uri, fetch_context).await?;
     let mut seen_items = HashSet::new();
-    let mut items = Vec::new();
-    append_remote_follow_collection_item_references(&mut items, &mut seen_items, &collection);
-    if !items.is_empty() && collection.get("first").is_none() {
-        return Ok(items);
+    let mut absolute_index = 0usize;
+    let mut selected = Vec::new();
+
+    let initial_items =
+        take_unique_remote_follow_collection_item_references(&mut seen_items, &collection);
+    let (next_index, page_selected, exhausted) = select_remote_follow_collection_page(
+        initial_items,
+        absolute_index,
+        limit,
+        max_id,
+        since_id,
+    );
+    absolute_index = next_index;
+    selected.extend(page_selected);
+    if exhausted || selected.len() >= limit as usize {
+        return Ok(selected);
+    }
+    if !seen_items.is_empty() && collection.get("first").is_none() {
+        return Ok(selected);
     }
 
     let mut seen_pages = HashSet::new();
@@ -135,11 +190,20 @@ async fn fetch_remote_follow_collection_item_references(
         {
             Some(first_page_uri)
         } else {
-            append_remote_follow_collection_item_references(
-                &mut items,
-                &mut seen_items,
-                first_page,
+            let embedded_items =
+                take_unique_remote_follow_collection_item_references(&mut seen_items, first_page);
+            let (next_index, page_selected, exhausted) = select_remote_follow_collection_page(
+                embedded_items,
+                absolute_index,
+                limit.saturating_sub(selected.len() as u32),
+                max_id,
+                since_id,
             );
+            absolute_index = next_index;
+            selected.extend(page_selected);
+            if exhausted || selected.len() >= limit as usize {
+                return Ok(selected);
+            }
             extract_remote_follow_collection_page_reference(first_page.get("next"))
         }
     } else {
@@ -147,30 +211,47 @@ async fn fetch_remote_follow_collection_item_references(
     };
 
     while let Some(page_uri) = next_page_uri.take() {
+        if selected.len() >= limit as usize {
+            break;
+        }
         if seen_pages.len() >= REMOTE_FOLLOW_COLLECTION_PAGE_FETCH_LIMIT
             || !seen_pages.insert(page_uri.clone())
         {
             break;
         }
-        let page = fetch_remote_activitypub_document(&page_uri).await?;
-        append_remote_follow_collection_item_references(&mut items, &mut seen_items, &page);
+        let page = fetch_activitypub_document_with_context(&page_uri, fetch_context).await?;
+        let page_items =
+            take_unique_remote_follow_collection_item_references(&mut seen_items, &page);
+        let (next_index, page_selected, exhausted) = select_remote_follow_collection_page(
+            page_items,
+            absolute_index,
+            limit.saturating_sub(selected.len() as u32),
+            max_id,
+            since_id,
+        );
+        absolute_index = next_index;
+        selected.extend(page_selected);
+        if exhausted || selected.len() >= limit as usize {
+            break;
+        }
         next_page_uri = extract_remote_follow_collection_page_reference(page.get("next"));
     }
 
-    Ok(items)
+    Ok(selected)
 }
 
-fn append_remote_follow_collection_item_references(
-    items: &mut Vec<RemoteFollowCollectionReference>,
+fn take_unique_remote_follow_collection_item_references(
     seen_items: &mut HashSet<String>,
     collection: &serde_json::Value,
-) {
+) -> Vec<RemoteFollowCollectionReference> {
+    let mut items = Vec::new();
     for item in extract_remote_follow_collection_item_references(collection) {
         let key = item.key();
         if seen_items.insert(key) {
             items.push(item);
         }
     }
+    items
 }
 
 fn extract_remote_follow_collection_item_references(
@@ -250,6 +331,10 @@ impl RemoteFollowCollectionReference {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn uri(path: &str) -> RemoteFollowCollectionReference {
+        RemoteFollowCollectionReference::Uri(format!("https://remote.example/users/{path}"))
+    }
 
     #[test]
     fn remote_follow_collection_references_extract_items_in_order() {
@@ -335,47 +420,57 @@ mod tests {
     }
 
     #[test]
-    fn remote_follow_collection_references_page_before_resolution() {
-        let references = vec![
-            RemoteFollowCollectionReference::Uri("https://remote.example/users/a".to_owned()),
-            RemoteFollowCollectionReference::Uri("https://remote.example/users/b".to_owned()),
-            RemoteFollowCollectionReference::Uri("https://remote.example/users/c".to_owned()),
-            RemoteFollowCollectionReference::Uri("https://remote.example/users/d".to_owned()),
-        ];
-
+    fn remote_follow_collection_page_uses_absolute_cursors() {
+        let references = vec![uri("a"), uri("b"), uri("c"), uri("d")];
+        let (_, first_page, _) =
+            select_remote_follow_collection_page(references.clone(), 0, 2, None, None);
         assert_eq!(
-            page_remote_follow_collection_references(references.clone(), 2, None, None),
+            first_page,
             vec![
-                (
-                    4,
-                    RemoteFollowCollectionReference::Uri(
-                        "https://remote.example/users/a".to_owned()
-                    )
-                ),
-                (
-                    3,
-                    RemoteFollowCollectionReference::Uri(
-                        "https://remote.example/users/b".to_owned()
-                    )
-                ),
+                (remote_follow_collection_cursor_id(0), uri("a")),
+                (remote_follow_collection_cursor_id(1), uri("b")),
             ]
         );
+
+        let max_id = remote_follow_collection_cursor_id(1);
+        let (_, second_page, _) =
+            select_remote_follow_collection_page(references, 0, 2, Some(max_id), None);
         assert_eq!(
-            page_remote_follow_collection_references(references, 2, Some(3), None),
+            second_page,
             vec![
-                (
-                    2,
-                    RemoteFollowCollectionReference::Uri(
-                        "https://remote.example/users/c".to_owned()
-                    )
-                ),
-                (
-                    1,
-                    RemoteFollowCollectionReference::Uri(
-                        "https://remote.example/users/d".to_owned()
-                    )
-                ),
+                (remote_follow_collection_cursor_id(2), uri("c")),
+                (remote_follow_collection_cursor_id(3), uri("d")),
             ]
+        );
+    }
+
+    #[test]
+    fn remote_follow_collection_page_can_resume_from_later_absolute_index() {
+        let page_two = vec![uri("c"), uri("d")];
+        let (next_index, selected, exhausted) =
+            select_remote_follow_collection_page(page_two, 2, 2, None, None);
+        assert_eq!(next_index, 4);
+        assert!(!exhausted);
+        assert_eq!(
+            selected,
+            vec![
+                (remote_follow_collection_cursor_id(2), uri("c")),
+                (remote_follow_collection_cursor_id(3), uri("d")),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_follow_collection_page_stops_at_since_id_lower_bound() {
+        let references = vec![uri("a"), uri("b"), uri("c"), uri("d")];
+        let since_id = remote_follow_collection_cursor_id(1);
+        let (next_index, selected, exhausted) =
+            select_remote_follow_collection_page(references, 0, 10, None, Some(since_id));
+        assert!(exhausted);
+        assert_eq!(next_index, 2);
+        assert_eq!(
+            selected,
+            vec![(remote_follow_collection_cursor_id(0), uri("a"))]
         );
     }
 }

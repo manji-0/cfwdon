@@ -87,6 +87,7 @@ async fn account_follow_collection_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
     let db = ctx.d1(&config.database_binding)?;
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let entries = match resolve_requested_account_reference(&db, &config, &account_id).await? {
         Some(AccountReference::Local(account)) => match kind {
@@ -102,6 +103,7 @@ async fn account_follow_collection_response(
                 remote_actor_follower_entries(
                     &db,
                     &config,
+                    viewer.as_ref(),
                     &actor.actor_uri,
                     limit.saturating_add(1),
                     max_id,
@@ -113,6 +115,7 @@ async fn account_follow_collection_response(
                 remote_actor_following_entries(
                     &db,
                     &config,
+                    viewer.as_ref(),
                     &actor.actor_uri,
                     limit.saturating_add(1),
                     max_id,

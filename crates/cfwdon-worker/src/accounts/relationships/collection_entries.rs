@@ -1,8 +1,8 @@
 use super::collections::CollectionAccountEntry;
 use super::remote_collections::remote_follow_collection_entries;
 use crate::{
-    MastodonAccountResponse, Result, fetch_remote_actor_profile, find_local_account_response,
-    find_remote_actor_by_actor_uri, list_local_followers_for_account,
+    LocalAccount, MastodonAccountResponse, Result, fetch_remote_actor_profile,
+    find_local_account_response, find_remote_actor_by_actor_uri, list_local_followers_for_account,
     list_local_followers_for_remote_actor, list_local_following_for_account,
     list_local_following_for_remote_actor, list_remote_followers_for_account,
     list_remote_following_for_account, upserted_remote_actor_response,
@@ -123,6 +123,7 @@ pub(crate) async fn local_account_follower_entries(
 pub(crate) async fn remote_actor_follower_entries(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     limit: u32,
     max_id: Option<i64>,
@@ -131,6 +132,7 @@ pub(crate) async fn remote_actor_follower_entries(
     if let Some(remote_entries) = remote_follow_collection_entries(
         db,
         config,
+        viewer,
         actor_uri,
         "followers",
         limit,
@@ -182,6 +184,7 @@ pub(crate) async fn local_account_following_entries(
 pub(crate) async fn remote_actor_following_entries(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     limit: u32,
     max_id: Option<i64>,
@@ -190,6 +193,7 @@ pub(crate) async fn remote_actor_following_entries(
     if let Some(remote_entries) = remote_follow_collection_entries(
         db,
         config,
+        viewer,
         actor_uri,
         "following",
         limit,
