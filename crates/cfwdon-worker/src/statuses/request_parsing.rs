@@ -217,7 +217,9 @@ pub(crate) fn normalize_scheduled_at(
 pub(crate) fn validate_scheduled_at_minimum_offset(value: &str) -> std::result::Result<(), String> {
     let scheduled_at = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|_| "scheduled_at must be a valid RFC 3339 datetime".to_owned())?;
-    if scheduled_at <= OffsetDateTime::now_utc() + Duration::minutes(5) {
+    let now = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp())
+        .map_err(|error| format!("invalid current unix timestamp: {error}"))?;
+    if scheduled_at <= now + Duration::minutes(5) {
         return Err(
             "Validation failed: Scheduled at The scheduled date must be in the future".to_owned(),
         );

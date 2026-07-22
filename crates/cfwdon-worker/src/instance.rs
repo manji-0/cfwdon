@@ -407,7 +407,10 @@ pub(crate) async fn instance_peers_search_response(
 pub(crate) async fn instance_activity_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let now = OffsetDateTime::now_utc();
+    // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
+    let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()).map_err(|error| {
+        worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
+    })?;
     let midnight = now.replace_time(Time::MIDNIGHT);
     let week_floor = midnight - Duration::days(midnight.weekday().number_days_from_monday().into());
 
@@ -773,13 +776,17 @@ async fn list_trending_link_documents(
 }
 
 async fn list_trending_link_entries(db: &worker::D1Database) -> Result<Vec<TrendingLinkEntry>> {
-    let now = OffsetDateTime::now_utc();
+    // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
+    let now_ts = now_unix_timestamp();
+    let now = OffsetDateTime::from_unix_timestamp(now_ts).map_err(|error| {
+        worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
+    })?;
     let cutoff = (now - Duration::days(TRENDING_LINK_HISTORY_DAYS as i64))
         .format(&Rfc3339)
         .map_err(|error| {
             worker::Error::RustError(format!("failed to format trending link cutoff: {error}"))
         })?;
-    let today = unix_day_bucket(now.unix_timestamp());
+    let today = unix_day_bucket(now_ts);
     let mut candidates = Vec::new();
 
     for row in list_trending_local_link_rows(db, &cutoff).await? {

@@ -174,7 +174,9 @@ fn expires_at_from_seconds(seconds: Option<i64>) -> std::result::Result<Option<S
     let Some(seconds) = seconds else {
         return Ok(None);
     };
-    let expires_at = (OffsetDateTime::now_utc() + Duration::seconds(seconds))
+    let now = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp())
+        .map_err(|error| Error::RustError(format!("invalid current unix timestamp: {error}")))?;
+    let expires_at = (now + Duration::seconds(seconds))
         .format(&Rfc3339)
         .map_err(|error| Error::RustError(format!("failed to format expires_at: {error}")))?;
     Ok(Some(expires_at))
@@ -716,9 +718,13 @@ fn phrase_matches_text(text: &str, phrase: &str, whole_word: bool) -> bool {
 
 fn filter_is_expired(expires_at: Option<&str>) -> bool {
     expires_at.is_some_and(|value| {
-        OffsetDateTime::parse(value, &Rfc3339)
-            .map(|datetime| datetime <= OffsetDateTime::now_utc())
-            .unwrap_or(false)
+        let Ok(datetime) = OffsetDateTime::parse(value, &Rfc3339) else {
+            return false;
+        };
+        let Ok(now) = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp()) else {
+            return false;
+        };
+        datetime <= now
     })
 }
 

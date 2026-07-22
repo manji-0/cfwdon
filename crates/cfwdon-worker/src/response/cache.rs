@@ -173,10 +173,35 @@ fn cache_control_max_age(max_age_seconds: u32) -> String {
 }
 
 async fn cache_get(key: &str) -> Result<Option<Response>> {
-    match Cache::default().get(key, true).await {
-        Ok(response) => Ok(response),
-        Err(_) => Ok(None),
+    let Some(mut cached) = (match Cache::default().get(key, true).await {
+        Ok(response) => response,
+        Err(_) => None,
+    }) else {
+        return Ok(None);
+    };
+
+    // Cache API hits are immutable; rebuild so CORS / other middleware can mutate headers.
+    let status = cached.status_code();
+    let content_type = cached
+        .headers()
+        .get("Content-Type")?
+        .unwrap_or_else(|| "application/octet-stream".to_owned());
+    let cache_control = cached.headers().get("Cache-Control")?;
+    let cache_tag = cached.headers().get("Cache-Tag")?;
+    let vary = cached.headers().get("Vary")?;
+    let body = cached.bytes().await?;
+    let mut response = Response::from_body(ResponseBody::Body(body))?.with_status(status);
+    response.headers_mut().set("Content-Type", &content_type)?;
+    if let Some(value) = cache_control {
+        response.headers_mut().set("Cache-Control", &value)?;
     }
+    if let Some(value) = cache_tag {
+        response.headers_mut().set("Cache-Tag", &value)?;
+    }
+    if let Some(value) = vary {
+        response.headers_mut().set("Vary", &value)?;
+    }
+    Ok(Some(response))
 }
 
 async fn cache_delete(key: &str) {
