@@ -16,10 +16,8 @@ pub fn remote_http_authority(url: &str) -> Option<String> {
     let trimmed = url.trim();
     let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
         ("https", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        ("http", rest)
     } else {
-        return None;
+        ("http", trimmed.strip_prefix("http://")?)
     };
 
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
