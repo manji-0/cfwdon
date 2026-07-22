@@ -1,12 +1,15 @@
 use cfwdon_domain::{ActivityPubReblogInput, ActivityPubStatusInput};
 use serde_json::Value;
 
-use crate::render_status_html;
+use crate::{
+    render_status_html, sanitize_remote_http_url, sanitize_remote_plain_text,
+    sanitize_remote_status_html,
+};
 
 pub(crate) fn activity_pub_status_input_from_object(object: &Value) -> ActivityPubStatusInput {
     ActivityPubStatusInput {
         object_id: object.get("id").and_then(Value::as_str).map(str::to_owned),
-        url: object.get("url").and_then(Value::as_str).map(str::to_owned),
+        url: sanitize_remote_http_url(object.get("url").and_then(Value::as_str)),
         in_reply_to: object
             .get("inReplyTo")
             .and_then(Value::as_str)
@@ -27,7 +30,7 @@ pub(crate) fn activity_pub_status_input_from_object(object: &Value) -> ActivityP
         spoiler_text: object
             .get("summary")
             .and_then(Value::as_str)
-            .map(str::to_owned),
+            .map(sanitize_remote_plain_text),
         to_audiences: collect_activitypub_audiences(object.get("to")),
         cc_audiences: collect_activitypub_audiences(object.get("cc")),
         sensitive: object.get("sensitive").and_then(Value::as_bool),
@@ -78,11 +81,11 @@ pub(crate) fn activity_pub_reblog_input_from_activity(activity: &Value) -> Activ
     }
 }
 
-fn remote_status_content_html(object: &Value) -> String {
+pub(crate) fn remote_status_content_html(object: &Value) -> String {
     object
         .get("content")
         .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+        .map(sanitize_remote_status_html)
         .or_else(|| {
             object
                 .get("name")

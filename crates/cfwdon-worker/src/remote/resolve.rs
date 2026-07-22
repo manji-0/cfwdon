@@ -2,12 +2,11 @@ use crate::{
     AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteCollectionFetchContext,
     RemoteStatusRow, account_search_is_complete_handle, enrich_remote_account_response,
     ensure_remote_actor_username_matches_handle, extract_remote_note_object,
-    fetch_remote_activitypub_document, fetch_remote_actor_profile,
-    fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
-    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
-    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
-    log_json_event, parse_lookup_handle, parse_remote_http_url,
+    fetch_activitypub_document_with_context, fetch_remote_actor_profile_with_context,
+    find_account_by_id, find_account_by_username, find_remote_actor_by_actor_uri,
+    find_remote_actor_by_profile_url_or_actor_uri, find_remote_status_by_object_uri,
+    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
+    local_username_from_actor_uri, log_json_event, parse_lookup_handle, parse_remote_http_url,
     reconcile_remote_account_status_summary, remote_actor_uri_from_rest_id,
     resolve_webfinger_actor_uri, upsert_remote_actor, upsert_remote_status,
     visibility_from_activitypub_object,
@@ -213,8 +212,9 @@ pub(crate) async fn resolve_search_account_with_viewer(
 
 pub(crate) async fn resolve_remote_status_by_url(
     db: &D1Database,
-    _config: &AppConfig,
+    config: &AppConfig,
     url: &str,
+    viewer: Option<&LocalAccount>,
 ) -> Result<Option<(RemoteStatusRow, RemoteActorRow)>> {
     if let Some(status) = find_remote_status_by_url_or_object_uri(db, url).await? {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
@@ -223,10 +223,19 @@ pub(crate) async fn resolve_remote_status_by_url(
         return Ok(Some((status, actor)));
     }
 
-    let document = match fetch_remote_activitypub_document(url).await {
-        Ok(document) => document,
-        Err(_) => return Ok(None),
+    let fetch_url = parse_remote_http_url(url)?;
+    let fetch_context = RemoteCollectionFetchContext {
+        config,
+        db,
+        signer: viewer,
     };
+    let document =
+        match fetch_activitypub_document_with_context(fetch_url.as_str(), Some(&fetch_context))
+            .await
+        {
+            Ok(document) => document,
+            Err(_) => return Ok(None),
+        };
     let Some(object) = extract_remote_note_object(&document) else {
         return Ok(None);
     };
@@ -234,6 +243,10 @@ pub(crate) async fn resolve_remote_status_by_url(
         return Ok(None);
     }
 
+    let object_id = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))?;
     let actor_uri = object
         .get("attributedTo")
         .and_then(serde_json::Value::as_str)
@@ -241,17 +254,24 @@ pub(crate) async fn resolve_remote_status_by_url(
         .ok_or_else(|| {
             Error::RustError("remote status object is missing attributedTo".to_owned())
         })?;
-    let actor = fetch_remote_actor_profile(actor_uri).await?;
-    upsert_remote_actor(db, &actor).await?;
-    upsert_remote_status(db, _config, &actor, object).await?;
-    let object_uri = object
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))?;
-    let Some(status) = find_remote_status_by_object_uri(db, object_uri).await? else {
+    if cfwdon_domain::remote_status_object_authority_allowed(
+        fetch_url.as_str(),
+        object_id,
+        actor_uri,
+    )
+    .is_err()
+    {
+        return Ok(None);
+    }
+
+    let actor = fetch_remote_actor_profile_with_context(actor_uri, Some(&fetch_context)).await?;
+    upsert_remote_actor(db, &actor.profile).await?;
+    upsert_remote_status(db, config, &actor.profile, object).await?;
+    let Some(status) = find_remote_status_by_object_uri(db, object_id).await? else {
         return Ok(None);
     };
-    let Some(actor_row) = find_remote_actor_by_actor_uri(db, &actor.actor_uri).await? else {
+    let Some(actor_row) = find_remote_actor_by_actor_uri(db, &actor.profile.actor_uri).await?
+    else {
         return Ok(None);
     };
     Ok(Some((status, actor_row)))

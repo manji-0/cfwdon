@@ -760,6 +760,69 @@ pub(crate) async fn list_direct_remote_replies_by_uri(
     .await
 }
 
+pub(crate) async fn list_remote_direct_statuses_mentioning_viewer(
+    db: &D1Database,
+    mention_pattern: &str,
+    cursor: &ResolvedTimelineCursor,
+    limit: u32,
+) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+    let bindings = [
+        D1Type::Text(mention_pattern),
+        optional_text_binding(cursor.max_timestamp.as_deref()),
+        optional_text_binding(cursor.max_id.as_deref()),
+        optional_text_binding(cursor.min_timestamp.as_deref()),
+        optional_text_binding(cursor.min_id.as_deref()),
+        D1Type::Integer(limit as i32),
+    ];
+    query_remote_statuses_with_actor(
+        db,
+        "SELECT
+            rs.id,
+            rs.actor_uri,
+            rs.object_uri,
+            rs.url,
+            rs.in_reply_to_uri,
+            rs.boost_of_uri,
+            rs.quote_of_uri,
+            rs.content_html,
+            rs.spoiler_text,
+            rs.visibility,
+            rs.sensitive,
+            rs.language,
+            rs.quote_state,
+            rs.published_at,
+            ra.username,
+            ra.domain,
+            ra.display_name,
+            ra.summary_html,
+            ra.profile_url,
+            ra.avatar_url,
+            ra.header_url,
+            ra.locked,
+            ra.bot,
+            ra.discoverable,
+            ra.indexable
+         FROM remote_statuses rs
+         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         WHERE rs.visibility = 'direct'
+           AND (lower(rs.content_html) LIKE ?1 OR lower(rs.spoiler_text) LIKE ?1)
+           AND (
+                ?2 IS NULL
+                OR rs.published_at < ?2
+                OR (rs.published_at = ?2 AND rs.id < ?3)
+           )
+           AND (
+                ?4 IS NULL
+                OR rs.published_at > ?4
+                OR (rs.published_at = ?4 AND rs.id > ?5)
+           )
+         ORDER BY rs.published_at DESC, rs.id DESC
+         LIMIT ?6",
+        &bindings,
+    )
+    .await
+}
+
 fn direct_remote_replies_by_uri_bindings(object_uri: &str) -> [D1Type<'_>; 1] {
     [D1Type::Text(object_uri)]
 }

@@ -94,6 +94,20 @@ pub fn remote_actor_related_uri_authority_allowed(
     if actor == related { Ok(()) } else { Err(issue) }
 }
 
+/// Fetched status URL, object `id`, and `attributedTo` must share one http(s) authority.
+pub fn remote_status_object_authority_allowed(
+    fetch_url: &str,
+    object_id: &str,
+    attributed_to: &str,
+) -> Result<(), RemoteActorAuthorityIssue> {
+    remote_actor_id_authority_allowed(fetch_url, object_id)?;
+    remote_actor_related_uri_authority_allowed(
+        object_id,
+        attributed_to,
+        RemoteActorAuthorityIssue::CrossAuthorityId,
+    )
+}
+
 /// `publicKey.owner` may be absent; when present it must match the actor URI.
 pub fn remote_actor_public_key_owner_allowed(
     actor_uri: &str,
@@ -253,6 +267,34 @@ mod tests {
             "https://remote.example.evil/users/alice",
             "remote.example"
         ));
+    }
+
+    #[test]
+    fn status_object_authority_requires_shared_host() {
+        assert!(
+            remote_status_object_authority_allowed(
+                "https://remote.example/@alice/statuses/1",
+                "https://remote.example/users/alice/statuses/1",
+                "https://remote.example/users/alice",
+            )
+            .is_ok()
+        );
+        assert!(
+            remote_status_object_authority_allowed(
+                "https://evil.example/note",
+                "https://remote.example/users/alice/statuses/1",
+                "https://remote.example/users/alice",
+            )
+            .is_err()
+        );
+        assert!(
+            remote_status_object_authority_allowed(
+                "https://remote.example/note",
+                "https://remote.example/users/alice/statuses/1",
+                "https://other.example/users/alice",
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -34,13 +34,13 @@ use crate::{
     find_remote_statuses_with_actors_by_ids, find_statuses_by_ids, list_active_muted_actor_uris,
     list_home_timeline_candidate_ids, list_local_direct_timeline_statuses,
     list_local_public_statuses_by_link, list_local_public_statuses_by_tag,
-    list_local_public_timeline_statuses, list_remote_public_statuses_by_link,
-    list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
-    load_account_filter_matcher, normalize_hashtag, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    require_authenticated_local_account, strip_html_tags,
+    list_local_public_timeline_statuses, list_remote_direct_statuses_mentioning_viewer,
+    list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
+    list_remote_public_timeline_statuses, load_account_filter_matcher, normalize_hashtag,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
+    preload_status_quote_counts, require_authenticated_local_account, strip_html_tags,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -1230,9 +1230,26 @@ pub(crate) async fn direct_timeline_response(
     };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
     let filter_matcher = load_account_filter_matcher(&db, viewer.id()).await?;
-    let direct_statuses =
-        list_local_direct_timeline_statuses(&db, viewer.id(), &cursor, query_limit).await?;
+    let mention_pattern = format!(
+        "%@{}@{}%",
+        viewer.username().to_ascii_lowercase(),
+        instance_host(&config)
+    );
+    let (direct_statuses, remote_direct_rows) = futures_util::try_join!(
+        list_local_direct_timeline_statuses(&db, viewer.id(), &cursor, query_limit),
+        list_remote_direct_statuses_mentioning_viewer(&db, &mention_pattern, &cursor, query_limit,),
+    )?;
+    let remote_direct_rows = remote_direct_rows
+        .into_iter()
+        .filter(|(status, _)| {
+            let text = crate::strip_html_tags(&status.content_html);
+            crate::extract_mentions_from_text(&text, &config)
+                .into_iter()
+                .any(|handle| handle.username == viewer.username())
+        })
+        .collect::<Vec<_>>();
     let direct_status_refs = direct_statuses.iter().collect::<Vec<_>>();
+    let remote_status_refs = remote_direct_rows.iter().collect::<Vec<_>>();
     let (local_accounts_by_id, mut media_by_status_id) =
         preload_local_timeline_rows_from_status_refs(&db, &direct_status_refs).await?;
     let muted_actor_uris = preload_muted_timeline_actor_uris(
@@ -1240,7 +1257,7 @@ pub(crate) async fn direct_timeline_response(
         &config,
         &viewer,
         &direct_status_refs,
-        &[],
+        &remote_status_refs,
         &local_accounts_by_id,
     )
     .await?;
@@ -1270,6 +1287,17 @@ pub(crate) async fn direct_timeline_response(
             timestamp: status.created_at.clone(),
             id: status.id.clone(),
             candidate: PublicTimelineCandidate::Local { status, media },
+        });
+    }
+
+    for (status, actor) in remote_direct_rows {
+        if muted_actor_uris.contains(&actor.actor_uri) {
+            continue;
+        }
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.published_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Remote { status, actor },
         });
     }
 

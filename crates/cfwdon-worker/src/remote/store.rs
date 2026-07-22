@@ -464,7 +464,7 @@ pub(crate) async fn upsert_remote_status(
     Ok(())
 }
 
-fn remote_status_attachments_from_object(
+pub(crate) fn remote_status_attachments_from_object(
     status_id: &str,
     object: &serde_json::Value,
 ) -> Vec<RemoteStatusAttachmentRow> {

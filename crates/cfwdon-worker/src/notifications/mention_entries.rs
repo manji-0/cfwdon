@@ -126,7 +126,10 @@ pub(crate) async fn collect_mention_notification_entries(
     )
     .await?
     {
-        if !is_public_activitypub_visibility(&mention.visibility) {
+        if !is_public_activitypub_visibility(&mention.visibility)
+            && mention.visibility != "direct"
+            && mention.visibility != "private"
+        {
             continue;
         }
         let Some(actor) = find_remote_actor_by_actor_uri(db, &mention.actor_uri).await? else {

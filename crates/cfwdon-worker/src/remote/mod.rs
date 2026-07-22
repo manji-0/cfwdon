@@ -15,6 +15,7 @@ mod store;
 
 pub(crate) use actor_profile_store::*;
 pub(crate) use actor_store::*;
+pub(crate) use adapters::*;
 pub(crate) use poll_activity::*;
 pub(crate) use poll_mutations::*;
 pub(crate) use poll_parsing::*;

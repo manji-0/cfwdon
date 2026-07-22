@@ -149,12 +149,18 @@ pub(crate) fn remote_status_html_item(
     status: &RemoteStatusRow,
     media: &[RemoteStatusAttachmentRow],
 ) -> String {
-    let status_url = escape_html(status.url.as_deref().unwrap_or(status.object_uri.as_str()));
     let _actor = actor;
+    let raw_url = status.url.as_deref().unwrap_or(status.object_uri.as_str());
+    let status_url = escape_html(
+        crate::sanitize_remote_http_url(Some(raw_url))
+            .as_deref()
+            .unwrap_or("#"),
+    );
     let media_html = remote_media_html(media);
+    let safe_content = crate::sanitize_remote_status_html(&status.content_html);
     status_html_item(
         &status_url,
-        &status.content_html,
+        &safe_content,
         &status.spoiler_text,
         &status.published_at,
         &media_html,

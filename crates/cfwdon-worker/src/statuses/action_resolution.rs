@@ -104,9 +104,10 @@ pub(crate) async fn resolve_authenticated_status_action_context(
     ))
 }
 
-pub(crate) async fn resolve_action_status(
+pub(crate) async fn resolve_action_status_with_viewer(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
     status_id: &str,
     action_uri: Option<&str>,
 ) -> Result<Option<ResolvedActionStatus>> {
@@ -117,7 +118,7 @@ pub(crate) async fn resolve_action_status(
     }
 
     if let Some(action_uri) = normalized_action_uri(action_uri) {
-        return resolve_action_uri_reference(db, config, &action_uri).await;
+        return resolve_action_uri_reference(db, config, viewer, &action_uri).await;
     }
 
     if let Some(status) = find_status_by_id(db, status_id).await?
@@ -135,7 +136,7 @@ pub(crate) async fn resolve_action_status(
     let decoded_status_id = urlencoding::decode(status_id)
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| status_id.to_owned());
-    resolve_action_uri_reference(db, config, &decoded_status_id).await
+    resolve_action_uri_reference(db, config, viewer, &decoded_status_id).await
 }
 
 pub(crate) async fn resolve_visible_action_status(
@@ -145,7 +146,8 @@ pub(crate) async fn resolve_visible_action_status(
     status_id: &str,
     action_uri: Option<&str>,
 ) -> Result<Option<ResolvedVisibleActionStatus>> {
-    match resolve_action_status(db, config, status_id, action_uri).await? {
+    match resolve_action_status_with_viewer(db, config, Some(viewer), status_id, action_uri).await?
+    {
         Some(ResolvedActionStatus::Local(status)) => Ok(
             load_visible_local_status_response_subject(db, Some(viewer), status)
                 .await?
@@ -164,6 +166,7 @@ pub(crate) async fn resolve_visible_action_status(
 async fn resolve_action_uri_reference(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
+    viewer: Option<&LocalAccount>,
     value: &str,
 ) -> Result<Option<ResolvedActionStatus>> {
     if let Some(status) = find_local_status_by_object_uri(db, config, value).await?
@@ -178,7 +181,7 @@ async fn resolve_action_uri_reference(
         return Ok(Some(ResolvedActionStatus::Remote(status, actor)));
     }
 
-    if let Some((status, actor)) = resolve_remote_status_by_url(db, config, value).await? {
+    if let Some((status, actor)) = resolve_remote_status_by_url(db, config, value, viewer).await? {
         return Ok(Some(ResolvedActionStatus::Remote(status, actor)));
     }
 

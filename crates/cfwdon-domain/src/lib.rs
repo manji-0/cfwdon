@@ -47,8 +47,8 @@ pub use federation::{
     remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
     remote_actor_uri_matches_acct_domain, remote_fetch_host_allowed,
     remote_hostname_dns_resolution_allowed, remote_http_authorities_match, remote_http_authority,
-    remote_http_url_scheme_allowed, remote_url_policy_for_ip, remote_url_policy_from_parts,
-    webfinger_link_is_activitypub_type,
+    remote_http_url_scheme_allowed, remote_status_object_authority_allowed,
+    remote_url_policy_for_ip, remote_url_policy_from_parts, webfinger_link_is_activitypub_type,
 };
 pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,

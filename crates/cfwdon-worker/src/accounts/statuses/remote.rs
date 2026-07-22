@@ -2,10 +2,11 @@ use super::filters::{remote_account_status_list_options, remote_status_matches_a
 use super::html::{account_statuses_html_response, remote_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::{
-    AccountStatusesQuery, AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow,
+    AccountStatusesQuery, AppConfig, LocalAccount, MastodonMediaAttachmentResponse,
+    MastodonPollOptionResponse, MastodonPollResponse, MastodonStatusResponse, RemoteActorRow,
     RemoteCollectionFetchContext, RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
     apply_remote_actor_social_counts, build_remote_status_response_with_timeline_preloads,
-    escape_html, extract_remote_note_object, fetch_remote_activitypub_document,
+    extract_remote_note_object, extract_remote_poll_draft, fetch_activitypub_document_with_context,
     fetch_remote_actor_profile_with_context, find_follow_by_target, find_remote_actor_by_actor_uri,
     find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
     is_public_activitypub_visibility, list_public_remote_statuses_by_actor_uri,
@@ -14,8 +15,9 @@ use crate::{
     persist_remote_actor_social_counts, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
     preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
-    remote_actor_social_counts_are_fresh, remote_status_from_record, upsert_remote_actor,
-    upsert_remote_status, visibility_from_activitypub_object,
+    remote_actor_social_counts_are_fresh, remote_status_attachments_from_object,
+    remote_status_from_record, sanitize_remote_http_url, sanitize_remote_plain_text,
+    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
 };
 use worker::D1Database;
 
@@ -146,7 +148,8 @@ async fn load_remote_account_status_page(
     }
     let transient_statuses = if !is_following_remote_actor && !wants_html {
         let (statuses, counts) =
-            load_transient_remote_actor_statuses(db, config, viewer, &actor, query, limit).await?;
+            load_transient_remote_actor_statuses(db, config, viewer, &actor, query, min_id, limit)
+                .await?;
         actor_social_counts = counts;
         statuses
     } else {
@@ -434,22 +437,44 @@ async fn hydrate_remote_actor_statuses_from_outbox(
     limit: u32,
 ) -> Result<()> {
     let limit = limit.clamp(1, 20) as usize;
-    let Some(outbox) = remote_actor_outbox_page(actor_document).await? else {
+    let Some(mut page) = remote_actor_outbox_page(actor_document, None).await? else {
         return Ok(());
     };
     let mut inserted = 0usize;
-    for item in activitypub_collection_items(&outbox) {
+    let mut pages_fetched = 0usize;
+    while inserted < limit && pages_fetched < TRANSIENT_OUTBOX_MAX_PAGES {
+        pages_fetched += 1;
+        for item in activitypub_collection_items(&page) {
+            if inserted >= limit {
+                break;
+            }
+            let Some(object) = extract_remote_note_object(item) else {
+                continue;
+            };
+            if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
+                continue;
+            }
+            upsert_remote_status(db, config, actor, object).await?;
+            inserted += 1;
+        }
         if inserted >= limit {
             break;
         }
-        let Some(object) = extract_remote_note_object(item) else {
-            continue;
+        let Some(next) = activitypub_collection_next_uri(&page) else {
+            break;
         };
-        if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
-            continue;
+        match fetch_activitypub_document_with_context(&next, None).await {
+            Ok(next_page) => page = next_page,
+            Err(error) => {
+                log_json_event(serde_json::json!({
+                    "event": "remote_outbox_page_fetch_failed",
+                    "actor_uri": actor.actor_uri,
+                    "url": next,
+                    "error": error.to_string(),
+                }));
+                break;
+            }
         }
-        upsert_remote_status(db, config, actor, object).await?;
-        inserted += 1;
     }
     Ok(())
 }
@@ -460,6 +485,7 @@ async fn load_transient_remote_actor_statuses(
     viewer: Option<&LocalAccount>,
     actor: &RemoteActorRow,
     query: &AccountStatusesQuery,
+    min_id: Option<&str>,
     limit: u32,
 ) -> Result<(
     Vec<MastodonStatusResponse>,
@@ -510,44 +536,136 @@ async fn load_transient_remote_actor_statuses(
                 }
             }
         };
-    let Some(outbox) = remote_actor_outbox_page(&actor_document).await? else {
+    if query.pinned.unwrap_or(false) {
+        return Ok((Vec::new(), social_counts));
+    }
+    let Some(mut page) = remote_actor_outbox_page(&actor_document, Some(&fetch_context)).await?
+    else {
         return Ok((Vec::new(), social_counts));
     };
+    let limit = limit.clamp(1, 20) as usize;
+    let max_id = query.max_id.as_deref();
     let mut response = Vec::new();
-    for item in activitypub_collection_items(&outbox) {
-        if response.len() >= limit as usize {
+    let mut pages_fetched = 0usize;
+    let mut passed_max_id = max_id.is_none();
+    while response.len() < limit && pages_fetched < TRANSIENT_OUTBOX_MAX_PAGES {
+        pages_fetched += 1;
+        for item in activitypub_collection_items(&page) {
+            if response.len() >= limit {
+                break;
+            }
+            let Some(object) = extract_remote_note_object(item) else {
+                continue;
+            };
+            if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
+                continue;
+            }
+            let Ok(status) = remote_status_row_from_activitypub_object(actor, object) else {
+                continue;
+            };
+            if let Some(max_id) = max_id {
+                if status.id == max_id {
+                    passed_max_id = true;
+                    continue;
+                }
+                if !passed_max_id {
+                    continue;
+                }
+            }
+            if let Some(min_id) = min_id
+                && status.id == min_id
+            {
+                // Exclusive lower bound reached in reverse-chronological order.
+                return Ok((response, social_counts));
+            }
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+                continue;
+            }
+            let attachments = remote_status_attachments_from_object(&status.id, object);
+            if !remote_status_matches_account_filters(&status, query, !attachments.is_empty()) {
+                continue;
+            }
+            response.push(transient_mastodon_status_response(
+                config,
+                actor,
+                &status,
+                object,
+                &attachments,
+            ));
+        }
+        if response.len() >= limit {
             break;
         }
-        let Some(object) = extract_remote_note_object(item) else {
-            continue;
+        let Some(next) = activitypub_collection_next_uri(&page) else {
+            break;
         };
-        if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
-            continue;
+        match fetch_activitypub_document_with_context(&next, Some(&fetch_context)).await {
+            Ok(next_page) => page = next_page,
+            Err(error) => {
+                log_json_event(serde_json::json!({
+                    "event": "remote_outbox_page_fetch_failed",
+                    "actor_uri": actor.actor_uri,
+                    "url": next,
+                    "error": error.to_string(),
+                }));
+                break;
+            }
         }
-        let Ok(status) = remote_status_row_from_activitypub_object(actor, object) else {
-            continue;
-        };
-        if !is_public_activitypub_visibility(status.visibility.as_str()) {
-            continue;
-        }
-        if !remote_status_matches_account_filters(&status, query, false) {
-            continue;
-        }
-        response.push(MastodonStatusResponse::from_remote_row(
-            &status, actor, config,
-        ));
     }
     Ok((response, social_counts))
 }
 
+fn transient_mastodon_status_response(
+    config: &AppConfig,
+    actor: &RemoteActorRow,
+    status: &RemoteStatusRow,
+    object: &serde_json::Value,
+    attachments: &[crate::RemoteStatusAttachmentRow],
+) -> MastodonStatusResponse {
+    let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
+    response.media_attachments = attachments
+        .iter()
+        .map(|attachment| {
+            serde_json::to_value(MastodonMediaAttachmentResponse::from_remote_row(attachment))
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect();
+    if let Some(poll) = extract_remote_poll_draft(object) {
+        response.poll = serde_json::to_value(MastodonPollResponse {
+            id: status.id.clone(),
+            expires_at: poll.expires_at.unwrap_or_default(),
+            expired: poll.expired,
+            multiple: poll.multiple,
+            votes_count: poll.votes_count,
+            voters_count: poll.voters_count,
+            voted: None,
+            own_votes: None,
+            options: poll
+                .options
+                .into_iter()
+                .map(|option| MastodonPollOptionResponse {
+                    title: option.title,
+                    votes_count: Some(option.votes_count),
+                })
+                .collect(),
+            emojis: Vec::new(),
+        })
+        .ok();
+    }
+    response
+}
+
+const TRANSIENT_OUTBOX_MAX_PAGES: usize = 5;
+
 async fn remote_actor_outbox_page(
     actor_document: &serde_json::Value,
+    fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Result<Option<serde_json::Value>> {
     let Some(outbox) = actor_document.get("outbox") else {
         return Ok(None);
     };
     let collection = match activitypub_reference_uri(outbox) {
-        Some(uri) => fetch_remote_activitypub_document(&uri).await?,
+        Some(uri) => fetch_activitypub_document_with_context(&uri, fetch_context).await?,
         None if outbox.is_object() => outbox.clone(),
         None => return Ok(None),
     };
@@ -558,10 +676,16 @@ async fn remote_actor_outbox_page(
         return Ok(Some(collection));
     };
     match activitypub_reference_uri(first) {
-        Some(uri) => fetch_remote_activitypub_document(&uri).await.map(Some),
+        Some(uri) => fetch_activitypub_document_with_context(&uri, fetch_context)
+            .await
+            .map(Some),
         None if first.is_object() => Ok(Some(first.clone())),
         None => Ok(Some(collection)),
     }
+}
+
+fn activitypub_collection_next_uri(collection: &serde_json::Value) -> Option<String> {
+    collection.get("next").and_then(activitypub_reference_uri)
 }
 
 fn activitypub_collection_items(collection: &serde_json::Value) -> Vec<&serde_json::Value> {
@@ -609,10 +733,7 @@ fn remote_status_row_from_activitypub_object(
         id: remote_account_rest_id(&object_uri),
         actor_uri: actor.actor_uri.clone(),
         object_uri,
-        url: object
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
+        url: sanitize_remote_http_url(object.get("url").and_then(serde_json::Value::as_str)),
         in_reply_to_uri: object
             .get("inReplyTo")
             .and_then(serde_json::Value::as_str)
@@ -623,8 +744,8 @@ fn remote_status_row_from_activitypub_object(
         spoiler_text: object
             .get("summary")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+            .map(sanitize_remote_plain_text)
+            .unwrap_or_default(),
         visibility: visibility_from_activitypub_object(object),
         sensitive: i32::from(
             object
@@ -642,17 +763,7 @@ fn remote_status_row_from_activitypub_object(
 }
 
 fn remote_status_content_html(object: &serde_json::Value) -> String {
-    object
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            object
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(escape_html)
-        })
-        .unwrap_or_default()
+    crate::remote_status_content_html(object)
 }
 
 fn remote_status_published_at(object: &serde_json::Value) -> String {

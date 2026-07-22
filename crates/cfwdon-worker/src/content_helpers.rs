@@ -152,6 +152,41 @@ pub(crate) fn strip_html_tags(html: &str) -> String {
     output
 }
 
+/// Convert untrusted federated HTML into safe, escaped paragraph markup.
+///
+/// Mastodon-compatible clients still accept plain `<p>`/`<br>` bodies; stripping
+/// remote tags removes stored XSS while preserving readable text.
+pub(crate) fn sanitize_remote_status_html(html: &str) -> String {
+    let plain = decode_basic_html_entities(&strip_html_tags(html));
+    crate::render_status_html(&plain)
+}
+
+pub(crate) fn sanitize_remote_plain_text(value: &str) -> String {
+    decode_basic_html_entities(&strip_html_tags(value))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn sanitize_remote_http_url(value: Option<&str>) -> Option<String> {
+    let value = value.map(str::trim).filter(|value| !value.is_empty())?;
+    if !cfwdon_domain::remote_http_url_scheme_allowed(value) {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+fn decode_basic_html_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 pub(crate) fn extract_hashtags_from_html(html: &str) -> Vec<String> {
     extract_hashtags_from_text(&strip_html_tags(html))
 }
@@ -165,6 +200,43 @@ pub(crate) fn tag_rest_id(name: &str) -> String {
 
 pub(crate) fn tag_url(config: &AppConfig, name: &str) -> String {
     format!("{}/tags/{}", instance_base_url(config), name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        sanitize_remote_http_url, sanitize_remote_plain_text, sanitize_remote_status_html,
+    };
+
+    #[test]
+    fn sanitize_remote_status_html_strips_script_and_event_handlers() {
+        let html = sanitize_remote_status_html(
+            r#"<p onclick="alert(1)">hi <script>alert(2)</script><a href="javascript:alert(3)">x</a></p>"#,
+        );
+        assert!(!html.to_ascii_lowercase().contains("<script"));
+        assert!(!html.to_ascii_lowercase().contains("onclick"));
+        assert!(!html.to_ascii_lowercase().contains("javascript:"));
+        assert!(html.contains("hi"));
+        assert!(html.contains("x"));
+    }
+
+    #[test]
+    fn sanitize_remote_plain_text_strips_markup() {
+        assert_eq!(
+            sanitize_remote_plain_text("  hello <b>world</b>  "),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn sanitize_remote_http_url_rejects_non_http_schemes() {
+        assert_eq!(
+            sanitize_remote_http_url(Some("https://remote.example/note")),
+            Some("https://remote.example/note".to_owned())
+        );
+        assert_eq!(sanitize_remote_http_url(Some("javascript:alert(1)")), None);
+        assert_eq!(sanitize_remote_http_url(Some("")), None);
+    }
 }
 
 pub(crate) fn tag_history_stub() -> Vec<MastodonTagHistoryEntry> {
