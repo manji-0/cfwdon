@@ -534,15 +534,8 @@ async fn load_cached_account_search_candidates(
         }
     }
     for actor in remote_actors {
-        if let Some(response) = remote_search_account_response(
-            db,
-            config,
-            viewer,
-            &actor,
-            remote_stats.get(&actor.actor_uri),
-            search_terms,
-        )
-        .await?
+        if let Some(response) =
+            remote_search_account_response(&actor, remote_stats.get(&actor.actor_uri), search_terms)
         {
             accounts.push(response);
         }
@@ -568,14 +561,11 @@ fn local_search_account_response(
     search_account_response_matches(search_terms, response)
 }
 
-async fn remote_search_account_response(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
+fn remote_search_account_response(
     actor: &RemoteActorRow,
     stats: Option<&crate::RemoteActorStatusSummary>,
     search_terms: &[String],
-) -> Result<Option<MastodonAccountResponse>> {
+) -> Option<MastodonAccountResponse> {
     let default_stats;
     let stats = match stats {
         Some(stats) => stats,
@@ -587,30 +577,15 @@ async fn remote_search_account_response(
             &default_stats
         }
     };
-    let mut fallback_response = MastodonAccountResponse::from_remote_actor(actor);
-    fallback_response.statuses_count = stats.statuses_count;
-    fallback_response.last_status_at = stats.last_status_at.clone();
-    let Some(_) = search_account_response_matches(search_terms, fallback_response.clone()) else {
-        return Ok(None);
-    };
-
-    let mut response = match fresh_remote_search_account_response(
-        db,
-        config,
-        actor,
-        &actor.username,
-        viewer,
-    )
-    .await
-    {
-        Ok(fresh_response) => fresh_response,
-        Err(_) => fallback_response,
-    };
+    // Cached list search must stay local-only: refreshing every hit over HTTP (and
+    // optionally collection totals) makes /api/v2/search time out under Worker limits.
+    // Exact-handle / resolve paths still call fresh_remote_search_account_response.
+    let mut response = MastodonAccountResponse::from_remote_actor(actor);
     if stats.statuses_count > 0 {
         response.statuses_count = stats.statuses_count;
     }
     response.last_status_at = stats.last_status_at.clone();
-    Ok(Some(response))
+    search_account_response_matches(search_terms, response)
 }
 
 fn search_account_response_matches(

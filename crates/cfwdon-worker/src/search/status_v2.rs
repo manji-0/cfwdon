@@ -8,23 +8,40 @@ use super::statuses::{
     status_search_rank, text_mentions_search_library_viewer,
 };
 use crate::{
-    AccountReference, MastodonStatusResponse, build_local_status_response,
-    build_remote_status_card_value, build_remote_status_response, build_status_card_value,
-    can_view_local_status, find_account_by_id, find_account_by_username,
-    find_media_attachments_by_status_id, find_remote_actor_by_username_domain,
+    AccountReference, MastodonStatusResponse,
+    build_local_status_response_with_quote_count_preloads, build_remote_status_card_value,
+    build_remote_status_response, build_status_card_value, can_view_local_status,
+    find_account_by_id, find_account_by_username, find_media_attachments_by_status_id,
+    find_media_attachments_by_status_ids, find_remote_actor_by_username_domain,
     find_remote_status_attachments_by_status_id, find_remote_status_by_id,
     find_remote_status_poll_by_status_id, find_status_by_id, find_status_poll_by_status_id,
     is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_reblogged_by,
     is_public_activitypub_visibility, is_remote_status_bookmarked_by,
-    is_remote_status_favourited_by, is_remote_status_reblogged_by, load_in_reply_to_account_id,
-    parse_lookup_handle, resolve_account_reference, strip_html_tags,
+    is_remote_status_favourited_by, is_remote_status_reblogged_by, load_account_filter_matcher,
+    load_in_reply_to_account_id, local_status_ap_id, parse_lookup_handle,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    resolve_account_reference, strip_html_tags,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccount};
 use worker::{D1Database, Result};
 
 type SearchStatusSortKey = ((u8, u8, u8), Reverse<String>, Reverse<String>);
-type SearchStatusEntry = (SearchStatusSortKey, MastodonStatusResponse);
+
+enum SearchStatusCandidate {
+    Local {
+        status: crate::StatusRow,
+        owner: LocalAccount,
+        in_reply_to_account_id: Option<String>,
+    },
+    Remote {
+        status: crate::RemoteStatusRow,
+        actor: crate::RemoteActorRow,
+    },
+}
+
+type SearchStatusEntry = (SearchStatusSortKey, SearchStatusCandidate);
 
 fn status_search_self_reference(viewer: &LocalAccount, value: &str) -> Option<AccountReference> {
     value
@@ -121,12 +138,27 @@ async fn resolve_search_status_bound_timestamp(
     Ok(None)
 }
 
-fn search_status_query_limit(limit: u32, offset: u32) -> u32 {
-    limit
-        .saturating_add(offset)
-        .saturating_mul(4)
-        .min(200)
-        .max(limit)
+fn search_status_query_limit(limit: u32, offset: u32, has_text_terms: bool) -> u32 {
+    let needed = limit.saturating_add(offset).max(limit);
+    if has_text_terms {
+        needed.saturating_mul(4).min(200).max(needed)
+    } else {
+        // Filter-only queries (from:/has:/is:) keep SQL date order as the sort key, so
+        // oversampling only multiplies expensive status hydration work.
+        needed.min(200)
+    }
+}
+
+fn status_search_needs_media_metadata(parsed_query: &ParsedStatusSearchQuery) -> bool {
+    parsed_query.has_media.is_some()
+}
+
+fn status_search_needs_poll_metadata(parsed_query: &ParsedStatusSearchQuery) -> bool {
+    parsed_query.has_poll.is_some()
+}
+
+fn status_search_needs_embed_metadata(parsed_query: &ParsedStatusSearchQuery) -> bool {
+    parsed_query.has_embed.is_some()
 }
 
 async fn local_status_is_in_search_library(
@@ -222,7 +254,11 @@ async fn collect_local_search_status_entries(
             continue;
         }
         let is_public = status.visibility == cfwdon_domain::Visibility::Public;
-        let is_library = local_status_is_in_search_library(db, config, viewer, &status).await?;
+        let is_library = if is_public && parsed_query.in_library.is_none() {
+            false
+        } else {
+            local_status_is_in_search_library(db, config, viewer, &status).await?
+        };
         if !status_is_searchable_by_scope(parsed_query, is_public, is_library) {
             continue;
         }
@@ -241,16 +277,33 @@ async fn collect_local_search_status_entries(
         if !status_matches_search_timestamp(parsed_query, &status.created_at) {
             continue;
         }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        if !status_matches_search_metadata(
-            parsed_query,
-            !media.is_empty(),
-            find_status_poll_by_status_id(db, &status.id)
-                .await?
-                .is_some(),
-            build_status_card_value(&status.text).is_some(),
-        ) {
-            continue;
+        if status_search_needs_media_metadata(parsed_query)
+            || status_search_needs_poll_metadata(parsed_query)
+            || status_search_needs_embed_metadata(parsed_query)
+        {
+            let media = if status_search_needs_media_metadata(parsed_query) {
+                find_media_attachments_by_status_id(db, &status.id).await?
+            } else {
+                Vec::new()
+            };
+            if !status_matches_search_metadata(
+                parsed_query,
+                !media.is_empty(),
+                if status_search_needs_poll_metadata(parsed_query) {
+                    find_status_poll_by_status_id(db, &status.id)
+                        .await?
+                        .is_some()
+                } else {
+                    false
+                },
+                if status_search_needs_embed_metadata(parsed_query) {
+                    build_status_card_value(&status.text).is_some()
+                } else {
+                    false
+                },
+            ) {
+                continue;
+            }
         }
         let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
         entries.push((
@@ -259,16 +312,11 @@ async fn collect_local_search_status_entries(
                 Reverse(status.created_at.clone()),
                 Reverse(status.id.clone()),
             ),
-            build_local_status_response(
-                db,
-                config,
-                Some(viewer),
-                &status,
-                &owner,
+            SearchStatusCandidate::Local {
+                status,
+                owner,
                 in_reply_to_account_id,
-                media,
-            )
-            .await?,
+            },
         ));
     }
 
@@ -313,7 +361,11 @@ async fn collect_remote_search_status_entries(
         }) {
             continue;
         }
-        let is_library = remote_status_is_in_search_library(db, config, viewer, &status).await?;
+        let is_library = if is_public && parsed_query.in_library.is_none() {
+            false
+        } else {
+            remote_status_is_in_search_library(db, config, viewer, &status).await?
+        };
         if !status_is_searchable_by_scope(parsed_query, is_public, is_library) {
             continue;
         }
@@ -333,15 +385,28 @@ async fn collect_remote_search_status_entries(
         if !status_matches_search_timestamp(parsed_query, &status.published_at) {
             continue;
         }
-        let remote_attachments =
-            find_remote_status_attachments_by_status_id(db, &status.id).await?;
+        let remote_attachments = if status_search_needs_media_metadata(parsed_query)
+            || status_search_needs_embed_metadata(parsed_query)
+        {
+            find_remote_status_attachments_by_status_id(db, &status.id).await?
+        } else {
+            Vec::new()
+        };
         if !status_matches_search_metadata(
             parsed_query,
             !remote_attachments.is_empty(),
-            find_remote_status_poll_by_status_id(db, &status.id)
-                .await?
-                .is_some(),
-            build_remote_status_card_value(&text_content, &remote_attachments).is_some(),
+            if status_search_needs_poll_metadata(parsed_query) {
+                find_remote_status_poll_by_status_id(db, &status.id)
+                    .await?
+                    .is_some()
+            } else {
+                false
+            },
+            if status_search_needs_embed_metadata(parsed_query) {
+                build_remote_status_card_value(&text_content, &remote_attachments).is_some()
+            } else {
+                false
+            },
         ) {
             continue;
         }
@@ -351,7 +416,7 @@ async fn collect_remote_search_status_entries(
                 Reverse(status.published_at.clone()),
                 Reverse(status.id.clone()),
             ),
-            build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
+            SearchStatusCandidate::Remote { status, actor },
         ));
     }
 
@@ -395,14 +460,14 @@ pub(crate) async fn search_statuses_for_v2(
         return Ok(Vec::new());
     }
 
-    let query_limit = search_status_query_limit(limit, offset);
+    let search_terms = status_search_query_terms(&parsed_query);
+    let query_limit = search_status_query_limit(limit, offset, !search_terms.is_empty());
     let cursor_max_timestamp = resolve_search_status_bound_timestamp(db, max_id).await?;
     let cursor_min_timestamp = resolve_search_status_bound_timestamp(db, min_id).await?;
     let max_timestamp =
         earlier_status_search_bound(cursor_max_timestamp.clone(), parsed_query.before.clone());
     let min_timestamp =
         later_status_search_bound(cursor_min_timestamp.clone(), parsed_query.after.clone());
-    let search_terms = status_search_query_terms(&parsed_query);
     let max_id = (max_timestamp == cursor_max_timestamp)
         .then_some(max_id)
         .flatten();
@@ -455,12 +520,95 @@ pub(crate) async fn search_statuses_for_v2(
     }
 
     entries.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(entries
+    let selected = entries
         .into_iter()
         .skip(offset as usize)
-        .map(|(_, value)| value)
         .take(limit as usize)
-        .collect())
+        .map(|(_, candidate)| candidate)
+        .collect::<Vec<_>>();
+    build_search_status_candidates(db, config, viewer, selected).await
+}
+
+async fn build_search_status_candidates(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    candidates: Vec<SearchStatusCandidate>,
+) -> Result<Vec<MastodonStatusResponse>> {
+    let local_statuses = candidates
+        .iter()
+        .filter_map(|candidate| match candidate {
+            SearchStatusCandidate::Local { status, owner, .. } => Some((status, owner)),
+            SearchStatusCandidate::Remote { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let local_status_ids = local_statuses
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<Vec<_>>();
+    let local_status_refs = local_statuses
+        .iter()
+        .map(|(status, _)| *status)
+        .collect::<Vec<_>>();
+    let quote_uris = local_statuses
+        .iter()
+        .map(|(status, owner)| local_status_ap_id(config, owner, status))
+        .collect::<Vec<_>>();
+
+    let (
+        counts_preload,
+        quote_counts_preload,
+        poll_preload,
+        viewer_state_preload,
+        application_preload,
+        mut media_by_status_id,
+        filter_matcher,
+    ) = futures_util::try_join!(
+        preload_status_counts(db, &local_status_ids, &[]),
+        preload_status_quote_counts(db, &quote_uris),
+        preload_mastodon_poll_responses(db, &local_status_ids, Some(viewer)),
+        preload_local_status_viewer_state(db, viewer.id(), &local_status_refs, None),
+        preload_status_applications(db, config, &local_status_refs),
+        find_media_attachments_by_status_ids(db, &local_status_ids),
+        load_account_filter_matcher(db, viewer.id()),
+    )?;
+
+    let mut responses = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        match candidate {
+            SearchStatusCandidate::Local {
+                status,
+                owner,
+                in_reply_to_account_id,
+            } => {
+                let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+                responses.push(
+                    build_local_status_response_with_quote_count_preloads(
+                        db,
+                        config,
+                        Some(viewer),
+                        &status,
+                        &owner,
+                        in_reply_to_account_id,
+                        media,
+                        Some(&filter_matcher),
+                        Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&poll_preload),
+                        Some(&viewer_state_preload),
+                        Some(&application_preload),
+                    )
+                    .await?,
+                );
+            }
+            SearchStatusCandidate::Remote { status, actor } => {
+                responses.push(
+                    build_remote_status_response(db, config, Some(viewer), &status, &actor).await?,
+                );
+            }
+        }
+    }
+    Ok(responses)
 }
 
 #[cfg(test)]
@@ -468,9 +616,11 @@ mod tests {
     use super::search_status_query_limit;
 
     #[test]
-    fn search_status_query_limit_oversamples_with_cap() {
-        assert_eq!(search_status_query_limit(20, 0), 80);
-        assert_eq!(search_status_query_limit(40, 20), 200);
-        assert_eq!(search_status_query_limit(250, 0), 250);
+    fn search_status_query_limit_oversamples_text_queries_only() {
+        assert_eq!(search_status_query_limit(20, 0, true), 80);
+        assert_eq!(search_status_query_limit(40, 20, true), 200);
+        assert_eq!(search_status_query_limit(250, 0, true), 250);
+        assert_eq!(search_status_query_limit(20, 0, false), 20);
+        assert_eq!(search_status_query_limit(40, 20, false), 60);
     }
 }
