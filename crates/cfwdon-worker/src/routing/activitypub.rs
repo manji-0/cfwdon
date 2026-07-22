@@ -80,8 +80,8 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
         .post_async("/users/:username/inbox", |req, ctx| async move {
             inbox_response(req, ctx).await
         })
-        .get_async("/users/:username/outbox", |_req, ctx| async move {
-            outbox_response(ctx).await
+        .get_async("/users/:username/outbox", |req, ctx| async move {
+            outbox_response(req, ctx).await
         })
         .head_async("/users/:username/outbox", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)

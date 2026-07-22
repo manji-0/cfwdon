@@ -1,9 +1,11 @@
 use super::{
-    AppConfig, D1Database, Error, LocalAccount, StatusRow, build_add_featured_activity,
-    build_remove_featured_activity, build_status_update_activity, enqueue_targeted_outbox_activity,
+    AppConfig, D1Database, Error, LocalAccount, StatusRow, Visibility,
+    activitypub_audiences_for_status, build_add_featured_activity, build_remove_featured_activity,
+    build_status_update_activity, enqueue_targeted_outbox_activity,
     is_public_activitypub_visibility, list_follower_delivery_targets,
-    load_remote_actor_delivery_inbox, local_status_target_uri,
+    load_remote_actor_delivery_inbox, local_status_target_uri, local_username_from_actor_uri,
 };
+use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
 
@@ -155,12 +157,40 @@ pub(crate) async fn enqueue_status_update_activity(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
-    if !is_public_activitypub_visibility(status.visibility.as_str()) {
+    let payload_json = build_status_update_activity(db, config, account, status).await?;
+    let inboxes = match status.visibility {
+        Visibility::Public | Visibility::Unlisted | Visibility::FollowersOnly => {
+            list_follower_delivery_targets(db, account.id()).await?
+        }
+        Visibility::Direct => {
+            let (to_audiences, _) =
+                activitypub_audiences_for_status(db, config, account, status).await?;
+            let mut inboxes = Vec::new();
+            let mut seen = HashSet::new();
+            let actor_uris = match &to_audiences {
+                serde_json::Value::Array(values) => values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>(),
+                serde_json::Value::String(uri) => vec![uri.clone()],
+                _ => Vec::new(),
+            };
+            for actor_uri in actor_uris {
+                if local_username_from_actor_uri(config, &actor_uri).is_some() {
+                    continue;
+                }
+                if let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await?
+                    && seen.insert(inbox.clone())
+                {
+                    inboxes.push(inbox);
+                }
+            }
+            inboxes
+        }
+    };
+    if inboxes.is_empty() {
         return Ok(());
     }
-
-    let payload_json = build_status_update_activity(db, config, account, status).await?;
-    let inboxes = list_follower_delivery_targets(db, account.id()).await?;
     enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
 }
 

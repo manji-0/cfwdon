@@ -157,6 +157,21 @@ pub(crate) fn contains_public_audience(value: Option<&serde_json::Value>) -> boo
     }
 }
 
+pub(crate) fn contains_followers_audience(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::String(value)) => cfwdon_domain::is_followers_collection_uri(value),
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .any(|value| contains_followers_audience(Some(value))),
+        Some(serde_json::Value::Object(map)) => map
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(cfwdon_domain::is_followers_collection_uri)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 pub(crate) fn follow_targets_local_actor(
     object: Option<&serde_json::Value>,
     local_actor_uri: &str,
@@ -253,6 +268,8 @@ pub(crate) fn visibility_from_activitypub_object(object: &serde_json::Value) -> 
     cfwdon_domain::visibility_from_activitypub_audiences(
         contains_public_audience(object.get("to")),
         contains_public_audience(object.get("cc")),
+        contains_followers_audience(object.get("to"))
+            || contains_followers_audience(object.get("cc")),
     )
     .as_str()
     .to_owned()

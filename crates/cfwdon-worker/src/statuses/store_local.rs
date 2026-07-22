@@ -182,8 +182,18 @@ pub(crate) async fn list_public_outbox_statuses(
     account_id: &str,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
+    list_public_outbox_statuses_page(db, account_id, limit, 0).await
+}
+
+pub(crate) async fn list_public_outbox_statuses_page(
+    db: &D1Database,
+    account_id: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<StatusRow>> {
     let account_id = D1Type::Text(account_id);
     let limit = D1Type::Integer(limit as i32);
+    let offset = D1Type::Integer(offset as i32);
     let result = db
         .prepare(
             "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
@@ -191,15 +201,36 @@ pub(crate) async fn list_public_outbox_statuses(
              WHERE account_id = ?1
                AND visibility IN ('public', 'unlisted')
              ORDER BY created_at DESC
-             LIMIT ?2",
+             LIMIT ?2 OFFSET ?3",
         )
-        .bind_refs(&[account_id, limit])?
+        .bind_refs(&[account_id, limit, offset])?
         .all()
         .await?;
 
     result
         .results::<StatusRecord>()
         .and_then(statuses_from_records)
+}
+
+pub(crate) async fn count_public_outbox_statuses(db: &D1Database, account_id: &str) -> Result<u64> {
+    #[derive(serde::Deserialize)]
+    struct CountRow {
+        count: i64,
+    }
+
+    let account_id = D1Type::Text(account_id);
+    let row = db
+        .prepare(
+            "SELECT COUNT(*) AS count
+             FROM statuses
+             WHERE account_id = ?1
+               AND visibility IN ('public', 'unlisted')",
+        )
+        .bind_refs(&[account_id])?
+        .first::<CountRow>(None)
+        .await?;
+
+    Ok(row.map(|row| row.count.max(0) as u64).unwrap_or(0))
 }
 
 pub(crate) async fn list_account_statuses(

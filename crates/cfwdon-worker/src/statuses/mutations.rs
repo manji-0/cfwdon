@@ -1,8 +1,8 @@
 use super::{
-    StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string, find_local_status_by_object_uri,
-    generate_entity_id, now_iso_string, outbox_create_insert_statement,
-    outbox_delete_insert_statement, render_status_html, replace_local_status_hashtags,
-    require_status_by_id, status_from_record,
+    StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string, enqueue_direct_create_activity,
+    enqueue_direct_delete_activity, find_local_status_by_object_uri, generate_entity_id,
+    now_iso_string, outbox_create_insert_statement, outbox_delete_insert_statement,
+    render_status_html, replace_local_status_hashtags, require_status_by_id, status_from_record,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -67,6 +67,10 @@ pub(crate) async fn insert_status(
         outbox_create_insert_statement(db, config, account, &preview).await?
     };
     insert_local_status_intent(db, &stored, outbox_statement).await?;
+
+    if !defer_outbox {
+        enqueue_direct_create_activity(db, config, account, &preview, None).await?;
+    }
 
     replace_local_status_hashtags(
         db,
@@ -526,6 +530,8 @@ pub(crate) async fn delete_local_status_with_outbox(
     account: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
+    enqueue_direct_delete_activity(db, config, account, status).await?;
+
     let mut statements = Vec::new();
     if let Some(statement) = outbox_delete_insert_statement(db, config, account, status).await? {
         statements.push(statement);

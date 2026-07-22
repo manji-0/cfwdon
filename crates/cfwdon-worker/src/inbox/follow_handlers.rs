@@ -40,13 +40,13 @@ pub(crate) async fn handle_inbox_follow(
 
     let accept_activity =
         build_accept_activity(config, account, activity, &remote_actor.actor_uri)?;
-    let _ = queue_remote_actor_activity_required(
+    queue_remote_actor_activity_required(
         db,
         account.id(),
         &remote_actor.actor_uri,
         &accept_activity,
     )
-    .await;
+    .await?;
 
     Ok(())
 }

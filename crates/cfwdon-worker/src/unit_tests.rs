@@ -2159,6 +2159,13 @@ fn visibility_from_activitypub_object_detects_public_and_unlisted() {
         })),
         "private"
     );
+    assert_eq!(
+        visibility_from_activitypub_object(&serde_json::json!({
+            "to": ["https://social.example/users/bob"],
+            "cc": []
+        })),
+        "direct"
+    );
 }
 
 #[test]

@@ -11,12 +11,14 @@ pub(crate) struct ActivityPubVisibilityModel;
 pub(crate) struct ActivityPubVisibilityModelState {
     pub(crate) to_contains_public: bool,
     pub(crate) cc_contains_public: bool,
+    pub(crate) addresses_followers: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ActivityPubVisibilityAction {
     ToggleToPublic,
     ToggleCcPublic,
+    ToggleAddressesFollowers,
     EmitPublic,
     EmitUnlisted,
     EmitFollowersOnly,
@@ -25,7 +27,11 @@ pub(crate) enum ActivityPubVisibilityAction {
 
 impl ActivityPubVisibilityModel {
     fn resolved_visibility(state: &ActivityPubVisibilityModelState) -> Visibility {
-        visibility_from_activitypub_audiences(state.to_contains_public, state.cc_contains_public)
+        visibility_from_activitypub_audiences(
+            state.to_contains_public,
+            state.cc_contains_public,
+            state.addresses_followers,
+        )
     }
 }
 
@@ -38,18 +44,27 @@ impl Model for ActivityPubVisibilityModel {
             ActivityPubVisibilityModelState {
                 to_contains_public: false,
                 cc_contains_public: false,
+                addresses_followers: false,
+            },
+            ActivityPubVisibilityModelState {
+                to_contains_public: false,
+                cc_contains_public: false,
+                addresses_followers: true,
             },
             ActivityPubVisibilityModelState {
                 to_contains_public: true,
                 cc_contains_public: false,
+                addresses_followers: true,
             },
             ActivityPubVisibilityModelState {
                 to_contains_public: false,
                 cc_contains_public: true,
+                addresses_followers: true,
             },
             ActivityPubVisibilityModelState {
                 to_contains_public: true,
                 cc_contains_public: true,
+                addresses_followers: false,
             },
         ]
     }
@@ -58,6 +73,7 @@ impl Model for ActivityPubVisibilityModel {
         actions.extend([
             ActivityPubVisibilityAction::ToggleToPublic,
             ActivityPubVisibilityAction::ToggleCcPublic,
+            ActivityPubVisibilityAction::ToggleAddressesFollowers,
             ActivityPubVisibilityAction::EmitPublic,
             ActivityPubVisibilityAction::EmitUnlisted,
             ActivityPubVisibilityAction::EmitFollowersOnly,
@@ -75,25 +91,36 @@ impl Model for ActivityPubVisibilityModel {
             ActivityPubVisibilityAction::ToggleCcPublic => {
                 next.cc_contains_public = !next.cc_contains_public;
             }
+            ActivityPubVisibilityAction::ToggleAddressesFollowers => {
+                next.addresses_followers = !next.addresses_followers;
+            }
             ActivityPubVisibilityAction::EmitPublic => {
-                let (to, cc) = activitypub_audience_flags_for_visibility(Visibility::Public);
+                let (to, cc, followers) =
+                    activitypub_audience_flags_for_visibility(Visibility::Public);
                 next.to_contains_public = to;
                 next.cc_contains_public = cc;
+                next.addresses_followers = followers;
             }
             ActivityPubVisibilityAction::EmitUnlisted => {
-                let (to, cc) = activitypub_audience_flags_for_visibility(Visibility::Unlisted);
+                let (to, cc, followers) =
+                    activitypub_audience_flags_for_visibility(Visibility::Unlisted);
                 next.to_contains_public = to;
                 next.cc_contains_public = cc;
+                next.addresses_followers = followers;
             }
             ActivityPubVisibilityAction::EmitFollowersOnly => {
-                let (to, cc) = activitypub_audience_flags_for_visibility(Visibility::FollowersOnly);
+                let (to, cc, followers) =
+                    activitypub_audience_flags_for_visibility(Visibility::FollowersOnly);
                 next.to_contains_public = to;
                 next.cc_contains_public = cc;
+                next.addresses_followers = followers;
             }
             ActivityPubVisibilityAction::EmitDirect => {
-                let (to, cc) = activitypub_audience_flags_for_visibility(Visibility::Direct);
+                let (to, cc, followers) =
+                    activitypub_audience_flags_for_visibility(Visibility::Direct);
                 next.to_contains_public = to;
                 next.cc_contains_public = cc;
+                next.addresses_followers = followers;
             }
         }
 
@@ -118,11 +145,21 @@ impl Model for ActivityPubVisibilityModel {
                 },
             ),
             Property::always(
-                "no_public_audience_is_followers_only",
+                "no_public_with_followers_is_followers_only",
                 |_, state: &ActivityPubVisibilityModelState| {
                     state.to_contains_public
                         || state.cc_contains_public
+                        || !state.addresses_followers
                         || Self::resolved_visibility(state) == Visibility::FollowersOnly
+                },
+            ),
+            Property::always(
+                "no_public_without_followers_is_direct",
+                |_, state: &ActivityPubVisibilityModelState| {
+                    state.to_contains_public
+                        || state.cc_contains_public
+                        || state.addresses_followers
+                        || Self::resolved_visibility(state) == Visibility::Direct
                 },
             ),
             Property::always(
@@ -161,6 +198,12 @@ impl Model for ActivityPubVisibilityModel {
                 "followers_only_visibility_reachable",
                 |_, state: &ActivityPubVisibilityModelState| {
                     Self::resolved_visibility(state) == Visibility::FollowersOnly
+                },
+            ),
+            Property::sometimes(
+                "direct_visibility_reachable",
+                |_, state: &ActivityPubVisibilityModelState| {
+                    Self::resolved_visibility(state) == Visibility::Direct
                 },
             ),
         ]

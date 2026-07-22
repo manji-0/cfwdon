@@ -353,11 +353,16 @@ pub(crate) async fn remote_poll_is_visible_to_viewer(
         if remote_status_targets_local_viewer_account(&raw_status, viewer, config) {
             return Ok(true);
         }
-        if remote_status_targets_local_viewer_followers(&raw_status, viewer, config)
+        if status.visibility.as_str() != "direct"
+            && remote_status_targets_local_viewer_followers(&raw_status, viewer, config)
             && is_local_account_following_remote_actor(db, viewer.id(), &status.actor_uri).await?
         {
             return Ok(true);
         }
+        return Ok(has_own_vote);
+    }
+
+    if status.visibility.as_str() == "direct" {
         return Ok(has_own_vote);
     }
 

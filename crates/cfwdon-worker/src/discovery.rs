@@ -4,11 +4,12 @@ use super::{
     build_activitypub_actor_document, build_outbox_activities, build_tag_response,
     cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
     cache_public_response, cache_public_response_with_options, cached_actor_json_response,
-    cached_actor_profile_html_response, ensure_account_keys, escape_html, find_account_by_username,
-    find_media_attachments_by_status_ids, instance_host, list_follower_actor_uris,
-    list_following_actor_uris, list_local_follower_usernames, list_public_outbox_statuses,
-    load_account_stats, load_config, local_status_html_item, media_object_url, normalize_hashtag,
-    parse_webfinger_resource, render_profile_field_value_html,
+    cached_actor_profile_html_response, count_public_outbox_statuses, ensure_account_keys,
+    escape_html, find_account_by_username, find_media_attachments_by_status_ids, instance_host,
+    list_follower_actor_uris, list_following_actor_uris, list_local_follower_usernames,
+    list_public_outbox_statuses, list_public_outbox_statuses_page, load_account_stats, load_config,
+    local_status_html_item, media_object_url, normalize_hashtag, parse_webfinger_resource,
+    render_profile_field_value_html,
 };
 use std::collections::HashSet;
 use url::Url;
@@ -521,8 +522,9 @@ pub(crate) async fn following_collection_response(
     )
 }
 
-pub(crate) async fn outbox_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
+    let query: CollectionPagingQuery = req.query().unwrap_or_default();
     let username = ctx
         .param("username")
         .map(|value| value.trim().to_ascii_lowercase())
@@ -534,19 +536,47 @@ pub(crate) async fn outbox_response(ctx: RouteContext<()>) -> Result<Response> {
         return Response::error("actor not found", 404);
     };
 
-    let statuses = list_public_outbox_statuses(&db, account.id(), 20).await?;
     let actor = actor_url(&config, account.username());
     let outbox = format!("{actor}/outbox");
-    let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
+    let total_items = count_public_outbox_statuses(&db, account.id()).await?;
+    let limit = query.limit.unwrap_or(20).clamp(1, 80);
+    let offset = query.offset.unwrap_or(0);
     let cache_tag = format!("account-{username}");
+
+    if query.page.unwrap_or(false) || query.offset.unwrap_or(0) > 0 {
+        let statuses = list_public_outbox_statuses_page(&db, account.id(), limit, offset).await?;
+        let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
+        let next_offset = offset.saturating_add(ordered_items.len() as u32);
+        let next = if (next_offset as u64) < total_items {
+            Some(format!(
+                "{outbox}?page=true&offset={next_offset}&limit={limit}"
+            ))
+        } else {
+            None
+        };
+
+        return cache_public_json_response(
+            &serde_json::json!({
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "type": "OrderedCollectionPage",
+                "id": format!("{outbox}?page=true&offset={offset}&limit={limit}"),
+                "partOf": outbox,
+                "next": next,
+                "orderedItems": ordered_items,
+            }),
+            "application/activity+json",
+            CACHE_TTL_FEDERATION,
+            &[("Cache-Tag", &cache_tag)],
+        );
+    }
 
     cache_public_json_response(
         &serde_json::json!({
             "@context": "https://www.w3.org/ns/activitystreams",
             "type": "OrderedCollection",
             "id": outbox,
-            "totalItems": ordered_items.len(),
-            "orderedItems": ordered_items,
+            "totalItems": total_items,
+            "first": format!("{outbox}?page=true&offset=0&limit={limit}"),
         }),
         "application/activity+json",
         CACHE_TTL_FEDERATION,

@@ -69,7 +69,8 @@ pub use remote::{
     ActivityPubReblogInput, ActivityPubStatusInput, IncomingRemoteReblog, IncomingRemoteStatus,
     RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, RemoteStatusRecord,
     StoredRemoteReblogIntent, StoredRemoteStatusIntent, activitypub_audience_flags_for_visibility,
-    audience_values_contains_public, is_public_activitypub_visibility, is_public_audience_uri,
+    audience_values_contain_followers, audience_values_contains_public,
+    is_followers_collection_uri, is_public_activitypub_visibility, is_public_audience_uri,
     quote_target_uri_from_fields, remote_status_default_quote_state,
     visibility_from_activitypub_audiences, visibility_from_audience_lists,
 };

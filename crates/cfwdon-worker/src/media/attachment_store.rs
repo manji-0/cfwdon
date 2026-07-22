@@ -1,6 +1,7 @@
 use crate::{
     AppConfig, D1Database, Error, LocalAccount, MediaAttachmentRow, OrphanMediaRow, Result,
-    UpdateMediaRequest, outbox_create_insert_statement_with_attachments, parse_media_focus,
+    UpdateMediaRequest, enqueue_direct_create_activity,
+    outbox_create_insert_statement_with_attachments, parse_media_focus,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -434,6 +435,8 @@ pub(crate) async fn attach_media_and_enqueue_outbox(
 
     if let Some(outbox_statement) = outbox_statement {
         outbox_statement.run().await?;
+    } else {
+        enqueue_direct_create_activity(db, config, account, status, Some(media)).await?;
     }
 
     Ok(())

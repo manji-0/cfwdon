@@ -17,12 +17,20 @@ fn model_domain_step(
 }
 
 fn resolved_visibility(state: ActivityPubVisibilityModelState) -> Visibility {
-    visibility_from_activitypub_audiences(state.to_contains_public, state.cc_contains_public)
+    visibility_from_activitypub_audiences(
+        state.to_contains_public,
+        state.cc_contains_public,
+        state.addresses_followers,
+    )
 }
 
 /// Mirrors `visibility_from_activitypub_object` in the worker parse path.
 fn worker_parse_visibility(state: ActivityPubVisibilityModelState) -> Visibility {
-    visibility_from_activitypub_audiences(state.to_contains_public, state.cc_contains_public)
+    visibility_from_activitypub_audiences(
+        state.to_contains_public,
+        state.cc_contains_public,
+        state.addresses_followers,
+    )
 }
 
 /// Mirrors worker `is_public_activitypub_visibility` on parsed visibility strings.
@@ -31,7 +39,7 @@ fn worker_is_public_visibility_string(visibility: Visibility) -> bool {
 }
 
 /// Mirrors `activitypub_audiences` flag selection before JSON assembly.
-fn worker_emit_audience_flags(visibility: Visibility) -> (bool, bool) {
+fn worker_emit_audience_flags(visibility: Visibility) -> (bool, bool, bool) {
     activitypub_audience_flags_for_visibility(visibility)
 }
 
@@ -42,7 +50,8 @@ fn worker_visibility_for_emit(action: ActivityPubVisibilityAction) -> Option<Vis
         ActivityPubVisibilityAction::EmitFollowersOnly => Some(Visibility::FollowersOnly),
         ActivityPubVisibilityAction::EmitDirect => Some(Visibility::Direct),
         ActivityPubVisibilityAction::ToggleToPublic
-        | ActivityPubVisibilityAction::ToggleCcPublic => None,
+        | ActivityPubVisibilityAction::ToggleCcPublic
+        | ActivityPubVisibilityAction::ToggleAddressesFollowers => None,
     }
 }
 
@@ -60,10 +69,12 @@ fn worker_effect(
     let Some(visibility) = worker_visibility_for_emit(action) else {
         return _state;
     };
-    let (to_contains_public, cc_contains_public) = worker_emit_audience_flags(visibility);
+    let (to_contains_public, cc_contains_public, addresses_followers) =
+        worker_emit_audience_flags(visibility);
     ActivityPubVisibilityModelState {
         to_contains_public,
         cc_contains_public,
+        addresses_followers,
     }
 }
 

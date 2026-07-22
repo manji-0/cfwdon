@@ -19,6 +19,11 @@ pub(crate) struct DnsJsonAnswer {
     pub(crate) data: String,
 }
 
+/// Validate remote fetch URL policy and DNS answers via DoH.
+///
+/// Cloudflare Workers `Fetch` resolves hostnames independently of this check, so
+/// this is best-effort SSRF filtering rather than true IP pinning. Redirect
+/// targets are re-validated before each hop.
 pub(crate) async fn validate_remote_fetch_url(url: &Url) -> Result<()> {
     let has_userinfo = !url.username().is_empty() || url.password().is_some();
     if !matches!(url.scheme(), "http" | "https") {

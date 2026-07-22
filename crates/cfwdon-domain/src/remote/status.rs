@@ -2,8 +2,8 @@ use crate::error::RemoteStatusError;
 use crate::ids::StatusId;
 use crate::quote::QuoteState;
 use crate::remote::activitypub::{
-    audience_values_contains_public, quote_target_uri_from_fields,
-    visibility_from_activitypub_audiences,
+    audience_values_contain_followers, audience_values_contains_public,
+    quote_target_uri_from_fields, visibility_from_activitypub_audiences,
 };
 use crate::status::Visibility;
 use crate::transition::Transition;
@@ -42,6 +42,8 @@ impl ActivityPubStatusInput {
         let visibility = visibility_from_activitypub_audiences(
             audience_values_contains_public(&self.to_audiences),
             audience_values_contains_public(&self.cc_audiences),
+            audience_values_contain_followers(&self.to_audiences)
+                || audience_values_contain_followers(&self.cc_audiences),
         );
         let published_at = self
             .published_at
@@ -243,6 +245,8 @@ impl ActivityPubReblogInput {
         let visibility = visibility_from_activitypub_audiences(
             audience_values_contains_public(&self.to_audiences),
             audience_values_contains_public(&self.cc_audiences),
+            audience_values_contain_followers(&self.to_audiences)
+                || audience_values_contain_followers(&self.cc_audiences),
         );
         let published_at = self
             .published_at
