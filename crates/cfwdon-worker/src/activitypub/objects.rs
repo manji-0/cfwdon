@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, actor_url,
+    AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, activitypub_datetime_string, actor_url,
     apply_activitypub_poll_fields, classify_media_kind, count_poll_voters,
     extract_account_handles_from_text, find_account_by_id, find_account_by_username,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
@@ -168,7 +168,7 @@ pub(crate) async fn build_activitypub_note(
         "url": note_id.clone(),
         "attributedTo": actor,
         "content": status.content_html,
-        "published": status.created_at,
+        "published": activitypub_datetime_string(&status.created_at),
         "to": audiences.0,
         "cc": audiences.1,
         "attachment": attachments

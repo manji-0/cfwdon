@@ -38,6 +38,32 @@ pub(crate) fn add_seconds_to_iso_string(value: &str, seconds: u64) -> Result<Str
         .map_err(|error| Error::RustError(format!("failed to format ISO timestamp: {error}")))
 }
 
+/// Normalize D1 / SQLite timestamps into ActivityPub-friendly RFC3339 UTC.
+///
+/// Accepts already-valid RFC3339 values, or `YYYY-MM-DD HH:MM:SS` (SQLite
+/// `CURRENT_TIMESTAMP`) treated as UTC.
+pub(crate) fn activitypub_datetime_string(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(timestamp) = OffsetDateTime::parse(trimmed, &Rfc3339) {
+        return timestamp
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| trimmed.to_owned());
+    }
+
+    // SQLite CURRENT_TIMESTAMP: "2026-05-09 13:40:48"
+    if trimmed.len() >= 19 && trimmed.as_bytes().get(10) == Some(&b' ') {
+        let candidate = format!("{}T{}Z", &trimmed[..10], &trimmed[11..19]);
+        if let Ok(timestamp) = OffsetDateTime::parse(&candidate, &Rfc3339) {
+            return timestamp.format(&Rfc3339).unwrap_or(candidate);
+        }
+    }
+
+    trimmed.to_owned()
+}
+
 pub(crate) fn is_iso_timestamp_in_past(value: &str) -> Result<bool> {
     let timestamp = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|error| Error::RustError(format!("invalid ISO timestamp {value}: {error}")))?;
@@ -68,4 +94,26 @@ pub(crate) fn escape_html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::activitypub_datetime_string;
+
+    #[test]
+    fn activitypub_datetime_string_normalizes_sqlite_timestamp() {
+        assert_eq!(
+            activitypub_datetime_string("2026-05-09 13:40:48"),
+            "2026-05-09T13:40:48Z"
+        );
+    }
+
+    #[test]
+    fn activitypub_datetime_string_keeps_rfc3339() {
+        let normalized = activitypub_datetime_string("2026-05-09T13:40:48.000Z");
+        assert!(
+            normalized == "2026-05-09T13:40:48.000Z" || normalized == "2026-05-09T13:40:48Z",
+            "unexpected normalized timestamp: {normalized}"
+        );
+    }
 }

@@ -7,9 +7,9 @@ use crate::{
 };
 use worker::{Response, Result, Router};
 
-pub(super) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
-const JSON_CONTENT_TYPE: &str = "application/json";
-const JRD_CONTENT_TYPE: &str = "application/jrd+json";
+pub(crate) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
+pub(crate) const JSON_CONTENT_TYPE: &str = "application/json";
+pub(crate) const JRD_CONTENT_TYPE: &str = "application/jrd+json";
 
 pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'static, ()> {
     router
@@ -91,7 +91,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
         })
 }
 
-pub(super) fn static_head_response(content_type: &str) -> Result<Response> {
+pub(crate) fn static_head_response(content_type: &str) -> Result<Response> {
     let mut response = Response::empty()?;
     response.headers_mut().set("Content-Type", content_type)?;
     Ok(response)

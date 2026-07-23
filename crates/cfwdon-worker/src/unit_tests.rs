@@ -136,9 +136,28 @@ fn parse_webfinger_resource_accepts_case_insensitive_acct_scheme() {
 }
 
 #[test]
-fn parse_webfinger_resource_rejects_non_acct_scheme() {
-    let error = parse_webfinger_resource("https://example.com/users/alice").unwrap_err();
-    assert!(error.to_string().contains("acct"));
+fn parse_webfinger_resource_accepts_bare_handle_and_actor_urls() {
+    let handle = parse_webfinger_resource("alice@example.com").unwrap();
+    assert_eq!(handle.username, "alice");
+    assert_eq!(handle.domain.as_deref(), Some("example.com"));
+
+    let handle = parse_webfinger_resource("https://example.com/users/alice").unwrap();
+    assert_eq!(handle.username, "alice");
+    assert_eq!(handle.domain.as_deref(), Some("example.com"));
+
+    let handle = parse_webfinger_resource("https://example.com/@Alice").unwrap();
+    assert_eq!(handle.username, "alice");
+    assert_eq!(handle.domain.as_deref(), Some("example.com"));
+}
+
+#[test]
+fn parse_webfinger_resource_rejects_unsupported_forms() {
+    let error = parse_webfinger_resource("ftp://example.com/users/alice").unwrap_err();
+    assert!(
+        error.to_string().contains("acct:user@domain") || error.to_string().contains("actor URL")
+    );
+    let error = parse_webfinger_resource("https://example.com/about").unwrap_err();
+    assert!(error.to_string().contains("users"));
 }
 
 #[test]

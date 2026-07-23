@@ -72,7 +72,10 @@ struct CollectionPagingQuery {
 pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: WebFingerQuery = req.query()?;
-    let handle = parse_webfinger_resource(&query.resource)?;
+    let handle = match parse_webfinger_resource(&query.resource) {
+        Ok(handle) => handle,
+        Err(error) => return Response::error(error.to_string(), 400),
+    };
 
     if !handle.is_local_to(&config.instance_domain) {
         return Response::error("resource not found", 404);

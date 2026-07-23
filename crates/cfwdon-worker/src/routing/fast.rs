@@ -185,6 +185,8 @@ fn account_router() -> Router<'static, ()> {
 }
 
 fn discovery_router() -> Router<'static, ()> {
+    use super::activitypub::{JRD_CONTENT_TYPE, JSON_CONTENT_TYPE, static_head_response};
+
     Router::new()
         .get_async(
             "/.well-known/oauth-authorization-server",
@@ -193,11 +195,20 @@ fn discovery_router() -> Router<'static, ()> {
         .get_async("/.well-known/webfinger", |req, ctx| async move {
             webfinger_response(req, ctx).await
         })
+        .head_async("/.well-known/webfinger", |_req, _ctx| async move {
+            static_head_response(JRD_CONTENT_TYPE)
+        })
         .get_async("/.well-known/nodeinfo", |_req, ctx| async move {
             nodeinfo_links_response(ctx).await
         })
+        .head_async("/.well-known/nodeinfo", |_req, _ctx| async move {
+            static_head_response(JSON_CONTENT_TYPE)
+        })
         .get_async("/nodeinfo/2.0", |_req, ctx| async move {
             nodeinfo_response(ctx).await
+        })
+        .head_async("/nodeinfo/2.0", |_req, _ctx| async move {
+            static_head_response(JSON_CONTENT_TYPE)
         })
         .get_async("/api/oembed", |req, ctx| async move {
             oembed_response(req, ctx).await

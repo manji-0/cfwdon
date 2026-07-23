@@ -1,6 +1,6 @@
 use super::{
-    AppConfig, LocalAccount, activitypub_profile_attachments, actor_url, media_object_url,
-    public_key_id, shared_inbox_url,
+    AppConfig, LocalAccount, activitypub_datetime_string, activitypub_profile_attachments,
+    actor_url, media_object_url, public_key_id, shared_inbox_url,
 };
 
 #[derive(Debug, serde::Serialize)]
@@ -116,6 +116,6 @@ pub(crate) fn build_activitypub_actor_document(
         },
         manually_approves_followers: account.is_locked(),
         discoverable: account.is_discoverable(),
-        published: account.created_at().to_owned(),
+        published: activitypub_datetime_string(account.created_at()),
     }
 }

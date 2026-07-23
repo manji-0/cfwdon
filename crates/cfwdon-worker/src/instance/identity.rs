@@ -15,31 +15,101 @@ pub(crate) fn parse_csv_list(value: &str) -> Vec<String> {
     values
 }
 
+/// Parse a WebFinger `resource` query value.
+///
+/// Accepts Mastodon-compatible forms:
+/// - `acct:user@domain`
+/// - `user@domain`
+/// - `https://domain/users/user` / `https://domain/@user`
 pub(crate) fn parse_webfinger_resource(resource: &str) -> Result<AccountHandle> {
     let resource = resource.trim();
-    let Some(acct) = resource.get(5..).filter(|_| {
-        resource
-            .get(..5)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
-    }) else {
+    if resource.is_empty() {
         return Err(Error::RustError(
-            "WebFinger resource must use the acct: scheme".to_owned(),
+            "WebFinger resource must not be empty".to_owned(),
         ));
-    };
+    }
 
+    if resource
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acct:"))
+    {
+        return parse_acct_handle(&resource[5..]);
+    }
+
+    if resource.starts_with("http://") || resource.starts_with("https://") {
+        return parse_webfinger_actor_url(resource);
+    }
+
+    if resource.contains('@') {
+        return parse_acct_handle(resource.trim_start_matches('@'));
+    }
+
+    Err(Error::RustError(
+        "WebFinger resource must be acct:user@domain, user@domain, or an actor URL".to_owned(),
+    ))
+}
+
+fn parse_acct_handle(acct: &str) -> Result<AccountHandle> {
     let Some((username, domain)) = acct.split_once('@') else {
         return Err(Error::RustError(
-            "WebFinger resource must be in acct:user@domain form".to_owned(),
+            "WebFinger resource must be in user@domain form".to_owned(),
         ));
     };
 
-    let username = username.trim().to_ascii_lowercase();
-    let domain = domain.trim().to_ascii_lowercase();
+    let username = username.trim().trim_start_matches('@').to_ascii_lowercase();
+    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if username.is_empty() || domain.is_empty() {
         return Err(Error::RustError(
             "WebFinger resource must include both username and domain".to_owned(),
         ));
     }
+
+    Ok(AccountHandle {
+        username,
+        domain: Some(domain),
+    })
+}
+
+fn parse_webfinger_actor_url(resource: &str) -> Result<AccountHandle> {
+    let parsed = Url::parse(resource).map_err(|_| {
+        Error::RustError("WebFinger resource URL is not a valid http(s) URL".to_owned())
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(Error::RustError(
+            "WebFinger resource URL must use http or https".to_owned(),
+        ));
+    }
+    let domain = parsed
+        .host_str()
+        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| Error::RustError("WebFinger resource URL must include a host".to_owned()))?;
+
+    let mut segments = parsed
+        .path_segments()
+        .ok_or_else(|| Error::RustError("WebFinger resource URL path is invalid".to_owned()))?
+        .filter(|segment| !segment.is_empty());
+
+    let username = match (segments.next(), segments.next(), segments.next()) {
+        (Some("users"), Some(username), None) if !username.is_empty() => {
+            username.to_ascii_lowercase()
+        }
+        (Some(segment), None, None) => segment
+            .strip_prefix('@')
+            .filter(|username| !username.is_empty())
+            .map(|username| username.to_ascii_lowercase())
+            .ok_or_else(|| {
+                Error::RustError(
+                    "WebFinger resource URL must point to /users/:username or /@:username"
+                        .to_owned(),
+                )
+            })?,
+        _ => {
+            return Err(Error::RustError(
+                "WebFinger resource URL must point to /users/:username or /@:username".to_owned(),
+            ));
+        }
+    };
 
     Ok(AccountHandle {
         username,
