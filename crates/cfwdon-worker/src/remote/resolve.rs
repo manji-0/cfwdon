@@ -4,9 +4,10 @@ use crate::{
     ensure_remote_actor_username_matches_handle, extract_remote_note_object,
     fetch_activitypub_document_with_context, fetch_remote_actor_profile_with_context,
     find_account_by_id, find_account_by_username, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, find_remote_status_by_object_uri,
-    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
-    local_username_from_actor_uri, log_json_event, parse_lookup_handle, parse_remote_http_url,
+    find_remote_actor_by_profile_url_or_actor_uri, find_remote_actor_by_username_domain,
+    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
+    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
+    log_json_event, parse_lookup_handle, parse_remote_http_url,
     reconcile_remote_account_status_summary, remote_actor_uri_from_rest_id,
     resolve_webfinger_actor_uri, upsert_remote_actor, upsert_remote_status,
     visibility_from_activitypub_object,
@@ -105,13 +106,57 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
         ));
     }
 
+    let domain = handle
+        .domain
+        .as_deref()
+        .ok_or_else(|| Error::RustError("remote handle is missing domain".to_owned()))?;
     let fetch_context = RemoteCollectionFetchContext {
         config,
         db,
         signer: viewer,
     };
-    let actor_uri = resolve_webfinger_actor_uri(&handle).await?;
-    let fetched = fetch_remote_actor_profile_with_context(&actor_uri, Some(&fetch_context)).await?;
+    match resolve_remote_lookup_via_fetch(db, &handle, &fetch_context).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            if let Some(actor) =
+                find_remote_actor_by_username_domain(db, &handle.username, domain).await?
+            {
+                log_json_event(serde_json::json!({
+                    "event": "account_lookup_cache_fallback",
+                    "acct": acct,
+                    "actor_uri": actor.actor_uri,
+                    "error": error.to_string(),
+                }));
+                let mut response = MastodonAccountResponse::from_remote_actor(&actor);
+                if let Err(enrich_error) = reconcile_remote_account_status_summary(
+                    db,
+                    &actor.actor_uri,
+                    &mut response,
+                )
+                .await
+                {
+                    log_json_event(serde_json::json!({
+                        "event": "remote_account_enrichment_failed",
+                        "actor_uri": actor.actor_uri,
+                        "stage": "status_summary",
+                        "error": enrich_error.to_string(),
+                    }));
+                }
+                return Ok(response);
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn resolve_remote_lookup_via_fetch(
+    db: &D1Database,
+    handle: &cfwdon_domain::AccountHandle,
+    fetch_context: &RemoteCollectionFetchContext<'_>,
+) -> Result<MastodonAccountResponse> {
+    let actor_uri = resolve_webfinger_actor_uri(handle).await?;
+    let fetched =
+        fetch_remote_actor_profile_with_context(&actor_uri, Some(fetch_context)).await?;
     let profile = fetched.profile;
     ensure_remote_actor_username_matches_handle(&profile, &handle.username)?;
     upsert_remote_actor(db, &profile).await?;
@@ -125,7 +170,7 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
         actor.social_counts_updated_at.as_deref(),
         &mut response,
         &fetched.document,
-        Some(&fetch_context),
+        Some(fetch_context),
     )
     .await?;
     Ok(response)

@@ -206,7 +206,14 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     let query: AccountLookupQuery = req.query()?;
     match resolve_lookup_account_with_viewer(&db, &config, &query.acct, Some(&viewer)).await {
         Ok(account) => Response::from_json(&account),
-        Err(_) => Response::error("account not found", 404),
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "account_lookup_failed",
+                "acct": query.acct,
+                "error": error.to_string(),
+            }));
+            Response::error("account not found", 404)
+        }
     }
 }
 

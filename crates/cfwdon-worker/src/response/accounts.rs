@@ -179,10 +179,18 @@ fn log_remote_account_enrichment_failure(actor_uri: &str, stage: &str, error: &E
 }
 
 pub(crate) fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
+    // Public ActivityPub GETs should fall back to an unsigned fetch whenever the
+    // signed attempt fails. Auth-rejection (401/403) is the common case, but some
+    // remotes (and Cloudflare WAF in front of them) return other status codes or
+    // non-JSON challenge bodies that still leave the unsigned public document
+    // reachable.
     let message = error.to_string();
-    message.contains("HTTP 401")
-        || message.contains("HTTP 403")
-        || message.contains("private signing key is missing")
+    message.contains("private signing key is missing")
+        || message.contains("HTTP ")
+        || message.contains("error decoding response body")
+        || message.contains("expected value")
+        || message.contains("invalid type")
+        || message.contains("EOF while parsing")
 }
 
 pub(crate) async fn fetch_activitypub_document_with_context(
@@ -776,8 +784,11 @@ mod tests {
         assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
             "account private signing key is missing".to_owned()
         )));
-        assert!(!signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "failed to fetch signed remote document https://x: HTTP 500".to_owned()
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "failed to fetch signed remote document https://x: HTTP 523".to_owned()
+        )));
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "error decoding response body: expected value at line 1 column 1".to_owned()
         )));
     }
 

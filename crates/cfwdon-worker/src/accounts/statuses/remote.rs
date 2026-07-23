@@ -497,7 +497,19 @@ async fn load_transient_remote_actor_statuses(
         signer: viewer,
     };
     let fetched =
-        fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await?;
+        match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
+        {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                log_json_event(serde_json::json!({
+                    "event": "remote_outbox_hydrate_failed",
+                    "actor_uri": actor.actor_uri,
+                    "stage": "actor_document",
+                    "error": error.to_string(),
+                }));
+                return Ok((Vec::new(), None));
+            }
+        };
     let actor_document = fetched.document;
     let social_counts =
         if remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref()) {
@@ -539,8 +551,19 @@ async fn load_transient_remote_actor_statuses(
     if query.pinned.unwrap_or(false) {
         return Ok((Vec::new(), social_counts));
     }
-    let Some(mut page) = remote_actor_outbox_page(&actor_document, Some(&fetch_context)).await?
-    else {
+    let page = match remote_actor_outbox_page(&actor_document, Some(&fetch_context)).await {
+        Ok(page) => page,
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "remote_outbox_hydrate_failed",
+                "actor_uri": actor.actor_uri,
+                "stage": "outbox_page",
+                "error": error.to_string(),
+            }));
+            return Ok((Vec::new(), social_counts));
+        }
+    };
+    let Some(mut page) = page else {
         return Ok((Vec::new(), social_counts));
     };
     let limit = limit.clamp(1, 20) as usize;
