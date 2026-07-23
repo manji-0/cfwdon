@@ -1,7 +1,7 @@
 use super::{
     AccountStats, AppConfig, CACHE_TTL_FEDERATION, CACHE_TTL_STATIC_METADATA, CACHE_TTL_TRENDS,
-    Error, LocalAccount, Request, Response, Result, RouteContext, actor_url,
-    build_activitypub_actor_document, build_outbox_activities, build_tag_response,
+    Error, LocalAccount, Request, Response, Result, RouteContext, activitypub_datetime_string,
+    actor_url, build_activitypub_actor_document, build_outbox_activities, build_tag_response,
     cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
     cache_public_response, cache_public_response_with_options, cached_actor_json_response,
     cached_actor_profile_html_response, count_public_outbox_statuses, ensure_account_keys,
@@ -296,7 +296,7 @@ fn profile_html_document(
     let bio_html = profile_bio_html(account);
     let fields_html = profile_fields_html(account);
     let badges_html = profile_badges_html(account);
-    let created = escape_html(account.created_at());
+    let created = escape_html(&activitypub_datetime_string(account.created_at()));
     let posts_section = profile_posts_section(&profile_url, posts_html);
     format!(
         r#"<!doctype html>

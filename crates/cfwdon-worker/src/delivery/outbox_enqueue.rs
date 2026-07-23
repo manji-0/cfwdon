@@ -1,8 +1,8 @@
 use super::{
     AppConfig, D1Database, Error, LocalAccount, Result, StatusRow, Visibility,
-    activitypub_audiences_for_status, actor_url, build_activitypub_delete, build_activitypub_note,
-    describe_outbound_activity, load_remote_actor_delivery_inbox, local_username_from_actor_uri,
-    status_has_active_quote,
+    activitypub_audiences_for_status, activitypub_datetime_string, actor_url,
+    build_activitypub_delete, build_activitypub_note, describe_outbound_activity,
+    load_remote_actor_delivery_inbox, local_username_from_actor_uri, status_has_active_quote,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -133,7 +133,7 @@ async fn build_create_activity_payload(
         "type": "Create",
         "id": activity_id,
         "actor": actor_url(config, account.username()),
-        "published": status.created_at.clone(),
+        "published": activitypub_datetime_string(&status.created_at),
         "to": note.get("to").cloned().unwrap_or_else(|| serde_json::json!([])),
         "cc": note.get("cc").cloned().unwrap_or_else(|| serde_json::json!([])),
         "object": note,

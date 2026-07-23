@@ -11,6 +11,7 @@ use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_usernam
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::timestamp_to_mastodon_iso8601;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     LocalFollowState, RemoteInboundFollowRequestState, authorize_local_follow_request,
@@ -411,8 +412,8 @@ async fn build_notification_request_document(
 
     Ok(Some(serde_json::json!({
         "id": notification_request_id(request),
-        "created_at": request.created_at(),
-        "updated_at": request.created_at(),
+        "created_at": timestamp_to_mastodon_iso8601(request.created_at()),
+        "updated_at": timestamp_to_mastodon_iso8601(request.created_at()),
         "account": account,
         "notifications_count": "1",
         "last_status": serde_json::Value::Null,

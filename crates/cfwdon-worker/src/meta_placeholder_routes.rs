@@ -574,7 +574,7 @@ async fn create_generated_annual_report(
             account.display_name().to_owned()
         },
         "username": account.username(),
-        "joined_at": account.created_at(),
+        "joined_at": crate::timestamp_to_mastodon_iso8601(account.created_at()),
         "posts_count": posts_count,
         "followers_count": stats.followers_count,
         "following_count": stats.following_count,

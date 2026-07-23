@@ -1,6 +1,7 @@
 use crate::{
     AccountReference, AppConfig, MastodonAccountResponse, MastodonReportResponse, ReportRow,
     list_report_status_ids, load_account_stats, resolve_account_reference,
+    timestamp_to_mastodon_iso8601,
 };
 use worker::{D1Database, Error, Result};
 
@@ -29,7 +30,7 @@ pub(crate) async fn build_report_response(
         category: report.category.clone(),
         comment: report.comment.clone(),
         forwarded: report.forward != 0,
-        created_at: report.created_at.clone(),
+        created_at: timestamp_to_mastodon_iso8601(&report.created_at),
         status_ids: {
             let status_ids = list_report_status_ids(db, &report.id).await?;
             if status_ids.is_empty() {

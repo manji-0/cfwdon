@@ -2,6 +2,7 @@ use crate::{
     AppConfig, LocalAccount, MastodonMediaAttachmentResponse, MastodonStatusResponse,
     MastodonStatusTagResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusRow, StatusRow,
     actor_url, extract_hashtags_from_html, extract_hashtags_from_text, tag_url,
+    timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
 };
 
 pub(crate) struct LocalStatusResponseDetails {
@@ -75,7 +76,7 @@ impl MastodonStatusResponse {
 
         Self {
             id: row.id.clone(),
-            created_at: row.created_at.clone(),
+            created_at: timestamp_to_mastodon_iso8601(&row.created_at),
             in_reply_to_id: row.in_reply_to_id.clone(),
             in_reply_to_account_id,
             sensitive: row.sensitive,
@@ -146,7 +147,7 @@ impl MastodonStatusResponse {
 
         Self {
             id: row.id.clone(),
-            created_at: row.published_at.clone(),
+            created_at: timestamp_to_mastodon_iso8601(&row.published_at),
             in_reply_to_id: None,
             in_reply_to_account_id: None,
             sensitive: row.sensitive,
@@ -195,7 +196,7 @@ impl MastodonStatusResponse {
         self.muted = details.muted;
         self.bookmarked = details.bookmarked;
         self.pinned = details.pinned;
-        self.edited_at = details.edited_at;
+        self.edited_at = timestamp_to_mastodon_iso8601_opt(details.edited_at.as_deref());
         self.filtered = details.filtered;
         self.quote_approval = details.quote_approval;
         self.quote = details.quote;
@@ -214,7 +215,7 @@ impl MastodonStatusResponse {
         self.muted = details.muted;
         self.bookmarked = details.bookmarked;
         self.in_reply_to_id = details.in_reply_to_id;
-        self.edited_at = details.edited_at;
+        self.edited_at = timestamp_to_mastodon_iso8601_opt(details.edited_at.as_deref());
         self.filtered = details.filtered;
         self.quote_approval = details.quote_approval;
         self.quote = details.quote;

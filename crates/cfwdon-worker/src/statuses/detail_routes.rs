@@ -15,7 +15,7 @@ use super::{
     load_account_stats, load_config, load_local_status_response_preload,
     load_remote_status_updated_at, load_visible_local_status_response_subject,
     remote_account_rest_id, resolve_local_status_response_subject, status_id_from_context,
-    strip_html_tags,
+    strip_html_tags, timestamp_to_mastodon_iso8601,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -79,8 +79,9 @@ pub(crate) fn normalize_status_history_entry(mut value: serde_json::Value) -> se
         .unwrap_or(serde_json::Value::Bool(false));
     let created_at = value
         .get("created_at")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!(""));
+        .and_then(serde_json::Value::as_str)
+        .map(timestamp_to_mastodon_iso8601)
+        .unwrap_or_default();
     let account = value
         .get("account")
         .cloned()

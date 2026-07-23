@@ -202,7 +202,7 @@ fn filter_summary_document(row: &FilterRow) -> serde_json::Value {
         "id": row.id,
         "title": row.title,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": row.expires_at,
+        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "filter_action": row.filter_action,
     })
 }
@@ -212,7 +212,7 @@ fn v1_filter_document(row: &V1FilterRow) -> serde_json::Value {
         "id": row.id,
         "phrase": row.phrase,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": row.expires_at,
+        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "irreversible": row.filter_action == "hide",
         "whole_word": row.whole_word != 0,
     })
@@ -233,7 +233,7 @@ fn v2_filter_document_from_parts(
         "id": row.id,
         "title": row.title,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": row.expires_at,
+        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "filter_action": row.filter_action,
         "keywords": keywords,
         "statuses": statuses,

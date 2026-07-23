@@ -17,10 +17,9 @@ pub(crate) async fn build_outbox_activities(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let published = note
-            .get("published")
-            .cloned()
-            .unwrap_or_else(|| serde_json::Value::String(status.created_at.clone()));
+        let published = note.get("published").cloned().unwrap_or_else(|| {
+            serde_json::Value::String(crate::activitypub_datetime_string(&status.created_at))
+        });
         let to = note
             .get("to")
             .cloned()

@@ -1,6 +1,7 @@
 use super::generate_entity_id;
 use super::is_iso_timestamp_in_past;
 use super::queue_remote_actor_activity_required;
+use super::timestamp_to_mastodon_iso8601;
 use super::{MastodonPollOptionResponse, MastodonPollResponse};
 use super::{
     RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
@@ -256,7 +257,11 @@ fn remote_mastodon_poll_response_from_parts(
 
     Some(MastodonPollResponse {
         id: poll.id.clone(),
-        expires_at: poll.expires_at.clone().unwrap_or_default(),
+        expires_at: poll
+            .expires_at
+            .as_deref()
+            .map(timestamp_to_mastodon_iso8601)
+            .unwrap_or_default(),
         expired: poll.expired != 0
             || poll
                 .expires_at

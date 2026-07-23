@@ -116,4 +116,10 @@ mod tests {
             "unexpected normalized timestamp: {normalized}"
         );
     }
+
+    #[test]
+    fn activitypub_datetime_string_leaves_empty() {
+        assert_eq!(activitypub_datetime_string(""), "");
+        assert_eq!(activitypub_datetime_string("   "), "");
+    }
 }

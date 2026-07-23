@@ -173,7 +173,7 @@ fn featured_tag_api_document(
         "name": normalized,
         "url": featured_tag_profile_url(config, username, tag),
         "statuses_count": statuses_count,
-        "last_status_at": last_status_at,
+        "last_status_at": crate::timestamp_to_mastodon_iso8601_opt(last_status_at.as_deref()),
     })
 }
 

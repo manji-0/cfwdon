@@ -9,7 +9,8 @@ use crate::{
     load_notification_policy_row, local_username_from_actor_uri, muted_notifications_for_actor,
     notification_account_matches_filter, notification_type_allowed,
     oauth_access_token_has_any_scope, parse_optional_bool, queue_remote_actor_activity,
-    remote_account_rest_id, resolve_account_reference, upsert_remote_actor,
+    remote_account_rest_id, resolve_account_reference, timestamp_to_mastodon_iso8601,
+    timestamp_to_mastodon_iso8601_opt, upsert_remote_actor,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -1016,8 +1017,8 @@ fn collection_document(
         "discoverable": row.discoverable != 0,
         "url": uri,
         "item_count": items.len(),
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
+        "created_at": timestamp_to_mastodon_iso8601(&row.created_at),
+        "updated_at": timestamp_to_mastodon_iso8601(&row.updated_at),
         "tag": tag_document(config, row.tag_name.as_deref()),
         "items": items,
     })
@@ -1029,6 +1030,9 @@ fn remote_collection_document(
     row: &RemoteCollectionRow,
     items: Vec<serde_json::Value>,
 ) -> serde_json::Value {
+    let uri = row.url.as_deref().unwrap_or(&row.uri);
+    let created_at = row.published_at.as_deref().unwrap_or(&row.created_at);
+    let updated_at = row.remote_updated_at.as_deref().unwrap_or(&row.updated_at);
     serde_json::json!({
         "id": row.id,
         "uri": row.uri,
@@ -1039,10 +1043,10 @@ fn remote_collection_document(
         "local": false,
         "sensitive": row.sensitive,
         "discoverable": row.discoverable != 0,
-        "url": row.url.as_deref().unwrap_or(&row.uri),
+        "url": uri,
         "item_count": items.len(),
-        "created_at": row.published_at.as_deref().unwrap_or(&row.created_at),
-        "updated_at": row.remote_updated_at.as_deref().unwrap_or(&row.updated_at),
+        "created_at": timestamp_to_mastodon_iso8601(created_at),
+        "updated_at": timestamp_to_mastodon_iso8601(updated_at),
         "tag": tag_document(config, row.tag_name.as_deref()),
         "items": items,
     })
@@ -1091,7 +1095,7 @@ async fn collection_item_activitypub_object(
         "featuredObject": featured_object,
         "featuredObjectType": "Person",
         "featureAuthorization": feature_authorization,
-        "published": item.created_at,
+        "published": timestamp_to_mastodon_iso8601(&item.created_at),
     })))
 }
 
@@ -1121,8 +1125,8 @@ async fn collection_activitypub_object(
         "url": uri,
         "sensitive": row.sensitive,
         "discoverable": row.discoverable != 0,
-        "published": row.created_at,
-        "updated": row.updated_at,
+        "published": timestamp_to_mastodon_iso8601(&row.created_at),
+        "updated": timestamp_to_mastodon_iso8601(&row.updated_at),
         "orderedItems": ordered_items,
     });
     if let Some(language) = row.language.as_deref().filter(|value| !value.is_empty()) {
@@ -1383,7 +1387,7 @@ fn collection_item_document(row: &CollectionItemRow) -> serde_json::Value {
     let mut value = serde_json::json!({
         "id": row.id,
         "state": row.state,
-        "created_at": row.created_at,
+        "created_at": timestamp_to_mastodon_iso8601(&row.created_at),
     });
     if row.state == "accepted" || row.state == "pending" {
         value["account_id"] = serde_json::json!(row.target_account_ref);
@@ -1419,9 +1423,13 @@ async fn remote_collection_item_document(
         "id": row.id,
         "uri": row.uri,
         "state": row.state,
-        "created_at": row.published_at.as_deref().unwrap_or(&row.created_at),
+        "created_at": timestamp_to_mastodon_iso8601(
+            row.published_at.as_deref().unwrap_or(&row.created_at),
+        ),
         "feature_authorization": row.feature_authorization,
-        "approval_last_verified_at": row.approval_last_verified_at,
+        "approval_last_verified_at": timestamp_to_mastodon_iso8601_opt(
+            row.approval_last_verified_at.as_deref(),
+        ),
     });
     if row.state == "accepted" || row.state == "pending" {
         value["account_id"] =
@@ -2654,6 +2662,7 @@ pub(crate) async fn collect_collection_notification_entries(
             .iter()
             .map(collection_item_document)
             .collect::<Vec<_>>();
+        let created_at = timestamp_to_mastodon_iso8601(&notification.created_at);
         let mut value = serde_json::to_value(MastodonNotificationResponse {
             id: notification.id.clone(),
             notification_type: notification.notification_type.clone(),
@@ -2661,7 +2670,7 @@ pub(crate) async fn collect_collection_notification_entries(
                 "{}-{}",
                 notification.notification_type, notification.collection_id
             ),
-            created_at: notification.created_at.clone(),
+            created_at: created_at.clone(),
             account: MastodonAccountResponse::from_account(&owner, config),
             status: None,
             report: None,
@@ -2672,7 +2681,7 @@ pub(crate) async fn collect_collection_notification_entries(
         }
         entries.push(NotificationEntry {
             id: notification.id,
-            created_at: notification.created_at,
+            created_at,
             value,
         });
     }

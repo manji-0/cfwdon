@@ -6,6 +6,7 @@ pub(crate) use votes::*;
 
 use super::CreateStatusPollRequest;
 use super::time_html::is_iso_timestamp_in_past;
+use super::timestamp_to_mastodon_iso8601;
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -323,7 +324,7 @@ fn mastodon_poll_response_from_rows(
     };
     Some(MastodonPollResponse {
         id: poll.id.clone(),
-        expires_at: poll.expires_at.clone(),
+        expires_at: timestamp_to_mastodon_iso8601(&poll.expires_at),
         expired,
         multiple: poll.multiple != 0,
         votes_count: if reveal_totals { votes_count } else { 0 },
@@ -400,10 +401,10 @@ pub(crate) fn apply_activitypub_poll_fields(
     }
 
     object["type"] = serde_json::json!("Question");
-    object["endTime"] = serde_json::json!(poll.expires_at.clone());
+    object["endTime"] = serde_json::json!(timestamp_to_mastodon_iso8601(&poll.expires_at));
     object["votersCount"] = serde_json::json!(voters_count);
     if expired {
-        object["closed"] = serde_json::json!(poll.expires_at.clone());
+        object["closed"] = serde_json::json!(timestamp_to_mastodon_iso8601(&poll.expires_at));
     }
 
     let rendered_options = options

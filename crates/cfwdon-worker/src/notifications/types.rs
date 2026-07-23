@@ -1,4 +1,5 @@
 use super::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::timestamp_to_mastodon_iso8601;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -24,8 +25,9 @@ pub(crate) struct NotificationEntry {
 
 pub(crate) fn push_notification_entry(
     entries: &mut Vec<NotificationEntry>,
-    notification: MastodonNotificationResponse,
+    mut notification: MastodonNotificationResponse,
 ) {
+    notification.created_at = timestamp_to_mastodon_iso8601(&notification.created_at);
     let id = notification.id.clone();
     let created_at = notification.created_at.clone();
     entries.push(NotificationEntry {

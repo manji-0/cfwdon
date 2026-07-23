@@ -2,7 +2,7 @@ use super::{
     AppConfig, FollowAccountRequest, LocalAccount, RemoteActorRow, actor_url,
     build_follow_activity, build_undo_follow_activity, delete_follow_by_target,
     load_follow_activity_id, queue_remote_actor_activity, queue_remote_actor_activity_required,
-    remote_account_rest_id, upsert_remote_follow,
+    remote_account_rest_id, timestamp_to_mastodon_iso8601_opt, upsert_remote_follow,
 };
 use js_sys::Date;
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,7 @@ fn relationship_response_from_state(
             .mute_notifications
             .map(|value| value != 0)
             .unwrap_or(false),
-        muting_expires_at: state_row.mute_expires_at,
+        muting_expires_at: timestamp_to_mastodon_iso8601_opt(state_row.mute_expires_at.as_deref()),
         requested: state == "pending",
         requested_by: state_row.requested_by != 0,
         domain_blocking: false,

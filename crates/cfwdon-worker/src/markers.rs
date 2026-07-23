@@ -47,7 +47,7 @@ async fn load_marker(
             serde_json::json!({
                 "last_read_id": row.last_read_id,
                 "version": row.version,
-                "updated_at": row.updated_at,
+                "updated_at": crate::timestamp_to_mastodon_iso8601(&row.updated_at),
             })
         }))
 }
