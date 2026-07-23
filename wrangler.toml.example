@@ -34,6 +34,18 @@ CONTACT_EMAIL = "admin@example.com"
 INSTANCE_THUMBNAIL_URL = "https://media.example.com/site/thumbnail.png"
 MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
 
+# Optional longer about / privacy / terms bodies (plain text or HTML).
+# HTML vars win when both plain and HTML are set.
+# INSTANCE_EXTENDED_DESCRIPTION = "About this instance."
+# INSTANCE_EXTENDED_DESCRIPTION_HTML = "<p>About this instance.</p>"
+# INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT = "2026-07-23T00:00:00Z"
+# PRIVACY_POLICY = "Privacy policy for this instance."
+# PRIVACY_POLICY_HTML = "<p>Privacy policy for this instance.</p>"
+# PRIVACY_POLICY_UPDATED_AT = "2026-07-23T00:00:00Z"
+# TERMS_OF_SERVICE = "Terms of service for this instance."
+# TERMS_OF_SERVICE_HTML = "<p>Terms of service for this instance.</p>"
+# TERMS_OF_SERVICE_EFFECTIVE_DATE = "2026-07-23"
+
 # Optional e-mail confirmation dispatch via Resend.
 # RESEND_API_KEY should normally be configured as a secret, not here.
 EMAIL_FROM = "cfwdon <noreply@example.com>"

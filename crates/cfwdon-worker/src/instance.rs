@@ -478,14 +478,13 @@ pub(crate) async fn instance_privacy_policy_response(ctx: RouteContext<()>) -> R
 
 pub(crate) async fn instance_terms_of_service_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let Some(content) = configured_html_document(
+    let content = configured_html_document(
         config.terms_of_service_html.as_deref(),
         config.terms_of_service_effective_date.as_deref(),
         "1970-01-01",
         true,
-    ) else {
-        return Response::error("Record not found", 404);
-    };
+    )
+    .unwrap_or_else(|| build_default_terms_of_service_document(&config.instance_description));
 
     cache_public_response(Response::from_json(&content)?, 300)
 }

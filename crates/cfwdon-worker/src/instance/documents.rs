@@ -1,7 +1,8 @@
 use super::{
     AppConfig, InstanceSummary, MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES,
     configured_instance_languages, extended_description_url, instance_base_url,
-    instance_supported_mime_types, privacy_policy_url, render_status_html, terms_of_service_url,
+    instance_supported_mime_types, normalize_policy_body, privacy_policy_url, render_status_html,
+    terms_of_service_url,
 };
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -114,21 +115,14 @@ fn instance_icon_document(config: &AppConfig) -> serde_json::Value {
     }
 }
 
-fn optional_configured_url(html: Option<&str>, url: impl FnOnce() -> String) -> Option<String> {
-    html.filter(|value| !value.trim().is_empty()).map(|_| url())
-}
-
 fn instance_v2_urls_configuration(config: &AppConfig) -> serde_json::Value {
-    // about / privacy_policy always resolve (HTML config or instance_description fallback).
+    // about / privacy_policy / terms_of_service always resolve (configured content or fallback).
     serde_json::json!({
         "streaming": streaming_api_url(config),
         "status": serde_json::Value::Null,
         "about": extended_description_url(config),
         "privacy_policy": privacy_policy_url(config),
-        "terms_of_service": optional_configured_url(
-            config.terms_of_service_html.as_deref(),
-            || terms_of_service_url(config),
-        ),
+        "terms_of_service": terms_of_service_url(config),
     })
 }
 
@@ -320,15 +314,5 @@ pub(crate) fn build_default_privacy_policy_document(content: &str) -> serde_json
 }
 
 pub(crate) fn build_default_extended_description_document(description: &str) -> serde_json::Value {
-    let content = {
-        let trimmed = description.trim();
-        if trimmed.is_empty() {
-            String::new()
-        } else if trimmed.contains('<') {
-            trimmed.to_owned()
-        } else {
-            render_status_html(trimmed)
-        }
-    };
-    build_default_privacy_policy_document(&content)
+    build_default_privacy_policy_document(&normalize_policy_body(description))
 }

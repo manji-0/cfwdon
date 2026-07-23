@@ -1,4 +1,4 @@
-use super::{AppConfig, Env, RouteContext, parse_csv_list};
+use super::{AppConfig, Env, RouteContext, parse_csv_list, policy_html_from_sources};
 use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
 
 #[derive(Debug, serde::Serialize)]
@@ -300,27 +300,34 @@ fn set_instance_metadata_config(vars: &impl Fn(&str) -> Option<String>, config: 
 }
 
 fn set_instance_document_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
-    set_trimmed_optional(
-        vars,
-        "INSTANCE_EXTENDED_DESCRIPTION_HTML",
-        &mut config.instance_extended_description_html,
-    );
+    if let Some(content) = policy_html_from_sources(
+        vars("INSTANCE_EXTENDED_DESCRIPTION_HTML").as_deref(),
+        vars("INSTANCE_EXTENDED_DESCRIPTION").as_deref(),
+    ) {
+        config.instance_extended_description_html = Some(content);
+    }
     set_trimmed_optional(
         vars,
         "INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT",
         &mut config.instance_extended_description_updated_at,
     );
-    set_trimmed_optional(vars, "PRIVACY_POLICY_HTML", &mut config.privacy_policy_html);
+    if let Some(content) = policy_html_from_sources(
+        vars("PRIVACY_POLICY_HTML").as_deref(),
+        vars("PRIVACY_POLICY").as_deref(),
+    ) {
+        config.privacy_policy_html = Some(content);
+    }
     set_trimmed_optional(
         vars,
         "PRIVACY_POLICY_UPDATED_AT",
         &mut config.privacy_policy_updated_at,
     );
-    set_trimmed_optional(
-        vars,
-        "TERMS_OF_SERVICE_HTML",
-        &mut config.terms_of_service_html,
-    );
+    if let Some(content) = policy_html_from_sources(
+        vars("TERMS_OF_SERVICE_HTML").as_deref(),
+        vars("TERMS_OF_SERVICE").as_deref(),
+    ) {
+        config.terms_of_service_html = Some(content);
+    }
     set_trimmed_optional(
         vars,
         "TERMS_OF_SERVICE_EFFECTIVE_DATE",

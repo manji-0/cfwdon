@@ -25,12 +25,36 @@ crons = ["17 * * * *"]
 [vars]
 INSTANCE_DOMAIN = "fedi.manji.app"
 INSTANCE_NAME = "cfwdon"
-INSTANCE_DESCRIPTION = "Cloudflare Workers + D1 + R2 based Mastodon-compatible server"
+INSTANCE_DESCRIPTION = "Cloudflare Workers 上で動く、個人向けの Mastodon 互換サーバです。"
 SOURCE_URL = "https://github.com/manji-0/cfwdon"
 INSTANCE_LANGUAGES = "ja,en"
 CONTACT_EMAIL = "admin@manji.app"
 INSTANCE_THUMBNAIL_URL = "https://media.fedi.manji.app/site/thumbnail.png"
 MEDIA_PUBLIC_BASE_URL = "https://media.fedi.manji.app"
+
+INSTANCE_EXTENDED_DESCRIPTION_HTML = """
+<p><strong>cfwdon</strong>（fedi.manji.app）は、Cloudflare Workers / D1 / R2 上で動く個人運用の Mastodon 互換サーバです。</p>
+<p>ActivityPub で他の Fediverse サーバと連合し、WebFinger・NodeInfo・標準的な Mastodon API を通じてクライアントやリモートサーバから発見・利用できます。</p>
+<p>登録は Auth0 経由です。問い合わせは <a href="mailto:admin@manji.app">admin@manji.app</a> まで。ソースコードは <a href="https://github.com/manji-0/cfwdon">GitHub</a> で公開しています。</p>
+"""
+INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT = "2026-07-23T00:00:00Z"
+
+PRIVACY_POLICY_HTML = """
+<p>本サーバ（fedi.manji.app / cfwdon）は個人運用の Fediverse インスタンスです。運用者は投稿・プロフィール・メディア・連合に必要なメタデータを、サービス提供のために処理します。</p>
+<p><strong>取得する情報</strong>には、アカウント識別子と認証に用いるメールアドレス、投稿本文、メディア、フォロー関係、およびアクセス・連合処理に伴う技術ログが含まれます。</p>
+<p><strong>第三者提供</strong>は、ActivityPub 連合やクライアント連携などサービス動作に必要な範囲、または法令に基づく場合に限ります。広告目的の販売は行いません。</p>
+<p><strong>保管</strong>は Cloudflare（Workers / D1 / R2 等）上で行い、運用上不要になったデータは合理的な期間内に削除または匿名化します。問い合わせは <a href="mailto:admin@manji.app">admin@manji.app</a> まで。</p>
+"""
+PRIVACY_POLICY_UPDATED_AT = "2026-07-23T00:00:00Z"
+
+TERMS_OF_SERVICE_HTML = """
+<p>fedi.manji.app（cfwdon）を利用することで、本利用規約に同意したものとみなします。</p>
+<p><strong>利用</strong>は個人の良識あるコミュニケーションを前提とします。違法行為、嫌がらせ、スパム、他者の権利侵害、サーバや連合先への過度な負荷、マルウェア配布などは禁止します。</p>
+<p><strong>コンテンツ</strong>の責任は投稿者にあります。運用者は規約違反や安全性上の理由で、投稿・アカウント・連合関係を制限・削除できます。本サーバはベストエフォートで提供され、無停止や完全性を保証しません。</p>
+<p>規約は予告なく更新することがあります。重要な変更がある場合はインスタンス説明などで周知します。連絡先は <a href="mailto:admin@manji.app">admin@manji.app</a> です。</p>
+"""
+TERMS_OF_SERVICE_EFFECTIVE_DATE = "2026-07-23"
+
 # Optional e-mail confirmation dispatch via Resend.
 # RESEND_API_KEY should normally be configured as a secret, not here.
 EMAIL_FROM = "cfwdon <noreply@fedi.manji.app>"

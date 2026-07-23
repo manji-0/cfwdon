@@ -5844,6 +5844,36 @@ fn instance_v2_document_advertises_configured_policy_urls() {
 }
 
 #[test]
+fn instance_v2_document_advertises_policy_urls_without_configured_html() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let document = build_instance_v2_document(
+        &InstanceSummary {
+            domain: "social.example".to_owned(),
+            title: "cfwdon".to_owned(),
+            description: "test instance".to_owned(),
+            software: SoftwareInfo {
+                name: "cfwdon".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            capabilities: InstanceCapabilities {
+                federation: true,
+                local_timeline: true,
+                media_uploads: true,
+            },
+        },
+        &config,
+        1,
+    );
+
+    assert_eq!(
+        document.pointer("/configuration/urls/terms_of_service"),
+        Some(&serde_json::json!(
+            "https://social.example/api/v1/instance/terms_of_service"
+        ))
+    );
+}
+
+#[test]
 fn instance_v1_document_reports_mastodon_compatible_shape() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     config.contact_email = Some("admin@example.com".to_owned());

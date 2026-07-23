@@ -57,17 +57,23 @@ For the complete Auth0 Dashboard setup, API audience selection, PKCE application
 Cloudflare Access can protect private or operational Worker hostnames as an edge access gate, but it should not sit in front of the normal public Auth0 callback path. The current Worker does not treat Access JWTs as local user authentication. For the supported deployment boundary and policy setup, see [Cloudflare Access Configuration Guide](../operations/cloudflare-access-configuration.md).
 
 ## Policy And Instance Content Vars
+<!-- constrained-by #Public Instance Vars -->
+
+Short instance blurb goes in `INSTANCE_DESCRIPTION`. Longer about / privacy / terms bodies can be set as HTML or plain text. Plain text is wrapped in paragraphs automatically; when both plain and HTML vars are set, the HTML var wins.
 
 | Var | Required | Notes |
 | --- | --- | --- |
-| `INSTANCE_EXTENDED_DESCRIPTION_HTML` | Optional | Body returned by the extended description endpoint. |
-| `INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT` | Optional | Extended description timestamp. |
-| `PRIVACY_POLICY_HTML` | Optional | Privacy policy endpoint body. |
-| `PRIVACY_POLICY_UPDATED_AT` | Optional | Privacy policy timestamp. |
-| `TERMS_OF_SERVICE_HTML` | Optional | Terms endpoint body. |
-| `TERMS_OF_SERVICE_EFFECTIVE_DATE` | Optional | Terms effective date. |
+| `INSTANCE_EXTENDED_DESCRIPTION` | Optional | Plain-text about / extended description body. |
+| `INSTANCE_EXTENDED_DESCRIPTION_HTML` | Optional | HTML about / extended description body. |
+| `INSTANCE_EXTENDED_DESCRIPTION_UPDATED_AT` | Optional | Extended description timestamp (`updated_at`). |
+| `PRIVACY_POLICY` | Optional | Plain-text privacy policy body. |
+| `PRIVACY_POLICY_HTML` | Optional | HTML privacy policy body. |
+| `PRIVACY_POLICY_UPDATED_AT` | Optional | Privacy policy timestamp (`updated_at`). |
+| `TERMS_OF_SERVICE` | Optional | Plain-text terms of service body. |
+| `TERMS_OF_SERVICE_HTML` | Optional | HTML terms of service body. |
+| `TERMS_OF_SERVICE_EFFECTIVE_DATE` | Optional | Terms effective date (`YYYY-MM-DD`). |
 
-These HTML values live in Worker vars, so keep Cloudflare var size limits in mind. Move large or frequently edited content behind a storage-backed path later instead of expanding vars indefinitely.
+When these bodies are unset, the Worker falls back to `INSTANCE_DESCRIPTION` for extended description, privacy policy, and terms of service so the Mastodon `configuration.urls` links stay resolvable. Keep Cloudflare var size limits in mind; move large or frequently edited content behind a storage-backed path later instead of expanding vars indefinitely.
 
 ## Timeline Access Vars
 
