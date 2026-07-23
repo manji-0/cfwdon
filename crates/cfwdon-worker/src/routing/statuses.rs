@@ -70,6 +70,12 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
         .head_async("/users/:username/statuses/:id", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
+        .get_async("/@:username/:id", |req, ctx| async move {
+            status_object_response(req, ctx).await
+        })
+        .head_async("/@:username/:id", |_req, _ctx| async move {
+            static_head_response(ACTIVITYPUB_CONTENT_TYPE)
+        })
         .get_async(
             "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
             |_, ctx| async move { status_quote_authorization_object_response(ctx).await },

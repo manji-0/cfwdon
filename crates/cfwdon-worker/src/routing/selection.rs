@@ -14,6 +14,8 @@ pub(crate) fn fast_router_kind(method: &str, path: &str) -> Option<FastRouterKin
         path,
         "/.well-known/oauth-authorization-server"
             | "/.well-known/webfinger"
+            | "/.well-known/host-meta"
+            | "/.well-known/host-meta.json"
             | "/.well-known/nodeinfo"
             | "/nodeinfo/2.0"
             | "/api/oembed"

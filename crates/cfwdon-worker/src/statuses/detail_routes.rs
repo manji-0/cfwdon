@@ -746,7 +746,7 @@ pub(crate) async fn status_object_response(
     let config = load_config(&ctx);
     let username = ctx
         .param("username")
-        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| value.trim().trim_start_matches('@').to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
     let status_id = ctx

@@ -155,6 +155,26 @@ pub(crate) fn actor_url(config: &AppConfig, username: &str) -> String {
     format!("{}/users/{}", instance_base_url(config), username)
 }
 
+/// Mastodon-style human profile URL (`/@username`).
+pub(crate) fn account_profile_page_url(config: &AppConfig, username: &str) -> String {
+    format!("{}/@{}", instance_base_url(config), username)
+}
+
+/// OStatus subscribe template used by Mastodon WebFinger responses.
+pub(crate) fn authorize_interaction_subscribe_template(config: &AppConfig) -> String {
+    format!(
+        "{}/authorize_interaction?uri={{uri}}",
+        instance_base_url(config)
+    )
+}
+
+pub(crate) fn webfinger_lrdd_template(config: &AppConfig) -> String {
+    format!(
+        "{}/.well-known/webfinger?resource={{uri}}",
+        instance_base_url(config)
+    )
+}
+
 pub(crate) fn normalize_instance_domain(value: &str) -> String {
     value
         .trim()

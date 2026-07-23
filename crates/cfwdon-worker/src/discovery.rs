@@ -1,15 +1,16 @@
 use super::{
     AccountStats, AppConfig, CACHE_TTL_FEDERATION, CACHE_TTL_STATIC_METADATA, CACHE_TTL_TRENDS,
-    Error, LocalAccount, Request, Response, Result, RouteContext, activitypub_datetime_string,
-    actor_url, build_activitypub_actor_document, build_outbox_activities, build_tag_response,
+    Error, LocalAccount, Request, Response, Result, RouteContext, account_profile_page_url,
+    activitypub_datetime_string, actor_url, authorize_interaction_subscribe_template,
+    build_activitypub_actor_document, build_outbox_activities, build_tag_response,
     cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
     cache_public_response, cache_public_response_with_options, cached_actor_json_response,
     cached_actor_profile_html_response, count_public_outbox_statuses, ensure_account_keys,
-    escape_html, find_account_by_username, find_media_attachments_by_status_ids, instance_host,
-    list_follower_actor_uris, list_following_actor_uris, list_local_follower_usernames,
-    list_public_outbox_statuses, list_public_outbox_statuses_page, load_account_stats, load_config,
-    local_status_html_item, media_object_url, normalize_hashtag, parse_webfinger_resource,
-    render_profile_field_value_html,
+    escape_html, find_account_by_username, find_media_attachments_by_status_ids, instance_base_url,
+    instance_host, list_follower_actor_uris, list_following_actor_uris,
+    list_local_follower_usernames, list_public_outbox_statuses, list_public_outbox_statuses_page,
+    load_account_stats, load_config, local_status_html_item, media_object_url, normalize_hashtag,
+    parse_webfinger_resource, render_profile_field_value_html, webfinger_lrdd_template,
 };
 use std::collections::HashSet;
 use url::Url;
@@ -28,6 +29,7 @@ struct RemoteFollowQuery {
 #[derive(Debug, serde::Serialize)]
 struct WebFingerResponse {
     subject: String,
+    aliases: Vec<String>,
     links: Vec<WebFingerLink>,
 }
 
@@ -43,6 +45,15 @@ struct WebFingerLink {
 }
 
 impl WebFingerLink {
+    fn profile_page_link(href: String) -> Self {
+        Self {
+            rel: "http://webfinger.net/rel/profile-page",
+            link_type: Some("text/html"),
+            href: Some(href),
+            template: None,
+        }
+    }
+
     fn self_link(href: String) -> Self {
         Self {
             rel: "self",
@@ -87,14 +98,16 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
     };
 
     let instance_host = instance_host(&config);
+    let username = account.username();
+    let actor = actor_url(&config, username);
+    let profile_page = account_profile_page_url(&config, username);
     let response = WebFingerResponse {
-        subject: format!("acct:{}@{}", account.username(), instance_host),
+        subject: format!("acct:{username}@{instance_host}"),
+        aliases: vec![profile_page.clone(), actor.clone()],
         links: vec![
-            WebFingerLink::self_link(actor_url(&config, account.username())),
-            WebFingerLink::subscribe_link(format!(
-                "{}/remote-follow?domain={{uri}}",
-                actor_url(&config, account.username())
-            )),
+            WebFingerLink::profile_page_link(profile_page),
+            WebFingerLink::self_link(actor),
+            WebFingerLink::subscribe_link(authorize_interaction_subscribe_template(&config)),
         ],
     };
 
@@ -106,18 +119,51 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
     )
 }
 
+pub(crate) async fn host_meta_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    host_meta_response_for_config(&config)
+}
+
+pub(crate) fn host_meta_response_from_env(env: &worker::Env) -> Result<Response> {
+    let config = crate::load_config_from_env(env);
+    host_meta_response_for_config(&config)
+}
+
+fn host_meta_response_for_config(config: &AppConfig) -> Result<Response> {
+    let template = webfinger_lrdd_template(config);
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <XRD xmlns=\"http://docs.oasis-open.org/ns/xri/xrd-1.0\">\n\
+           <Link rel=\"lrdd\" template=\"{}\"/>\n\
+         </XRD>\n",
+        escape_xml_attr(&template)
+    );
+    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?;
+    response
+        .headers_mut()
+        .set("Content-Type", "application/xrd+xml; charset=utf-8")?;
+    response
+        .headers_mut()
+        .set("Access-Control-Allow-Origin", "*")?;
+    cache_public_response(response, CACHE_TTL_STATIC_METADATA)
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let username = ctx
-        .param("username")
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let username = route_username(&ctx)?;
 
     let wants_html = prefers_profile_html(&req)?;
     if wants_html {
         if let Some(response) = cached_actor_profile_html_response(&ctx, &username).await? {
-            return Ok(response);
+            return with_profile_discovery_link_headers(response, &config, &username);
         }
     } else if let Some(response) = cached_actor_json_response(&ctx, &username).await? {
         return Ok(response);
@@ -148,12 +194,13 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
         let html = profile_html_document(&config, &account, &stats, &posts_html);
         cache_actor_profile_html_response(&ctx, &username, html.clone()).await?;
         let cache_tag = format!("account-{username}");
-        return cache_public_response_with_options(
+        let response = cache_public_response_with_options(
             profile_html_response(html)?,
             CACHE_TTL_FEDERATION,
             None,
             &[("Cache-Tag", &cache_tag)],
-        );
+        )?;
+        return with_profile_discovery_link_headers(response, &config, &username);
     }
 
     let response = build_activitypub_actor_document(&config, &account);
@@ -191,6 +238,35 @@ pub(crate) async fn remote_follow_response(
         urlencoding::encode(&acct)
     );
     redirect_response(&location)
+}
+
+fn route_username(ctx: &RouteContext<()>) -> Result<String> {
+    ctx.param("username")
+        .map(|value| value.trim().trim_start_matches('@').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))
+}
+
+fn with_profile_discovery_link_headers(
+    mut response: Response,
+    config: &AppConfig,
+    username: &str,
+) -> Result<Response> {
+    let acct = format!("acct:{}@{}", username, instance_host(config));
+    let webfinger = format!(
+        "{}/.well-known/webfinger?resource={}",
+        instance_base_url(config),
+        urlencoding::encode(&acct)
+    );
+    let actor = actor_url(config, username);
+    let link = format!(
+        "<{webfinger}>; rel=\"lrdd\"; type=\"application/jrd+json\", <{actor}>; rel=\"alternate\"; type=\"application/activity+json\""
+    );
+    response.headers_mut().set("Link", &link)?;
+    if response.headers().get("Vary")?.is_none() {
+        response.headers_mut().set("Vary", "Accept")?;
+    }
+    Ok(response)
 }
 
 fn prefers_profile_html(req: &Request) -> Result<bool> {
@@ -633,7 +709,10 @@ fn build_ordered_collection_document(
 
 #[cfg(test)]
 mod tests {
-    use super::{profile_avatar_html, profile_header_style, profile_posts_section};
+    use super::{
+        WebFingerLink, WebFingerResponse, escape_xml_attr, profile_avatar_html,
+        profile_header_style, profile_posts_section,
+    };
 
     #[test]
     fn profile_avatar_html_uses_escaped_image_when_avatar_is_configured() {
@@ -677,5 +756,56 @@ mod tests {
         assert!(html.contains("Recent posts"));
         assert!(html.contains("https://social.example/@alice/statuses"));
         assert!(html.contains("<article>hello</article>"));
+    }
+
+    #[test]
+    fn webfinger_document_matches_mastodon_shape() {
+        let config = cfwdon_core::AppConfig::new("example.com", "cfwdon", "test instance");
+        let username = "alice";
+        let actor = crate::actor_url(&config, username);
+        let profile = crate::account_profile_page_url(&config, username);
+        let document = WebFingerResponse {
+            subject: format!("acct:{username}@{}", crate::instance_host(&config)),
+            aliases: vec![profile.clone(), actor.clone()],
+            links: vec![
+                WebFingerLink::profile_page_link(profile),
+                WebFingerLink::self_link(actor),
+                WebFingerLink::subscribe_link(crate::authorize_interaction_subscribe_template(
+                    &config,
+                )),
+            ],
+        };
+        let value = serde_json::to_value(document).unwrap();
+        assert_eq!(
+            value["links"][0]["rel"],
+            "http://webfinger.net/rel/profile-page"
+        );
+        assert_eq!(value["links"][1]["rel"], "self");
+        assert_eq!(
+            value["links"][2]["template"],
+            "https://example.com/authorize_interaction?uri={uri}"
+        );
+        assert!(
+            value["aliases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|alias| alias.as_str() == Some("https://example.com/@alice"))
+        );
+    }
+
+    #[test]
+    fn host_meta_body_includes_webfinger_lrdd_template() {
+        let config = cfwdon_core::AppConfig::new("example.com", "cfwdon", "test instance");
+        let body = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <XRD xmlns=\"http://docs.oasis-open.org/ns/xri/xrd-1.0\">\n\
+               <Link rel=\"lrdd\" template=\"{}\"/>\n\
+             </XRD>\n",
+            escape_xml_attr(&crate::webfinger_lrdd_template(&config))
+        );
+        assert!(
+            body.contains("template=\"https://example.com/.well-known/webfinger?resource={uri}\"")
+        );
     }
 }

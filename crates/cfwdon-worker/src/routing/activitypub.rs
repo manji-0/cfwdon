@@ -1,15 +1,16 @@
 use crate::{
     account_statuses_by_username_response, actor_response, featured_collection_response,
     featured_tags_collection_response, followers_collection_response,
-    following_collection_response, inbox_response, nodeinfo_links_response, nodeinfo_response,
-    outbox_response, process_outbox_deliveries, remote_follow_response, shared_inbox_response,
-    webfinger_response,
+    following_collection_response, host_meta_response, inbox_response, nodeinfo_links_response,
+    nodeinfo_response, outbox_response, process_outbox_deliveries, remote_follow_response,
+    shared_inbox_response, webfinger_response,
 };
 use worker::{Response, Result, Router};
 
 pub(crate) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
 pub(crate) const JSON_CONTENT_TYPE: &str = "application/json";
 pub(crate) const JRD_CONTENT_TYPE: &str = "application/jrd+json";
+pub(crate) const XRD_CONTENT_TYPE: &str = "application/xrd+xml; charset=utf-8";
 
 pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'static, ()> {
     router
@@ -18,6 +19,18 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
         })
         .head_async("/.well-known/webfinger", |_req, _ctx| async move {
             static_head_response(JRD_CONTENT_TYPE)
+        })
+        .get_async("/.well-known/host-meta", |_req, ctx| async move {
+            host_meta_response(ctx).await
+        })
+        .head_async("/.well-known/host-meta", |_req, _ctx| async move {
+            static_head_response(XRD_CONTENT_TYPE)
+        })
+        .get_async("/.well-known/host-meta.json", |_req, ctx| async move {
+            host_meta_response(ctx).await
+        })
+        .head_async("/.well-known/host-meta.json", |_req, _ctx| async move {
+            static_head_response(XRD_CONTENT_TYPE)
         })
         .get_async("/.well-known/nodeinfo", |_req, ctx| async move {
             nodeinfo_links_response(ctx).await
@@ -35,6 +48,12 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             actor_response(req, ctx).await
         })
         .head_async("/users/:username", |_req, _ctx| async move {
+            static_head_response(ACTIVITYPUB_CONTENT_TYPE)
+        })
+        .get_async("/@:username", |req, ctx| async move {
+            actor_response(req, ctx).await
+        })
+        .head_async("/@:username", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
         .get_async("/users/:username/statuses", |req, ctx| async move {
