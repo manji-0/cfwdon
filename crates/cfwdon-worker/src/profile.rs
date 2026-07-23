@@ -96,11 +96,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
     {
         return Ok(response);
     }
-    let fetch_context = RemoteCollectionFetchContext {
-        config: &config,
-        db: &db,
-        signer: viewer.as_ref(),
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
     match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
         Some(AccountReference::Local(account)) => {
             let stats = load_account_stats(&db, account.id()).await?;
@@ -141,11 +137,7 @@ async fn remote_account_response(
     actor: &crate::RemoteActorRow,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {

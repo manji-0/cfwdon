@@ -110,11 +110,7 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
         .domain
         .as_deref()
         .ok_or_else(|| Error::RustError("remote handle is missing domain".to_owned()))?;
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     match resolve_remote_lookup_via_fetch(db, &handle, &fetch_context).await {
         Ok(response) => Ok(response),
         Err(error) => {
@@ -225,11 +221,7 @@ pub(crate) async fn resolve_search_account_with_viewer(
         return Ok(Some(response));
     }
 
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let fetched = match fetch_remote_actor_profile_with_context(query, Some(&fetch_context)).await {
         Ok(fetched) => fetched,
         Err(_) => return Ok(None),
@@ -265,11 +257,7 @@ pub(crate) async fn resolve_remote_status_by_url(
     }
 
     let fetch_url = parse_remote_http_url(url)?;
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let document =
         match fetch_activitypub_document_with_context(fetch_url.as_str(), Some(&fetch_context))
             .await

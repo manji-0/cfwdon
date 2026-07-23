@@ -10,6 +10,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
+- A KV namespace bound as `REMOTE_DNS_CACHE` (remote hostname DoH validation cache)
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
 
 ## Provisioning Steps
@@ -27,7 +28,16 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
    wrangler r2 bucket create cfwdon-media
    ```
 
-3. Configure R2 CORS for the public instance origin.
+3. Create the remote DNS validation KV namespace.
+
+   ```sh
+   wrangler kv namespace create REMOTE_DNS_CACHE
+   wrangler kv namespace create REMOTE_DNS_CACHE --preview
+   ```
+
+   Copy the returned ids into `[[kv_namespaces]]` for binding `REMOTE_DNS_CACHE`.
+
+4. Configure R2 CORS for the public instance origin.
 
    ```json
    {
@@ -101,7 +111,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - `devbox run ci`
 - `wrangler.toml` contains active `[[d1_databases]]` and `[[r2_buckets]]` bindings
 - production vars do not contain placeholder values from the sample `wrangler.toml`
-- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB` and `MEDIA`
+- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, and `REMOTE_DNS_CACHE`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `migrations/` contains the schema required by the Worker code
 

@@ -108,7 +108,19 @@ async fn load_remote_account_status_page(
     };
     let mut actor_social_counts = None;
     let mut statuses = if !is_following_remote_actor && !wants_html {
-        Vec::new()
+        if actor.indexable {
+            Vec::new()
+        } else {
+            // Non-indexable remotes skip live outbox; serve any locally cached public notes.
+            list_public_remote_statuses_by_actor_uri(
+                db,
+                &actor.actor_uri,
+                query.max_id.as_deref(),
+                min_id,
+                query_limit,
+            )
+            .await?
+        }
     } else if wants_html {
         list_public_remote_statuses_by_actor_uri(
             db,
@@ -160,11 +172,7 @@ async fn load_remote_account_status_page(
         && !statuses.is_empty()
         && !remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref())
     {
-        let fetch_context = RemoteCollectionFetchContext {
-            config,
-            db,
-            signer: viewer,
-        };
+        let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
             Ok(fetched) => {
@@ -357,11 +365,7 @@ async fn refresh_remote_status_actor(
     include_social_counts: bool,
     status_fetch_limit: Option<u32>,
 ) -> Result<(RemoteActorRow, Option<crate::RemoteActorSocialCounts>)> {
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::authorized(config, db, viewer);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
@@ -491,11 +495,14 @@ async fn load_transient_remote_actor_statuses(
     Vec<MastodonStatusResponse>,
     Option<crate::RemoteActorSocialCounts>,
 )> {
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    // Non-indexable remotes expose an empty public outbox; skip live crawl.
+    if !actor.indexable {
+        return Ok((Vec::new(), None));
+    }
+    if query.pinned.unwrap_or(false) {
+        return Ok((Vec::new(), None));
+    }
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
@@ -511,46 +518,7 @@ async fn load_transient_remote_actor_statuses(
             }
         };
     let actor_document = fetched.document;
-    let social_counts =
-        if remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref()) {
-            None
-        } else {
-            match load_remote_actor_social_counts_from_document_with_context(
-                &actor_document,
-                Some(&fetch_context),
-            )
-            .await
-            {
-                Ok(counts) if counts.has_any() => {
-                    match persist_remote_actor_social_counts(db, &actor.actor_uri, counts).await {
-                        Ok(true) => Some(counts),
-                        Ok(false) => None,
-                        Err(error) => {
-                            log_json_event(serde_json::json!({
-                                "event": "remote_account_enrichment_failed",
-                                "actor_uri": actor.actor_uri,
-                                "stage": "social_counts",
-                                "error": error.to_string(),
-                            }));
-                            None
-                        }
-                    }
-                }
-                Ok(_) => None,
-                Err(error) => {
-                    log_json_event(serde_json::json!({
-                        "event": "remote_account_enrichment_failed",
-                        "actor_uri": actor.actor_uri,
-                        "stage": "social_counts",
-                        "error": error.to_string(),
-                    }));
-                    None
-                }
-            }
-        };
-    if query.pinned.unwrap_or(false) {
-        return Ok((Vec::new(), social_counts));
-    }
+    // Social counts are refreshed on account show/lookup, not on the statuses path.
     let page = match remote_actor_outbox_page(&actor_document, Some(&fetch_context)).await {
         Ok(page) => page,
         Err(error) => {
@@ -560,11 +528,11 @@ async fn load_transient_remote_actor_statuses(
                 "stage": "outbox_page",
                 "error": error.to_string(),
             }));
-            return Ok((Vec::new(), social_counts));
+            return Ok((Vec::new(), None));
         }
     };
     let Some(mut page) = page else {
-        return Ok((Vec::new(), social_counts));
+        return Ok((Vec::new(), None));
     };
     let limit = limit.clamp(1, 20) as usize;
     let max_id = query.max_id.as_deref();
@@ -593,7 +561,7 @@ async fn load_transient_remote_actor_statuses(
                 && status.id == min_id
             {
                 // Exclusive lower bound reached in reverse-chronological order.
-                return Ok((response, social_counts));
+                return Ok((response, None));
             }
             if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 continue;
@@ -629,7 +597,7 @@ async fn load_transient_remote_actor_statuses(
             }
         }
     }
-    Ok((response, social_counts))
+    Ok((response, None))
 }
 
 fn transient_mastodon_status_response(

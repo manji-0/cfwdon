@@ -56,6 +56,12 @@ database_id = "replace-with-d1-database-id"
 binding = "MEDIA"
 bucket_name = "cfwdon-media"
 
+# Host-level DoH SSRF validation cache for remote ActivityPub fetches.
+[[kv_namespaces]]
+binding = "REMOTE_DNS_CACHE"
+id = "replace-with-remote-dns-cache-kv-namespace-id"
+preview_id = "replace-with-remote-dns-cache-kv-preview-id"
+
 # Configure the bucket behind a public custom domain and keep that domain
 # outside protected API authentication. Entity payloads will use MEDIA_PUBLIC_BASE_URL
 # directly; /media/:id remains as a fallback/redirect route.

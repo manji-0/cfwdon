@@ -133,6 +133,7 @@ fn scheduled_config(env: &Env) -> AppConfig {
 #[event(scheduled)]
 async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let config = scheduled_config(&env);
+    install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     let result = async {
         let db = env.d1(&config.database_binding)?;
         match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
@@ -162,6 +163,7 @@ async fn queue(
     let message_count = batch.raw_iter().count();
     batch.ack_all();
     let config = load_config_from_env(&env);
+    install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     let db = env.d1(&config.database_binding)?;
     if !pending_outbox_work_exists(&db).await? {
         console_log!("outbox queue batch idle: messages={message_count}");

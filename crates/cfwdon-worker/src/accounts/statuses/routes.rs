@@ -52,11 +52,7 @@ async fn account_statuses_response_for_account_id(
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    let fetch_context = RemoteCollectionFetchContext {
-        config: &config,
-        db: &db,
-        signer: viewer.as_ref(),
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
     let account_ref =
         resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await?;
     account_statuses_response_for_reference(req, config, db, viewer, account_ref).await

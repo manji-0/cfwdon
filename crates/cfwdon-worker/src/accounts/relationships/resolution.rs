@@ -12,11 +12,7 @@ pub(crate) async fn resolve_requested_account_reference(
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Option<AccountReference>> {
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: None,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, None);
     if let Some(reference) =
         resolve_account_reference_with_fetch(db, account_id, Some(&fetch_context)).await?
     {

@@ -35,10 +35,48 @@ impl RemoteActorSocialCounts {
     }
 }
 
+/// Controls whether ActivityPub GETs may use HTTP signatures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoteFetchAuthMode {
+    /// Public documents only — skip signed GET (avoids slow signed failures / WAF paths).
+    Public,
+    /// Prefer signed GET when a local signer is available, then fall back to unsigned.
+    Authorized,
+}
+
 pub(crate) struct RemoteCollectionFetchContext<'a> {
     pub(crate) config: &'a AppConfig,
     pub(crate) db: &'a D1Database,
     pub(crate) signer: Option<&'a LocalAccount>,
+    pub(crate) auth_mode: RemoteFetchAuthMode,
+}
+
+impl<'a> RemoteCollectionFetchContext<'a> {
+    pub(crate) fn public(
+        config: &'a AppConfig,
+        db: &'a D1Database,
+        signer: Option<&'a LocalAccount>,
+    ) -> Self {
+        Self {
+            config,
+            db,
+            signer,
+            auth_mode: RemoteFetchAuthMode::Public,
+        }
+    }
+
+    pub(crate) fn authorized(
+        config: &'a AppConfig,
+        db: &'a D1Database,
+        signer: Option<&'a LocalAccount>,
+    ) -> Self {
+        Self {
+            config,
+            db,
+            signer,
+            auth_mode: RemoteFetchAuthMode::Authorized,
+        }
+    }
 }
 
 pub(crate) async fn load_remote_actor_social_counts_from_document_with_context(
@@ -198,6 +236,7 @@ pub(crate) async fn fetch_activitypub_document_with_context(
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Result<serde_json::Value> {
     if let Some(context) = fetch_context
+        && context.auth_mode == RemoteFetchAuthMode::Authorized
         && let Some(signer) = context.signer
     {
         match fetch_signed_activitypub_document(context.config, context.db, signer, url).await {
@@ -790,6 +829,11 @@ mod tests {
         assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
             "error decoding response body: expected value at line 1 column 1".to_owned()
         )));
+    }
+
+    #[test]
+    fn remote_fetch_auth_mode_distinguishes_public_and_authorized() {
+        assert_ne!(RemoteFetchAuthMode::Public, RemoteFetchAuthMode::Authorized);
     }
 
     #[test]

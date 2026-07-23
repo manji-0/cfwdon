@@ -10,6 +10,7 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | --- | --- | --- | --- |
 | `DB` | D1 database | Yes | Database binding expected by the Worker runtime and by the defaults in `crates/cfwdon-core/src/config.rs`. |
 | `MEDIA` | R2 bucket | Yes | Bucket binding used for uploaded media bodies and profile media objects. |
+| `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
 
 If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync.
 

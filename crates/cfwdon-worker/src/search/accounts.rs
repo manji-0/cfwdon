@@ -713,11 +713,7 @@ async fn fresh_remote_search_account_response(
     expected_username: &str,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetch_context = RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: viewer,
-    };
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {

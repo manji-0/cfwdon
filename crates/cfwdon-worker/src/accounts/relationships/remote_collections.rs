@@ -100,12 +100,8 @@ pub(crate) async fn remote_follow_collection_entries(
     max_id: Option<i64>,
     since_id: Option<i64>,
 ) -> Result<Option<Vec<CollectionAccountEntry>>> {
-    let fetch_context = viewer.map(|signer| RemoteCollectionFetchContext {
-        config,
-        db,
-        signer: Some(signer),
-    });
-    let fetch_context = fetch_context.as_ref();
+    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = Some(&fetch_context);
     let actor_document =
         match fetch_activitypub_document_with_context(actor_uri, fetch_context).await {
             Ok(document) => document,
