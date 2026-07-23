@@ -452,14 +452,13 @@ pub(crate) async fn instance_extended_description_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let Some(content) = configured_html_document(
+    let content = configured_html_document(
         config.instance_extended_description_html.as_deref(),
         config.instance_extended_description_updated_at.as_deref(),
         "1970-01-01T00:00:00Z",
         false,
-    ) else {
-        return Response::error("Record not found", 404);
-    };
+    )
+    .unwrap_or_else(|| build_default_extended_description_document(&config.instance_description));
 
     cache_public_response(Response::from_json(&content)?, 300)
 }

@@ -7,10 +7,11 @@ use crate::build_featured_collection_document;
 use crate::relationships::RelationshipResponse;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::{
-    build_default_privacy_policy_document, build_donation_campaign_document,
-    build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
-    build_oauth_authorization_server_document, build_oauth_userinfo_document,
-    build_preferences_document, build_translation_document, scheduled_status_document,
+    build_default_extended_description_document, build_default_privacy_policy_document,
+    build_donation_campaign_document, build_instance_activity_document, build_instance_v1_document,
+    build_instance_v2_document, build_oauth_authorization_server_document,
+    build_oauth_userinfo_document, build_preferences_document, build_translation_document,
+    scheduled_status_document,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -363,6 +364,16 @@ fn compatibility_privacy_policy_fallback_shape_is_stable() {
     let value = build_default_privacy_policy_document("test instance");
     assert_has_pointer(&value, "/updated_at");
     assert_has_pointer(&value, "/content");
+}
+
+#[test]
+fn compatibility_extended_description_fallback_wraps_plain_text() {
+    let value = build_default_extended_description_document("hello instance");
+    assert_has_pointer(&value, "/updated_at");
+    assert_eq!(
+        value.pointer("/content").and_then(|v| v.as_str()),
+        Some("<p>hello instance</p>")
+    );
 }
 
 #[test]

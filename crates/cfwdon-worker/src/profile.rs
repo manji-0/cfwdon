@@ -190,13 +190,12 @@ fn account_api_cache_candidate(account_id: &str) -> bool {
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
-    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Auth0 authentication required", 401),
-    };
+    // Mastodon allows unauthenticated lookup; auth is optional and only used for
+    // signed remote fetches / richer relationship context when present.
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let query: AccountLookupQuery = req.query()?;
-    match resolve_lookup_account_with_viewer(&db, &config, &query.acct, Some(&viewer)).await {
+    match resolve_lookup_account_with_viewer(&db, &config, &query.acct, viewer.as_ref()).await {
         Ok(account) => Response::from_json(&account),
         Err(error) => {
             log_json_event(serde_json::json!({
@@ -204,7 +203,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
                 "acct": query.acct,
                 "error": error.to_string(),
             }));
-            Response::error("account not found", 404)
+            Response::error("Record not found", 404)
         }
     }
 }

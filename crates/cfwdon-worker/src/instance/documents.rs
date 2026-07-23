@@ -323,3 +323,17 @@ pub(crate) fn build_default_privacy_policy_document(content: &str) -> serde_json
         "content": content,
     })
 }
+
+pub(crate) fn build_default_extended_description_document(description: &str) -> serde_json::Value {
+    let content = {
+        let trimmed = description.trim();
+        if trimmed.is_empty() {
+            String::new()
+        } else if trimmed.contains('<') {
+            trimmed.to_owned()
+        } else {
+            render_status_html(trimmed)
+        }
+    };
+    build_default_privacy_policy_document(&content)
+}
