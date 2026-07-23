@@ -4,7 +4,10 @@ pub(crate) use crate::*;
 mod request_parsing;
 pub(crate) use request_parsing::*;
 
-pub(crate) use self::request_parsing::{UpdateCredentialsField, UpdateCredentialsRequest};
+pub(crate) use self::request_parsing::{
+    AttributionDomainsUpdate, FieldsAttributesUpdate, UpdateCredentialsField,
+    UpdateCredentialsRequest,
+};
 use super::{
     AccountReference, AppConfig, CACHE_TTL_ACCOUNT_API, Error, MastodonAccountResponse,
     ProfileField, RemoteCollectionFetchContext, Request, Response, Result, RouteContext,
@@ -39,6 +42,7 @@ struct AccountProfileSettings {
     show_featured: bool,
     avatar_description: String,
     header_description: String,
+    attribution_domains: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,7 +61,7 @@ const ACCOUNT_PREFERENCES_SELECT_SQL: &str = "a.id, a.username, a.access_email,
             a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key,
             a.header_content_type, '' AS private_key_jwk, a.public_key_pem, a.created_at,
             s.hide_collections, s.indexable, s.show_media, s.show_media_replies, s.show_featured,
-            s.avatar_description, s.header_description";
+            s.avatar_description, s.header_description, s.attribution_domains_json";
 const PREFERENCES_READ_SCOPES: &[&str] = &[
     "read",
     "read:accounts",
@@ -563,7 +567,8 @@ async fn load_account_profile_settings(
                     show_media_replies,
                     show_featured,
                     avatar_description,
-                    header_description
+                    header_description,
+                    attribution_domains_json
              FROM account_profile_settings
              WHERE account_id = ?1
              LIMIT 1",
@@ -596,7 +601,18 @@ fn account_profile_settings_from_value(row: &serde_json::Value) -> AccountProfil
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        attribution_domains: parse_attribution_domains_json(
+            row.get("attribution_domains_json")
+                .and_then(serde_json::Value::as_str),
+        ),
     }
+}
+
+fn parse_attribution_domains_json(value: Option<&str>) -> Vec<String> {
+    let Some(raw) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
 }
 
 async fn save_account_profile_settings(
@@ -605,6 +621,10 @@ async fn save_account_profile_settings(
     update: &UpdateCredentialsRequest,
 ) -> Result<()> {
     let current = load_account_profile_settings(db, account_id).await?;
+    let attribution_domains = match &update.attribution_domains {
+        AttributionDomainsUpdate::Set(domains) => domains.clone(),
+        AttributionDomainsUpdate::Omitted => current.attribution_domains.clone(),
+    };
     let merged = AccountProfileSettings {
         hide_collections: update.hide_collections.or(current.hide_collections),
         indexable: update.indexable.unwrap_or(current.indexable),
@@ -621,6 +641,7 @@ async fn save_account_profile_settings(
             .header_description
             .clone()
             .unwrap_or(current.header_description),
+        attribution_domains,
     };
     upsert_account_profile_settings(db, account_id, &merged).await
 }
@@ -630,6 +651,10 @@ async fn upsert_account_profile_settings(
     account_id: &str,
     settings: &AccountProfileSettings,
 ) -> Result<()> {
+    let attribution_domains_json =
+        serde_json::to_string(&settings.attribution_domains).map_err(|error| {
+            Error::RustError(format!("failed to serialize attribution_domains: {error}"))
+        })?;
     let bindings = [
         D1Type::Text(account_id),
         match settings.hide_collections {
@@ -642,6 +667,7 @@ async fn upsert_account_profile_settings(
         D1Type::Integer(i32::from(settings.show_featured)),
         D1Type::Text(settings.avatar_description.as_str()),
         D1Type::Text(settings.header_description.as_str()),
+        D1Type::Text(attribution_domains_json.as_str()),
     ];
     db.prepare(
         "INSERT INTO account_profile_settings (
@@ -653,6 +679,7 @@ async fn upsert_account_profile_settings(
             show_featured,
             avatar_description,
             header_description,
+            attribution_domains_json,
             created_at,
             updated_at
         ) VALUES (
@@ -664,6 +691,7 @@ async fn upsert_account_profile_settings(
             ?6,
             ?7,
             ?8,
+            ?9,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -675,6 +703,7 @@ async fn upsert_account_profile_settings(
             show_featured = excluded.show_featured,
             avatar_description = excluded.avatar_description,
             header_description = excluded.header_description,
+            attribution_domains_json = excluded.attribution_domains_json,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?
@@ -800,7 +829,10 @@ fn build_credentials_document(
             "header_description".to_owned(),
             serde_json::json!(settings.header_description),
         );
-        object.insert("attribution_domains".to_owned(), serde_json::json!([]));
+        object.insert(
+            "attribution_domains".to_owned(),
+            serde_json::json!(settings.attribution_domains),
+        );
         object.insert(
             "featured_tags".to_owned(),
             serde_json::Value::Array(featured_tags),
@@ -817,6 +849,10 @@ fn build_credentials_document(
             source.insert(
                 "discoverable".to_owned(),
                 serde_json::json!(account.is_discoverable()),
+            );
+            source.insert(
+                "attribution_domains".to_owned(),
+                serde_json::json!(settings.attribution_domains),
             );
         }
     }
@@ -856,7 +892,7 @@ fn build_profile_document(
         "show_media": settings.show_media,
         "show_media_replies": settings.show_media_replies,
         "show_featured": settings.show_featured,
-        "attribution_domains": [],
+        "attribution_domains": settings.attribution_domains,
         "featured_tags": featured_tags,
     })
 }

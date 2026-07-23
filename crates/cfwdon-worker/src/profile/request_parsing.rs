@@ -8,12 +8,18 @@ use serde::de::Deserializer;
 use std::collections::BTreeMap;
 use worker::{FormData, FormEntry, Request};
 
+const MAX_PROFILE_FIELDS: usize = 4;
+const MAX_ATTRIBUTION_DOMAINS: usize = 10;
+const FORM_FIELDS_ATTRIBUTES_INDEX_LIMIT: usize = 256;
+
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct UpdateCredentialsRequest {
     pub(crate) display_name: Option<String>,
     pub(crate) note: Option<String>,
     #[serde(default, deserialize_with = "deserialize_fields_attributes")]
-    pub(crate) fields_attributes: Option<Vec<UpdateCredentialsField>>,
+    pub(crate) fields_attributes: FieldsAttributesUpdate,
+    #[serde(default, deserialize_with = "deserialize_attribution_domains")]
+    pub(crate) attribution_domains: AttributionDomainsUpdate,
     pub(crate) discoverable: Option<bool>,
     pub(crate) locked: Option<bool>,
     pub(crate) bot: Option<bool>,
@@ -31,6 +37,22 @@ pub(crate) struct UpdateCredentialsRequest {
     pub(crate) header: Option<ProfileMediaUpload>,
 }
 
+/// Client omitted `fields_attributes` vs sent a (possibly empty) replacement list.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FieldsAttributesUpdate {
+    #[default]
+    Omitted,
+    Set(Vec<UpdateCredentialsField>),
+}
+
+/// Client omitted `attribution_domains` vs sent a (possibly empty) replacement list.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AttributionDomainsUpdate {
+    #[default]
+    Omitted,
+    Set(Vec<String>),
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct UpdateCredentialsSource {
     pub(crate) privacy: Option<String>,
@@ -39,7 +61,7 @@ pub(crate) struct UpdateCredentialsSource {
     pub(crate) language: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub(crate) struct UpdateCredentialsField {
     pub(crate) name: Option<String>,
     pub(crate) value: Option<String>,
@@ -85,7 +107,8 @@ async fn update_credentials_request_from_form(
     let mut request = UpdateCredentialsRequest {
         display_name: form.get_field("display_name"),
         note: form.get_field("note"),
-        fields_attributes: Some(parse_profile_fields_from_form(&form)),
+        fields_attributes: parse_fields_attributes_from_form(&form),
+        attribution_domains: parse_attribution_domains_from_form(&form)?,
         discoverable: parse_optional_bool(form.get_field("discoverable").as_deref())?,
         locked: parse_optional_bool(form.get_field("locked").as_deref())?,
         bot: parse_optional_bool(form.get_field("bot").as_deref())?,
@@ -117,11 +140,12 @@ fn normalize_update_credentials_request(
     normalize_optional_text(&mut request.avatar_description, false);
     normalize_optional_text(&mut request.header_description, false);
 
-    if let Some(fields) = request.fields_attributes.as_mut() {
+    if let FieldsAttributesUpdate::Set(fields) = &mut request.fields_attributes {
         *fields = normalize_profile_fields(std::mem::take(fields));
-        if fields.is_empty() {
-            request.fields_attributes = None;
-        }
+    }
+
+    if let AttributionDomainsUpdate::Set(domains) = &mut request.attribution_domains {
+        *domains = normalize_attribution_domains(std::mem::take(domains))?;
     }
 
     if let Some(source) = request.source.as_mut() {
@@ -159,7 +183,7 @@ fn normalize_update_credentials_source(
 
 fn deserialize_fields_attributes<'de, D>(
     deserializer: D,
-) -> std::result::Result<Option<Vec<UpdateCredentialsField>>, D::Error>
+) -> std::result::Result<FieldsAttributesUpdate, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -172,13 +196,35 @@ where
 
     Ok(
         match Option::<FieldsAttributes>::deserialize(deserializer)? {
-            Some(FieldsAttributes::List(fields)) => Some(fields),
+            Some(FieldsAttributes::List(fields)) => FieldsAttributesUpdate::Set(fields),
             Some(FieldsAttributes::Map(fields)) => {
                 let mut fields = fields.into_iter().collect::<Vec<_>>();
-                fields.sort_by_key(|(key, _)| key.parse::<usize>().ok());
-                Some(fields.into_iter().map(|(_, field)| field).collect())
+                fields.sort_by_key(|(key, _)| key.parse::<i64>().unwrap_or(i64::MAX));
+                FieldsAttributesUpdate::Set(fields.into_iter().map(|(_, field)| field).collect())
             }
-            None => None,
+            None => FieldsAttributesUpdate::Omitted,
+        },
+    )
+}
+
+fn deserialize_attribution_domains<'de, D>(
+    deserializer: D,
+) -> std::result::Result<AttributionDomainsUpdate, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AttributionDomains {
+        List(Vec<String>),
+        Single(String),
+    }
+
+    Ok(
+        match Option::<AttributionDomains>::deserialize(deserializer)? {
+            Some(AttributionDomains::List(domains)) => AttributionDomainsUpdate::Set(domains),
+            Some(AttributionDomains::Single(domain)) => AttributionDomainsUpdate::Set(vec![domain]),
+            None => AttributionDomainsUpdate::Omitted,
         },
     )
 }
@@ -192,18 +238,64 @@ fn normalize_optional_text(value: &mut Option<String>, clear_if_empty: bool) {
     }
 }
 
-fn parse_profile_fields_from_form(form: &FormData) -> Vec<UpdateCredentialsField> {
-    (0..8)
-        .filter_map(|index| {
-            let name = form.get_field(&format!("fields_attributes[{index}][name]"));
-            let value = form.get_field(&format!("fields_attributes[{index}][value]"));
-            if name.is_none() && value.is_none() {
-                None
-            } else {
-                Some(UpdateCredentialsField { name, value })
+fn parse_fields_attributes_from_form(form: &FormData) -> FieldsAttributesUpdate {
+    let mut fields = Vec::new();
+    let mut present = false;
+    for index in 0..FORM_FIELDS_ATTRIBUTES_INDEX_LIMIT {
+        let name_key = format!("fields_attributes[{index}][name]");
+        let value_key = format!("fields_attributes[{index}][value]");
+        let name_present = form.has(&name_key);
+        let value_present = form.has(&value_key);
+        if !name_present && !value_present {
+            continue;
+        }
+        present = true;
+        fields.push(UpdateCredentialsField {
+            name: form.get_field(&name_key),
+            value: form.get_field(&value_key),
+        });
+    }
+    if present {
+        FieldsAttributesUpdate::Set(fields)
+    } else {
+        FieldsAttributesUpdate::Omitted
+    }
+}
+
+fn parse_attribution_domains_from_form(
+    form: &FormData,
+) -> std::result::Result<AttributionDomainsUpdate, String> {
+    let mut domains = Vec::new();
+    let mut present = false;
+
+    if let Some(entries) = form.get_all("attribution_domains[]") {
+        present = true;
+        for entry in entries {
+            if let FormEntry::Field(value) = entry {
+                domains.push(value);
             }
-        })
-        .collect()
+        }
+    }
+    if let Some(value) = form.get_field("attribution_domains") {
+        present = true;
+        domains.push(value);
+    }
+    for index in 0..MAX_ATTRIBUTION_DOMAINS.saturating_mul(2) {
+        let key = format!("attribution_domains[{index}]");
+        if !form.has(&key) {
+            continue;
+        }
+        present = true;
+        if let Some(value) = form.get_field(&key) {
+            domains.push(value);
+        }
+    }
+
+    if present {
+        Ok(AttributionDomainsUpdate::Set(domains))
+    } else {
+        Ok(AttributionDomainsUpdate::Omitted)
+    }
 }
 
 fn normalize_profile_fields(fields: Vec<UpdateCredentialsField>) -> Vec<UpdateCredentialsField> {
@@ -226,8 +318,62 @@ fn normalize_profile_fields(fields: Vec<UpdateCredentialsField>) -> Vec<UpdateCr
                 _ => None,
             }
         })
-        .take(4)
+        .take(MAX_PROFILE_FIELDS)
         .collect()
+}
+
+pub(crate) fn normalize_attribution_domains(
+    domains: Vec<String>,
+) -> std::result::Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    for domain in domains {
+        let Some(value) = normalize_attribution_domain(&domain)? else {
+            continue;
+        };
+        if !normalized.iter().any(|existing| existing == &value) {
+            normalized.push(value);
+        }
+        if normalized.len() > MAX_ATTRIBUTION_DOMAINS {
+            return Err(format!(
+                "attribution_domains must contain at most {MAX_ATTRIBUTION_DOMAINS} domains"
+            ));
+        }
+    }
+    Ok(normalized)
+}
+
+fn normalize_attribution_domain(value: &str) -> std::result::Result<Option<String>, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let host = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host.is_empty() {
+        return Ok(None);
+    }
+    if host.contains('@') || host.contains(' ') || host.contains(':') {
+        return Err(format!("invalid attribution domain: {value}"));
+    }
+    if !host.contains('.') && host != "localhost" {
+        return Err(format!("invalid attribution domain: {value}"));
+    }
+    if !host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+    {
+        return Err(format!("invalid attribution domain: {value}"));
+    }
+    Ok(Some(host))
 }
 
 async fn parse_profile_media_upload(
@@ -323,8 +469,9 @@ fn parse_profile_media_data_url(
 #[cfg(test)]
 mod tests {
     use super::{
-        UpdateCredentialsRequest, UpdateCredentialsSource, normalize_update_credentials_request,
-        parse_profile_media_data_url, request_is_json,
+        AttributionDomainsUpdate, FieldsAttributesUpdate, UpdateCredentialsRequest,
+        UpdateCredentialsSource, normalize_attribution_domains,
+        normalize_update_credentials_request, parse_profile_media_data_url, request_is_json,
     };
 
     #[test]
@@ -338,7 +485,9 @@ mod tests {
         }))
         .expect("map-shaped fields_attributes should deserialize");
 
-        let fields = request.fields_attributes.expect("fields should be present");
+        let FieldsAttributesUpdate::Set(fields) = request.fields_attributes else {
+            panic!("fields should be set");
+        };
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name.as_deref(), Some("First"));
         assert_eq!(
@@ -361,10 +510,49 @@ mod tests {
         }))
         .expect("list-shaped fields_attributes should deserialize");
 
-        let fields = request.fields_attributes.expect("fields should be present");
+        let FieldsAttributesUpdate::Set(fields) = request.fields_attributes else {
+            panic!("fields should be set");
+        };
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].name.as_deref(), Some("Website"));
         assert_eq!(fields[0].value.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn update_credentials_keeps_empty_fields_attributes_as_set() {
+        let mut request: UpdateCredentialsRequest = serde_json::from_value(serde_json::json!({
+            "fields_attributes": {}
+        }))
+        .expect("empty map should deserialize");
+        normalize_update_credentials_request(&mut request).unwrap();
+        assert_eq!(
+            request.fields_attributes,
+            FieldsAttributesUpdate::Set(Vec::new())
+        );
+    }
+
+    #[test]
+    fn update_credentials_accepts_attribution_domains() {
+        let mut request: UpdateCredentialsRequest = serde_json::from_value(serde_json::json!({
+            "attribution_domains": ["Example.COM", "https://blog.example/path", ""]
+        }))
+        .expect("attribution domains should deserialize");
+        normalize_update_credentials_request(&mut request).unwrap();
+        assert_eq!(
+            request.attribution_domains,
+            AttributionDomainsUpdate::Set(vec![
+                "example.com".to_owned(),
+                "blog.example".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn normalize_attribution_domains_rejects_too_many() {
+        let domains = (0..11)
+            .map(|index| format!("example{index}.com"))
+            .collect::<Vec<_>>();
+        assert!(normalize_attribution_domains(domains).is_err());
     }
 
     #[test]

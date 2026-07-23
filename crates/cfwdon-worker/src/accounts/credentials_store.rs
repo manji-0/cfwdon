@@ -58,16 +58,13 @@ fn account_profile_fields(
     account: &LocalAccount,
     update: &UpdateCredentialsRequest,
 ) -> Vec<ProfileField> {
-    update
-        .fields_attributes
-        .as_ref()
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(profile_field_from_update)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| account.fields().to_vec())
+    match &update.fields_attributes {
+        crate::FieldsAttributesUpdate::Set(fields) => fields
+            .iter()
+            .filter_map(profile_field_from_update)
+            .collect(),
+        crate::FieldsAttributesUpdate::Omitted => account.fields().to_vec(),
+    }
 }
 
 fn profile_media_value<'a>(
@@ -296,7 +293,7 @@ async fn store_profile_media(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{UpdateCredentialsField, UpdateCredentialsSource};
+    use crate::profile::{FieldsAttributesUpdate, UpdateCredentialsField, UpdateCredentialsSource};
     use cfwdon_domain::LocalAccountRecord;
 
     fn test_account() -> LocalAccount {
@@ -338,10 +335,21 @@ mod tests {
     }
 
     #[test]
+    fn account_profile_fields_clears_when_update_sets_empty_list() {
+        let account = test_account();
+        let update = UpdateCredentialsRequest {
+            fields_attributes: FieldsAttributesUpdate::Set(Vec::new()),
+            ..UpdateCredentialsRequest::default()
+        };
+
+        assert!(account_profile_fields(&account, &update).is_empty());
+    }
+
+    #[test]
     fn account_profile_fields_uses_complete_update_fields() {
         let account = test_account();
         let update = UpdateCredentialsRequest {
-            fields_attributes: Some(vec![
+            fields_attributes: FieldsAttributesUpdate::Set(vec![
                 UpdateCredentialsField {
                     name: Some("Git".to_owned()),
                     value: Some("https://example.com/git".to_owned()),
@@ -372,7 +380,7 @@ mod tests {
             locked: Some(true),
             bot: Some(true),
             discoverable: Some(false),
-            fields_attributes: Some(vec![UpdateCredentialsField {
+            fields_attributes: FieldsAttributesUpdate::Set(vec![UpdateCredentialsField {
                 name: Some("Site".to_owned()),
                 value: Some("https://example.com".to_owned()),
             }]),
