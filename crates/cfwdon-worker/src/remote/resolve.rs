@@ -128,12 +128,9 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
                     "error": error.to_string(),
                 }));
                 let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-                if let Err(enrich_error) = reconcile_remote_account_status_summary(
-                    db,
-                    &actor.actor_uri,
-                    &mut response,
-                )
-                .await
+                if let Err(enrich_error) =
+                    reconcile_remote_account_status_summary(db, &actor.actor_uri, &mut response)
+                        .await
                 {
                     log_json_event(serde_json::json!({
                         "event": "remote_account_enrichment_failed",
@@ -155,8 +152,7 @@ async fn resolve_remote_lookup_via_fetch(
     fetch_context: &RemoteCollectionFetchContext<'_>,
 ) -> Result<MastodonAccountResponse> {
     let actor_uri = resolve_webfinger_actor_uri(handle).await?;
-    let fetched =
-        fetch_remote_actor_profile_with_context(&actor_uri, Some(fetch_context)).await?;
+    let fetched = fetch_remote_actor_profile_with_context(&actor_uri, Some(fetch_context)).await?;
     let profile = fetched.profile;
     ensure_remote_actor_username_matches_handle(&profile, &handle.username)?;
     upsert_remote_actor(db, &profile).await?;

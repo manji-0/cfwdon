@@ -173,10 +173,7 @@ fn cache_control_max_age(max_age_seconds: u32) -> String {
 }
 
 async fn cache_get(key: &str) -> Result<Option<Response>> {
-    let Some(mut cached) = (match Cache::default().get(key, true).await {
-        Ok(response) => response,
-        Err(_) => None,
-    }) else {
+    let Some(mut cached) = Cache::default().get(key, true).await.unwrap_or_default() else {
         return Ok(None);
     };
 
