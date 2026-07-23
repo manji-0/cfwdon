@@ -1,6 +1,6 @@
 use super::{
-    AppConfig, LocalAccount, activitypub_datetime_string, activitypub_profile_attachments,
-    actor_url, media_object_url, public_key_id, shared_inbox_url,
+    AppConfig, LocalAccount, account_webfinger_acct, activitypub_datetime_string,
+    activitypub_profile_attachments, actor_url, media_object_url, public_key_id, shared_inbox_url,
 };
 
 #[derive(Debug, serde::Serialize)]
@@ -12,6 +12,8 @@ pub(crate) struct ActivityPubActorResponse {
     pub(crate) actor_type: &'static str,
     #[serde(rename = "preferredUsername")]
     pub(crate) preferred_username: String,
+    /// FEP-2c59 reverse WebFinger shortcut (`user@domain`).
+    pub(crate) webfinger: String,
     pub(crate) name: String,
     pub(crate) summary: String,
     pub(crate) inbox: String,
@@ -94,6 +96,7 @@ pub(crate) fn build_activitypub_actor_document(
             "Person"
         },
         preferred_username: account.username().to_owned(),
+        webfinger: account_webfinger_acct(config, account.username()),
         name: account.display_name().to_owned(),
         summary: account.bio_html().to_owned(),
         inbox: format!("{actor_url}/inbox"),

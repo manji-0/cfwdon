@@ -1,16 +1,18 @@
 use super::{
     AccountStats, AppConfig, CACHE_TTL_FEDERATION, CACHE_TTL_STATIC_METADATA, CACHE_TTL_TRENDS,
     Error, LocalAccount, Request, Response, Result, RouteContext, account_profile_page_url,
-    activitypub_datetime_string, actor_url, authorize_interaction_subscribe_template,
-    build_activitypub_actor_document, build_outbox_activities, build_tag_response,
-    cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
-    cache_public_response, cache_public_response_with_options, cached_actor_json_response,
+    activitypub_datetime_string, actor_url, authorize_interaction_object_template,
+    authorize_interaction_subscribe_template, build_activitypub_actor_document,
+    build_outbox_activities, build_tag_response, cache_actor_json_response,
+    cache_actor_profile_html_response, cache_public_json_response, cache_public_response,
+    cache_public_response_with_options, cached_actor_json_response,
     cached_actor_profile_html_response, count_public_outbox_statuses, ensure_account_keys,
     escape_html, find_account_by_username, find_media_attachments_by_status_ids, instance_base_url,
     instance_host, list_follower_actor_uris, list_following_actor_uris,
     list_local_follower_usernames, list_public_outbox_statuses, list_public_outbox_statuses_page,
     load_account_stats, load_config, local_status_html_item, media_object_url, normalize_hashtag,
-    parse_webfinger_resource, render_profile_field_value_html, webfinger_lrdd_template,
+    parse_webfinger_resource, render_profile_field_value_html, share_create_template,
+    webfinger_lrdd_template,
 };
 use std::collections::HashSet;
 use url::Url;
@@ -37,7 +39,7 @@ struct WebFingerResponse {
 struct WebFingerLink {
     rel: &'static str,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    link_type: Option<&'static str>,
+    link_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     href: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,7 +50,7 @@ impl WebFingerLink {
     fn profile_page_link(href: String) -> Self {
         Self {
             rel: "http://webfinger.net/rel/profile-page",
-            link_type: Some("text/html"),
+            link_type: Some("text/html".to_owned()),
             href: Some(href),
             template: None,
         }
@@ -57,7 +59,7 @@ impl WebFingerLink {
     fn self_link(href: String) -> Self {
         Self {
             rel: "self",
-            link_type: Some("application/activity+json"),
+            link_type: Some("application/activity+json".to_owned()),
             href: Some(href),
             template: None,
         }
@@ -69,6 +71,33 @@ impl WebFingerLink {
             link_type: None,
             href: None,
             template: Some(template),
+        }
+    }
+
+    fn create_intent_link(template: String) -> Self {
+        Self {
+            rel: "https://w3id.org/fep/3b86/Create",
+            link_type: None,
+            href: None,
+            template: Some(template),
+        }
+    }
+
+    fn object_intent_link(template: String) -> Self {
+        Self {
+            rel: "https://w3id.org/fep/3b86/Object",
+            link_type: None,
+            href: None,
+            template: Some(template),
+        }
+    }
+
+    fn avatar_link(href: String, media_type: &str) -> Self {
+        Self {
+            rel: "http://webfinger.net/rel/avatar",
+            link_type: Some(media_type.to_owned()),
+            href: Some(href),
+            template: None,
         }
     }
 }
@@ -101,14 +130,26 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
     let username = account.username();
     let actor = actor_url(&config, username);
     let profile_page = account_profile_page_url(&config, username);
+    let mut links = vec![
+        WebFingerLink::profile_page_link(profile_page.clone()),
+        WebFingerLink::self_link(actor.clone()),
+        WebFingerLink::subscribe_link(authorize_interaction_subscribe_template(&config)),
+        WebFingerLink::create_intent_link(share_create_template(&config)),
+        WebFingerLink::object_intent_link(authorize_interaction_object_template(&config)),
+    ];
+    if let Some((object_key, content_type)) = account
+        .avatar_object_key()
+        .zip(account.avatar_content_type())
+    {
+        links.push(WebFingerLink::avatar_link(
+            media_object_url(&config, object_key),
+            content_type,
+        ));
+    }
     let response = WebFingerResponse {
         subject: format!("acct:{username}@{instance_host}"),
-        aliases: vec![profile_page.clone(), actor.clone()],
-        links: vec![
-            WebFingerLink::profile_page_link(profile_page),
-            WebFingerLink::self_link(actor),
-            WebFingerLink::subscribe_link(authorize_interaction_subscribe_template(&config)),
-        ],
+        aliases: vec![profile_page, actor],
+        links,
     };
 
     cache_public_json_response(
@@ -773,6 +814,10 @@ mod tests {
                 WebFingerLink::subscribe_link(crate::authorize_interaction_subscribe_template(
                     &config,
                 )),
+                WebFingerLink::create_intent_link(crate::share_create_template(&config)),
+                WebFingerLink::object_intent_link(crate::authorize_interaction_object_template(
+                    &config,
+                )),
             ],
         };
         let value = serde_json::to_value(document).unwrap();
@@ -785,6 +830,12 @@ mod tests {
             value["links"][2]["template"],
             "https://example.com/authorize_interaction?uri={uri}"
         );
+        assert_eq!(value["links"][3]["rel"], "https://w3id.org/fep/3b86/Create");
+        assert_eq!(
+            value["links"][3]["template"],
+            "https://example.com/share?text={content}"
+        );
+        assert_eq!(value["links"][4]["rel"], "https://w3id.org/fep/3b86/Object");
         assert!(
             value["aliases"]
                 .as_array()

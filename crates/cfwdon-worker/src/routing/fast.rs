@@ -22,8 +22,8 @@ use crate::{
     note_account_response, oauth_authorization_server_response, oauth_authorize_response,
     oauth_token_response, oauth_userinfo_response, oembed_response, pin_account_response,
     pin_status_response, public_timeline_response, reblog_status, reject_follow_request_response,
-    reject_quote_response, remove_from_followers_response, revoke_quote_response,
-    status_api_response, status_card_response, status_context_response,
+    reject_quote_response, remove_from_followers_response, revoke_quote_response, share_response,
+    share_submit_response, status_api_response, status_card_response, status_context_response,
     status_favourited_by_response, status_history_response, status_interaction_policy_response,
     status_quotes_response, status_reblogged_by_response, status_source_response,
     statuses_index_placeholder_response, tag_timeline_response, translate_status_response,
@@ -232,6 +232,12 @@ fn discovery_router() -> Router<'static, ()> {
         })
         .post_async("/authorize_interaction", |req, ctx| async move {
             authorize_interaction_submit_response(req, ctx).await
+        })
+        .get_async("/share", |req, ctx| async move {
+            share_response(req, ctx).await
+        })
+        .post_async("/share", |req, ctx| async move {
+            share_submit_response(req, ctx).await
         })
 }
 

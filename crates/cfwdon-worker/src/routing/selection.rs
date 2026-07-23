@@ -20,6 +20,7 @@ pub(crate) fn fast_router_kind(method: &str, path: &str) -> Option<FastRouterKin
             | "/nodeinfo/2.0"
             | "/api/oembed"
             | "/authorize_interaction"
+            | "/share"
     ) {
         return Some(FastRouterKind::Discovery);
     }

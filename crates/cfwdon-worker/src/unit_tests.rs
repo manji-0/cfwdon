@@ -5026,6 +5026,7 @@ fn activitypub_actor_document_reflects_locked_and_bot_flags() {
     let actor = build_activitypub_actor_document(&config, &account);
     assert_eq!(actor.actor_type, "Service");
     assert!(actor.manually_approves_followers);
+    assert_eq!(actor.webfinger, "alice@social.example");
 }
 
 #[test]

@@ -119,17 +119,12 @@ fn optional_configured_url(html: Option<&str>, url: impl FnOnce() -> String) -> 
 }
 
 fn instance_v2_urls_configuration(config: &AppConfig) -> serde_json::Value {
+    // about / privacy_policy always resolve (HTML config or instance_description fallback).
     serde_json::json!({
         "streaming": streaming_api_url(config),
         "status": serde_json::Value::Null,
-        "about": optional_configured_url(
-            config.instance_extended_description_html.as_deref(),
-            || extended_description_url(config),
-        ),
-        "privacy_policy": optional_configured_url(
-            config.privacy_policy_html.as_deref(),
-            || privacy_policy_url(config),
-        ),
+        "about": extended_description_url(config),
+        "privacy_policy": privacy_policy_url(config),
         "terms_of_service": optional_configured_url(
             config.terms_of_service_html.as_deref(),
             || terms_of_service_url(config),

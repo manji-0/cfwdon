@@ -53,6 +53,7 @@ mod runtime_config;
 mod scheduled_statuses;
 mod search;
 mod secret_storage;
+mod share;
 mod statuses;
 mod streaming_types;
 mod suggestions;
@@ -103,6 +104,7 @@ pub(crate) use routing::*;
 pub(crate) use runtime_config::*;
 pub(crate) use scheduled_statuses::*;
 pub(crate) use search::*;
+pub(crate) use share::*;
 #[allow(unused_imports)]
 pub(crate) use statuses::*;
 pub(crate) use streaming_types::*;

@@ -168,6 +168,24 @@ pub(crate) fn authorize_interaction_subscribe_template(config: &AppConfig) -> St
     )
 }
 
+/// FEP-3b86 Object intent template (follow / interact with a remote object).
+pub(crate) fn authorize_interaction_object_template(config: &AppConfig) -> String {
+    format!(
+        "{}/authorize_interaction?uri={{object}}",
+        instance_base_url(config)
+    )
+}
+
+/// FEP-3b86 Create intent template (compose / share).
+pub(crate) fn share_create_template(config: &AppConfig) -> String {
+    format!("{}/share?text={{content}}", instance_base_url(config))
+}
+
+/// FEP-2c59 acct subject for a local actor (`user@domain`).
+pub(crate) fn account_webfinger_acct(config: &AppConfig, username: &str) -> String {
+    format!("{username}@{}", instance_host(config))
+}
+
 pub(crate) fn webfinger_lrdd_template(config: &AppConfig) -> String {
     format!(
         "{}/.well-known/webfinger?resource={{uri}}",
