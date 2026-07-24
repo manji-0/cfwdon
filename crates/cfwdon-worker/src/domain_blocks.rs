@@ -4,6 +4,7 @@ use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pag
 use crate::runtime_config::load_config;
 use serde::Deserialize;
 use std::collections::HashSet;
+use url::Url;
 use worker::D1Database;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -76,6 +77,36 @@ fn normalize_domain_block_value(value: Option<&str>) -> std::result::Result<Stri
     Ok(domain.to_ascii_lowercase())
 }
 
+pub(crate) fn delivery_inbox_blocked_by_domains(
+    inbox_url: &str,
+    blocked_domains: &[String],
+) -> bool {
+    if blocked_domains.is_empty() {
+        return false;
+    }
+    let Ok(url) = Url::parse(inbox_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    blocked_domains.iter().any(|blocked| {
+        let blocked = blocked.trim().to_ascii_lowercase();
+        !blocked.is_empty() && (host == blocked || host.ends_with(&format!(".{blocked}")))
+    })
+}
+
+pub(crate) fn filter_delivery_inboxes_for_domain_blocks(
+    inboxes: Vec<String>,
+    blocked_domains: &[String],
+) -> Vec<String> {
+    inboxes
+        .into_iter()
+        .filter(|inbox| !delivery_inbox_blocked_by_domains(inbox, blocked_domains))
+        .collect()
+}
+
 async fn list_account_domain_blocks(
     db: &D1Database,
     account_id: &str,
@@ -127,7 +158,10 @@ async fn insert_account_domain_block(
     Ok(())
 }
 
-async fn list_all_account_domain_blocks(db: &D1Database, account_id: &str) -> Result<Vec<String>> {
+pub(crate) async fn list_all_account_domain_blocks(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<String>> {
     let bindings = [D1Type::Text(account_id)];
     let result = db
         .prepare(
@@ -300,7 +334,10 @@ pub(crate) async fn delete_domain_block_response(
 
 #[cfg(test)]
 mod tests {
-    use super::domain_block_preview_candidates;
+    use super::{
+        delivery_inbox_blocked_by_domains, domain_block_preview_candidates,
+        filter_delivery_inboxes_for_domain_blocks,
+    };
 
     #[test]
     fn domain_block_preview_excludes_blocked_domains() {
@@ -332,5 +369,32 @@ mod tests {
         );
 
         assert_eq!(candidates, vec!["alpha.example"]);
+    }
+
+    #[test]
+    fn delivery_inbox_domain_block_matches_host_and_subdomain() {
+        let blocked = vec!["blocked.example".to_owned()];
+        assert!(delivery_inbox_blocked_by_domains(
+            "https://blocked.example/inbox",
+            &blocked
+        ));
+        assert!(delivery_inbox_blocked_by_domains(
+            "https://sub.blocked.example/users/a/inbox",
+            &blocked
+        ));
+        assert!(!delivery_inbox_blocked_by_domains(
+            "https://safe.example/inbox",
+            &blocked
+        ));
+        assert_eq!(
+            filter_delivery_inboxes_for_domain_blocks(
+                vec![
+                    "https://blocked.example/inbox".to_owned(),
+                    "https://safe.example/inbox".to_owned(),
+                ],
+                &blocked,
+            ),
+            vec!["https://safe.example/inbox".to_owned()]
+        );
     }
 }

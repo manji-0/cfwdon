@@ -1,9 +1,9 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_announce_activity,
-    build_local_action_status_response, build_remote_status_response, build_undo_announce_activity,
-    delete_reblog_by_target_uri, delete_reblog_wrapper_status_by_target_uri,
-    enqueue_outbox_process_queue_best_effort, find_reblog_activity_by_target_uri,
-    invalidate_status_api_cache, local_status_target_uri, queue_remote_actor_activity,
+    Error, Request, Response, Result, RouteContext, build_local_action_status_response,
+    build_remote_status_response, delete_reblog_by_target_uri,
+    delete_reblog_wrapper_status_by_target_uri, enqueue_announce_activity,
+    enqueue_outbox_process_queue_best_effort, enqueue_undo_announce_activity,
+    find_reblog_activity_by_target_uri, invalidate_status_api_cache, local_status_target_uri,
     resolve_authenticated_status_action_context, resolve_visible_action_status,
     upsert_reblog_local_status, upsert_reblog_remote_status, upsert_reblog_wrapper_status,
 };
@@ -43,15 +43,6 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             if viewer.id() == subject.account.id() {
                 return Response::error("cannot reblog your own status", 422);
             }
-            upsert_reblog_local_status(
-                &action.auth.db,
-                &action.auth.config,
-                viewer.id(),
-                &subject.status,
-                &visibility,
-            )
-            .await?;
-            invalidate_status_api_cache(&ctx, &action.status_id).await;
             let wrapper = upsert_reblog_wrapper_status(
                 &action.auth.db,
                 &action.auth.config,
@@ -60,6 +51,35 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
                 &visibility,
             )
             .await?;
+            let existing = find_reblog_activity_by_target_uri(
+                &action.auth.db,
+                viewer.id(),
+                &local_status_target_uri(&subject.status),
+            )
+            .await?;
+            let mut outbound_activity_id = existing.and_then(|row| row.ap_activity_id);
+            if outbound_activity_id.is_none() {
+                outbound_activity_id = enqueue_announce_activity(
+                    &action.auth.db,
+                    &action.auth.config,
+                    viewer,
+                    &wrapper.id,
+                    &local_status_target_uri(&subject.status),
+                    &visibility,
+                    None,
+                )
+                .await?;
+            }
+            upsert_reblog_local_status(
+                &action.auth.db,
+                &action.auth.config,
+                viewer.id(),
+                &subject.status,
+                &visibility,
+                outbound_activity_id.as_deref(),
+            )
+            .await?;
+            invalidate_status_api_cache(&ctx, &action.status_id).await;
             let wrapper_subject = crate::find_owned_local_status_response_subject(
                 &action.auth.db,
                 &wrapper.id,
@@ -87,18 +107,23 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             let mut outbound_activity_id = existing.and_then(|row| row.ap_activity_id);
+            let wrapper = upsert_reblog_wrapper_status(
+                &action.auth.db,
+                &action.auth.config,
+                viewer,
+                &status.object_uri,
+                &visibility,
+            )
+            .await?;
             if outbound_activity_id.is_none() {
-                let (_, payload_json) = build_announce_activity(
+                outbound_activity_id = enqueue_announce_activity(
+                    &action.auth.db,
                     &action.auth.config,
                     viewer,
+                    &wrapper.id,
                     &status.object_uri,
                     &visibility,
-                )?;
-                outbound_activity_id = queue_remote_actor_activity(
-                    &action.auth.db,
-                    viewer.id(),
-                    &actor.actor_uri,
-                    &payload_json,
+                    Some(actor.actor_uri.as_str()),
                 )
                 .await?;
             }
@@ -111,14 +136,6 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let wrapper = upsert_reblog_wrapper_status(
-                &action.auth.db,
-                &action.auth.config,
-                viewer,
-                &status.object_uri,
-                &visibility,
-            )
-            .await?;
             let wrapper_subject = crate::find_owned_local_status_response_subject(
                 &action.auth.db,
                 &wrapper.id,
@@ -164,19 +181,28 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
     .await?
     {
         Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
-            delete_reblog_by_target_uri(
-                &action.auth.db,
-                viewer.id(),
-                &local_status_target_uri(&subject.status),
-            )
-            .await?;
+            let target_uri = local_status_target_uri(&subject.status);
+            if let Some(row) =
+                find_reblog_activity_by_target_uri(&action.auth.db, viewer.id(), &target_uri)
+                    .await?
+                && let Some(announce_activity_id) = row.ap_activity_id.as_deref()
+            {
+                enqueue_undo_announce_activity(
+                    &action.auth.db,
+                    &action.auth.config,
+                    viewer,
+                    &subject.status.id,
+                    announce_activity_id,
+                    &target_uri,
+                    &row.visibility,
+                    None,
+                )
+                .await?;
+            }
+            delete_reblog_by_target_uri(&action.auth.db, viewer.id(), &target_uri).await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            delete_reblog_wrapper_status_by_target_uri(
-                &action.auth.db,
-                viewer.id(),
-                &local_status_target_uri(&subject.status),
-            )
-            .await?;
+            delete_reblog_wrapper_status_by_target_uri(&action.auth.db, viewer.id(), &target_uri)
+                .await?;
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -193,19 +219,15 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
                     .await?
                 && let Some(announce_activity_id) = row.ap_activity_id.as_deref()
             {
-                let (_, payload_json) = build_undo_announce_activity(
+                enqueue_undo_announce_activity(
+                    &action.auth.db,
                     &action.auth.config,
                     viewer,
+                    &status.id,
                     announce_activity_id,
-                    &actor.actor_uri,
                     &status.object_uri,
                     &row.visibility,
-                )?;
-                let _ = queue_remote_actor_activity(
-                    &action.auth.db,
-                    viewer.id(),
-                    &actor.actor_uri,
-                    &payload_json,
+                    Some(actor.actor_uri.as_str()),
                 )
                 .await?;
             }

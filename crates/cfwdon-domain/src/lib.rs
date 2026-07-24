@@ -24,9 +24,10 @@ pub use account::{
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,
     OUTBOX_DELIVERY_CONCURRENCY, OutboundActivityState, OutboundDeliverySlot,
-    OutboxDeliveryRecordState, RemoteFollowState, delivery_retry_delay_modifier,
-    follow_state_after_inbox_response, generic_outbox_has_follower_targets,
-    generic_outbox_parent_state_after_expand, initial_remote_follow_state, is_delivery_terminal,
+    OutboxDeliveryRecordState, RemoteFollowState, delivery_disposition_for_http_status,
+    delivery_retry_delay_modifier, follow_state_after_inbox_response,
+    generic_outbox_has_follower_targets, generic_outbox_parent_state_after_expand,
+    initial_remote_follow_state, is_delivery_http_status_permanent, is_delivery_terminal,
     next_delivery_attempt_count, outbound_delivery_slot_after_attempt,
     outbound_state_after_delivery_attempt, outbound_terminal_failure_follow_state,
     outbox_delivery_pool_size, outbox_delivery_state_after_attempt, outbox_expand_slot_count,

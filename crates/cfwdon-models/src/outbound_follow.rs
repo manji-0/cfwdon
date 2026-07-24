@@ -39,7 +39,10 @@ pub(crate) fn apply_outbound_follow_delivery_outcome(
         return false;
     }
     let next_attempt = next_delivery_attempt_count(state.attempt_count as i32);
-    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+    if matches!(
+        outcome,
+        DeliveryAttemptOutcome::Failure | DeliveryAttemptOutcome::PermanentFailure
+    ) {
         state.attempt_count = next_attempt;
     }
     state.outbound_state =

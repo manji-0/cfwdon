@@ -77,7 +77,10 @@ pub(crate) fn apply_outbox_pipeline_target_outcome(
         return false;
     }
     let next_attempt = next_delivery_attempt_count(slot.attempt_count as i32);
-    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+    if matches!(
+        outcome,
+        DeliveryAttemptOutcome::Failure | DeliveryAttemptOutcome::PermanentFailure
+    ) {
         slot.attempt_count = next_attempt;
     }
     slot.state = outbox_delivery_state_after_attempt(slot.state, next_attempt, outcome);

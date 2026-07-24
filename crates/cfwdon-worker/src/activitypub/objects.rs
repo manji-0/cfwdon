@@ -1,11 +1,12 @@
 use super::{
     AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, activitypub_datetime_string, actor_url,
     apply_activitypub_poll_fields, classify_media_kind, count_poll_voters,
-    extract_account_handles_from_text, find_account_by_id, find_account_by_username,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_remote_actor_by_username_domain, find_status_by_id, find_status_poll_by_status_id,
-    is_iso_timestamp_in_past, list_status_poll_options, media_attachment_url, media_kind_label,
-    quote_authorization_uri, status_has_active_quote,
+    extract_account_handles_from_text, extract_hashtags_from_text, find_account_by_id,
+    find_account_by_username, find_local_status_by_object_uri, find_media_attachments_by_status_id,
+    find_remote_actor_by_username_domain, find_remote_status_by_id, find_status_by_id,
+    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
+    media_attachment_url, media_kind_label, quote_authorization_uri, status_has_active_quote,
+    tag_url,
 };
 use cfwdon_domain::{QuoteState, Visibility};
 use std::collections::HashSet;
@@ -45,6 +46,33 @@ pub(crate) fn activitypub_audiences_for_visibility(
     }
 }
 
+fn audience_uri_list(value: serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect(),
+        serde_json::Value::String(uri) => vec![uri],
+        _ => Vec::new(),
+    }
+}
+
+fn audience_json(uris: Vec<String>) -> serde_json::Value {
+    serde_json::Value::Array(
+        uris.into_iter()
+            .map(serde_json::Value::String)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn append_unique_uris(target: &mut Vec<String>, seen: &mut HashSet<String>, uris: Vec<String>) {
+    for uri in uris {
+        if seen.insert(uri.clone()) {
+            target.push(uri);
+        }
+    }
+}
+
 pub(crate) async fn activitypub_audiences_for_status(
     db: &D1Database,
     config: &AppConfig,
@@ -55,11 +83,104 @@ pub(crate) async fn activitypub_audiences_for_status(
         return direct_activitypub_audiences(db, config, account, status).await;
     }
 
-    Ok(activitypub_audiences_for_visibility(
-        config,
-        account.username(),
-        status.visibility,
-    ))
+    let (base_to, base_cc) =
+        activitypub_audiences_for_visibility(config, account.username(), status.visibility);
+    let addressed = collect_addressed_actor_uris(db, config, account, status).await?;
+    if addressed.is_empty() {
+        return Ok((base_to, base_cc));
+    }
+
+    let mut to = audience_uri_list(base_to);
+    let cc = audience_uri_list(base_cc);
+    let mut seen = to.iter().chain(cc.iter()).cloned().collect::<HashSet<_>>();
+
+    // Mastodon places explicit recipients (mentions / reply parent) on `to`
+    // for public and followers-only posts, keeping collection audiences intact.
+    append_unique_uris(&mut to, &mut seen, addressed);
+
+    Ok((audience_json(to), audience_json(cc)))
+}
+
+async fn collect_addressed_actor_uris(
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &StatusRow,
+) -> Result<Vec<String>> {
+    let mut recipients = Vec::new();
+    let mut seen = HashSet::new();
+
+    for handle in extract_account_handles_from_text(&status.text, config) {
+        if handle.is_local_to(&config.instance_domain) {
+            if let Some(account) = find_account_by_username(db, &handle.username).await?
+                && account.id() != author.id()
+            {
+                let uri = actor_url(config, account.username());
+                if seen.insert(uri.clone()) {
+                    recipients.push(uri);
+                }
+            }
+            continue;
+        }
+
+        if let Some(domain) = handle.domain.as_deref()
+            && let Some(actor) =
+                find_remote_actor_by_username_domain(db, &handle.username, domain).await?
+            && seen.insert(actor.actor_uri.clone())
+        {
+            recipients.push(actor.actor_uri);
+        }
+    }
+
+    if let Some(reply_actor_uri) = resolve_reply_actor_uri(db, config, author, status).await?
+        && seen.insert(reply_actor_uri.clone())
+    {
+        recipients.push(reply_actor_uri);
+    }
+
+    Ok(recipients)
+}
+
+async fn resolve_reply_actor_uri(
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &StatusRow,
+) -> Result<Option<String>> {
+    let Some(reply_id) = status.in_reply_to_id.as_deref() else {
+        return Ok(None);
+    };
+
+    if let Some(reply) = find_status_by_id(db, reply_id).await?
+        && let Some(reply_account) = find_account_by_id(db, &reply.account_id).await?
+        && reply_account.id() != author.id()
+    {
+        return Ok(Some(actor_url(config, reply_account.username())));
+    }
+
+    if let Some(reply) = find_remote_status_by_id(db, reply_id).await? {
+        return Ok(Some(reply.actor_uri));
+    }
+
+    Ok(None)
+}
+
+async fn resolve_reply_object_uri(db: &D1Database, status: &StatusRow) -> Result<Option<String>> {
+    let Some(reply_id) = status.in_reply_to_id.as_deref() else {
+        return Ok(None);
+    };
+
+    if let Some(reply) = find_status_by_id(db, reply_id).await?
+        && let Some(ap_id) = reply.ap_id
+    {
+        return Ok(Some(ap_id));
+    }
+
+    if let Some(reply) = find_remote_status_by_id(db, reply_id).await? {
+        return Ok(Some(reply.object_uri));
+    }
+
+    Ok(None)
 }
 
 async fn direct_activitypub_audiences(
@@ -68,14 +189,30 @@ async fn direct_activitypub_audiences(
     author: &LocalAccount,
     status: &StatusRow,
 ) -> Result<(serde_json::Value, serde_json::Value)> {
-    let mut recipients = HashSet::new();
+    let recipients = collect_addressed_actor_uris(db, config, author, status).await?;
+    Ok((audience_json(recipients), serde_json::json!([])))
+}
+
+async fn build_activitypub_note_tags(
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &StatusRow,
+) -> Result<Vec<serde_json::Value>> {
+    let mut tags = Vec::new();
+    let mut seen_mentions = HashSet::new();
 
     for handle in extract_account_handles_from_text(&status.text, config) {
         if handle.is_local_to(&config.instance_domain) {
-            if let Some(account) = find_account_by_username(db, &handle.username).await?
-                && account.id() != author.id()
-            {
-                recipients.insert(actor_url(config, account.username()));
+            if let Some(account) = find_account_by_username(db, &handle.username).await? {
+                let href = actor_url(config, account.username());
+                if seen_mentions.insert(href.clone()) {
+                    tags.push(serde_json::json!({
+                        "type": "Mention",
+                        "href": href,
+                        "name": format!("@{}", account.username()),
+                    }));
+                }
             }
             continue;
         }
@@ -83,26 +220,34 @@ async fn direct_activitypub_audiences(
         if let Some(domain) = handle.domain.as_deref()
             && let Some(actor) =
                 find_remote_actor_by_username_domain(db, &handle.username, domain).await?
+            && seen_mentions.insert(actor.actor_uri.clone())
         {
-            recipients.insert(actor.actor_uri);
+            tags.push(serde_json::json!({
+                "type": "Mention",
+                "href": actor.actor_uri,
+                "name": format!("@{}@{}", handle.username, domain),
+            }));
         }
     }
 
-    if let Some(reply_id) = status.in_reply_to_id.as_deref()
-        && let Some(reply) = find_status_by_id(db, reply_id).await?
-        && let Some(reply_account) = find_account_by_id(db, &reply.account_id).await?
-        && reply_account.id() != author.id()
+    if let Some(reply_actor_uri) = resolve_reply_actor_uri(db, config, author, status).await?
+        && seen_mentions.insert(reply_actor_uri.clone())
     {
-        recipients.insert(actor_url(config, reply_account.username()));
+        tags.push(serde_json::json!({
+            "type": "Mention",
+            "href": reply_actor_uri,
+        }));
     }
 
-    let to = serde_json::Value::Array(
-        recipients
-            .into_iter()
-            .map(serde_json::Value::String)
-            .collect(),
-    );
-    Ok((to, serde_json::json!([])))
+    for tag in extract_hashtags_from_text(&status.text) {
+        tags.push(serde_json::json!({
+            "type": "Hashtag",
+            "href": tag_url(config, &tag),
+            "name": format!("#{tag}"),
+        }));
+    }
+
+    Ok(tags)
 }
 
 fn quote_context_mapping() -> serde_json::Value {
@@ -149,12 +294,8 @@ pub(crate) async fn build_activitypub_note(
     let note_id = local_status_ap_id(config, account, status);
     let audiences = activitypub_audiences_for_status(db, config, account, status).await?;
     let poll = find_status_poll_by_status_id(db, &status.id).await?;
-    let reply_uri = match status.in_reply_to_id.as_deref() {
-        Some(reply_id) => find_status_by_id(db, reply_id)
-            .await?
-            .and_then(|reply| reply.ap_id),
-        None => None,
-    };
+    let reply_uri = resolve_reply_object_uri(db, status).await?;
+    let tags = build_activitypub_note_tags(db, config, account, status).await?;
     let attachments = if let Some(attachments) = attachment_override {
         attachments.to_vec()
     } else {
@@ -171,6 +312,7 @@ pub(crate) async fn build_activitypub_note(
         "published": activitypub_datetime_string(&status.created_at),
         "to": audiences.0,
         "cc": audiences.1,
+        "tag": tags,
         "attachment": attachments
             .iter()
             .map(|attachment| {

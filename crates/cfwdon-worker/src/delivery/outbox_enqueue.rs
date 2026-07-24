@@ -2,6 +2,7 @@ use super::{
     AppConfig, D1Database, Error, LocalAccount, Result, StatusRow, Visibility,
     activitypub_audiences_for_status, activitypub_datetime_string, actor_url,
     build_activitypub_delete, build_activitypub_note, describe_outbound_activity,
+    filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
     load_remote_actor_delivery_inbox, local_username_from_actor_uri, status_has_active_quote,
 };
 use std::collections::HashSet;
@@ -86,32 +87,48 @@ fn audience_uri_strings(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
-async fn remote_direct_delivery_inboxes(
+async fn remote_addressed_delivery_inboxes(
     db: &D1Database,
     config: &AppConfig,
-    to_audiences: &serde_json::Value,
+    account_id: &str,
+    audiences: &[&serde_json::Value],
 ) -> Result<Vec<String>> {
     let mut inboxes = Vec::new();
     let mut seen = HashSet::new();
 
-    for actor_uri in audience_uri_strings(to_audiences) {
-        if local_username_from_actor_uri(config, &actor_uri).is_some() {
-            continue;
-        }
-        if cfwdon_domain::is_followers_collection_uri(&actor_uri)
-            || cfwdon_domain::is_public_audience_uri(&actor_uri)
-        {
-            continue;
-        }
-        let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await? else {
-            continue;
-        };
-        if seen.insert(inbox.clone()) {
-            inboxes.push(inbox);
+    for audience in audiences {
+        for actor_uri in audience_uri_strings(audience) {
+            if local_username_from_actor_uri(config, &actor_uri).is_some() {
+                continue;
+            }
+            if cfwdon_domain::is_followers_collection_uri(&actor_uri)
+                || cfwdon_domain::is_public_audience_uri(&actor_uri)
+            {
+                continue;
+            }
+            let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await? else {
+                continue;
+            };
+            if seen.insert(inbox.clone()) {
+                inboxes.push(inbox);
+            }
         }
     }
 
-    Ok(inboxes)
+    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    Ok(filter_delivery_inboxes_for_domain_blocks(
+        inboxes,
+        &blocked_domains,
+    ))
+}
+
+async fn remote_direct_delivery_inboxes(
+    db: &D1Database,
+    config: &AppConfig,
+    account_id: &str,
+    to_audiences: &serde_json::Value,
+) -> Result<Vec<String>> {
+    remote_addressed_delivery_inboxes(db, config, account_id, &[to_audiences]).await
 }
 
 async fn build_create_activity_payload(
@@ -147,6 +164,8 @@ async fn build_create_activity_payload(
 /// Generic follower-fanout Create (public / unlisted / followers-only).
 /// Direct Creates are handled by [`enqueue_direct_create_activity`] after the
 /// status row exists, because they need per-recipient inbox targeting.
+/// Explicit mention/reply recipients are enqueued by
+/// [`enqueue_addressed_create_activity`].
 pub(crate) async fn outbox_create_insert_statement(
     db: &D1Database,
     config: &AppConfig,
@@ -193,7 +212,38 @@ pub(crate) async fn enqueue_direct_create_activity(
     }
 
     let (to_audiences, _) = activitypub_audiences_for_status(db, config, account, status).await?;
-    let inboxes = remote_direct_delivery_inboxes(db, config, &to_audiences).await?;
+    let inboxes = remote_direct_delivery_inboxes(db, config, account.id(), &to_audiences).await?;
+    if inboxes.is_empty() {
+        return Ok(());
+    }
+
+    let (_, payload_json) =
+        build_create_activity_payload(db, config, account, status, attachments_override).await?;
+    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+}
+
+/// Deliver Create to explicitly addressed remote actors (mentions / reply parent)
+/// in addition to follower sharedInbox fan-out.
+pub(crate) async fn enqueue_addressed_create_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+    attachments_override: Option<&[crate::MediaAttachmentRow]>,
+) -> Result<()> {
+    if status.visibility == Visibility::Direct {
+        return Ok(());
+    }
+
+    let (to_audiences, cc_audiences) =
+        activitypub_audiences_for_status(db, config, account, status).await?;
+    let inboxes = remote_addressed_delivery_inboxes(
+        db,
+        config,
+        account.id(),
+        &[&to_audiences, &cc_audiences],
+    )
+    .await?;
     if inboxes.is_empty() {
         return Ok(());
     }
@@ -244,7 +294,37 @@ pub(crate) async fn enqueue_direct_delete_activity(
     }
 
     let (to_audiences, _) = activitypub_audiences_for_status(db, config, account, status).await?;
-    let inboxes = remote_direct_delivery_inboxes(db, config, &to_audiences).await?;
+    let inboxes = remote_direct_delivery_inboxes(db, config, account.id(), &to_audiences).await?;
+    if inboxes.is_empty() {
+        return Ok(());
+    }
+
+    let activity = build_activitypub_delete(db, config, account, status).await?;
+    let payload_json = serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!("failed to serialize delete activity: {error}"))
+    })?;
+    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+}
+
+pub(crate) async fn enqueue_addressed_delete_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status: &StatusRow,
+) -> Result<()> {
+    if status.visibility == Visibility::Direct {
+        return Ok(());
+    }
+
+    let (to_audiences, cc_audiences) =
+        activitypub_audiences_for_status(db, config, account, status).await?;
+    let inboxes = remote_addressed_delivery_inboxes(
+        db,
+        config,
+        account.id(),
+        &[&to_audiences, &cc_audiences],
+    )
+    .await?;
     if inboxes.is_empty() {
         return Ok(());
     }

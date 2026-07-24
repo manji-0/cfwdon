@@ -1,9 +1,11 @@
 use super::{
     AppConfig, D1Database, Error, LocalAccount, StatusRow, Visibility,
-    activitypub_audiences_for_status, build_add_featured_activity, build_remove_featured_activity,
-    build_status_update_activity, enqueue_targeted_outbox_activity,
-    is_public_activitypub_visibility, list_follower_delivery_targets,
-    load_remote_actor_delivery_inbox, local_status_target_uri, local_username_from_actor_uri,
+    activitypub_audiences_for_status, build_add_featured_activity, build_announce_activity,
+    build_remove_featured_activity, build_status_update_activity, build_undo_announce_activity,
+    enqueue_targeted_outbox_activity, filter_delivery_inboxes_for_domain_blocks,
+    is_public_activitypub_visibility, list_all_account_domain_blocks,
+    list_follower_delivery_targets, load_remote_actor_delivery_inbox, local_status_target_uri,
+    local_username_from_actor_uri,
 };
 use std::collections::HashSet;
 use worker::Result;
@@ -113,9 +115,13 @@ pub(crate) async fn queue_remote_actor_activity(
     target_actor_uri: &str,
     payload_json: &str,
 ) -> Result<Option<String>> {
+    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
     let Some(target_inbox) = load_remote_actor_delivery_inbox(db, target_actor_uri).await? else {
         return Ok(None);
     };
+    if delivery_inbox_blocked(&target_inbox, &blocked_domains) {
+        return Ok(None);
+    }
     let descriptor = describe_outbound_activity(payload_json)?;
     enqueue_outbound_activity(
         db,
@@ -141,13 +147,106 @@ pub(crate) async fn queue_remote_actor_activity_required(
         .ok_or_else(|| Error::RustError("remote account is missing a delivery inbox".to_owned()))
 }
 
+async fn follower_delivery_inboxes(db: &D1Database, account_id: &str) -> Result<Vec<String>> {
+    let inboxes = list_follower_delivery_targets(db, account_id).await?;
+    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    Ok(filter_delivery_inboxes_for_domain_blocks(
+        inboxes,
+        &blocked_domains,
+    ))
+}
+
+fn delivery_inbox_blocked(inbox: &str, blocked_domains: &[String]) -> bool {
+    crate::delivery_inbox_blocked_by_domains(inbox, blocked_domains)
+}
+
+async fn merge_author_inbox(
+    db: &D1Database,
+    account_id: &str,
+    author_actor_uri: Option<&str>,
+    mut inboxes: Vec<String>,
+) -> Result<Vec<String>> {
+    let Some(author_actor_uri) = author_actor_uri else {
+        return Ok(inboxes);
+    };
+    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    let Some(author_inbox) = load_remote_actor_delivery_inbox(db, author_actor_uri).await? else {
+        return Ok(inboxes);
+    };
+    if delivery_inbox_blocked(&author_inbox, &blocked_domains) {
+        return Ok(inboxes);
+    }
+    if !inboxes.iter().any(|inbox| inbox == &author_inbox) {
+        inboxes.push(author_inbox);
+    }
+    Ok(inboxes)
+}
+
+/// Fan-out Announce to follower sharedInboxes and optionally the remote author.
+pub(crate) async fn enqueue_announce_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_id: &str,
+    object_uri: &str,
+    visibility: &str,
+    author_actor_uri: Option<&str>,
+) -> Result<Option<String>> {
+    let (activity_id, payload_json) =
+        build_announce_activity(config, account, object_uri, visibility)?;
+    let inboxes = merge_author_inbox(
+        db,
+        account.id(),
+        author_actor_uri,
+        follower_delivery_inboxes(db, account.id()).await?,
+    )
+    .await?;
+    if inboxes.is_empty() {
+        return Ok(Some(activity_id));
+    }
+    enqueue_targeted_outbox_activity(db, account.id(), status_id, &payload_json, &inboxes).await?;
+    Ok(Some(activity_id))
+}
+
+pub(crate) async fn enqueue_undo_announce_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    status_id: &str,
+    announce_activity_id: &str,
+    object_uri: &str,
+    visibility: &str,
+    author_actor_uri: Option<&str>,
+) -> Result<()> {
+    let author_for_payload = author_actor_uri.unwrap_or("");
+    let (_, payload_json) = build_undo_announce_activity(
+        config,
+        account,
+        announce_activity_id,
+        author_for_payload,
+        object_uri,
+        visibility,
+    )?;
+    let inboxes = merge_author_inbox(
+        db,
+        account.id(),
+        author_actor_uri,
+        follower_delivery_inboxes(db, account.id()).await?,
+    )
+    .await?;
+    if inboxes.is_empty() {
+        return Ok(());
+    }
+    enqueue_targeted_outbox_activity(db, account.id(), status_id, &payload_json, &inboxes).await
+}
+
 pub(crate) async fn enqueue_profile_update_activities(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
 ) -> Result<()> {
     let payload_json = crate::build_update_person_activity(config, account)?;
-    let inboxes = list_follower_delivery_targets(db, account.id()).await?;
+    let inboxes = follower_delivery_inboxes(db, account.id()).await?;
     enqueue_targeted_outbox_activity(db, account.id(), account.id(), &payload_json, &inboxes).await
 }
 
@@ -158,9 +257,38 @@ pub(crate) async fn enqueue_status_update_activity(
     status: &StatusRow,
 ) -> Result<()> {
     let payload_json = build_status_update_activity(db, config, account, status).await?;
+    let blocked_domains = list_all_account_domain_blocks(db, account.id()).await?;
     let inboxes = match status.visibility {
         Visibility::Public | Visibility::Unlisted | Visibility::FollowersOnly => {
-            list_follower_delivery_targets(db, account.id()).await?
+            let mut inboxes = follower_delivery_inboxes(db, account.id()).await?;
+            let mut seen = inboxes.iter().cloned().collect::<HashSet<_>>();
+            let (to_audiences, cc_audiences) =
+                activitypub_audiences_for_status(db, config, account, status).await?;
+            for audience in [&to_audiences, &cc_audiences] {
+                let actor_uris = match audience {
+                    serde_json::Value::Array(values) => values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>(),
+                    serde_json::Value::String(uri) => vec![uri.clone()],
+                    _ => Vec::new(),
+                };
+                for actor_uri in actor_uris {
+                    if local_username_from_actor_uri(config, &actor_uri).is_some()
+                        || cfwdon_domain::is_followers_collection_uri(&actor_uri)
+                        || cfwdon_domain::is_public_audience_uri(&actor_uri)
+                    {
+                        continue;
+                    }
+                    if let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await?
+                        && !delivery_inbox_blocked(&inbox, &blocked_domains)
+                        && seen.insert(inbox.clone())
+                    {
+                        inboxes.push(inbox);
+                    }
+                }
+            }
+            inboxes
         }
         Visibility::Direct => {
             let (to_audiences, _) =
@@ -180,6 +308,7 @@ pub(crate) async fn enqueue_status_update_activity(
                     continue;
                 }
                 if let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await?
+                    && !delivery_inbox_blocked(&inbox, &blocked_domains)
                     && seen.insert(inbox.clone())
                 {
                     inboxes.push(inbox);
@@ -206,7 +335,7 @@ pub(crate) async fn enqueue_add_featured_status_activity(
 
     let payload_json =
         build_add_featured_activity(config, account, &local_status_target_uri(status))?;
-    let inboxes = list_follower_delivery_targets(db, account.id()).await?;
+    let inboxes = follower_delivery_inboxes(db, account.id()).await?;
     enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
 }
 
@@ -222,6 +351,6 @@ pub(crate) async fn enqueue_remove_featured_status_activity(
 
     let payload_json =
         build_remove_featured_activity(config, account, &local_status_target_uri(status))?;
-    let inboxes = list_follower_delivery_targets(db, account.id()).await?;
+    let inboxes = follower_delivery_inboxes(db, account.id()).await?;
     enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
 }

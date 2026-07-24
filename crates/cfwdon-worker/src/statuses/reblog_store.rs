@@ -28,6 +28,7 @@ pub(crate) async fn upsert_reblog_local_status(
     account_id: &str,
     status: &StatusRow,
     visibility: &str,
+    ap_activity_id: Option<&str>,
 ) -> Result<()> {
     let target_uri = local_status_target_uri(status);
     let bindings = [
@@ -35,6 +36,10 @@ pub(crate) async fn upsert_reblog_local_status(
         D1Type::Text(status.id.as_str()),
         D1Type::Text(target_uri.as_str()),
         D1Type::Text(visibility),
+        match ap_activity_id {
+            Some(value) => D1Type::Text(value),
+            None => D1Type::Null,
+        },
     ];
 
     db.prepare(
@@ -53,7 +58,7 @@ pub(crate) async fn upsert_reblog_local_status(
             NULL,
             ?3,
             ?4,
-            NULL,
+            ?5,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -61,7 +66,7 @@ pub(crate) async fn upsert_reblog_local_status(
             status_id = excluded.status_id,
             remote_status_id = NULL,
             visibility = excluded.visibility,
-            ap_activity_id = NULL,
+            ap_activity_id = COALESCE(excluded.ap_activity_id, reblogs.ap_activity_id),
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?

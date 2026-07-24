@@ -73,6 +73,7 @@ pub(crate) use conversations::*;
 pub(crate) use db_utils::*;
 pub(crate) use delivery::*;
 pub(crate) use discovery::*;
+pub(crate) use domain_blocks::*;
 pub(crate) use featured_tags::*;
 pub(crate) use federation::*;
 pub(crate) use filters::*;

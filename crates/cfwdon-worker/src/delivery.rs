@@ -121,6 +121,7 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         outbound_deliveries.len()
     );
     let mut account_cache = HashMap::new();
+    let mut blocked_domains_cache = HashMap::<String, Vec<String>>::new();
     preload_outbox_delivery_accounts(db, config, &target_deliveries, &mut account_cache).await?;
     preload_outbound_activity_accounts(db, config, &outbound_deliveries, &mut account_cache)
         .await?;
@@ -147,6 +148,31 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
+        if !blocked_domains_cache.contains_key(&delivery.account_id) {
+            let blocked = list_all_account_domain_blocks(db, &delivery.account_id).await?;
+            blocked_domains_cache.insert(delivery.account_id.clone(), blocked);
+        }
+        let blocked_domains = blocked_domains_cache
+            .get(&delivery.account_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if delivery_inbox_blocked_by_domains(&target_inbox, blocked_domains) {
+            console_log!(
+                "outbox delivery skipped domain block: id={} target={}",
+                delivery.id,
+                target_inbox
+            );
+            if mark_outbox_delivery_terminal_failure(
+                db,
+                &delivery.id,
+                delivery.attempt_count.saturating_add(1) as u32,
+            )
+            .await?
+            {
+                summary.failed += 1;
+            }
+            continue;
+        }
         target_send_jobs.push((delivery, target_inbox, account.clone()));
     }
 
@@ -173,15 +199,17 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
+                let permanent = error.is_permanent();
                 console_error!(
-                    "outbox delivery failed: id={} target={} attempt={} terminal={} error={}",
+                    "outbox delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
                     delivery.id,
                     target_inbox,
                     next_attempt,
-                    is_delivery_terminal(next_attempt),
-                    error
+                    permanent || is_delivery_terminal(next_attempt),
+                    permanent,
+                    error.detail
                 );
-                if is_delivery_terminal(next_attempt) {
+                if permanent || is_delivery_terminal(next_attempt) {
                     if mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?
                     {
                         summary.failed += 1;
@@ -212,6 +240,29 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             summary.failed += 1;
             continue;
         };
+        if !blocked_domains_cache.contains_key(&delivery.account_id) {
+            let blocked = list_all_account_domain_blocks(db, &delivery.account_id).await?;
+            blocked_domains_cache.insert(delivery.account_id.clone(), blocked);
+        }
+        let blocked_domains = blocked_domains_cache
+            .get(&delivery.account_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if delivery_inbox_blocked_by_domains(&delivery.target_inbox, blocked_domains) {
+            console_log!(
+                "outbound delivery skipped domain block: id={} target={}",
+                delivery.id,
+                delivery.target_inbox
+            );
+            reconcile_outbound_activity_terminal_failure(
+                db,
+                &delivery,
+                delivery.attempt_count.saturating_add(1) as u32,
+            )
+            .await?;
+            summary.failed += 1;
+            continue;
+        }
         outbound_send_jobs.push((delivery, account.clone()));
     }
 
@@ -243,15 +294,17 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
+                let permanent = error.is_permanent();
                 console_error!(
-                    "outbound delivery failed: id={} target={} attempt={} terminal={} error={}",
+                    "outbound delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
                     delivery.id,
                     delivery.target_inbox,
                     next_attempt,
-                    is_delivery_terminal(next_attempt),
-                    error
+                    permanent || is_delivery_terminal(next_attempt),
+                    permanent,
+                    error.detail
                 );
-                if is_delivery_terminal(next_attempt) {
+                if permanent || is_delivery_terminal(next_attempt) {
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
                     summary.failed += 1;
@@ -286,6 +339,15 @@ async fn process_generic_outbox_deliveries(
         .collect::<Vec<_>>();
     let targets_by_account =
         list_follower_delivery_targets_by_account_ids(db, &account_ids).await?;
+    let mut filtered_targets = HashMap::new();
+    for (account_id, targets) in targets_by_account {
+        let blocked_domains = list_all_account_domain_blocks(db, &account_id).await?;
+        let targets = filter_delivery_inboxes_for_domain_blocks(targets, &blocked_domains);
+        if !targets.is_empty() {
+            filtered_targets.insert(account_id, targets);
+        }
+    }
+    let targets_by_account = filtered_targets;
     let target_count = targets_by_account
         .values()
         .map(std::vec::Vec::len)

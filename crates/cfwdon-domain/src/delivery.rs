@@ -32,6 +32,7 @@ pub fn outbox_delivery_state_after_attempt(
 ) -> OutboxDeliveryRecordState {
     match (current, outcome) {
         (_, DeliveryAttemptOutcome::Success) => OutboxDeliveryRecordState::Delivered,
+        (_, DeliveryAttemptOutcome::PermanentFailure) => OutboxDeliveryRecordState::Failed,
         (OutboxDeliveryRecordState::Queued, DeliveryAttemptOutcome::Failure) => {
             if is_delivery_terminal(next_attempt) {
                 OutboxDeliveryRecordState::Failed
@@ -71,7 +72,30 @@ pub enum FollowInboxResponse {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DeliveryAttemptOutcome {
     Success,
+    /// Transient failure — retry with backoff until [`DELIVERY_MAX_ATTEMPTS`].
     Failure,
+    /// Non-retryable remote rejection (typical 4xx except 408/429).
+    PermanentFailure,
+}
+
+/// Classifies an HTTP status from a signed ActivityPub inbox POST.
+///
+/// Aligns with common Mastodon / ActivityPub delivery practice: treat most 4xx as
+/// permanent, keep 408/429 and 5xx retryable, and accept any 2xx as success.
+pub fn delivery_disposition_for_http_status(status: u16) -> DeliveryAttemptOutcome {
+    match status {
+        200..=299 => DeliveryAttemptOutcome::Success,
+        408 | 429 => DeliveryAttemptOutcome::Failure,
+        400..=499 => DeliveryAttemptOutcome::PermanentFailure,
+        _ => DeliveryAttemptOutcome::Failure,
+    }
+}
+
+pub fn is_delivery_http_status_permanent(status: u16) -> bool {
+    matches!(
+        delivery_disposition_for_http_status(status),
+        DeliveryAttemptOutcome::PermanentFailure
+    )
 }
 
 pub fn delivery_retry_delay_modifier(attempt: u32) -> &'static str {
@@ -98,6 +122,7 @@ pub fn outbound_state_after_delivery_attempt(
 ) -> OutboundActivityState {
     match (current, outcome) {
         (_, DeliveryAttemptOutcome::Success) => OutboundActivityState::Delivered,
+        (_, DeliveryAttemptOutcome::PermanentFailure) => OutboundActivityState::Failed,
         (OutboundActivityState::Queued, DeliveryAttemptOutcome::Failure) => {
             if is_delivery_terminal(next_attempt) {
                 OutboundActivityState::Failed
@@ -138,7 +163,10 @@ pub fn outbound_delivery_slot_after_attempt(
         state: slot.state,
         attempt_count: slot.attempt_count,
     };
-    if matches!(outcome, DeliveryAttemptOutcome::Failure) {
+    if matches!(
+        outcome,
+        DeliveryAttemptOutcome::Failure | DeliveryAttemptOutcome::PermanentFailure
+    ) {
         next.attempt_count = next_attempt;
     }
     next.state = outbound_state_after_delivery_attempt(slot.state, next_attempt, outcome);
@@ -321,6 +349,52 @@ mod tests {
                 DeliveryAttemptOutcome::Failure,
             ),
             OutboxDeliveryRecordState::Failed
+        );
+    }
+
+    #[test]
+    fn permanent_http_failures_are_terminal_immediately() {
+        assert_eq!(
+            delivery_disposition_for_http_status(404),
+            DeliveryAttemptOutcome::PermanentFailure
+        );
+        assert_eq!(
+            delivery_disposition_for_http_status(410),
+            DeliveryAttemptOutcome::PermanentFailure
+        );
+        assert_eq!(
+            delivery_disposition_for_http_status(408),
+            DeliveryAttemptOutcome::Failure
+        );
+        assert_eq!(
+            delivery_disposition_for_http_status(429),
+            DeliveryAttemptOutcome::Failure
+        );
+        assert_eq!(
+            delivery_disposition_for_http_status(503),
+            DeliveryAttemptOutcome::Failure
+        );
+        assert_eq!(
+            delivery_disposition_for_http_status(202),
+            DeliveryAttemptOutcome::Success
+        );
+        assert!(is_delivery_http_status_permanent(403));
+        assert!(!is_delivery_http_status_permanent(503));
+        assert_eq!(
+            outbox_delivery_state_after_attempt(
+                OutboxDeliveryRecordState::Queued,
+                1,
+                DeliveryAttemptOutcome::PermanentFailure,
+            ),
+            OutboxDeliveryRecordState::Failed
+        );
+        assert_eq!(
+            outbound_state_after_delivery_attempt(
+                OutboundActivityState::Queued,
+                1,
+                DeliveryAttemptOutcome::PermanentFailure,
+            ),
+            OutboundActivityState::Failed
         );
     }
 

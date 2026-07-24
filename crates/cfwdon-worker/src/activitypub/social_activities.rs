@@ -212,7 +212,7 @@ pub(crate) fn build_undo_announce_activity(
     config: &AppConfig,
     account: &LocalAccount,
     announce_activity_id: &str,
-    remote_actor_uri: &str,
+    _remote_actor_uri: &str,
     object_uri: &str,
     visibility: &str,
 ) -> Result<(String, String)> {
@@ -228,7 +228,8 @@ pub(crate) fn build_undo_announce_activity(
         "id": format!("{actor}/undo/{}", generate_entity_id(12)?),
         "type": "Undo",
         "actor": actor,
-        "to": [remote_actor_uri],
+        "to": audiences.0,
+        "cc": audiences.1,
         "object": {
             "id": announce_activity_id,
             "type": "Announce",
