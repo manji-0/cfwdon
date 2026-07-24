@@ -489,6 +489,7 @@ fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
     assert!(is_cors_enabled_path(
         "/.well-known/oauth-authorization-server"
     ));
+    assert!(is_cors_enabled_path("/.well-known/webfinger"));
     assert!(!is_cors_enabled_path("/admin"));
 }
 

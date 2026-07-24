@@ -19,13 +19,14 @@ use url::Url;
 use worker::ResponseBody;
 
 #[derive(Debug, serde::Deserialize)]
-struct WebFingerQuery {
-    resource: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
 struct RemoteFollowQuery {
     domain: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedWebFingerQuery {
+    resource: String,
+    rels: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -111,7 +112,10 @@ struct CollectionPagingQuery {
 
 pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let query: WebFingerQuery = req.query()?;
+    let query = match parse_webfinger_query_pairs(req.url()?.query_pairs()) {
+        Ok(query) => query,
+        Err(message) => return Response::error(message, 400),
+    };
     let handle = match parse_webfinger_resource(&query.resource) {
         Ok(handle) => handle,
         Err(error) => return Response::error(error.to_string(), 400),
@@ -146,18 +150,63 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
             content_type,
         ));
     }
+    let links = filter_webfinger_links(links, &query.rels);
     let response = WebFingerResponse {
         subject: format!("acct:{username}@{instance_host}"),
         aliases: vec![profile_page, actor],
         links,
     };
 
+    // CORS is applied centrally via `is_cors_enabled_path("/.well-known/webfinger")`.
     cache_public_json_response(
         &response,
         "application/jrd+json",
         CACHE_TTL_STATIC_METADATA,
-        &[("Access-Control-Allow-Origin", "*")],
+        &[],
     )
+}
+
+/// Parse WebFinger query pairs per RFC 7033 §4.1.
+///
+/// `resource` is required once (last value wins if repeated). Zero or more `rel`
+/// values select link relations; when present, unmatched links are omitted.
+fn parse_webfinger_query_pairs<I, K, V>(
+    pairs: I,
+) -> std::result::Result<ParsedWebFingerQuery, String>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let mut resource = None;
+    let mut rels = Vec::new();
+    for (key, value) in pairs {
+        match key.as_ref() {
+            "resource" => resource = Some(value.as_ref().to_owned()),
+            "rel" => {
+                let value = value.as_ref();
+                if !value.is_empty() {
+                    rels.push(value.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    let resource = resource
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "resource query parameter is required".to_owned())?;
+    Ok(ParsedWebFingerQuery { resource, rels })
+}
+
+fn filter_webfinger_links(links: Vec<WebFingerLink>, rels: &[String]) -> Vec<WebFingerLink> {
+    if rels.is_empty() {
+        return links;
+    }
+    links
+        .into_iter()
+        .filter(|link| rels.iter().any(|rel| rel == link.rel))
+        .collect()
 }
 
 pub(crate) async fn host_meta_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -751,8 +800,9 @@ fn build_ordered_collection_document(
 #[cfg(test)]
 mod tests {
     use super::{
-        WebFingerLink, WebFingerResponse, escape_xml_attr, profile_avatar_html,
-        profile_header_style, profile_posts_section,
+        WebFingerLink, WebFingerResponse, escape_xml_attr, filter_webfinger_links,
+        parse_webfinger_query_pairs, profile_avatar_html, profile_header_style,
+        profile_posts_section,
     };
 
     #[test]
@@ -858,5 +908,78 @@ mod tests {
         assert!(
             body.contains("template=\"https://example.com/.well-known/webfinger?resource={uri}\"")
         );
+    }
+
+    #[test]
+    fn parse_webfinger_query_pairs_requires_resource() {
+        let error = parse_webfinger_query_pairs(Vec::<(&str, &str)>::new()).unwrap_err();
+        assert!(error.contains("resource"));
+
+        let error = parse_webfinger_query_pairs([("resource", "   ")]).unwrap_err();
+        assert!(error.contains("resource"));
+    }
+
+    #[test]
+    fn parse_webfinger_query_pairs_collects_multiple_rels() {
+        let query = parse_webfinger_query_pairs([
+            ("resource", "acct:alice@example.com"),
+            ("rel", "self"),
+            ("rel", "http://webfinger.net/rel/profile-page"),
+            ("rel", ""),
+        ])
+        .unwrap();
+
+        assert_eq!(query.resource, "acct:alice@example.com");
+        assert_eq!(
+            query.rels,
+            vec![
+                "self".to_owned(),
+                "http://webfinger.net/rel/profile-page".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_webfinger_links_keeps_all_when_rel_absent() {
+        let filtered = filter_webfinger_links(
+            vec![
+                WebFingerLink::self_link("https://example.com/users/alice".to_owned()),
+                WebFingerLink::profile_page_link("https://example.com/@alice".to_owned()),
+            ],
+            &[],
+        );
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].rel, "self");
+        assert_eq!(filtered[1].rel, "http://webfinger.net/rel/profile-page");
+    }
+
+    #[test]
+    fn filter_webfinger_links_selects_requested_rels() {
+        let links = vec![
+            WebFingerLink::self_link("https://example.com/users/alice".to_owned()),
+            WebFingerLink::profile_page_link("https://example.com/@alice".to_owned()),
+            WebFingerLink::subscribe_link(
+                "https://example.com/authorize_interaction?uri={uri}".to_owned(),
+            ),
+        ];
+        let filtered = filter_webfinger_links(
+            links,
+            &[
+                "self".to_owned(),
+                "http://webfinger.net/rel/avatar".to_owned(),
+            ],
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].rel, "self");
+    }
+
+    #[test]
+    fn filter_webfinger_links_empty_when_no_match() {
+        let links = vec![WebFingerLink::self_link(
+            "https://example.com/users/alice".to_owned(),
+        )];
+        let filtered =
+            filter_webfinger_links(links, &["http://webfinger.net/rel/avatar".to_owned()]);
+        assert!(filtered.is_empty());
     }
 }
