@@ -185,6 +185,16 @@ async fn queue(
                 summary.failed,
                 summary.completed_without_targets
             );
+            // Each run claims a bounded batch. Continue only while the previous
+            // batch progressed, so a stalled backlog cannot self-schedule forever.
+            if outbox_batch_made_progress(&summary) {
+                match enqueue_outbox_process_queue_if_pending(&env, &db, "queue_continuation").await
+                {
+                    Ok(true) => console_log!("outbox queue continuation enqueued"),
+                    Ok(false) => {}
+                    Err(error) => console_error!("outbox queue continuation failed: {error}"),
+                }
+            }
         }
         Err(error) => {
             console_error!("outbox queue processing failed: {error}");

@@ -1,8 +1,7 @@
 use super::{
     CreatePublishedStatusInput, Request, Response, Result, RouteContext,
-    auth0_login_redirect_response, create_published_status_and_response,
-    enqueue_outbox_process_queue_best_effort, escape_html, find_authenticated_local_account,
-    invalidate_account_dynamic_public_cache, load_config,
+    auth0_login_redirect_response, create_published_status_and_response, escape_html,
+    find_authenticated_local_account, invalidate_account_dynamic_public_cache, load_config,
 };
 use cfwdon_domain::{ComposingStatus, Visibility};
 use worker::ResponseBody;
@@ -69,8 +68,6 @@ pub(crate) async fn share_submit_response(
     )
     .await?;
     invalidate_account_dynamic_public_cache(&ctx, account.id(), account.username()).await;
-    enqueue_outbox_process_queue_best_effort(&ctx.env, "share_create").await;
-
     let redirect_url = url::Url::parse(&response.url).map_err(|error| {
         worker::Error::RustError(format!("invalid share redirect url: {error}"))
     })?;

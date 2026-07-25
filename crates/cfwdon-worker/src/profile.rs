@@ -484,7 +484,6 @@ async fn delete_profile_media_response(
     };
     enqueue_profile_update_activities(&db, &config, &account).await?;
     invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
-    enqueue_outbox_process_queue_best_effort(&ctx.env, "profile_media_delete").await;
     let stats = load_account_stats(&db, account.id()).await?;
     let settings = load_account_profile_settings(&db, account.id()).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;

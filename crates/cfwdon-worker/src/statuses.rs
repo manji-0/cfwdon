@@ -293,8 +293,6 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     .await?;
     invalidate_account_dynamic_public_cache(&ctx, access.account.id(), access.account.username())
         .await;
-    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_create").await;
-
     Response::from_json(&response)
 }
 
@@ -321,8 +319,6 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         let bucket = ctx.bucket(&config.media_binding)?;
         delete_media_attachments(&db, &bucket, &deleted.media).await?;
     }
-    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_delete").await;
-
     Response::from_json(&deleted.response)
 }
 
@@ -450,7 +446,5 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Err(error) => return Err(error),
     };
     invalidate_status_api_cache(&ctx, &updated.status_id).await;
-    enqueue_outbox_process_queue_best_effort(&ctx.env, "status_update").await;
-
     Response::from_json(&updated.response)
 }

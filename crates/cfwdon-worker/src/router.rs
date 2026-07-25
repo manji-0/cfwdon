@@ -1,4 +1,7 @@
-use crate::{HttpRequestContext, dispatch_route, install_remote_dns_cache, load_config_from_env};
+use crate::{
+    HttpRequestContext, dispatch_route, install_remote_dns_cache,
+    kick_outbox_process_queue_after_request, load_config_from_env,
+};
 use worker::{Env, Request, Response, Result};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
@@ -10,8 +13,17 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
         return request_context.cors_preflight_response();
     }
 
+    let kick_env = env.clone();
     let response =
         dispatch_route(req, env, request_context.method(), request_context.path()).await?;
+    kick_outbox_process_queue_after_request(
+        &kick_env,
+        &config,
+        request_context.method(),
+        request_context.path(),
+        response.status_code(),
+    )
+    .await;
 
     request_context.finish_response(response)
 }

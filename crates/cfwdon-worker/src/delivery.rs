@@ -95,10 +95,43 @@ pub(crate) async fn enqueue_outbox_process_queue_if_pending(
     Ok(true)
 }
 
-pub(crate) async fn enqueue_outbox_process_queue_best_effort(env: &Env, reason: &str) {
-    if let Err(error) = enqueue_outbox_process_queue(env, reason).await {
-        console_error!("failed to enqueue outbox processing: {error}");
+/// Requests under this prefix already kick the queue themselves, so re-kicking
+/// them would let one drain run schedule the next one indefinitely.
+const OUTBOX_KICK_EXEMPT_PATH_PREFIX: &str = "/internal/outbox/";
+
+pub(crate) fn request_may_enqueue_outbox_work(method: &str, path: &str, status_code: u16) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+        && (200..400).contains(&status_code)
+        && !path.starts_with(OUTBOX_KICK_EXEMPT_PATH_PREFIX)
+}
+
+pub(crate) async fn kick_outbox_process_queue_after_request(
+    env: &Env,
+    config: &AppConfig,
+    method: &str,
+    path: &str,
+    status_code: u16,
+) {
+    if !request_may_enqueue_outbox_work(method, path, status_code) {
+        return;
     }
+    let db = match env.d1(&config.database_binding) {
+        Ok(db) => db,
+        Err(error) => {
+            console_error!("outbox queue kick skipped: {error}");
+            return;
+        }
+    };
+    if let Err(error) = enqueue_outbox_process_queue_if_pending(env, &db, "request").await {
+        console_error!("outbox queue kick failed: {error}");
+    }
+}
+
+pub(crate) fn outbox_batch_made_progress(summary: &OutboxProcessResponse) -> bool {
+    summary.expanded > 0
+        || summary.delivered > 0
+        || summary.failed > 0
+        || summary.completed_without_targets > 0
 }
 
 pub(crate) async fn process_outbox_deliveries_for_config(

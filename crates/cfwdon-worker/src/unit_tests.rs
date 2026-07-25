@@ -5,28 +5,29 @@ use super::{
     AUTH_CONTEXT_LIMIT, AccountStatusesQuery, CreateStatusPollRequest, HomeTimelineQuery,
     LinkTimelineQuery, MastodonAccountResponse, MastodonMediaAttachmentResponse,
     MastodonReportResponse, NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest,
-    PublicTimelineQuery, RemoteActorProfile, RemoteActorRow, RemotePollDraft,
-    RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
-    RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query, StatusPollOptionRow,
-    StatusPollRow, StatusRow, StreamingChannelValidationError, TagSearchMetrics, TagTimelineQuery,
-    TimelinePaginationQuery, TranslationProviderLanguageRow, account_matches_search_terms,
-    account_relationship_rank, account_search_is_complete_handle, account_search_non_exact_limit,
-    account_search_rank, account_search_sort_key, account_search_term, account_search_terms,
-    activitypub_audiences_for_visibility, activitypub_media_attachment_type,
-    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
-    auth0_login_url, auth0_logout_url, authorize_interaction_document,
-    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
-    build_activitypub_actor_document, build_add_featured_activity_with_id,
-    build_announcements_document, build_app_verify_credentials_document,
-    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
-    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
-    build_donation_campaign_document, build_email_confirmation_html,
-    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
-    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    OutboxProcessResponse, PublicTimelineQuery, RemoteActorProfile, RemoteActorRow,
+    RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
+    RemoteStatusPollVoteRow, RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode,
+    SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow, StreamingChannelValidationError,
+    TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery, TranslationProviderLanguageRow,
+    account_matches_search_terms, account_relationship_rank, account_search_is_complete_handle,
+    account_search_non_exact_limit, account_search_rank, account_search_sort_key,
+    account_search_term, account_search_terms, activitypub_audiences_for_visibility,
+    activitypub_media_attachment_type, activitypub_profile_attachments,
+    apply_activitypub_poll_fields, apply_html_preview_metadata, auth0_login_url, auth0_logout_url,
+    authorize_interaction_document, authorize_interaction_url_from_base,
+    build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
+    build_add_featured_activity_with_id, build_announcements_document,
+    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
+    build_deepl_request_body, build_deepl_translation_languages_document,
+    build_delete_quote_authorization_activity, build_donation_campaign_document,
+    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
+    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
+    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
+    build_libretranslate_request_payload, build_nodeinfo_document_with_halfyear,
+    build_nodeinfo_links_document, build_notifications_v2_document,
+    build_oauth_authorization_server_document, build_oauth_token_document,
+    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_quote_authorization_object, build_quote_request_object,
     build_reject_quote_request_activity_with_id, build_remote_status_card_value,
     build_remove_featured_activity_with_id, build_status_card_value,
@@ -53,7 +54,7 @@ use super::{
     notification_sort_key, notification_timestamp_sort_token,
     oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
     object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
-    paginate_tag_search_matches, parse_activitypub_request_date_ms,
+    outbox_batch_made_progress, paginate_tag_search_matches, parse_activitypub_request_date_ms,
     parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
     parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
     parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
@@ -65,9 +66,9 @@ use super::{
     remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
     remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
     remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers, resolve_search_tag_name,
-    scheduled_status_document, scheduled_status_document_with_params, search_category_flags,
-    search_text_match_rank, search_v2_limit, search_v2_requires_auth,
+    remote_status_targets_local_viewer_followers, request_may_enqueue_outbox_work,
+    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
+    search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
     set_instance_translation_enabled, signed_get_signing_string, status_has_active_quote,
     status_is_searchable_by_scope, status_matches_search_metadata, status_matches_search_scope,
@@ -497,6 +498,79 @@ fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
     assert!(is_cors_enabled_path("/nodeinfo/2.0"));
     assert!(is_cors_enabled_path("/nodeinfo/2.1"));
     assert!(!is_cors_enabled_path("/admin"));
+}
+
+#[test]
+fn outbox_kick_covers_successful_mutating_requests() {
+    for method in ["POST", "PUT", "PATCH", "DELETE"] {
+        assert!(request_may_enqueue_outbox_work(
+            method,
+            "/api/v1/accounts/account-1/follow",
+            200
+        ));
+    }
+    assert!(request_may_enqueue_outbox_work(
+        "POST",
+        "/users/alice/inbox",
+        202
+    ));
+    assert!(request_may_enqueue_outbox_work(
+        "POST",
+        "/authorize_interaction",
+        302
+    ));
+}
+
+#[test]
+fn outbox_kick_skips_reads_failures_and_the_drain_endpoint() {
+    assert!(!request_may_enqueue_outbox_work(
+        "GET",
+        "/api/v1/timelines/home",
+        200
+    ));
+    assert!(!request_may_enqueue_outbox_work(
+        "HEAD",
+        "/users/alice",
+        200
+    ));
+    assert!(!request_may_enqueue_outbox_work(
+        "POST",
+        "/api/v1/accounts/account-1/follow",
+        401
+    ));
+    assert!(!request_may_enqueue_outbox_work(
+        "POST",
+        "/api/v1/accounts/account-1/follow",
+        500
+    ));
+    assert!(!request_may_enqueue_outbox_work(
+        "POST",
+        "/internal/outbox/process",
+        202
+    ));
+}
+
+#[test]
+fn outbox_continuation_requires_batch_progress() {
+    assert!(!outbox_batch_made_progress(
+        &OutboxProcessResponse::default()
+    ));
+    assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+        delivered: 1,
+        ..OutboxProcessResponse::default()
+    }));
+    assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+        expanded: 1,
+        ..OutboxProcessResponse::default()
+    }));
+    assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+        failed: 1,
+        ..OutboxProcessResponse::default()
+    }));
+    assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+        completed_without_targets: 1,
+        ..OutboxProcessResponse::default()
+    }));
 }
 
 #[test]
