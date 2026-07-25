@@ -3,7 +3,8 @@ use super::{
     activitypub_audiences_for_status, activitypub_datetime_string, actor_url,
     build_activitypub_delete, build_activitypub_note, describe_outbound_activity,
     filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
-    load_remote_actor_delivery_inbox, local_username_from_actor_uri, status_has_active_quote,
+    load_remote_actor_delivery_inbox, local_username_from_actor_uri, quote_context_mapping,
+    status_has_active_quote,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -12,12 +13,7 @@ fn create_activity_context(status: &StatusRow) -> serde_json::Value {
     if status_has_active_quote(status) {
         serde_json::json!([
             "https://www.w3.org/ns/activitystreams",
-            {
-                "_misskey_quote": {
-                    "@id": "https://misskey-hub.net/ns#_misskey_quote",
-                    "@type": "@id"
-                }
-            }
+            quote_context_mapping()
         ])
     } else {
         serde_json::json!("https://www.w3.org/ns/activitystreams")

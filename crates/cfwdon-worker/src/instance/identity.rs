@@ -50,6 +50,9 @@ pub(crate) fn parse_webfinger_resource(resource: &str) -> Result<AccountHandle> 
 }
 
 fn parse_acct_handle(acct: &str) -> Result<AccountHandle> {
+    // Decode only when a `%HH` escape is present. WebFinger `query_pairs()` already
+    // percent-decodes once; unconditional decoding here would double-decode those values.
+    let acct = maybe_percent_decode_acct(acct);
     let Some((username, domain)) = acct.split_once('@') else {
         return Err(Error::RustError(
             "WebFinger resource must be in user@domain form".to_owned(),
@@ -57,8 +60,8 @@ fn parse_acct_handle(acct: &str) -> Result<AccountHandle> {
     };
 
     let username = username.trim().trim_start_matches('@').to_ascii_lowercase();
-    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    if username.is_empty() || domain.is_empty() {
+    let domain = normalize_acct_host(domain)?;
+    if username.is_empty() {
         return Err(Error::RustError(
             "WebFinger resource must include both username and domain".to_owned(),
         ));
@@ -81,9 +84,8 @@ fn parse_webfinger_actor_url(resource: &str) -> Result<AccountHandle> {
     }
     let domain = parsed
         .host_str()
-        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| Error::RustError("WebFinger resource URL must include a host".to_owned()))?;
+        .ok_or_else(|| Error::RustError("WebFinger resource URL must include a host".to_owned()))
+        .and_then(normalize_acct_host)?;
 
     let mut segments = parsed
         .path_segments()
@@ -131,24 +133,81 @@ pub(crate) fn parse_lookup_handle(value: &str, config: &AppConfig) -> Result<Acc
         return parse_webfinger_resource(value);
     }
 
-    if let Some((username, domain)) = value.split_once('@') {
-        let username = username.trim().to_ascii_lowercase();
-        let domain = domain.trim().to_ascii_lowercase();
-        if username.is_empty() || domain.is_empty() {
-            return Err(Error::RustError(
-                "acct must be in user@domain form".to_owned(),
-            ));
-        }
-        return Ok(AccountHandle {
-            username,
-            domain: Some(domain),
-        });
+    if value.contains('@') {
+        return parse_acct_handle(value.trim_start_matches('@'));
     }
 
     Ok(AccountHandle {
         username: value.trim().to_ascii_lowercase(),
         domain: Some(instance_host(config)),
     })
+}
+
+fn maybe_percent_decode_acct(value: &str) -> std::borrow::Cow<'_, str> {
+    if !contains_percent_escape(value) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    match urlencoding::decode(value) {
+        Ok(decoded) => std::borrow::Cow::Owned(decoded.into_owned()),
+        Err(_) => std::borrow::Cow::Borrowed(value),
+    }
+}
+
+fn contains_percent_escape(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == b'%'
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Applies the same IDNA/punycode normalization to a configured instance domain that
+/// `parse_acct_handle` applies to incoming handles, so `AccountHandle::is_local_to`
+/// compares like-for-like. Scheme and path are preserved; a non-ASCII host becomes punycode.
+pub(crate) fn normalize_configured_instance_domain(value: &str) -> String {
+    let trimmed = value.trim();
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        ("https://", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        ("http://", rest)
+    } else {
+        ("", trimmed)
+    };
+    let (host, path) = match rest.find('/') {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
+
+    match normalize_acct_host(host) {
+        Ok(host) => format!("{scheme}{host}{path}"),
+        Err(_) => trimmed.to_owned(),
+    }
+}
+
+fn normalize_acct_host(host: &str) -> Result<String> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return Err(Error::RustError(
+            "WebFinger resource must include both username and domain".to_owned(),
+        ));
+    }
+    let parsed = Url::parse(&format!("https://{host}")).map_err(|_| {
+        Error::RustError("WebFinger resource domain is not a valid hostname".to_owned())
+    })?;
+    parsed
+        .host_str()
+        .map(|value| value.trim_end_matches('.').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            Error::RustError("WebFinger resource domain is not a valid hostname".to_owned())
+        })
 }
 
 pub(crate) fn actor_url(config: &AppConfig, username: &str) -> String {
@@ -272,6 +331,10 @@ pub(crate) fn nodeinfo_url(config: &AppConfig) -> String {
     format!("{}/nodeinfo/2.0", instance_base_url(config))
 }
 
+pub(crate) fn nodeinfo_21_url(config: &AppConfig) -> String {
+    format!("{}/nodeinfo/2.1", instance_base_url(config))
+}
+
 pub(crate) fn extended_description_url(config: &AppConfig) -> String {
     format!(
         "{}/api/v1/instance/extended_description",
@@ -320,5 +383,87 @@ pub(crate) fn peer_authority_from_uri(config: &AppConfig, uri: &str) -> Option<S
         None
     } else {
         Some(authority)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_configured_instance_domain, parse_lookup_handle, parse_webfinger_resource,
+    };
+    use cfwdon_core::AppConfig;
+
+    #[test]
+    fn parse_acct_decodes_percent_encoded_userpart_host() {
+        let handle = parse_webfinger_resource("acct:alice%40example.com").unwrap();
+        assert_eq!(handle.username, "alice");
+        assert_eq!(handle.domain.as_deref(), Some("example.com"));
+
+        let handle = parse_webfinger_resource("acct:al%69ce@example.com").unwrap();
+        assert_eq!(handle.username, "alice");
+        assert_eq!(handle.domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn parse_acct_keeps_already_decoded_handle() {
+        let handle = parse_webfinger_resource("acct:alice@example.com").unwrap();
+        assert_eq!(handle.username, "alice");
+        assert_eq!(handle.domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn parse_acct_normalizes_unicode_domain_to_punycode() {
+        let unicode = parse_webfinger_resource("acct:alice@日本.example").unwrap();
+        let punycode = parse_webfinger_resource("acct:alice@xn--wgv71a.example").unwrap();
+        assert_eq!(unicode.domain, punycode.domain);
+        assert_eq!(unicode.domain.as_deref(), Some("xn--wgv71a.example"));
+    }
+
+    #[test]
+    fn configured_instance_domain_normalization_keeps_unicode_handles_local() {
+        let handle = parse_webfinger_resource("acct:alice@日本.example").unwrap();
+        assert!(handle.is_local_to(&normalize_configured_instance_domain("日本.example")));
+        assert!(handle.is_local_to(&normalize_configured_instance_domain(
+            "https://日本.example"
+        )));
+        assert!(!handle.is_local_to(&normalize_configured_instance_domain("other.example")));
+    }
+
+    #[test]
+    fn configured_instance_domain_normalization_preserves_ascii_input() {
+        assert_eq!(
+            normalize_configured_instance_domain("social.example"),
+            "social.example"
+        );
+        assert_eq!(
+            normalize_configured_instance_domain("https://social.example"),
+            "https://social.example"
+        );
+    }
+
+    #[test]
+    fn parse_webfinger_actor_url_normalizes_unicode_host() {
+        let handle = parse_webfinger_resource("https://日本.example/users/alice").unwrap();
+        assert_eq!(handle.username, "alice");
+        assert_eq!(handle.domain.as_deref(), Some("xn--wgv71a.example"));
+    }
+
+    #[test]
+    fn parse_lookup_handle_trims_trailing_dot_like_acct() {
+        let config = AppConfig::new("example.com", "cfwdon", "test instance");
+        let from_lookup = parse_lookup_handle("alice@example.com.", &config).unwrap();
+        let from_acct = parse_webfinger_resource("acct:alice@example.com.").unwrap();
+        assert_eq!(from_lookup.username, from_acct.username);
+        assert_eq!(from_lookup.domain, from_acct.domain);
+        assert_eq!(from_lookup.domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn parse_lookup_handle_normalizes_idn_like_acct() {
+        let config = AppConfig::new("example.com", "cfwdon", "test instance");
+        let from_lookup = parse_lookup_handle("alice@日本.example", &config).unwrap();
+        let from_acct = parse_webfinger_resource("acct:alice@xn--wgv71a.example").unwrap();
+        assert_eq!(from_lookup.domain, from_acct.domain);
+        assert_eq!(from_lookup.domain.as_deref(), Some("xn--wgv71a.example"));
     }
 }

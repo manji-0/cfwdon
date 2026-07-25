@@ -129,6 +129,11 @@ pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
         || path.starts_with("/users/")
         || path == "/.well-known/oauth-authorization-server"
         || path == "/.well-known/webfinger"
+        || path == "/.well-known/host-meta"
+        || path == "/.well-known/host-meta.json"
+        || path == "/.well-known/nodeinfo"
+        || path == "/nodeinfo/2.0"
+        || path == "/nodeinfo/2.1"
 }
 
 fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<()> {
@@ -152,7 +157,7 @@ fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_logged_api_path, sanitize_log_value};
+    use super::{is_cors_enabled_path, is_logged_api_path, sanitize_log_value};
 
     #[test]
     fn logged_api_path_scope_matches_browser_and_discovery_surfaces() {
@@ -161,6 +166,16 @@ mod tests {
         assert!(is_logged_api_path("/.well-known/webfinger"));
         assert!(!is_logged_api_path("/users/alice"));
         assert!(!is_logged_api_path("/healthz"));
+    }
+
+    #[test]
+    fn cors_enabled_paths_cover_discovery_surfaces() {
+        assert!(is_cors_enabled_path("/.well-known/host-meta"));
+        assert!(is_cors_enabled_path("/.well-known/host-meta.json"));
+        assert!(is_cors_enabled_path("/.well-known/nodeinfo"));
+        assert!(is_cors_enabled_path("/nodeinfo/2.0"));
+        assert!(is_cors_enabled_path("/.well-known/webfinger"));
+        assert!(!is_cors_enabled_path("/admin"));
     }
 
     #[test]

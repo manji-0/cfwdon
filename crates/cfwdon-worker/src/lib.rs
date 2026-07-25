@@ -125,7 +125,9 @@ fn optional_env_var(env: &Env, key: &str) -> Option<String> {
 
 fn scheduled_config(env: &Env) -> AppConfig {
     AppConfig::new(
-        optional_env_var(env, "INSTANCE_DOMAIN").unwrap_or_else(|| "example.com".to_owned()),
+        normalize_configured_instance_domain(
+            &optional_env_var(env, "INSTANCE_DOMAIN").unwrap_or_else(|| "example.com".to_owned()),
+        ),
         optional_env_var(env, "INSTANCE_NAME").unwrap_or_else(|| "cfwdon".to_owned()),
         optional_env_var(env, "INSTANCE_DESCRIPTION").unwrap_or_else(|| {
             "Cloudflare Workers + D1 + R2 based Mastodon-compatible server".to_owned()

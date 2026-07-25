@@ -1,7 +1,7 @@
 use super::{
     D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
     fetch_remote_actor_profile, has_any_local_followers_for_remote_actor,
-    is_activitypub_actor_type, is_local_account_following_remote_actor,
+    is_local_account_following_remote_actor, object_has_activitypub_actor_type,
     parse_remote_actor_profile_document, upsert_remote_actor, validate_remote_actor_profile_urls,
 };
 
@@ -14,12 +14,12 @@ pub(crate) async fn handle_inbox_actor_update(
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
     };
-    if !is_activitypub_actor_type(object.get("type").and_then(serde_json::Value::as_str)) {
+    if !object_has_activitypub_actor_type(object) {
         return Ok(());
     }
 
     let object_actor_uri = activity_object_id(Some(object))
-        .or_else(|| activity.get("actor").and_then(serde_json::Value::as_str))
+        .or_else(|| activity_object_id(activity.get("actor")))
         .unwrap_or_default();
     if object_actor_uri != remote_actor.actor_uri {
         return Ok(());

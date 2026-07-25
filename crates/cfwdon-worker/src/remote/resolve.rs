@@ -276,10 +276,8 @@ pub(crate) async fn resolve_remote_status_by_url(
         .get("id")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| Error::RustError("remote status object is missing id".to_owned()))?;
-    let actor_uri = object
-        .get("attributedTo")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| document.get("actor").and_then(serde_json::Value::as_str))
+    let actor_uri = crate::activity_object_id(object.get("attributedTo"))
+        .or_else(|| crate::activity_object_id(document.get("actor")))
         .ok_or_else(|| {
             Error::RustError("remote status object is missing attributedTo".to_owned())
         })?;

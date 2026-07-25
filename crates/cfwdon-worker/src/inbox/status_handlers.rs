@@ -2,9 +2,9 @@ use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
     delete_remote_status_by_id, find_remote_status_by_object_uri, handle_inbox_actor_update,
     handle_inbox_collection_feature_authorization_delete, handle_inbox_collection_update,
-    handle_inbox_poll_vote, is_activitypub_actor_type, is_supported_remote_status_object_type,
-    note_targets_account_or_followers, object_attributed_to_remote_actor, upsert_remote_actor,
-    upsert_remote_status,
+    handle_inbox_poll_vote, note_targets_account_or_followers, object_attributed_to_remote_actor,
+    object_has_activitypub_actor_type, object_has_supported_remote_status_type,
+    upsert_remote_actor, upsert_remote_status,
 };
 
 pub(crate) async fn handle_inbox_create(
@@ -17,9 +17,7 @@ pub(crate) async fn handle_inbox_create(
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
     };
-    if !is_supported_remote_status_object_type(
-        object.get("type").and_then(serde_json::Value::as_str),
-    ) {
+    if !object_has_supported_remote_status_type(object) {
         return Ok(());
     }
 
@@ -58,15 +56,13 @@ pub(crate) async fn handle_inbox_update(
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
     };
-    if is_activitypub_actor_type(object.get("type").and_then(serde_json::Value::as_str)) {
+    if object_has_activitypub_actor_type(object) {
         return handle_inbox_actor_update(db, activity, remote_actor, Some(account)).await;
     }
     if handle_inbox_collection_update(db, config, activity, remote_actor).await? {
         return Ok(());
     }
-    if !is_supported_remote_status_object_type(
-        object.get("type").and_then(serde_json::Value::as_str),
-    ) {
+    if !object_has_supported_remote_status_type(object) {
         return Ok(());
     }
 

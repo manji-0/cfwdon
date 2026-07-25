@@ -73,6 +73,19 @@ pub(crate) async fn load_active_month_users(db: &D1Database) -> Result<u64> {
     Ok(row.map(|value| value.count).unwrap_or(0))
 }
 
+pub(crate) async fn load_active_halfyear_users(db: &D1Database) -> Result<u64> {
+    let row = db
+        .prepare(
+            "SELECT COUNT(DISTINCT account_id) AS count
+             FROM statuses
+             WHERE created_at >= datetime('now', '-180 days')",
+        )
+        .first::<ActiveMonthCountRow>(None)
+        .await?;
+
+    Ok(row.map(|value| value.count).unwrap_or(0))
+}
+
 pub(crate) async fn load_total_local_accounts(db: &D1Database) -> Result<u64> {
     let row = db
         .prepare("SELECT COUNT(*) AS count FROM accounts")

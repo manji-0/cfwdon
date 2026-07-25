@@ -23,10 +23,30 @@ use worker::Error;
 const ACTIVITYPUB_UNAUTHORIZED_PREFIX: &str = "activitypub unauthorized:";
 
 fn inbox_activity_type(activity: &serde_json::Value) -> &str {
-    activity
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
+    activitypub_primary_type(activity).unwrap_or_default()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SharedInboxPreprocessOutcome {
+    Unauthorized,
+    AcceptedNoTargets,
+    Process,
+}
+
+/// Shared-inbox gate after signature verification and target resolution.
+/// Signature verification must always run before consulting `has_local_targets`
+/// so unsigned requests cannot probe account existence via status codes.
+pub(crate) fn shared_inbox_preprocess_outcome(
+    signature_ok: bool,
+    has_local_targets: bool,
+) -> SharedInboxPreprocessOutcome {
+    if !signature_ok {
+        SharedInboxPreprocessOutcome::Unauthorized
+    } else if !has_local_targets {
+        SharedInboxPreprocessOutcome::AcceptedNoTargets
+    } else {
+        SharedInboxPreprocessOutcome::Process
+    }
 }
 
 async fn begin_inbox_activity_if_needed(
@@ -144,15 +164,26 @@ pub(crate) async fn shared_inbox_response(
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
 
-    if activity.get("type").and_then(serde_json::Value::as_str) == Some("Delete") {
+    if activitypub_has_type(&activity, "Delete") {
         return handle_inbox_request(&req, &db, &config, None, &body, &activity).await;
     }
 
+    let remote_actor = match verify_incoming_activitypub_request(&req, &db, &body, &activity).await
+    {
+        Ok(remote_actor) => remote_actor,
+        Err(_) => return Response::error("invalid activitypub signature", 401),
+    };
     let accounts = resolve_shared_inbox_target_accounts(&db, &config, None, &activity).await?;
-    if accounts.is_empty() {
-        return Ok(Response::empty()?.with_status(202));
+    match shared_inbox_preprocess_outcome(true, !accounts.is_empty()) {
+        SharedInboxPreprocessOutcome::Unauthorized => {
+            Response::error("invalid activitypub signature", 401)
+        }
+        SharedInboxPreprocessOutcome::AcceptedNoTargets => Ok(Response::empty()?.with_status(202)),
+        SharedInboxPreprocessOutcome::Process => {
+            process_verified_inbox_activity(&db, &config, &accounts, &body, &activity, remote_actor)
+                .await
+        }
     }
-    handle_inbox_request_for_accounts(&req, &db, &config, &accounts, &body, &activity).await
 }
 
 pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -202,6 +233,17 @@ pub(crate) async fn handle_inbox_request_for_accounts(
         Ok(remote_actor) => remote_actor,
         Err(_) => return Response::error("invalid activitypub signature", 401),
     };
+    process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor).await
+}
+
+async fn process_verified_inbox_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    accounts: &[LocalAccount],
+    body: &[u8],
+    activity: &serde_json::Value,
+    remote_actor: RemoteActorProfile,
+) -> Result<Response> {
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
     if !begin_inbox_activity_if_needed(
         db,
@@ -244,7 +286,31 @@ mod tests {
             inbox_activity_type(&serde_json::json!({"type": "Create"})),
             "Create"
         );
+        assert_eq!(
+            inbox_activity_type(&serde_json::json!({"type": ["Create"]})),
+            "Create"
+        );
         assert_eq!(inbox_activity_type(&serde_json::json!({})), "");
         assert_eq!(inbox_activity_type(&serde_json::json!({"type": 1})), "");
+    }
+
+    #[test]
+    fn shared_inbox_unsigned_never_gets_202() {
+        assert_eq!(
+            shared_inbox_preprocess_outcome(false, false),
+            SharedInboxPreprocessOutcome::Unauthorized
+        );
+        assert_eq!(
+            shared_inbox_preprocess_outcome(false, true),
+            SharedInboxPreprocessOutcome::Unauthorized
+        );
+        assert_eq!(
+            shared_inbox_preprocess_outcome(true, false),
+            SharedInboxPreprocessOutcome::AcceptedNoTargets
+        );
+        assert_eq!(
+            shared_inbox_preprocess_outcome(true, true),
+            SharedInboxPreprocessOutcome::Process
+        );
     }
 }

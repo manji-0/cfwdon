@@ -22,6 +22,10 @@ const POLL_MAX_CHARACTERS_PER_OPTION: u64 = 50;
 const POLL_MIN_EXPIRATION: u64 = 300;
 const POLL_MAX_EXPIRATION: u64 = 2_629_746;
 
+pub(crate) fn instance_open_registrations() -> bool {
+    false
+}
+
 fn streaming_api_url(config: &AppConfig) -> String {
     instance_base_url(config)
         .replace("https://", "wss://")
@@ -163,7 +167,7 @@ fn instance_v2_configuration(config: &AppConfig) -> serde_json::Value {
 
 fn instance_v2_registrations_document() -> serde_json::Value {
     serde_json::json!({
-        "enabled": true,
+        "enabled": instance_open_registrations(),
         "approval_required": false,
         "reason_required": false,
         "message": "Registration is handled by Auth0.",
@@ -204,7 +208,7 @@ pub(crate) fn build_instance_v1_document(
         },
         "thumbnail": config.instance_thumbnail_url,
         "languages": configured_instance_languages(config),
-        "registrations": true,
+        "registrations": instance_open_registrations(),
         "approval_required": false,
         "invites_enabled": false,
         "configuration": {
@@ -315,4 +319,45 @@ pub(crate) fn build_default_privacy_policy_document(content: &str) -> serde_json
 
 pub(crate) fn build_default_extended_description_document(description: &str) -> serde_json::Value {
     build_default_privacy_policy_document(&normalize_policy_body(description))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_instance_v1_document, build_instance_v2_document, instance_open_registrations,
+    };
+    use crate::{AppConfig, InstanceCapabilities, InstanceSummary, SoftwareInfo};
+
+    fn sample_summary() -> InstanceSummary {
+        InstanceSummary {
+            domain: "social.example".to_owned(),
+            title: "cfwdon".to_owned(),
+            description: "test instance".to_owned(),
+            software: SoftwareInfo {
+                name: "cfwdon".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            capabilities: InstanceCapabilities {
+                federation: true,
+                local_timeline: true,
+                media_uploads: true,
+            },
+        }
+    }
+
+    #[test]
+    fn instance_documents_registrations_match_open_registrations_helper() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let v1 = build_instance_v1_document(&sample_summary(), &config, 1, 1, 1, 1);
+        let v2 = build_instance_v2_document(&sample_summary(), &config, 1);
+        assert_eq!(
+            v1["registrations"],
+            serde_json::json!(instance_open_registrations())
+        );
+        assert_eq!(
+            v2["registrations"]["enabled"],
+            serde_json::json!(instance_open_registrations())
+        );
+        assert!(!instance_open_registrations());
+    }
 }

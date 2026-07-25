@@ -1,10 +1,10 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, activity_object_id, ensure_account_keys,
-    extract_inbox_target_username, find_account_by_id, find_account_by_username,
-    find_follow_by_activity_id, find_local_status_by_object_uri,
+    AppConfig, D1Database, LocalAccount, activity_object_id, activitypub_has_type,
+    ensure_account_keys, extract_inbox_target_username, find_account_by_id,
+    find_account_by_username, find_follow_by_activity_id, find_local_status_by_object_uri,
     find_status_poll_vote_by_activity_uri, first_local_follower_for_remote_actor,
-    is_activitypub_actor_type, is_supported_remote_status_object_type,
     list_local_follower_accounts_for_remote_actor, note_targets_account_or_followers,
+    object_has_activitypub_actor_type, object_has_supported_remote_status_type,
     quote_target_uri_from_object,
 };
 use worker::Result;
@@ -158,18 +158,13 @@ pub(crate) async fn resolve_remote_status_activity_target_accounts(
     config: &AppConfig,
     activity: &serde_json::Value,
 ) -> Result<Option<Vec<LocalAccount>>> {
-    if !matches!(
-        activity.get("type").and_then(serde_json::Value::as_str),
-        Some("Create" | "Update")
-    ) {
+    if !(activitypub_has_type(activity, "Create") || activitypub_has_type(activity, "Update")) {
         return Ok(None);
     }
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(None);
     };
-    if !is_supported_remote_status_object_type(
-        object.get("type").and_then(serde_json::Value::as_str),
-    ) {
+    if !object_has_supported_remote_status_type(object) {
         return Ok(None);
     }
 
@@ -182,7 +177,7 @@ pub(crate) async fn resolve_remote_status_activity_target_accounts(
         }
     }
 
-    if let Some(in_reply_to_uri) = object.get("inReplyTo").and_then(serde_json::Value::as_str)
+    if let Some(in_reply_to_uri) = activity_object_id(object.get("inReplyTo"))
         && let Some(account) =
             resolve_local_status_owner_account(db, config, in_reply_to_uri).await?
     {
@@ -195,14 +190,8 @@ pub(crate) async fn resolve_remote_status_activity_target_accounts(
         return Ok(Some(vec![account]));
     }
 
-    let Some(actor_uri) = activity
-        .get("actor")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            object
-                .get("attributedTo")
-                .and_then(serde_json::Value::as_str)
-        })
+    let Some(actor_uri) = activity_object_id(activity.get("actor"))
+        .or_else(|| activity_object_id(object.get("attributedTo")))
     else {
         return Ok(None);
     };
@@ -222,17 +211,17 @@ pub(crate) async fn resolve_remote_actor_update_target_account(
     db: &D1Database,
     activity: &serde_json::Value,
 ) -> Result<Option<LocalAccount>> {
-    if activity.get("type").and_then(serde_json::Value::as_str) != Some("Update") {
+    if !activitypub_has_type(activity, "Update") {
         return Ok(None);
     }
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(None);
     };
-    if !is_activitypub_actor_type(object.get("type").and_then(serde_json::Value::as_str)) {
+    if !object_has_activitypub_actor_type(object) {
         return Ok(None);
     }
-    let Some(actor_uri) = activity_object_id(Some(object))
-        .or_else(|| activity.get("actor").and_then(serde_json::Value::as_str))
+    let Some(actor_uri) =
+        activity_object_id(Some(object)).or_else(|| activity_object_id(activity.get("actor")))
     else {
         return Ok(None);
     };
@@ -254,14 +243,10 @@ pub(crate) async fn resolve_remote_actor_announce_target_accounts(
     db: &D1Database,
     activity: &serde_json::Value,
 ) -> Result<Option<Vec<LocalAccount>>> {
-    if activity.get("type").and_then(serde_json::Value::as_str) != Some("Announce") {
+    if !activitypub_has_type(activity, "Announce") {
         return Ok(None);
     }
-    let Some(actor_uri) = activity
-        .get("actor")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    else {
+    let Some(actor_uri) = activity_object_id(activity.get("actor")) else {
         return Ok(None);
     };
 
@@ -276,25 +261,20 @@ pub(crate) async fn resolve_remote_collection_activity_target_account(
     db: &D1Database,
     activity: &serde_json::Value,
 ) -> Result<Option<LocalAccount>> {
-    let is_collection_activity = match activity.get("type").and_then(serde_json::Value::as_str) {
-        Some("Add" | "Remove") => activity.get("target").is_some(),
-        Some("Update") => {
+    let is_collection_activity =
+        if activitypub_has_type(activity, "Add") || activitypub_has_type(activity, "Remove") {
+            activity.get("target").is_some()
+        } else if activitypub_has_type(activity, "Update") {
             activity
                 .get("object")
-                .and_then(|object| object.get("type"))
-                .and_then(serde_json::Value::as_str)
-                == Some("FeaturedCollection")
-        }
-        _ => false,
-    };
+                .is_some_and(|object| activitypub_has_type(object, "FeaturedCollection"))
+        } else {
+            false
+        };
     if !is_collection_activity {
         return Ok(None);
     }
-    let Some(actor_uri) = activity
-        .get("actor")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    else {
+    let Some(actor_uri) = activity_object_id(activity.get("actor")) else {
         return Ok(None);
     };
 
@@ -323,10 +303,7 @@ pub(crate) async fn resolve_feature_response_target_account(
     db: &D1Database,
     activity: &serde_json::Value,
 ) -> Result<Option<LocalAccount>> {
-    if !matches!(
-        activity.get("type").and_then(serde_json::Value::as_str),
-        Some("Accept" | "Reject")
-    ) {
+    if !(activitypub_has_type(activity, "Accept") || activitypub_has_type(activity, "Reject")) {
         return Ok(None);
     }
     let Some(feature_request_uri) = activity
@@ -358,13 +335,13 @@ pub(crate) async fn resolve_feature_authorization_delete_target_account(
     config: &AppConfig,
     activity: &serde_json::Value,
 ) -> Result<Option<LocalAccount>> {
-    if activity.get("type").and_then(serde_json::Value::as_str) != Some("Delete") {
+    if !activitypub_has_type(activity, "Delete") {
         return Ok(None);
     }
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(None);
     };
-    if object.get("type").and_then(serde_json::Value::as_str) != Some("FeatureAuthorization") {
+    if !activitypub_has_type(object, "FeatureAuthorization") {
         return Ok(None);
     }
     let Some(collection_uri) = object
@@ -396,7 +373,7 @@ pub(crate) async fn resolve_poll_vote_target_account(
     db: &D1Database,
     activity: &serde_json::Value,
 ) -> Result<Option<LocalAccount>> {
-    if activity.get("type").and_then(serde_json::Value::as_str) != Some("Undo") {
+    if !activitypub_has_type(activity, "Undo") {
         return Ok(None);
     }
     let Some(activity_uri) = activity

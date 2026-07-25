@@ -250,10 +250,22 @@ async fn build_activitypub_note_tags(
     Ok(tags)
 }
 
-fn quote_context_mapping() -> serde_json::Value {
+pub(crate) fn quote_context_mapping() -> serde_json::Value {
     serde_json::json!({
         "_misskey_quote": {
             "@id": "https://misskey-hub.net/ns#_misskey_quote",
+            "@type": "@id"
+        },
+        "quoteUri": {
+            "@id": "http://fedibird.com/ns#quoteUri",
+            "@type": "@id"
+        },
+        "quoteUrl": {
+            "@id": "https://www.w3.org/ns/activitystreams#quoteUrl",
+            "@type": "@id"
+        },
+        "quoteAuthorization": {
+            "@id": "https://w3id.org/fep/044f#quoteAuthorization",
             "@type": "@id"
         }
     })
@@ -431,5 +443,47 @@ mod tests {
         let (to, cc) = activitypub_audiences_for_visibility(&config, "alice", Visibility::Direct);
         assert_eq!(to, serde_json::json!([]));
         assert_eq!(cc, serde_json::json!([]));
+    }
+
+    #[test]
+    fn quote_context_mapping_declares_quote_iri_terms() {
+        let mapping = quote_context_mapping();
+        assert_eq!(
+            mapping["_misskey_quote"]["@id"],
+            serde_json::json!("https://misskey-hub.net/ns#_misskey_quote")
+        );
+        assert_eq!(
+            mapping["quoteUri"],
+            serde_json::json!({
+                "@id": "http://fedibird.com/ns#quoteUri",
+                "@type": "@id"
+            })
+        );
+        assert_eq!(
+            mapping["quoteUrl"],
+            serde_json::json!({
+                "@id": "https://www.w3.org/ns/activitystreams#quoteUrl",
+                "@type": "@id"
+            })
+        );
+        assert_eq!(
+            mapping["quoteAuthorization"],
+            serde_json::json!({
+                "@id": "https://w3id.org/fep/044f#quoteAuthorization",
+                "@type": "@id"
+            })
+        );
+    }
+
+    #[test]
+    fn note_context_includes_quote_terms_when_quote_present() {
+        let context = note_context(true, false);
+        let entries = context.as_array().expect("quote note context is an array");
+        assert!(entries.iter().any(|entry| {
+            entry.get("quoteUri").is_some()
+                && entry.get("quoteUrl").is_some()
+                && entry.get("quoteAuthorization").is_some()
+                && entry.get("_misskey_quote").is_some()
+        }));
     }
 }

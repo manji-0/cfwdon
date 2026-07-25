@@ -2,8 +2,9 @@ use crate::{RemoteActorProfile, parse_remote_http_url, sha256_http_digest};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use cfwdon_domain::{
-    activitypub_date_within_skew, activitypub_key_id_matches_actor,
-    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
+    activitypub_date_within_skew, activitypub_host_header_matches_url_host,
+    activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
+    cached_remote_actor_key_matches,
 };
 use time::{
     Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
@@ -31,9 +32,7 @@ pub(crate) fn cached_remote_actor_matches_key(
 }
 
 pub(crate) fn extract_activity_actor_uri(activity: &serde_json::Value) -> Result<String> {
-    activity
-        .get("actor")
-        .and_then(serde_json::Value::as_str)
+    crate::activity_object_id(activity.get("actor"))
         .map(ToOwned::to_owned)
         .ok_or_else(|| Error::RustError("activity is missing actor".to_owned()))
 }
@@ -248,6 +247,31 @@ pub(crate) async fn validate_request_digest(headers: &Headers, body: &[u8]) -> R
     Ok(())
 }
 
+/// When `host` is present in the signed header list, require it to match the
+/// request URL host. Peers that omit `host` remain accepted for interop.
+pub(crate) fn validate_signed_host_header(
+    req: &Request,
+    headers: &Headers,
+    signature: &ParsedSignatureHeader,
+) -> Result<()> {
+    if !signature.headers.iter().any(|header| header == "host") {
+        return Ok(());
+    }
+    let host_header = headers
+        .get("host")?
+        .ok_or_else(|| Error::RustError("missing signed header host".to_owned()))?;
+    let url = parse_remote_http_url(req.url()?.as_str())?;
+    let url_host = url
+        .host_str()
+        .ok_or_else(|| Error::RustError("request URL is missing host".to_owned()))?;
+    if !activitypub_host_header_matches_url_host(&host_header, url_host) {
+        return Err(Error::RustError(
+            "signed Host header does not match request host".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn build_signature_signing_string(
     req: &Request,
     headers: &Headers,
@@ -279,6 +303,92 @@ pub(crate) fn build_signature_signing_string(
     Ok(lines.join("\n"))
 }
 
+/// Reconstruct a draft-cavage signing string from ordered header names and values.
+/// Used by unit tests and outbound delivery to keep header order consistent.
+pub(crate) fn build_signature_signing_string_from_parts(
+    method: &str,
+    path_and_query: &str,
+    signed_headers: &[&str],
+    header_values: &[(&str, &str)],
+) -> Result<String> {
+    let mut lines = Vec::with_capacity(signed_headers.len());
+    for header_name in signed_headers {
+        let line = if *header_name == "(request-target)" {
+            format!(
+                "(request-target): {} {}",
+                method.to_ascii_lowercase(),
+                path_and_query
+            )
+        } else {
+            let value = header_values
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(header_name))
+                .map(|(_, value)| *value)
+                .ok_or_else(|| Error::RustError(format!("missing signed header {header_name}")))?;
+            format!("{header_name}: {value}")
+        };
+        lines.push(line);
+    }
+    Ok(lines.join("\n"))
+}
+
 fn key_id_matches_actor(key_id: &str, raw_actor_uri: &str, canonical_actor_uri: &str) -> bool {
     activitypub_key_id_matches_actor(key_id, raw_actor_uri, canonical_actor_uri)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_activity_actor_uri_accepts_embedded_object() {
+        let activity = serde_json::json!({
+            "actor": {
+                "id": "https://remote.example/users/bob",
+                "type": "Person"
+            }
+        });
+        assert_eq!(
+            extract_activity_actor_uri(&activity).unwrap(),
+            "https://remote.example/users/bob"
+        );
+    }
+
+    #[test]
+    fn extract_activity_actor_uri_accepts_at_id() {
+        let activity = serde_json::json!({
+            "actor": { "@id": "https://remote.example/users/carol" }
+        });
+        assert_eq!(
+            extract_activity_actor_uri(&activity).unwrap(),
+            "https://remote.example/users/carol"
+        );
+    }
+
+    #[test]
+    fn extract_activity_actor_uri_rejects_garbage() {
+        let activity = serde_json::json!({
+            "actor": { "type": "Person", "name": "no-id" }
+        });
+        assert!(extract_activity_actor_uri(&activity).is_err());
+        assert!(extract_activity_actor_uri(&serde_json::json!({})).is_err());
+        assert!(extract_activity_actor_uri(&serde_json::json!({"actor": 1})).is_err());
+    }
+
+    #[test]
+    fn signing_string_includes_host_and_content_type_in_order() {
+        let signed = ["(request-target)", "host", "date", "digest", "content-type"];
+        let values = [
+            ("host", "social.example"),
+            ("date", "Sat, 25 Jul 2026 00:00:00 GMT"),
+            ("digest", "SHA-256=abc"),
+            ("content-type", "application/activity+json"),
+        ];
+        let signing_string =
+            build_signature_signing_string_from_parts("POST", "/inbox", &signed, &values).unwrap();
+        assert_eq!(
+            signing_string,
+            "(request-target): post /inbox\nhost: social.example\ndate: Sat, 25 Jul 2026 00:00:00 GMT\ndigest: SHA-256=abc\ncontent-type: application/activity+json"
+        );
+    }
 }

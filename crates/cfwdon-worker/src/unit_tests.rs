@@ -24,9 +24,9 @@ use super::{
     build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
     build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
     build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
-    build_nodeinfo_document, build_nodeinfo_links_document, build_notifications_v2_document,
-    build_oauth_authorization_server_document, build_oauth_token_document,
-    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_quote_authorization_object, build_quote_request_object,
     build_reject_quote_request_activity_with_id, build_remote_status_card_value,
     build_remove_featured_activity_with_id, build_status_card_value,
@@ -42,14 +42,15 @@ use super::{
     extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
     filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
     format_async_refresh_header_value, hash_account_password, image_dimensions,
-    include_local_source, include_remote_source, instance_base_url, is_activitypub_actor_type,
-    is_admin_account, is_follow_undo, local_quote_policy_allows, local_quote_revoke_allowed,
-    local_status_ap_id, local_username_from_actor_uri, local_username_from_status_uri,
-    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
-    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
-    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
-    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
+    include_local_source, include_remote_source, instance_base_url, instance_open_registrations,
+    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
+    local_quote_revoke_allowed, local_status_ap_id, local_username_from_actor_uri,
+    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
+    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
+    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
+    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
+    normalized_account_search_query, normalized_action_uri, notification_api_numeric_id,
+    notification_sort_key, notification_timestamp_sort_token,
     oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
     object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
     paginate_tag_search_matches, parse_activitypub_request_date_ms,
@@ -490,6 +491,11 @@ fn cors_enabled_paths_cover_browser_client_oauth_surfaces() {
         "/.well-known/oauth-authorization-server"
     ));
     assert!(is_cors_enabled_path("/.well-known/webfinger"));
+    assert!(is_cors_enabled_path("/.well-known/host-meta"));
+    assert!(is_cors_enabled_path("/.well-known/host-meta.json"));
+    assert!(is_cors_enabled_path("/.well-known/nodeinfo"));
+    assert!(is_cors_enabled_path("/nodeinfo/2.0"));
+    assert!(is_cors_enabled_path("/nodeinfo/2.1"));
     assert!(!is_cors_enabled_path("/admin"));
 }
 
@@ -5723,7 +5729,7 @@ fn instance_v2_document_uses_conservative_defaults() {
     );
     assert_eq!(
         document.pointer("/registrations/enabled"),
-        Some(&serde_json::json!(true))
+        Some(&serde_json::json!(instance_open_registrations()))
     );
     assert_eq!(
         document.pointer("/contact/email"),
@@ -5964,12 +5970,16 @@ fn build_nodeinfo_documents_expose_expected_urls_and_counts() {
         serde_json::json!(nodeinfo_url(&config))
     );
 
-    let document = build_nodeinfo_document(&summary, &config, 5, 3, 8);
+    let document = build_nodeinfo_document_with_halfyear(&summary, &config, 5, 3, 4, 8);
     assert_eq!(document["protocols"][0], serde_json::json!("activitypub"));
     assert_eq!(document["usage"]["users"]["total"], serde_json::json!(5));
     assert_eq!(
         document["usage"]["users"]["activeMonth"],
         serde_json::json!(3)
+    );
+    assert_eq!(
+        document["usage"]["users"]["activeHalfyear"],
+        serde_json::json!(4)
     );
     assert_eq!(document["usage"]["localPosts"], serde_json::json!(8));
 }

@@ -1,4 +1,7 @@
-use super::{AppConfig, Env, RouteContext, parse_csv_list, policy_html_from_sources};
+use super::{
+    AppConfig, Env, RouteContext, normalize_configured_instance_domain, parse_csv_list,
+    policy_html_from_sources,
+};
 use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
 
 #[derive(Debug, serde::Serialize)]
@@ -178,6 +181,7 @@ const ROOT_ENDPOINTS: &[&str] = &[
     "/api/oembed",
     "/.well-known/nodeinfo",
     "/nodeinfo/2.0",
+    "/nodeinfo/2.1",
     "/internal/media/prune-orphans",
     "/internal/outbox/process",
 ];
@@ -219,7 +223,11 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let mut config = AppConfig::new(
-        config_string_or_default(&vars, "INSTANCE_DOMAIN", DEFAULT_INSTANCE_DOMAIN),
+        normalize_configured_instance_domain(&config_string_or_default(
+            &vars,
+            "INSTANCE_DOMAIN",
+            DEFAULT_INSTANCE_DOMAIN,
+        )),
         config_string_or_default(&vars, "INSTANCE_NAME", DEFAULT_INSTANCE_NAME),
         config_string_or_default(&vars, "INSTANCE_DESCRIPTION", DEFAULT_INSTANCE_DESCRIPTION),
     );

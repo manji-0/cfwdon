@@ -1,8 +1,9 @@
 use super::{
-    build_signature_signing_string, cached_remote_actor_matches_key, extract_activity_actor_uri,
-    now_http_date_string, parse_signature_header, sha256_http_digest, sign_http_signature,
+    build_signature_signing_string, build_signature_signing_string_from_parts,
+    cached_remote_actor_matches_key, extract_activity_actor_uri, now_http_date_string,
+    parse_signature_header, sha256_http_digest, sign_http_signature,
     validate_activitypub_signature_headers, validate_request_date, validate_request_digest,
-    verify_http_signature_bytes,
+    validate_signed_host_header, verify_http_signature_bytes,
 };
 use crate::auth::load_account_private_key_jwk;
 use crate::federation::{
@@ -20,9 +21,32 @@ use worker::{
 
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
 const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
+const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
+const SIGNED_POST_HEADERS: &[&str] =
+    &["(request-target)", "host", "date", "digest", "content-type"];
 
 pub(crate) fn signed_get_signing_string(path_and_query: &str, host: &str, date: &str) -> String {
     format!("(request-target): get {path_and_query}\nhost: {host}\ndate: {date}")
+}
+
+pub(crate) fn signed_post_signing_string(
+    path_and_query: &str,
+    host: &str,
+    date: &str,
+    digest: &str,
+    content_type: &str,
+) -> Result<String> {
+    build_signature_signing_string_from_parts(
+        "POST",
+        path_and_query,
+        SIGNED_POST_HEADERS,
+        &[
+            ("host", host),
+            ("date", date),
+            ("digest", digest),
+            ("content-type", content_type),
+        ],
+    )
 }
 
 pub(crate) async fn fetch_signed_activitypub_document(
@@ -147,9 +171,16 @@ pub(crate) async fn send_signed_activity(
         .map_err(|error| {
             SignedDeliveryFailure::retryable(format!("failed to build Digest header: {error}"))
         })?;
-    let signing_string = format!(
-        "(request-target): post {path_and_query}\nhost: {host}\ndate: {date}\ndigest: {digest}"
-    );
+    let signing_string = signed_post_signing_string(
+        &path_and_query,
+        &host,
+        &date,
+        &digest,
+        ACTIVITYPUB_CONTENT_TYPE,
+    )
+    .map_err(|error| {
+        SignedDeliveryFailure::retryable(format!("failed to build signing string: {error}"))
+    })?;
     let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
         .await
         .map_err(|error| {
@@ -165,13 +196,11 @@ pub(crate) async fn send_signed_activity(
         })?;
 
     let headers = Headers::new();
+    headers.set("Accept", ACTIVITYPUB_ACCEPT).map_err(|error| {
+        SignedDeliveryFailure::retryable(format!("failed to set Accept header: {error}"))
+    })?;
     headers
-        .set("Accept", "application/activity+json")
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to set Accept header: {error}"))
-        })?;
-    headers
-        .set("Content-Type", "application/activity+json")
+        .set("Content-Type", ACTIVITYPUB_CONTENT_TYPE)
         .map_err(|error| {
             SignedDeliveryFailure::retryable(format!("failed to set Content-Type header: {error}"))
         })?;
@@ -185,7 +214,7 @@ pub(crate) async fn send_signed_activity(
         .set(
             "Signature",
             &format!(
-                "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest\",signature=\"{}\"",
+                "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest content-type\",signature=\"{}\"",
                 public_key_id(config, account.username()),
                 signature
             ),
@@ -238,6 +267,7 @@ pub(crate) async fn verify_incoming_activitypub_request(
         .ok_or_else(|| Error::RustError("missing Signature header".to_owned()))?;
     let parsed_signature = parse_signature_header(&signature_header)?;
     validate_activitypub_signature_headers(&parsed_signature)?;
+    validate_signed_host_header(req, req.headers(), &parsed_signature)?;
     let signing_string = build_signature_signing_string(req, req.headers(), &parsed_signature)?;
 
     validate_request_date(req.headers())?;
@@ -291,12 +321,34 @@ pub(crate) async fn inbox_activity_dedupe_id(
     if let Some(id) = inbox_activity_id(activity) {
         return Ok(id);
     }
-    let activity_type = activity
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("Unknown");
+    let activity_type = crate::activitypub_primary_type(activity).unwrap_or("Unknown");
     let digest = sha256_http_digest(body).await?;
     Ok(format!(
         "derived:{remote_actor_uri}:{activity_type}:{digest}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_post_signing_string_covers_content_type_after_digest() {
+        let signing_string = signed_post_signing_string(
+            "/users/alice/inbox",
+            "social.example",
+            "Sat, 25 Jul 2026 00:00:00 GMT",
+            "SHA-256=abc",
+            ACTIVITYPUB_CONTENT_TYPE,
+        )
+        .unwrap();
+        assert_eq!(
+            signing_string,
+            "(request-target): post /users/alice/inbox\nhost: social.example\ndate: Sat, 25 Jul 2026 00:00:00 GMT\ndigest: SHA-256=abc\ncontent-type: application/activity+json"
+        );
+        assert_eq!(
+            SIGNED_POST_HEADERS.join(" "),
+            "(request-target) host date digest content-type"
+        );
+    }
 }

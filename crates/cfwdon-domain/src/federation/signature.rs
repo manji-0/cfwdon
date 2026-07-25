@@ -37,6 +37,26 @@ pub fn cached_remote_actor_key_matches(
     key_id_matches_actor && (cached_public_key_id.is_empty() || key_id == cached_public_key_id)
 }
 
+/// Compare a signed `Host` header value to the request URL hostname.
+///
+/// The header may include a port (`example.com:443`); only the hostname is
+/// compared. IPv6 bracket forms are compared as a whole against `url_host`.
+pub fn activitypub_host_header_matches_url_host(host_header: &str, url_host: &str) -> bool {
+    let host_header = host_header.trim();
+    let url_host = url_host.trim();
+    if host_header.eq_ignore_ascii_case(url_host) {
+        return true;
+    }
+    if let Some((name, port)) = host_header.rsplit_once(':')
+        && !name.is_empty()
+        && !name.contains(']')
+        && port.chars().all(|c| c.is_ascii_digit())
+    {
+        return name.eq_ignore_ascii_case(url_host);
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +91,22 @@ mod tests {
             "https://remote.example/users/eve#main-key",
             "https://remote.example/users/bob",
             "https://remote.example/@bob",
+        ));
+    }
+
+    #[test]
+    fn host_header_matches_url_host_with_optional_port() {
+        assert!(activitypub_host_header_matches_url_host(
+            "social.example",
+            "social.example"
+        ));
+        assert!(activitypub_host_header_matches_url_host(
+            "Social.Example:443",
+            "social.example"
+        ));
+        assert!(!activitypub_host_header_matches_url_host(
+            "other.example",
+            "social.example"
         ));
     }
 }

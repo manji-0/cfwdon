@@ -1,9 +1,9 @@
 use crate::{
     account_statuses_by_username_response, actor_response, featured_collection_response,
     featured_tags_collection_response, followers_collection_response,
-    following_collection_response, host_meta_response, inbox_response, nodeinfo_links_response,
-    nodeinfo_response, outbox_response, process_outbox_deliveries, remote_follow_response,
-    shared_inbox_response, webfinger_response,
+    following_collection_response, host_meta_json_response, host_meta_response, inbox_response,
+    nodeinfo_21_response, nodeinfo_links_response, nodeinfo_response, outbox_response,
+    process_outbox_deliveries, remote_follow_response, shared_inbox_response, webfinger_response,
 };
 use worker::{Response, Result, Router};
 
@@ -27,10 +27,10 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             static_head_response(XRD_CONTENT_TYPE)
         })
         .get_async("/.well-known/host-meta.json", |_req, ctx| async move {
-            host_meta_response(ctx).await
+            host_meta_json_response(ctx).await
         })
         .head_async("/.well-known/host-meta.json", |_req, _ctx| async move {
-            static_head_response(XRD_CONTENT_TYPE)
+            static_head_response(JRD_CONTENT_TYPE)
         })
         .get_async("/.well-known/nodeinfo", |_req, ctx| async move {
             nodeinfo_links_response(ctx).await
@@ -42,6 +42,12 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             nodeinfo_response(ctx).await
         })
         .head_async("/nodeinfo/2.0", |_req, _ctx| async move {
+            static_head_response(JSON_CONTENT_TYPE)
+        })
+        .get_async("/nodeinfo/2.1", |_req, ctx| async move {
+            nodeinfo_21_response(ctx).await
+        })
+        .head_async("/nodeinfo/2.1", |_req, _ctx| async move {
             static_head_response(JSON_CONTENT_TYPE)
         })
         .get_async("/users/:username", |req, ctx| async move {

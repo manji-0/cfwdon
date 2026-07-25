@@ -55,6 +55,7 @@ pub(crate) async fn extract_authenticated_user(
     }
 
     let claims = verify_auth0_jwt(&token, config).await?;
+    require_auth0_email_verified(&claims, &config.auth0_email_claim)?;
     let email = claims
         .string_claim(&config.auth0_email_claim)
         .map(|value| value.trim().to_ascii_lowercase())

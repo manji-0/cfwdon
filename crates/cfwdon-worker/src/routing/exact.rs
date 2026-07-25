@@ -1,9 +1,9 @@
 use crate::{
-    custom_emojis_response_direct, host_meta_response_from_env,
+    custom_emojis_response_direct, host_meta_json_response_from_env, host_meta_response_from_env,
     instance_domain_blocks_response_direct, instance_languages_response_from_env,
     instance_rules_response_direct, instance_summary_response_from_env,
-    instance_v2_response_from_env, nodeinfo_links_response_from_env, nodeinfo_response_from_env,
-    oauth_authorization_server_response_from_env,
+    instance_v2_response_from_env, nodeinfo_21_response_from_env, nodeinfo_links_response_from_env,
+    nodeinfo_response_from_env, oauth_authorization_server_response_from_env,
 };
 use worker::{Env, Response, Result};
 
@@ -25,8 +25,10 @@ pub(crate) async fn dispatch_exact_without_router(
             oauth_authorization_server_response_from_env(env).map(Some)
         }
         ExactWithoutRouterKind::HostMeta => host_meta_response_from_env(env).map(Some),
+        ExactWithoutRouterKind::HostMetaJson => host_meta_json_response_from_env(env).map(Some),
         ExactWithoutRouterKind::NodeinfoLinks => nodeinfo_links_response_from_env(env).map(Some),
         ExactWithoutRouterKind::Nodeinfo => nodeinfo_response_from_env(env).await.map(Some),
+        ExactWithoutRouterKind::Nodeinfo21 => nodeinfo_21_response_from_env(env).await.map(Some),
         ExactWithoutRouterKind::InstanceRules => instance_rules_response_direct().map(Some),
         ExactWithoutRouterKind::InstanceDomainBlocks => {
             instance_domain_blocks_response_direct().map(Some)
@@ -42,12 +44,14 @@ pub(crate) async fn dispatch_exact_without_router(
 enum ExactWithoutRouterKind {
     CustomEmojis,
     HostMeta,
+    HostMetaJson,
     InstanceDomainBlocks,
     InstanceLanguages,
     InstanceRules,
     InstanceV1,
     InstanceV2,
     Nodeinfo,
+    Nodeinfo21,
     NodeinfoLinks,
     OauthAuthorizationServer,
 }
@@ -63,11 +67,11 @@ fn exact_without_router_kind(method: &str, path: &str) -> Option<ExactWithoutRou
         "/.well-known/oauth-authorization-server" => {
             Some(ExactWithoutRouterKind::OauthAuthorizationServer)
         }
-        "/.well-known/host-meta" | "/.well-known/host-meta.json" => {
-            Some(ExactWithoutRouterKind::HostMeta)
-        }
+        "/.well-known/host-meta" => Some(ExactWithoutRouterKind::HostMeta),
+        "/.well-known/host-meta.json" => Some(ExactWithoutRouterKind::HostMetaJson),
         "/.well-known/nodeinfo" => Some(ExactWithoutRouterKind::NodeinfoLinks),
         "/nodeinfo/2.0" => Some(ExactWithoutRouterKind::Nodeinfo),
+        "/nodeinfo/2.1" => Some(ExactWithoutRouterKind::Nodeinfo21),
         "/api/v1/instance/rules" => Some(ExactWithoutRouterKind::InstanceRules),
         "/api/v1/instance/domain_blocks" => Some(ExactWithoutRouterKind::InstanceDomainBlocks),
         "/api/v1/instance/languages" => Some(ExactWithoutRouterKind::InstanceLanguages),
@@ -96,7 +100,7 @@ mod tests {
         ));
         assert!(matches!(
             exact_without_router_kind("GET", "/.well-known/host-meta.json"),
-            Some(ExactWithoutRouterKind::HostMeta)
+            Some(ExactWithoutRouterKind::HostMetaJson)
         ));
         assert!(exact_without_router_kind("POST", "/api/v1/instance").is_none());
         assert!(exact_without_router_kind("GET", "/api/v1/statuses/1").is_none());

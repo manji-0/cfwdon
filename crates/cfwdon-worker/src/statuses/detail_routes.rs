@@ -895,6 +895,8 @@ fn status_object_html_response(
     let title = crate::escape_html(title_source);
     let account_name = crate::escape_html(account.acct());
     let published = crate::escape_html(&status.created_at);
+    let status_url = crate::local_status_ap_id(config, account, status);
+    let oembed_link = status_oembed_discovery_link(config, &status_url);
     let media_html = attachments
         .iter()
         .filter(|attachment| {
@@ -912,7 +914,7 @@ fn status_object_html_response(
         .collect::<Vec<_>>()
         .join("");
     let html = format!(
-        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#0f1115;color:#f4f4f5}}main{{max-width:680px;margin:0 auto;padding:24px}}article{{border:1px solid #2b2f36;border-radius:8px;padding:20px;background:#171a21}}.account{{color:#a1a1aa;margin-bottom:12px}}.content{{font-size:18px;line-height:1.6}}.media{{display:grid;gap:12px;margin-top:16px}}img{{max-width:100%;border-radius:8px}}time{{display:block;color:#a1a1aa;margin-top:16px;font-size:14px}}</style></head><body><main><article><div class=\"account\">{account_name}</div><div class=\"content\">{content}</div><div class=\"media\">{media_html}</div><time>{published}</time></article></main></body></html>",
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>{oembed_link}<style>body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#0f1115;color:#f4f4f5}}main{{max-width:680px;margin:0 auto;padding:24px}}article{{border:1px solid #2b2f36;border-radius:8px;padding:20px;background:#171a21}}.account{{color:#a1a1aa;margin-bottom:12px}}.content{{font-size:18px;line-height:1.6}}.media{{display:grid;gap:12px;margin-top:16px}}img{{max-width:100%;border-radius:8px}}time{{display:block;color:#a1a1aa;margin-top:16px;font-size:14px}}</style></head><body><main><article><div class=\"account\">{account_name}</div><div class=\"content\">{content}</div><div class=\"media\">{media_html}</div><time>{published}</time></article></main></body></html>",
         content = status.content_html,
     );
     let mut response = Response::from_body(worker::ResponseBody::Body(html.into_bytes()))?;
@@ -920,6 +922,18 @@ fn status_object_html_response(
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;
     Ok(response)
+}
+
+fn status_oembed_discovery_link(config: &crate::AppConfig, status_url: &str) -> String {
+    let href = format!(
+        "{}/api/oembed?url={}",
+        crate::instance_base_url(config),
+        urlencoding::encode(status_url)
+    );
+    format!(
+        "<link rel=\"alternate\" type=\"application/json+oembed\" href=\"{}\">",
+        crate::escape_html(&href)
+    )
 }
 
 pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -1281,4 +1295,22 @@ pub(crate) async fn status_history_response(
     }
 
     Response::error("status not found", 404)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_oembed_discovery_link;
+    use crate::AppConfig;
+
+    #[test]
+    fn status_oembed_discovery_link_is_present_and_url_encoded() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let status_url = "https://social.example/@alice/statuses/status 1";
+        let link = status_oembed_discovery_link(&config, status_url);
+        assert!(link.contains("rel=\"alternate\""));
+        assert!(link.contains("type=\"application/json+oembed\""));
+        assert!(link.contains("/api/oembed?url="));
+        assert!(link.contains(&*urlencoding::encode(status_url)));
+        assert!(!link.contains("status 1"));
+    }
 }

@@ -1,6 +1,6 @@
 use super::{
-    LocalAccount, activitypub_audiences_for_visibility, actor_url, generate_entity_id,
-    now_iso_string,
+    LocalAccount, activitypub_audiences_for_visibility, activitypub_datetime_string, actor_url,
+    generate_entity_id, now_iso_string,
 };
 use cfwdon_core::AppConfig;
 use worker::{Error, Result};
@@ -83,11 +83,29 @@ pub(crate) fn build_follow_activity(
 ) -> Result<(String, String)> {
     let actor = actor_url(config, account.username());
     let follow_activity_id = format!("{actor}/follows/{}", generate_entity_id(12)?);
+    build_follow_activity_with_id(
+        config,
+        account,
+        remote_actor_uri,
+        &follow_activity_id,
+        &activitypub_datetime_string(&now_iso_string()?),
+    )
+}
+
+pub(crate) fn build_follow_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    remote_actor_uri: &str,
+    follow_activity_id: &str,
+    published: &str,
+) -> Result<(String, String)> {
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": follow_activity_id,
         "type": "Follow",
         "actor": actor,
+        "published": published,
         "object": remote_actor_uri,
         "to": [remote_actor_uri],
     });
@@ -131,11 +149,31 @@ pub(crate) fn build_like_activity(
 ) -> Result<(String, String)> {
     let actor = actor_url(config, account.username());
     let activity_id = format!("{actor}/likes/{}", generate_entity_id(12)?);
+    build_like_activity_with_id(
+        config,
+        account,
+        remote_actor_uri,
+        object_uri,
+        &activity_id,
+        &activitypub_datetime_string(&now_iso_string()?),
+    )
+}
+
+pub(crate) fn build_like_activity_with_id(
+    config: &AppConfig,
+    account: &LocalAccount,
+    remote_actor_uri: &str,
+    object_uri: &str,
+    activity_id: &str,
+    published: &str,
+) -> Result<(String, String)> {
+    let actor = actor_url(config, account.username());
     let activity = serde_json::json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": activity_id,
         "type": "Like",
         "actor": actor,
+        "published": published,
         "to": [remote_actor_uri],
         "object": object_uri,
     });
@@ -535,4 +573,51 @@ pub(crate) fn build_remove_featured_activity_with_id(
     });
     serde_json::to_string(&activity)
         .map_err(|error| Error::RustError(format!("failed to serialize Remove activity: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cfwdon_domain::LocalAccountRecord;
+
+    fn test_account() -> LocalAccount {
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice"))
+    }
+
+    #[test]
+    fn build_follow_activity_includes_published() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test");
+        let (_, payload) = build_follow_activity_with_id(
+            &config,
+            &test_account(),
+            "https://remote.example/users/bob",
+            "https://social.example/users/alice/follows/1",
+            "2026-07-25T00:00:00Z",
+        )
+        .unwrap();
+        let activity: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            activity["published"],
+            serde_json::json!("2026-07-25T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn build_like_activity_includes_published() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test");
+        let (_, payload) = build_like_activity_with_id(
+            &config,
+            &test_account(),
+            "https://remote.example/users/bob",
+            "https://remote.example/users/bob/statuses/1",
+            "https://social.example/users/alice/likes/1",
+            "2026-07-25T00:00:00Z",
+        )
+        .unwrap();
+        let activity: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            activity["published"],
+            serde_json::json!("2026-07-25T00:00:00Z")
+        );
+    }
 }

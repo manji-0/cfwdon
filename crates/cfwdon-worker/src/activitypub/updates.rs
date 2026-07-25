@@ -1,19 +1,18 @@
 use super::{
     AppConfig, Error, LocalAccount, Result, StatusRow, actor_url, build_activitypub_actor_document,
-    build_activitypub_note, generate_entity_id, now_iso_string,
+    build_activitypub_note, generate_entity_id, now_iso_string, quote_context_mapping,
 };
 use worker::D1Database;
 
 fn status_activity_context(object: &serde_json::Value) -> serde_json::Value {
-    if object.get("_misskey_quote").is_some() {
+    if object.get("_misskey_quote").is_some()
+        || object.get("quoteUri").is_some()
+        || object.get("quoteUrl").is_some()
+        || object.get("quoteAuthorization").is_some()
+    {
         serde_json::json!([
             "https://www.w3.org/ns/activitystreams",
-            {
-                "_misskey_quote": {
-                    "@id": "https://misskey-hub.net/ns#_misskey_quote",
-                    "@type": "@id"
-                }
-            }
+            quote_context_mapping()
         ])
     } else {
         serde_json::json!("https://www.w3.org/ns/activitystreams")

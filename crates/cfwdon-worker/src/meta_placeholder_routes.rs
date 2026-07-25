@@ -13,9 +13,9 @@ use crate::{
     build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
     build_remote_status_response, cache_public_response, can_view_local_status,
     collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, extract_hashtags_from_html, extract_hashtags_from_text,
-    filter_notification_entries_by_query, find_account_by_id, find_account_by_username,
-    find_authenticated_local_account, find_conversation_for_account,
+    delete_remote_follow_request_by_actor, escape_html, extract_hashtags_from_html,
+    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
+    find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
     find_conversation_id_by_status_id, find_follower_follow_activity_id,
     find_local_status_by_object_uri, find_media_attachments_by_status_id,
     find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
@@ -58,6 +58,7 @@ struct OembedQuery {
     url: String,
     maxwidth: Option<u32>,
     maxheight: Option<u32>,
+    format: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -408,9 +409,59 @@ fn build_oembed_html(
             "</blockquote>"
         ),
         content_html = content_html,
-        username = account.username(),
-        status_url = status_url,
+        username = escape_html(account.username()),
+        status_url = escape_html(status_url),
     )
+}
+
+const OEMBED_DEFAULT_WIDTH: u32 = 400;
+const OEMBED_DEFAULT_HEIGHT: u32 = 200;
+
+fn oembed_capped_dimension(default: u32, requested_max: Option<u32>) -> u32 {
+    match requested_max {
+        Some(max) => default.min(max),
+        None => default,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OembedFormatDecision {
+    Json,
+    UnsupportedXml,
+    Unrecognized,
+}
+
+fn resolve_oembed_format(format: Option<&str>) -> OembedFormatDecision {
+    match format.map(|value| value.trim().to_ascii_lowercase()) {
+        None => OembedFormatDecision::Json,
+        Some(ref value) if value.is_empty() || value == "json" => OembedFormatDecision::Json,
+        Some(ref value) if value == "xml" => OembedFormatDecision::UnsupportedXml,
+        Some(_) => OembedFormatDecision::Unrecognized,
+    }
+}
+
+fn build_oembed_document(
+    config: &cfwdon_core::AppConfig,
+    account: &cfwdon_domain::LocalAccount,
+    status_url: &str,
+    content_html: &str,
+    author_name: &str,
+    maxwidth: Option<u32>,
+    maxheight: Option<u32>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "rich",
+        "version": "1.0",
+        "title": format!("New status by {}", account.username()),
+        "author_name": author_name,
+        "author_url": actor_url(config, account.username()),
+        "provider_name": config.instance_domain,
+        "provider_url": format!("{}/", oauth_base_url(config)),
+        "cache_age": 86400,
+        "html": build_oembed_html(account, status_url, content_html),
+        "width": oembed_capped_dimension(OEMBED_DEFAULT_WIDTH, maxwidth),
+        "height": oembed_capped_dimension(OEMBED_DEFAULT_HEIGHT, maxheight),
+    })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -654,10 +705,14 @@ async fn is_authenticated_request(
 }
 
 fn invalid_access_token_response() -> Result<Response> {
-    Ok(Response::from_json(&serde_json::json!({
+    let mut response = Response::from_json(&serde_json::json!({
         "error": "The access token is invalid",
     }))?
-    .with_status(401))
+    .with_status(401);
+    response
+        .headers_mut()
+        .set("WWW-Authenticate", r#"Bearer error="invalid_token""#)?;
+    Ok(response)
 }
 
 fn streaming_bad_request_response(error: StreamingChannelValidationError) -> Result<Response> {
@@ -1139,6 +1194,15 @@ pub(crate) async fn oauth_userinfo_response(
 pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: OembedQuery = req.query()?;
+    match resolve_oembed_format(query.format.as_deref()) {
+        OembedFormatDecision::Json => {}
+        OembedFormatDecision::UnsupportedXml => {
+            return Response::error("Not Implemented", 501);
+        }
+        OembedFormatDecision::Unrecognized => {
+            return Response::error("Bad Request", 400);
+        }
+    }
     let db = ctx.d1(&config.database_binding)?;
     let Some(status) = find_local_status_by_object_uri(&db, &config, &query.url).await? else {
         return Response::error("Record not found", 404);
@@ -1158,19 +1222,15 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
     };
 
     cache_public_response(
-        Response::from_json(&serde_json::json!({
-            "type": "rich",
-            "version": "1.0",
-            "title": format!("New status by {}", account.username()),
-            "author_name": author_name,
-            "author_url": actor_url(&config, account.username()),
-            "provider_name": config.instance_domain,
-            "provider_url": format!("{}/", oauth_base_url(&config)),
-            "cache_age": 86400,
-            "html": build_oembed_html(&account, &status_url, &status.content_html),
-            "width": query.maxwidth.unwrap_or(400),
-            "height": query.maxheight,
-        }))?,
+        Response::from_json(&build_oembed_document(
+            &config,
+            &account,
+            &status_url,
+            &status.content_html,
+            &author_name,
+            query.maxwidth,
+            query.maxheight,
+        ))?,
         crate::CACHE_TTL_OEMBED,
     )
 }
@@ -4069,5 +4129,78 @@ mod tests {
         );
 
         assert!(streaming_error_is_subrequest_limit(&error));
+    }
+
+    #[test]
+    fn oembed_height_defaults_to_integer_when_maxheight_absent() {
+        let config = cfwdon_core::AppConfig::new("https://social.example", "cfwdon", "test");
+        let account = cfwdon_domain::LocalAccount::from_record(
+            cfwdon_domain::LocalAccountRecord::test_fixture("acct-1", "alice"),
+        );
+        let document = build_oembed_document(
+            &config,
+            &account,
+            "https://social.example/@alice/statuses/1",
+            "<p>hi</p>",
+            "alice",
+            None,
+            None,
+        );
+        assert_eq!(document["height"], serde_json::json!(OEMBED_DEFAULT_HEIGHT));
+        assert!(document["height"].is_number());
+        assert_eq!(document["width"], serde_json::json!(OEMBED_DEFAULT_WIDTH));
+    }
+
+    #[test]
+    fn oembed_dimensions_respect_maxwidth_and_maxheight_caps() {
+        assert_eq!(oembed_capped_dimension(400, Some(200)), 200);
+        assert_eq!(oembed_capped_dimension(400, Some(800)), 400);
+        assert_eq!(oembed_capped_dimension(200, Some(50)), 50);
+        assert_eq!(oembed_capped_dimension(200, None), 200);
+    }
+
+    #[test]
+    fn oembed_format_json_and_absent_are_accepted() {
+        assert_eq!(resolve_oembed_format(None), OembedFormatDecision::Json);
+        assert_eq!(
+            resolve_oembed_format(Some("json")),
+            OembedFormatDecision::Json
+        );
+        assert_eq!(
+            resolve_oembed_format(Some("JSON")),
+            OembedFormatDecision::Json
+        );
+    }
+
+    #[test]
+    fn oembed_format_xml_is_not_implemented() {
+        assert_eq!(
+            resolve_oembed_format(Some("xml")),
+            OembedFormatDecision::UnsupportedXml
+        );
+    }
+
+    #[test]
+    fn oembed_format_unrecognized_is_bad_request() {
+        assert_eq!(
+            resolve_oembed_format(Some("yaml")),
+            OembedFormatDecision::Unrecognized
+        );
+    }
+
+    #[test]
+    fn build_oembed_html_escapes_username_and_status_url() {
+        let account = cfwdon_domain::LocalAccount::from_record(
+            cfwdon_domain::LocalAccountRecord::test_fixture("acct-1", "alice\"onclick=x"),
+        );
+        let html = build_oembed_html(
+            &account,
+            "https://evil.example/\" onmouseover=\"alert(1)",
+            "<p>safe already-escaped content</p>",
+        );
+        assert!(html.contains("Post by @alice&quot;onclick=x"));
+        assert!(html.contains("href=\"https://evil.example/&quot; onmouseover=&quot;alert(1)\""));
+        assert!(html.contains("<p>safe already-escaped content</p>"));
+        assert!(!html.contains("Post by @alice\"onclick=x"));
     }
 }

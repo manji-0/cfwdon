@@ -11,19 +11,20 @@ use crate::{
     delete_status, direct_timeline_response, donation_campaigns_response, endorse_account_response,
     endorsements_response, familiar_followers_response, favourite_status, favourites_response,
     follow_account, follow_request_response, follow_requests_response, followed_tags_response,
-    home_timeline_response, host_meta_response, identity_proofs_response,
+    home_timeline_response, host_meta_json_response, host_meta_response, identity_proofs_response,
     instance_activity_response, instance_domain_blocks_response,
     instance_extended_description_response, instance_languages_response, instance_peers_response,
     instance_privacy_policy_response, instance_rules_response, instance_summary_response,
     instance_terms_of_service_response, instance_terms_of_service_version_response,
     instance_translation_languages_response, instance_v2_response, link_timeline_response,
     list_timeline_response, media_content_response, media_metadata_response, mute_account,
-    mute_status_response, mutes_response, nodeinfo_links_response, nodeinfo_response,
-    note_account_response, oauth_authorization_server_response, oauth_authorize_response,
-    oauth_token_response, oauth_userinfo_response, oembed_response, pin_account_response,
-    pin_status_response, public_timeline_response, reblog_status, reject_follow_request_response,
-    reject_quote_response, remove_from_followers_response, revoke_quote_response, share_response,
-    share_submit_response, status_api_response, status_card_response, status_context_response,
+    mute_status_response, mutes_response, nodeinfo_21_response, nodeinfo_links_response,
+    nodeinfo_response, note_account_response, oauth_authorization_server_response,
+    oauth_authorize_response, oauth_revoke_response, oauth_token_response, oauth_userinfo_response,
+    oembed_response, pin_account_response, pin_status_response, public_timeline_response,
+    reblog_status, reject_follow_request_response, reject_quote_response,
+    remove_from_followers_response, revoke_quote_response, share_response, share_submit_response,
+    status_api_response, status_card_response, status_context_response,
     status_favourited_by_response, status_history_response, status_interaction_policy_response,
     status_quotes_response, status_reblogged_by_response, status_source_response,
     statuses_index_placeholder_response, tag_timeline_response, translate_status_response,
@@ -194,6 +195,10 @@ fn discovery_router() -> Router<'static, ()> {
             "/.well-known/oauth-authorization-server",
             |_req, ctx| async move { oauth_authorization_server_response(ctx).await },
         )
+        .head_async(
+            "/.well-known/oauth-authorization-server",
+            |_req, _ctx| async move { static_head_response(JSON_CONTENT_TYPE) },
+        )
         .get_async("/.well-known/webfinger", |req, ctx| async move {
             webfinger_response(req, ctx).await
         })
@@ -207,10 +212,10 @@ fn discovery_router() -> Router<'static, ()> {
             static_head_response(XRD_CONTENT_TYPE)
         })
         .get_async("/.well-known/host-meta.json", |_req, ctx| async move {
-            host_meta_response(ctx).await
+            host_meta_json_response(ctx).await
         })
         .head_async("/.well-known/host-meta.json", |_req, _ctx| async move {
-            static_head_response(XRD_CONTENT_TYPE)
+            static_head_response(JRD_CONTENT_TYPE)
         })
         .get_async("/.well-known/nodeinfo", |_req, ctx| async move {
             nodeinfo_links_response(ctx).await
@@ -222,6 +227,12 @@ fn discovery_router() -> Router<'static, ()> {
             nodeinfo_response(ctx).await
         })
         .head_async("/nodeinfo/2.0", |_req, _ctx| async move {
+            static_head_response(JSON_CONTENT_TYPE)
+        })
+        .get_async("/nodeinfo/2.1", |_req, ctx| async move {
+            nodeinfo_21_response(ctx).await
+        })
+        .head_async("/nodeinfo/2.1", |_req, _ctx| async move {
             static_head_response(JSON_CONTENT_TYPE)
         })
         .get_async("/api/oembed", |req, ctx| async move {
@@ -475,5 +486,8 @@ fn oauth_router() -> Router<'static, ()> {
         })
         .post_async("/oauth/token", |req, ctx| async move {
             oauth_token_response(req, ctx).await
+        })
+        .post_async("/oauth/revoke", |req, ctx| async move {
+            oauth_revoke_response(req, ctx).await
         })
 }

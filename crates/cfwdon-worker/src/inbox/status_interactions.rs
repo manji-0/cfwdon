@@ -122,10 +122,7 @@ pub(crate) async fn handle_inbox_interaction_undo(
     let Some(object) = activity.get("object") else {
         return Ok(());
     };
-    let activity_type = object
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
+    let activity_type = crate::activitypub_primary_type(object).unwrap_or_default();
     let target_uri = object
         .get("object")
         .and_then(|value| activity_object_id(Some(value)))

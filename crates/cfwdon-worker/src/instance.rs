@@ -988,15 +988,52 @@ async fn nodeinfo_response_for_config(
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
     let active_month = load_active_month_users(db).await?;
+    let active_halfyear = load_active_halfyear_users(db).await?;
     let user_count = load_total_local_accounts(db).await?;
     let status_count = load_total_local_statuses(db).await?;
 
     cache_public_response(
-        Response::from_json(&build_nodeinfo_document(
+        Response::from_json(&build_nodeinfo_document_with_halfyear(
             &summary,
             &config,
             user_count,
             active_month,
+            active_halfyear,
+            status_count,
+        ))?,
+        300,
+    )
+}
+
+pub(crate) async fn nodeinfo_21_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    nodeinfo_21_response_for_config(&db, config).await
+}
+
+pub(crate) async fn nodeinfo_21_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    nodeinfo_21_response_for_config(&db, config).await
+}
+
+async fn nodeinfo_21_response_for_config(
+    db: &worker::D1Database,
+    config: super::AppConfig,
+) -> Result<Response> {
+    let summary = load_instance_summary(db, config.clone()).await?;
+    let active_month = load_active_month_users(db).await?;
+    let active_halfyear = load_active_halfyear_users(db).await?;
+    let user_count = load_total_local_accounts(db).await?;
+    let status_count = load_total_local_statuses(db).await?;
+
+    cache_public_response(
+        Response::from_json(&build_nodeinfo_21_document(
+            &summary,
+            &config,
+            user_count,
+            active_month,
+            active_halfyear,
             status_count,
         ))?,
         300,
