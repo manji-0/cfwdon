@@ -2413,6 +2413,28 @@ async fn oauth_authorization_code_token_response(
     ))?)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OAuthPostBodyKind {
+    FormUrlencoded,
+    Json,
+}
+
+fn classify_oauth_post_content_type(
+    content_type: &str,
+) -> std::result::Result<OAuthPostBodyKind, &'static str> {
+    let content_type = content_type.trim().to_ascii_lowercase();
+    if content_type.is_empty() {
+        return Err("Content-Type header is required.");
+    }
+    if content_type.starts_with("application/json") {
+        return Ok(OAuthPostBodyKind::Json);
+    }
+    if content_type.starts_with("application/x-www-form-urlencoded") {
+        return Ok(OAuthPostBodyKind::FormUrlencoded);
+    }
+    Err("Content-Type must be application/x-www-form-urlencoded.")
+}
+
 async fn parse_oauth_token_request(
     req: &mut Request,
 ) -> std::result::Result<OAuthTokenRequest, String> {
@@ -2420,27 +2442,29 @@ async fn parse_oauth_token_request(
         .headers()
         .get("Content-Type")
         .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
 
-    if content_type.contains("application/json") {
-        req.json::<OAuthTokenRequest>()
+    match classify_oauth_post_content_type(&content_type) {
+        Ok(OAuthPostBodyKind::Json) => req
+            .json::<OAuthTokenRequest>()
             .await
-            .map_err(|error| format!("invalid JSON token payload: {error}"))
-    } else {
-        let form = req
-            .form_data()
-            .await
-            .map_err(|error| format!("invalid form token payload: {error}"))?;
-        Ok(OAuthTokenRequest {
-            grant_type: form.get_field("grant_type"),
-            client_id: form.get_field("client_id"),
-            client_secret: form.get_field("client_secret"),
-            redirect_uri: form.get_field("redirect_uri"),
-            scope: form.get_field("scope"),
-            code: form.get_field("code"),
-            code_verifier: form.get_field("code_verifier"),
-        })
+            .map_err(|error| format!("invalid JSON token payload: {error}")),
+        Ok(OAuthPostBodyKind::FormUrlencoded) => {
+            let form = req
+                .form_data()
+                .await
+                .map_err(|error| format!("invalid form token payload: {error}"))?;
+            Ok(OAuthTokenRequest {
+                grant_type: form.get_field("grant_type"),
+                client_id: form.get_field("client_id"),
+                client_secret: form.get_field("client_secret"),
+                redirect_uri: form.get_field("redirect_uri"),
+                scope: form.get_field("scope"),
+                code: form.get_field("code"),
+                code_verifier: form.get_field("code_verifier"),
+            })
+        }
+        Err(message) => Err(message.to_owned()),
     }
 }
 
@@ -2480,7 +2504,7 @@ pub(crate) async fn oauth_token_response(
 ) -> Result<Response> {
     let request = match parse_oauth_token_request(&mut req).await {
         Ok(request) => request,
-        Err(_) => return oauth_invalid_client_response(),
+        Err(message) => return oauth_invalid_request_response(&message),
     };
     let grant_type = request
         .grant_type
@@ -2578,7 +2602,7 @@ pub(crate) async fn oauth_revoke_response(
 ) -> Result<Response> {
     let request = match parse_oauth_revoke_request(&mut req).await {
         Ok(request) => request,
-        Err(_) => return oauth_invalid_request_response("Invalid token revocation request."),
+        Err(message) => return oauth_invalid_request_response(&message),
     };
     let Some(token) = trimmed_non_empty(request.token.as_deref()) else {
         return oauth_invalid_request_response("token is required");
@@ -2625,24 +2649,26 @@ async fn parse_oauth_revoke_request(
         .headers()
         .get("Content-Type")
         .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
 
-    if content_type.contains("application/json") {
-        req.json::<OAuthRevokeRequest>()
+    match classify_oauth_post_content_type(&content_type) {
+        Ok(OAuthPostBodyKind::Json) => req
+            .json::<OAuthRevokeRequest>()
             .await
-            .map_err(|error| format!("invalid JSON revoke payload: {error}"))
-    } else {
-        let form = req
-            .form_data()
-            .await
-            .map_err(|error| format!("invalid form revoke payload: {error}"))?;
-        Ok(OAuthRevokeRequest {
-            token: form.get_field("token"),
-            token_type_hint: form.get_field("token_type_hint"),
-            client_id: form.get_field("client_id"),
-            client_secret: form.get_field("client_secret"),
-        })
+            .map_err(|error| format!("invalid JSON revoke payload: {error}")),
+        Ok(OAuthPostBodyKind::FormUrlencoded) => {
+            let form = req
+                .form_data()
+                .await
+                .map_err(|error| format!("invalid form revoke payload: {error}"))?;
+            Ok(OAuthRevokeRequest {
+                token: form.get_field("token"),
+                token_type_hint: form.get_field("token_type_hint"),
+                client_id: form.get_field("client_id"),
+                client_secret: form.get_field("client_secret"),
+            })
+        }
+        Err(message) => Err(message.to_owned()),
     }
 }
 
@@ -3041,6 +3067,30 @@ mod tests {
     #[test]
     fn oauth_revoke_success_is_empty_200() {
         assert_eq!(oauth_revoke_success_status(), 200);
+    }
+
+    #[test]
+    fn classify_oauth_post_content_type_requires_form_or_json() {
+        assert_eq!(
+            classify_oauth_post_content_type("application/x-www-form-urlencoded"),
+            Ok(OAuthPostBodyKind::FormUrlencoded)
+        );
+        assert_eq!(
+            classify_oauth_post_content_type("application/x-www-form-urlencoded; charset=UTF-8"),
+            Ok(OAuthPostBodyKind::FormUrlencoded)
+        );
+        assert_eq!(
+            classify_oauth_post_content_type("application/json"),
+            Ok(OAuthPostBodyKind::Json)
+        );
+        assert_eq!(
+            classify_oauth_post_content_type(""),
+            Err("Content-Type header is required.")
+        );
+        assert_eq!(
+            classify_oauth_post_content_type("text/plain"),
+            Err("Content-Type must be application/x-www-form-urlencoded.")
+        );
     }
 
     #[test]
