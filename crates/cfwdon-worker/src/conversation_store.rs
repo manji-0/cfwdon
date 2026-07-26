@@ -125,6 +125,42 @@ pub(crate) async fn find_conversation_id_by_status_id(
         }))
 }
 
+/// True when a local account is a participant in the direct conversation that
+/// owns `status_id` (conversation state or participant_ref = account id).
+pub(crate) async fn local_account_participates_in_direct_status(
+    db: &D1Database,
+    status_id: &str,
+    account_id: &str,
+) -> Result<bool> {
+    let bindings = [D1Type::Text(status_id), D1Type::Text(account_id)];
+    let row = db
+        .prepare(
+            "SELECT 1 AS matched
+             FROM conversation_statuses cs
+             WHERE cs.status_id = ?1
+               AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM conversation_states cst
+                        WHERE cst.conversation_id = cs.conversation_id
+                          AND cst.account_id = ?2
+                          AND cst.deleted_at IS NULL
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM conversation_participants cp
+                        WHERE cp.conversation_id = cs.conversation_id
+                          AND cp.participant_ref = ?2
+                    )
+               )
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?;
+    Ok(row.is_some())
+}
+
 pub(crate) async fn list_conversation_participants(
     db: &D1Database,
     conversation_id: &str,

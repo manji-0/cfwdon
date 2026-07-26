@@ -1,8 +1,8 @@
 use super::{
     D1Database, LocalAccount, Result, is_local_follower_authorized,
-    is_public_activitypub_visibility,
+    is_public_activitypub_visibility, local_account_participates_in_direct_status,
 };
-use cfwdon_domain::{LocalStatus, LocalStatusRecord, local_status_default_quote_state};
+use cfwdon_domain::{LocalStatus, LocalStatusRecord, Visibility, local_status_default_quote_state};
 
 pub(crate) type StatusRecord = LocalStatusRecord;
 pub(crate) type StatusRow = LocalStatus;
@@ -39,15 +39,18 @@ pub(crate) fn local_quote_revoke_allowed(
         && status_has_active_quote(quote)
 }
 
-pub(crate) fn status_is_visible_to_requester(
-    status: &StatusRow,
-    viewer: Option<&LocalAccount>,
-    owner: &LocalAccount,
+/// Pure visibility matrix used by [`can_view_local_status`] after relationship lookups.
+pub(crate) fn local_status_allows_viewer(
+    visibility: Visibility,
+    is_owner: bool,
+    is_follower: bool,
+    is_direct_participant: bool,
 ) -> bool {
-    is_public_activitypub_visibility(status.visibility.as_str())
-        || viewer
-            .map(|viewer| viewer.id() == owner.id())
-            .unwrap_or(false)
+    match visibility {
+        Visibility::Public | Visibility::Unlisted => true,
+        Visibility::FollowersOnly => is_owner || is_follower,
+        Visibility::Direct => is_owner || is_direct_participant,
+    }
 }
 
 pub(crate) async fn can_view_local_status(
@@ -56,15 +59,31 @@ pub(crate) async fn can_view_local_status(
     viewer: Option<&LocalAccount>,
     owner: &LocalAccount,
 ) -> Result<bool> {
-    if status_is_visible_to_requester(status, viewer, owner) {
+    if is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(true);
-    }
-    if status.visibility != cfwdon_domain::Visibility::FollowersOnly {
-        return Ok(false);
     }
 
     let Some(viewer) = viewer else {
         return Ok(false);
     };
-    is_local_follower_authorized(db, viewer.id(), owner.id()).await
+    if viewer.id() == owner.id() {
+        return Ok(true);
+    }
+
+    match status.visibility {
+        Visibility::FollowersOnly => Ok(local_status_allows_viewer(
+            status.visibility,
+            false,
+            is_local_follower_authorized(db, viewer.id(), owner.id()).await?,
+            false,
+        )),
+        Visibility::Direct => Ok(local_status_allows_viewer(
+            status.visibility,
+            false,
+            false,
+            local_account_participates_in_direct_status(db, &status.id, viewer.id()).await?,
+        )),
+        // Public/unlisted already returned true above.
+        Visibility::Public | Visibility::Unlisted => Ok(true),
+    }
 }

@@ -171,14 +171,45 @@ pub(crate) async fn shared_inbox_response(
     let remote_actor = match verify_incoming_activitypub_request(&req, &db, &body, &activity).await
     {
         Ok(remote_actor) => remote_actor,
-        Err(_) => return Response::error("invalid activitypub signature", 401),
+        Err(error) => {
+            log_federation_event(
+                "inbox_signature_failed",
+                "unauthorized",
+                format!(
+                    "shared inbox signature verification failed: activity_type={} error={error}",
+                    inbox_activity_type(&activity)
+                ),
+                serde_json::json!({
+                    "inbox": "shared",
+                    "activity_type": inbox_activity_type(&activity),
+                    "error": error.to_string(),
+                }),
+            );
+            return Response::error("invalid activitypub signature", 401);
+        }
     };
     let accounts = resolve_shared_inbox_target_accounts(&db, &config, None, &activity).await?;
     match shared_inbox_preprocess_outcome(true, !accounts.is_empty()) {
         SharedInboxPreprocessOutcome::Unauthorized => {
             Response::error("invalid activitypub signature", 401)
         }
-        SharedInboxPreprocessOutcome::AcceptedNoTargets => Ok(Response::empty()?.with_status(202)),
+        SharedInboxPreprocessOutcome::AcceptedNoTargets => {
+            log_federation_event(
+                "inbox_accepted_no_targets",
+                "skipped",
+                format!(
+                    "shared inbox accepted with no local targets: activity_type={} actor={}",
+                    inbox_activity_type(&activity),
+                    remote_actor.actor_uri
+                ),
+                serde_json::json!({
+                    "inbox": "shared",
+                    "activity_type": inbox_activity_type(&activity),
+                    "actor_uri": remote_actor.actor_uri,
+                }),
+            );
+            Ok(Response::empty()?.with_status(202))
+        }
         SharedInboxPreprocessOutcome::Process => {
             process_verified_inbox_activity(&db, &config, &accounts, &body, &activity, remote_actor)
                 .await
@@ -231,7 +262,22 @@ pub(crate) async fn handle_inbox_request_for_accounts(
 ) -> Result<Response> {
     let remote_actor = match verify_incoming_activitypub_request(req, db, body, activity).await {
         Ok(remote_actor) => remote_actor,
-        Err(_) => return Response::error("invalid activitypub signature", 401),
+        Err(error) => {
+            log_federation_event(
+                "inbox_signature_failed",
+                "unauthorized",
+                format!(
+                    "inbox signature verification failed: activity_type={} error={error}",
+                    inbox_activity_type(activity)
+                ),
+                serde_json::json!({
+                    "inbox": "personal",
+                    "activity_type": inbox_activity_type(activity),
+                    "error": error.to_string(),
+                }),
+            );
+            return Response::error("invalid activitypub signature", 401);
+        }
     };
     process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor).await
 }
@@ -244,15 +290,23 @@ async fn process_verified_inbox_activity(
     activity: &serde_json::Value,
     remote_actor: RemoteActorProfile,
 ) -> Result<Response> {
+    let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    if !begin_inbox_activity_if_needed(
-        db,
-        &remote_actor,
-        &activity_id,
-        inbox_activity_type(activity),
-    )
-    .await?
-    {
+    if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
+        log_federation_event(
+            "inbox_replay_skipped",
+            "replay",
+            format!(
+                "inbox replay skipped: activity_type={activity_type} actor={} activity_id={activity_id}",
+                remote_actor.actor_uri
+            ),
+            serde_json::json!({
+                "activity_type": activity_type,
+                "activity_id": activity_id,
+                "actor_uri": remote_actor.actor_uri,
+                "target_count": accounts.len(),
+            }),
+        );
         return Ok(Response::empty()?.with_status(202));
     }
 
@@ -273,6 +327,39 @@ async fn process_verified_inbox_activity(
         outcome
     };
     finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
+    match &result {
+        Ok(()) => log_federation_event(
+            "inbox_processed",
+            "ok",
+            format!(
+                "inbox processed: activity_type={activity_type} actor={} activity_id={activity_id} targets={}",
+                remote_actor.actor_uri,
+                accounts.len()
+            ),
+            serde_json::json!({
+                "activity_type": activity_type,
+                "activity_id": activity_id,
+                "actor_uri": remote_actor.actor_uri,
+                "target_count": accounts.len(),
+                "target_account_ids": accounts.iter().map(LocalAccount::id).collect::<Vec<_>>(),
+            }),
+        ),
+        Err(error) => log_federation_event(
+            "inbox_processing_failed",
+            "failed",
+            format!(
+                "inbox processing failed: activity_type={activity_type} actor={} activity_id={activity_id} error={error}",
+                remote_actor.actor_uri
+            ),
+            serde_json::json!({
+                "activity_type": activity_type,
+                "activity_id": activity_id,
+                "actor_uri": remote_actor.actor_uri,
+                "target_count": accounts.len(),
+                "error": error.to_string(),
+            }),
+        ),
+    }
     inbox_result_response(result)
 }
 

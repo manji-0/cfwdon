@@ -142,9 +142,22 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let result = async {
         let db = env.d1(&config.database_binding)?;
         match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
-            Ok(true) => {}
+            Ok(true) => log_federation_event(
+                "outbox_queue_kick",
+                "ok",
+                "outbox queue kick enqueued from scheduled trigger",
+                serde_json::json!({ "reason": "scheduled", "queued": true }),
+            ),
             Ok(false) => {}
-            Err(error) => console_error!("outbox delivery queue kick failed: {error}"),
+            Err(error) => log_federation_event(
+                "outbox_queue_kick_failed",
+                "failed",
+                format!("outbox delivery queue kick failed: {error}"),
+                serde_json::json!({
+                    "reason": "scheduled",
+                    "error": error.to_string(),
+                }),
+            ),
         }
         if let Err(error) =
             revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
@@ -171,33 +184,73 @@ async fn queue(
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     let db = env.d1(&config.database_binding)?;
     if !pending_outbox_work_exists(&db).await? {
-        console_log!("outbox queue batch idle: messages={message_count}");
+        log_federation_event(
+            "outbox_queue_idle",
+            "ok",
+            format!("outbox queue batch idle: messages={message_count}"),
+            serde_json::json!({ "messages": message_count }),
+        );
         return Ok(());
     }
 
     match process_outbox_deliveries_for_config(&db, &config).await {
         Ok(summary) => {
-            console_log!(
-                "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
-                message_count,
-                summary.expanded,
-                summary.delivered,
-                summary.failed,
-                summary.completed_without_targets
+            log_federation_event(
+                "outbox_queue_processed",
+                "ok",
+                format!(
+                    "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
+                    message_count,
+                    summary.expanded,
+                    summary.delivered,
+                    summary.failed,
+                    summary.completed_without_targets
+                ),
+                serde_json::json!({
+                    "messages": message_count,
+                    "expanded": summary.expanded,
+                    "delivered": summary.delivered,
+                    "failed": summary.failed,
+                    "completed_without_targets": summary.completed_without_targets,
+                }),
             );
             // Each run claims a bounded batch. Continue only while the previous
             // batch progressed, so a stalled backlog cannot self-schedule forever.
             if outbox_batch_made_progress(&summary) {
                 match enqueue_outbox_process_queue_if_pending(&env, &db, "queue_continuation").await
                 {
-                    Ok(true) => console_log!("outbox queue continuation enqueued"),
+                    Ok(true) => log_federation_event(
+                        "outbox_queue_kick",
+                        "ok",
+                        "outbox queue continuation enqueued",
+                        serde_json::json!({
+                            "reason": "queue_continuation",
+                            "queued": true,
+                        }),
+                    ),
                     Ok(false) => {}
-                    Err(error) => console_error!("outbox queue continuation failed: {error}"),
+                    Err(error) => log_federation_event(
+                        "outbox_queue_kick_failed",
+                        "failed",
+                        format!("outbox queue continuation failed: {error}"),
+                        serde_json::json!({
+                            "reason": "queue_continuation",
+                            "error": error.to_string(),
+                        }),
+                    ),
                 }
             }
         }
         Err(error) => {
-            console_error!("outbox queue processing failed: {error}");
+            log_federation_event(
+                "outbox_queue_processing_failed",
+                "failed",
+                format!("outbox queue processing failed: {error}"),
+                serde_json::json!({
+                    "messages": message_count,
+                    "error": error.to_string(),
+                }),
+            );
         }
     }
     Ok(())

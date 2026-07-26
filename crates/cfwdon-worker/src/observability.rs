@@ -29,6 +29,43 @@ pub(crate) fn log_json_event(mut payload: serde_json::Value) {
     }
 }
 
+/// Structured federation/outbox/inbox event for Cloudflare Workers Observability.
+///
+/// Prefer this over free-form `console_log!` for delivery and inbox lifecycle so
+/// operators can filter on `event`, `outcome`, `activity_type`, and targets.
+pub(crate) fn log_federation_event(
+    event: &str,
+    outcome: &str,
+    message: impl Into<String>,
+    mut details: serde_json::Value,
+) {
+    if let Some(object) = details.as_object_mut() {
+        object.insert("event".to_owned(), serde_json::json!(event));
+        object.insert("component".to_owned(), serde_json::json!("federation"));
+        object.insert("outcome".to_owned(), serde_json::json!(outcome));
+        object.insert(
+            "level".to_owned(),
+            serde_json::json!(federation_event_level(outcome)),
+        );
+    } else {
+        details = serde_json::json!({
+            "event": event,
+            "component": "federation",
+            "outcome": outcome,
+            "level": federation_event_level(outcome),
+        });
+    }
+    log_json_event(add_log_message(details, message));
+}
+
+fn federation_event_level(outcome: &str) -> &'static str {
+    match outcome {
+        "failed" | "error" | "unauthorized" => "error",
+        "skipped" | "replay" => "warn",
+        _ => "info",
+    }
+}
+
 pub(crate) fn log_json_debug_event(mut payload: serde_json::Value) {
     if let Some(object) = payload.as_object_mut() {
         object.insert("source".to_owned(), serde_json::json!("cfwdon"));
@@ -174,5 +211,15 @@ mod tests {
             payload["message"],
             "API request GET /api/v1/instance completed with HTTP 200 in 12ms"
         );
+    }
+
+    #[test]
+    fn federation_event_level_maps_outcomes() {
+        assert_eq!(federation_event_level("ok"), "info");
+        assert_eq!(federation_event_level("delivered"), "info");
+        assert_eq!(federation_event_level("failed"), "error");
+        assert_eq!(federation_event_level("unauthorized"), "error");
+        assert_eq!(federation_event_level("skipped"), "warn");
+        assert_eq!(federation_event_level("replay"), "warn");
     }
 }

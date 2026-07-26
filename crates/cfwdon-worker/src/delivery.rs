@@ -118,12 +118,28 @@ pub(crate) async fn kick_outbox_process_queue_after_request(
     let db = match env.d1(&config.database_binding) {
         Ok(db) => db,
         Err(error) => {
-            console_error!("outbox queue kick skipped: {error}");
+            log_federation_event(
+                "outbox_queue_kick_skipped",
+                "failed",
+                format!("outbox queue kick skipped: {error}"),
+                serde_json::json!({
+                    "reason": "request",
+                    "error": error.to_string(),
+                }),
+            );
             return;
         }
     };
     if let Err(error) = enqueue_outbox_process_queue_if_pending(env, &db, "request").await {
-        console_error!("outbox queue kick failed: {error}");
+        log_federation_event(
+            "outbox_queue_kick_failed",
+            "failed",
+            format!("outbox queue kick failed: {error}"),
+            serde_json::json!({
+                "reason": "request",
+                "error": error.to_string(),
+            }),
+        );
     }
 }
 
@@ -148,10 +164,18 @@ pub(crate) async fn process_outbox_deliveries_for_config(
         claim_pending_target_outbox_deliveries(db, 32),
         claim_pending_outbound_activities(db, 32),
     )?;
-    console_log!(
-        "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",
-        target_deliveries.len(),
-        outbound_deliveries.len()
+    log_federation_event(
+        "outbox_batch_candidates",
+        "ok",
+        format!(
+            "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",
+            target_deliveries.len(),
+            outbound_deliveries.len()
+        ),
+        serde_json::json!({
+            "target_deliveries": target_deliveries.len(),
+            "outbound_deliveries": outbound_deliveries.len(),
+        }),
     );
     let mut account_cache = HashMap::new();
     let mut blocked_domains_cache = HashMap::<String, Vec<String>>::new();
@@ -165,12 +189,28 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             continue;
         };
         let Some(account) = account_cache.get(&delivery.account_id) else {
-            console_error!(
-                "outbox delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
-                delivery.id,
-                target_inbox,
-                delivery.attempt_count.saturating_add(1),
-                delivery.account_id
+            log_federation_event(
+                "outbox_delivery_failed",
+                "failed",
+                format!(
+                    "outbox delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
+                    delivery.id,
+                    target_inbox,
+                    delivery.attempt_count.saturating_add(1),
+                    delivery.account_id
+                ),
+                serde_json::json!({
+                    "channel": "outbox_deliveries",
+                    "delivery_id": delivery.id,
+                    "account_id": delivery.account_id,
+                    "activity_id": delivery.activity_id,
+                    "activity_type": delivery.activity_type,
+                    "target_inbox": target_inbox,
+                    "attempt": delivery.attempt_count.saturating_add(1),
+                    "terminal": true,
+                    "permanent": true,
+                    "error": format!("missing account {}", delivery.account_id),
+                }),
             );
             mark_outbox_delivery_terminal_failure(
                 db,
@@ -190,10 +230,22 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if delivery_inbox_blocked_by_domains(&target_inbox, blocked_domains) {
-            console_log!(
-                "outbox delivery skipped domain block: id={} target={}",
-                delivery.id,
-                target_inbox
+            log_federation_event(
+                "outbox_delivery_skipped",
+                "skipped",
+                format!(
+                    "outbox delivery skipped domain block: id={} target={}",
+                    delivery.id, target_inbox
+                ),
+                serde_json::json!({
+                    "channel": "outbox_deliveries",
+                    "delivery_id": delivery.id,
+                    "account_id": delivery.account_id,
+                    "activity_id": delivery.activity_id,
+                    "activity_type": delivery.activity_type,
+                    "target_inbox": target_inbox,
+                    "reason": "domain_block",
+                }),
             );
             if mark_outbox_delivery_terminal_failure(
                 db,
@@ -222,27 +274,65 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             Ok(()) => {
                 if mark_outbox_delivery_delivered(db, &delivery.id).await? {
                     summary.delivered += 1;
+                    log_federation_event(
+                        "outbox_delivery_delivered",
+                        "delivered",
+                        format!(
+                            "outbox delivery delivered: id={} target={} activity_type={}",
+                            delivery.id, target_inbox, delivery.activity_type
+                        ),
+                        serde_json::json!({
+                            "channel": "outbox_deliveries",
+                            "delivery_id": delivery.id,
+                            "account_id": delivery.account_id,
+                            "activity_id": delivery.activity_id,
+                            "activity_type": delivery.activity_type,
+                            "target_inbox": target_inbox,
+                            "attempt": delivery.attempt_count,
+                        }),
+                    );
                 } else {
-                    console_error!(
-                        "outbox delivery mark delivered no-op: id={} target={}",
-                        delivery.id,
-                        target_inbox
+                    log_federation_event(
+                        "outbox_delivery_mark_noop",
+                        "failed",
+                        format!(
+                            "outbox delivery mark delivered no-op: id={} target={}",
+                            delivery.id, target_inbox
+                        ),
+                        serde_json::json!({
+                            "channel": "outbox_deliveries",
+                            "delivery_id": delivery.id,
+                            "target_inbox": target_inbox,
+                            "error": "mark_delivered_noop",
+                        }),
                     );
                 }
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
                 let permanent = error.is_permanent();
-                console_error!(
-                    "outbox delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
-                    delivery.id,
-                    target_inbox,
-                    next_attempt,
-                    permanent || is_delivery_terminal(next_attempt),
-                    permanent,
-                    error.detail
+                let terminal = permanent || is_delivery_terminal(next_attempt);
+                log_federation_event(
+                    "outbox_delivery_failed",
+                    "failed",
+                    format!(
+                        "outbox delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
+                        delivery.id, target_inbox, next_attempt, terminal, permanent, error.detail
+                    ),
+                    serde_json::json!({
+                        "channel": "outbox_deliveries",
+                        "delivery_id": delivery.id,
+                        "account_id": delivery.account_id,
+                        "activity_id": delivery.activity_id,
+                        "activity_type": delivery.activity_type,
+                        "target_inbox": target_inbox,
+                        "attempt": next_attempt,
+                        "terminal": terminal,
+                        "permanent": permanent,
+                        "error": error.detail,
+                    }),
                 );
-                if permanent || is_delivery_terminal(next_attempt) {
+                if terminal {
                     if mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?
                     {
                         summary.failed += 1;
@@ -257,12 +347,29 @@ pub(crate) async fn process_outbox_deliveries_for_config(
     let mut outbound_send_jobs = Vec::new();
     for delivery in outbound_deliveries {
         let Some(account) = account_cache.get(&delivery.account_id) else {
-            console_error!(
-                "outbound delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
-                delivery.id,
-                delivery.target_inbox,
-                delivery.attempt_count.saturating_add(1),
-                delivery.account_id
+            log_federation_event(
+                "outbox_delivery_failed",
+                "failed",
+                format!(
+                    "outbound delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
+                    delivery.id,
+                    delivery.target_inbox,
+                    delivery.attempt_count.saturating_add(1),
+                    delivery.account_id
+                ),
+                serde_json::json!({
+                    "channel": "outbound_activities",
+                    "delivery_id": delivery.id,
+                    "account_id": delivery.account_id,
+                    "activity_id": delivery.activity_id,
+                    "activity_type": delivery.activity_type,
+                    "target_inbox": delivery.target_inbox,
+                    "target_actor_uri": delivery.target_actor_uri,
+                    "attempt": delivery.attempt_count.saturating_add(1),
+                    "terminal": true,
+                    "permanent": true,
+                    "error": format!("missing account {}", delivery.account_id),
+                }),
             );
             reconcile_outbound_activity_terminal_failure(
                 db,
@@ -282,10 +389,23 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if delivery_inbox_blocked_by_domains(&delivery.target_inbox, blocked_domains) {
-            console_log!(
-                "outbound delivery skipped domain block: id={} target={}",
-                delivery.id,
-                delivery.target_inbox
+            log_federation_event(
+                "outbox_delivery_skipped",
+                "skipped",
+                format!(
+                    "outbound delivery skipped domain block: id={} target={}",
+                    delivery.id, delivery.target_inbox
+                ),
+                serde_json::json!({
+                    "channel": "outbound_activities",
+                    "delivery_id": delivery.id,
+                    "account_id": delivery.account_id,
+                    "activity_id": delivery.activity_id,
+                    "activity_type": delivery.activity_type,
+                    "target_inbox": delivery.target_inbox,
+                    "target_actor_uri": delivery.target_actor_uri,
+                    "reason": "domain_block",
+                }),
             );
             reconcile_outbound_activity_terminal_failure(
                 db,
@@ -317,27 +437,72 @@ pub(crate) async fn process_outbox_deliveries_for_config(
             Ok(()) => {
                 if mark_outbound_activity_delivered(db, &delivery.id).await? {
                     summary.delivered += 1;
+                    log_federation_event(
+                        "outbox_delivery_delivered",
+                        "delivered",
+                        format!(
+                            "outbound delivery delivered: id={} target={} activity_type={}",
+                            delivery.id, delivery.target_inbox, delivery.activity_type
+                        ),
+                        serde_json::json!({
+                            "channel": "outbound_activities",
+                            "delivery_id": delivery.id,
+                            "account_id": delivery.account_id,
+                            "activity_id": delivery.activity_id,
+                            "activity_type": delivery.activity_type,
+                            "target_inbox": delivery.target_inbox,
+                            "target_actor_uri": delivery.target_actor_uri,
+                            "attempt": delivery.attempt_count,
+                        }),
+                    );
                 } else {
-                    console_error!(
-                        "outbound delivery mark delivered no-op: id={} target={}",
-                        delivery.id,
-                        delivery.target_inbox
+                    log_federation_event(
+                        "outbox_delivery_mark_noop",
+                        "failed",
+                        format!(
+                            "outbound delivery mark delivered no-op: id={} target={}",
+                            delivery.id, delivery.target_inbox
+                        ),
+                        serde_json::json!({
+                            "channel": "outbound_activities",
+                            "delivery_id": delivery.id,
+                            "target_inbox": delivery.target_inbox,
+                            "error": "mark_delivered_noop",
+                        }),
                     );
                 }
             }
             Err(error) => {
                 let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
                 let permanent = error.is_permanent();
-                console_error!(
-                    "outbound delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
-                    delivery.id,
-                    delivery.target_inbox,
-                    next_attempt,
-                    permanent || is_delivery_terminal(next_attempt),
-                    permanent,
-                    error.detail
+                let terminal = permanent || is_delivery_terminal(next_attempt);
+                log_federation_event(
+                    "outbox_delivery_failed",
+                    "failed",
+                    format!(
+                        "outbound delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
+                        delivery.id,
+                        delivery.target_inbox,
+                        next_attempt,
+                        terminal,
+                        permanent,
+                        error.detail
+                    ),
+                    serde_json::json!({
+                        "channel": "outbound_activities",
+                        "delivery_id": delivery.id,
+                        "account_id": delivery.account_id,
+                        "activity_id": delivery.activity_id,
+                        "activity_type": delivery.activity_type,
+                        "target_inbox": delivery.target_inbox,
+                        "target_actor_uri": delivery.target_actor_uri,
+                        "attempt": next_attempt,
+                        "terminal": terminal,
+                        "permanent": permanent,
+                        "error": error.detail,
+                    }),
                 );
-                if permanent || is_delivery_terminal(next_attempt) {
+                if terminal {
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
                     summary.failed += 1;
@@ -388,14 +553,26 @@ async fn process_generic_outbox_deliveries(
 
     let (deliveries_with_targets, completed_without_targets) =
         partition_generic_outbox_deliveries_by_targets(&deliveries, &targets_by_account);
-    console_log!(
-        "outbox generic delivery expansion: pending={} accounts={} accounts_with_targets={} targets={} with_targets={} without_targets={}",
-        deliveries.len(),
-        unique_ordered_refs(&account_ids).len(),
-        targets_by_account.len(),
-        target_count,
-        deliveries_with_targets.len(),
-        completed_without_targets.len()
+    log_federation_event(
+        "outbox_expand_planned",
+        "ok",
+        format!(
+            "outbox generic delivery expansion: pending={} accounts={} accounts_with_targets={} targets={} with_targets={} without_targets={}",
+            deliveries.len(),
+            unique_ordered_refs(&account_ids).len(),
+            targets_by_account.len(),
+            target_count,
+            deliveries_with_targets.len(),
+            completed_without_targets.len()
+        ),
+        serde_json::json!({
+            "pending": deliveries.len(),
+            "accounts": unique_ordered_refs(&account_ids).len(),
+            "accounts_with_targets": targets_by_account.len(),
+            "targets": target_count,
+            "with_targets": deliveries_with_targets.len(),
+            "without_targets": completed_without_targets.len(),
+        }),
     );
 
     if !completed_without_targets.is_empty() {
@@ -413,7 +590,14 @@ async fn process_generic_outbox_deliveries(
         &targets_by_account,
     )
     .await? as u32;
-    console_log!("outbox generic delivery expanded target rows: expanded={expanded_count}");
+    log_federation_event(
+        "outbox_expanded",
+        "ok",
+        format!("outbox generic delivery expanded target rows: expanded={expanded_count}"),
+        serde_json::json!({
+            "expanded": expanded_count,
+        }),
+    );
     summary.expanded += expanded_count;
     let expanded_ids = deliveries_with_targets
         .iter()

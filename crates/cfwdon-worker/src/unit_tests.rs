@@ -45,13 +45,13 @@ use super::{
     format_async_refresh_header_value, hash_account_password, image_dimensions,
     include_local_source, include_remote_source, instance_base_url, instance_open_registrations,
     is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
-    local_quote_revoke_allowed, local_status_ap_id, local_username_from_actor_uri,
-    local_username_from_status_uri, mastodon_account_fields, matches_tag_timeline_filters,
-    media_fallback_url, media_kind_label, media_object_url, nodeinfo_url,
-    normalize_quote_approval_policy, normalize_scheduled_at, normalize_search_match_text,
-    normalize_search_query_input, normalize_status_history_entry, normalize_status_poll,
-    normalized_account_search_query, normalized_action_uri, notification_api_numeric_id,
-    notification_sort_key, notification_timestamp_sort_token,
+    local_quote_revoke_allowed, local_status_allows_viewer, local_status_ap_id,
+    local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
+    matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
+    nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
+    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
+    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
+    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
     oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
     object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
     outbox_batch_made_progress, paginate_tag_search_matches, parse_activitypub_request_date_ms,
@@ -4251,6 +4251,60 @@ fn status_has_active_quote_depends_on_quote_state() {
     status.quote_state = cfwdon_domain::QuoteState::Revoked;
     assert_eq!(effective_status_quote_state(&status), "revoked");
     assert!(!status_has_active_quote(&status));
+}
+
+#[test]
+fn local_status_allows_viewer_opens_direct_to_participants_only() {
+    use cfwdon_domain::Visibility;
+
+    assert!(local_status_allows_viewer(
+        Visibility::Public,
+        false,
+        false,
+        false
+    ));
+    assert!(local_status_allows_viewer(
+        Visibility::Unlisted,
+        false,
+        false,
+        false
+    ));
+    assert!(!local_status_allows_viewer(
+        Visibility::FollowersOnly,
+        false,
+        false,
+        false
+    ));
+    assert!(local_status_allows_viewer(
+        Visibility::FollowersOnly,
+        false,
+        true,
+        false
+    ));
+    assert!(local_status_allows_viewer(
+        Visibility::FollowersOnly,
+        true,
+        false,
+        false
+    ));
+    assert!(!local_status_allows_viewer(
+        Visibility::Direct,
+        false,
+        true,
+        false
+    ));
+    assert!(local_status_allows_viewer(
+        Visibility::Direct,
+        true,
+        false,
+        false
+    ));
+    assert!(local_status_allows_viewer(
+        Visibility::Direct,
+        false,
+        false,
+        true
+    ));
 }
 
 #[test]
