@@ -4,6 +4,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 
 ## Start Here
 <!-- derived-from ../README.md -->
+<!-- constrained-by ../workers/ap-x-mirror/README.md -->
 
 - [Development Workflow](getting-started/development.md)
   Local environment setup, common validation commands, local Worker execution, and compatibility document refresh steps.
@@ -19,6 +20,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
   Cloudflare Access edge gating, policy scope, service tokens, and Auth0 coexistence notes.
 - [Architecture](architecture/cfwdon-architecture.md)
   Worker, D1, R2, Mastodon API, and ActivityPub design boundaries.
+- [ActivityPub → X Mirror](../workers/ap-x-mirror/README.md)
+  Optional misc Worker that mirrors allowlisted ActivityPub notes to a fixed X account.
 - [Mastodon API Compatibility](mastodon-api-compat/README.md)
   Generated compatibility inventory comparing upstream Mastodon routes with `cfwdon` route handlers.
 

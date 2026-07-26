@@ -11,6 +11,7 @@ The project is still early software. The current focus is making the Mastodon AP
 - D1 migrations and R2 media bindings
 - Mastodon API compatibility inventory generated from upstream routes
 - ActivityPub actor, inbox, outbox, delivery, follow, status, poll, and interaction slices
+- Optional misc Workers under [`workers/`](workers/) (Auth0 email helper, ActivityPub→X mirror)
 
 For the detailed route inventory, see [Mastodon API Compatibility](docs/mastodon-api-compat/README.md).
 

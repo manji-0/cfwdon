@@ -1,0 +1,7 @@
+# Local secrets for `wrangler dev` (copy to `.dev.vars`, never commit).
+# ACTOR_PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+# ADMIN_TOKEN=replace-me
+# X_API_KEY=replace-me
+# X_API_SECRET=replace-me
+# X_ACCESS_TOKEN=replace-me
+# X_ACCESS_TOKEN_SECRET=replace-me

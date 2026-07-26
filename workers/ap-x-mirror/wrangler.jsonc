@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cfwdon-ap-x-mirror",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-09",
+  "workers_dev": true,
+  "preview_urls": false,
+  // Replace with the bridge custom domain before deploy.
+  // "routes": [{ "pattern": "x-mirror.example.com", "custom_domain": true }],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "vars": {
+    "INSTANCE_DOMAIN": "x-mirror.example.com",
+    "ACTOR_USERNAME": "bridge",
+    "ACTOR_NAME": "AP→X Mirror",
+    "ALLOWLIST_ACTOR_URIS": "",
+    "APPEND_SOURCE_URL": "true",
+    "MAX_TWEET_CHARS": "280"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "STORE",
+      "id": "replace-with-kv-namespace-id",
+      "preview_id": "replace-with-kv-preview-id"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MIRROR_QUEUE",
+        "queue": "ap-x-mirror-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "ap-x-mirror-jobs",
+        "max_batch_size": 5,
+        "max_retries": 5,
+        "max_batch_timeout": 5
+      }
+    ]
+  }
+}
