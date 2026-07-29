@@ -382,6 +382,32 @@ mod tests {
     }
 
     #[test]
+    fn misskey_specific_activity_types_are_recognized_but_not_dispatched() {
+        // dispatch_inbox_activity matches known Mastodon-shaped types only; Misskey
+        // EmojiReact / Vote / Flag fall through to the silent Ok(()) branch.
+        for activity_type in ["EmojiReact", "Vote", "Flag"] {
+            assert_eq!(
+                inbox_activity_type(&serde_json::json!({ "type": activity_type })),
+                activity_type
+            );
+            assert!(!matches!(
+                activity_type,
+                "Follow"
+                    | "Undo"
+                    | "Accept"
+                    | "Reject"
+                    | "Like"
+                    | "Create"
+                    | "Announce"
+                    | "Add"
+                    | "Remove"
+                    | "Update"
+                    | "Delete"
+            ));
+        }
+    }
+
+    #[test]
     fn shared_inbox_unsigned_never_gets_202() {
         assert_eq!(
             shared_inbox_preprocess_outcome(false, false),

@@ -3,6 +3,8 @@ pub(crate) use crate::*;
 
 mod actor_document;
 mod local_uri;
+#[cfg(test)]
+mod misskey_compat_tests;
 mod objects;
 mod parse;
 mod social_activities;

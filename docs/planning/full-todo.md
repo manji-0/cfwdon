@@ -48,6 +48,7 @@ The generated compatibility inventory currently maps all tracked upstream routes
 ## ActivityPub Follow-Up
 
 - Test Create/Update/Delete/Like/Announce/Follow/Accept/Reject flows against real federated implementations.
+- Track Misskey ActivityPub interop gaps and residual live tests in [Misskey ActivityPub Interop](misskey-activitypub-interop.md).
 - Improve remote `Question` update handling, option rename detection, and vote refresh semantics.
 - Add stronger replay and dedupe coverage for shared inbox traffic.
 - Decide where Queues should replace `waitUntil` or internal cron routes for high-volume delivery.
