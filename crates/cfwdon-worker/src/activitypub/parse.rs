@@ -158,7 +158,9 @@ pub(crate) fn note_targets_account_or_followers(
     account: &LocalAccount,
     config: &AppConfig,
 ) -> bool {
-    note_targets_account(object, account, config) || note_targets_followers(object, account, config)
+    note_targets_account(object, account, config)
+        || note_targets_followers(object, account, config)
+        || note_targets_public(object)
 }
 
 pub(crate) fn note_targets_account(
@@ -172,16 +174,25 @@ pub(crate) fn note_targets_account(
         .any(|audience| audience == actor)
 }
 
+/// True when the note addresses any followers collection (typically the author's).
+///
+/// Remote Creates use the remote actor's `/followers` URI in `to`/`cc`, not the
+/// local viewer's. Matching only the local followers collection dropped Misskey
+/// and Mastodon public/followers deliveries on the shared inbox path.
 pub(crate) fn note_targets_followers(
     object: &serde_json::Value,
-    account: &LocalAccount,
-    config: &AppConfig,
+    _account: &LocalAccount,
+    _config: &AppConfig,
 ) -> bool {
-    let actor = actor_url(config, account.username());
-    let followers = format!("{actor}/followers");
     activity_audience_uris(&serde_json::json!({ "object": object }))
         .into_iter()
-        .any(|audience| audience == followers)
+        .any(|audience| cfwdon_domain::is_followers_collection_uri(&audience))
+}
+
+pub(crate) fn note_targets_public(object: &serde_json::Value) -> bool {
+    activity_audience_uris(&serde_json::json!({ "object": object }))
+        .into_iter()
+        .any(|audience| cfwdon_domain::is_public_audience_uri(&audience))
 }
 
 pub(crate) fn contains_public_audience(value: Option<&serde_json::Value>) -> bool {

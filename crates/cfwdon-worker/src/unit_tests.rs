@@ -51,6 +51,7 @@ use super::{
     nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
     normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
     normalize_status_poll, normalized_account_search_query, normalized_action_uri,
+    note_targets_account_or_followers, note_targets_followers, note_targets_public,
     notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
     oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
     object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
@@ -2636,6 +2637,43 @@ fn remote_status_targets_local_viewer_followers_rejects_direct_audience() {
         &viewer,
         &config
     ));
+}
+
+#[test]
+fn remote_status_targets_local_viewer_followers_matches_remote_author_followers() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let raw_status = serde_json::json!({
+        "type": "Note",
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": ["https://misskey.io/users/9jc6bgzfkw/followers"]
+    });
+
+    assert!(remote_status_targets_local_viewer_followers(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+    assert!(note_targets_account_or_followers(
+        &raw_status,
+        &viewer,
+        &config
+    ));
+}
+
+#[test]
+fn note_targets_account_or_followers_accepts_public_without_followers_uri() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let viewer = actor_fixture_account();
+    let object = serde_json::json!({
+        "type": "Note",
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": []
+    });
+
+    assert!(note_targets_public(&object));
+    assert!(note_targets_account_or_followers(&object, &viewer, &config));
+    assert!(!note_targets_followers(&object, &viewer, &config));
 }
 
 #[test]
