@@ -1148,7 +1148,7 @@ async fn enqueue_collection_followers_activity(
     db: &worker::D1Database,
     _config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
-    collection_id: &str,
+    _collection_id: &str,
     payload: serde_json::Value,
 ) -> Result<()> {
     let follower_inboxes = list_follower_delivery_targets(db, owner.id()).await?;
@@ -1158,14 +1158,7 @@ async fn enqueue_collection_followers_activity(
     let payload_json = serde_json::to_string(&payload).map_err(|error| {
         worker::Error::RustError(format!("failed to serialize collection activity: {error}"))
     })?;
-    enqueue_targeted_outbox_activity(
-        db,
-        owner.id(),
-        collection_id,
-        &payload_json,
-        &follower_inboxes,
-    )
-    .await
+    enqueue_targeted_outbox_activity(db, owner.id(), None, &payload_json, &follower_inboxes).await
 }
 
 async fn enqueue_collection_add_activity(
@@ -2143,7 +2136,7 @@ async fn enqueue_delete_feature_authorization_activity(
         enqueue_targeted_outbox_activity(
             db,
             requester.id(),
-            &item.id,
+            None,
             &payload_json,
             &follower_inboxes,
         )

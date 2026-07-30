@@ -508,7 +508,7 @@ async fn enqueue_quote_revocation_federation(
         enqueue_targeted_outbox_activity(
             db,
             requester.id(),
-            target_status_id,
+            Some(target_status_id),
             &payload,
             &unique_follower_inboxes,
         )
@@ -553,7 +553,7 @@ async fn enqueue_quote_approval_federation(
         enqueue_targeted_outbox_activity(
             db,
             requester.id(),
-            target_status_id,
+            Some(target_status_id),
             &create_payload,
             &unique_follower_inboxes,
         )

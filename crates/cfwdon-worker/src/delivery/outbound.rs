@@ -204,7 +204,8 @@ pub(crate) async fn enqueue_announce_activity(
     if inboxes.is_empty() {
         return Ok(Some(activity_id));
     }
-    enqueue_targeted_outbox_activity(db, account.id(), status_id, &payload_json, &inboxes).await?;
+    enqueue_targeted_outbox_activity(db, account.id(), Some(status_id), &payload_json, &inboxes)
+        .await?;
     Ok(Some(activity_id))
 }
 
@@ -237,7 +238,8 @@ pub(crate) async fn enqueue_undo_announce_activity(
     if inboxes.is_empty() {
         return Ok(());
     }
-    enqueue_targeted_outbox_activity(db, account.id(), status_id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(db, account.id(), Some(status_id), &payload_json, &inboxes)
+        .await
 }
 
 pub(crate) async fn enqueue_profile_update_activities(
@@ -247,7 +249,8 @@ pub(crate) async fn enqueue_profile_update_activities(
 ) -> Result<()> {
     let payload_json = crate::build_update_person_activity(config, account)?;
     let inboxes = follower_delivery_inboxes(db, account.id()).await?;
-    enqueue_targeted_outbox_activity(db, account.id(), account.id(), &payload_json, &inboxes).await
+    // Profile Update has no status row; status_id must stay NULL to satisfy the FK.
+    enqueue_targeted_outbox_activity(db, account.id(), None, &payload_json, &inboxes).await
 }
 
 pub(crate) async fn enqueue_status_update_activity(
@@ -320,7 +323,14 @@ pub(crate) async fn enqueue_status_update_activity(
     if inboxes.is_empty() {
         return Ok(());
     }
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 pub(crate) async fn enqueue_add_featured_status_activity(
@@ -336,7 +346,14 @@ pub(crate) async fn enqueue_add_featured_status_activity(
     let payload_json =
         build_add_featured_activity(config, account, &local_status_target_uri(status))?;
     let inboxes = follower_delivery_inboxes(db, account.id()).await?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 pub(crate) async fn enqueue_remove_featured_status_activity(
@@ -352,5 +369,12 @@ pub(crate) async fn enqueue_remove_featured_status_activity(
     let payload_json =
         build_remove_featured_activity(config, account, &local_status_target_uri(status))?;
     let inboxes = follower_delivery_inboxes(db, account.id()).await?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }

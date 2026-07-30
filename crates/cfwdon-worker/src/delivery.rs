@@ -674,7 +674,7 @@ mod tests {
         OutboxDeliveryRow {
             id: id.to_owned(),
             account_id: account_id.to_owned(),
-            status_id: format!("status-{id}"),
+            status_id: Some(format!("status-{id}")),
             activity_id: format!("activity-{id}"),
             activity_type: "Create".to_owned(),
             target_inbox: None,

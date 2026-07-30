@@ -12,7 +12,7 @@ const OUTBOX_DELIVERY_EXPAND_CHUNK_SIZE: usize = 40;
 pub(crate) struct OutboxDeliveryRow {
     pub(crate) id: String,
     pub(crate) account_id: String,
-    pub(crate) status_id: String,
+    pub(crate) status_id: Option<String>,
     pub(crate) activity_id: String,
     pub(crate) activity_type: String,
     pub(crate) target_inbox: Option<String>,
@@ -258,7 +258,10 @@ pub(crate) async fn expand_outbox_delivery_targets_for_deliveries(
         for (delivery, target) in chunk {
             bindings.extend([
                 D1Type::Text(delivery.account_id.as_str()),
-                D1Type::Text(delivery.status_id.as_str()),
+                match delivery.status_id.as_deref() {
+                    Some(status_id) => D1Type::Text(status_id),
+                    None => D1Type::Null,
+                },
                 D1Type::Text(delivery.activity_id.as_str()),
                 D1Type::Text(delivery.activity_type.as_str()),
                 D1Type::Text(target),
@@ -298,7 +301,7 @@ mod tests {
         OutboxDeliveryRow {
             id: id.to_owned(),
             account_id: account_id.to_owned(),
-            status_id: format!("status-{id}"),
+            status_id: Some(format!("status-{id}")),
             activity_id: format!("activity-{id}"),
             activity_type: "Create".to_owned(),
             target_inbox: None,

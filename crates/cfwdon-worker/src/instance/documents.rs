@@ -6,7 +6,7 @@ use super::{
 };
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
-const INSTANCE_API_VERSION: u64 = 6;
+const INSTANCE_API_VERSION: u64 = 8;
 const MAX_FEATURED_TAGS: u64 = 10;
 const MAX_PINNED_STATUSES: u64 = 5;
 const MAX_DISPLAY_NAME_LENGTH: u64 = 30;

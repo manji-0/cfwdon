@@ -215,7 +215,14 @@ pub(crate) async fn enqueue_direct_create_activity(
 
     let (_, payload_json) =
         build_create_activity_payload(db, config, account, status, attachments_override).await?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 /// Deliver Create to explicitly addressed remote actors (mentions / reply parent)
@@ -246,7 +253,14 @@ pub(crate) async fn enqueue_addressed_create_activity(
 
     let (_, payload_json) =
         build_create_activity_payload(db, config, account, status, attachments_override).await?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 pub(crate) async fn outbox_delete_insert_statement(
@@ -299,7 +313,14 @@ pub(crate) async fn enqueue_direct_delete_activity(
     let payload_json = serde_json::to_string(&activity).map_err(|error| {
         Error::RustError(format!("failed to serialize delete activity: {error}"))
     })?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 pub(crate) async fn enqueue_addressed_delete_activity(
@@ -329,13 +350,20 @@ pub(crate) async fn enqueue_addressed_delete_activity(
     let payload_json = serde_json::to_string(&activity).map_err(|error| {
         Error::RustError(format!("failed to serialize delete activity: {error}"))
     })?;
-    enqueue_targeted_outbox_activity(db, account.id(), &status.id, &payload_json, &inboxes).await
+    enqueue_targeted_outbox_activity(
+        db,
+        account.id(),
+        Some(status.id.as_str()),
+        &payload_json,
+        &inboxes,
+    )
+    .await
 }
 
 pub(crate) async fn enqueue_targeted_outbox_activity(
     db: &D1Database,
     account_id: &str,
-    status_id: &str,
+    status_id: Option<&str>,
     payload_json: &str,
     target_inboxes: &[String],
 ) -> Result<()> {
@@ -350,7 +378,10 @@ pub(crate) async fn enqueue_targeted_outbox_activity(
 
         let bindings = [
             D1Type::Text(account_id),
-            D1Type::Text(status_id),
+            match status_id {
+                Some(status_id) => D1Type::Text(status_id),
+                None => D1Type::Null,
+            },
             D1Type::Text(descriptor.activity_id.as_str()),
             D1Type::Text(descriptor.activity_type.as_str()),
             D1Type::Text(target_inbox),

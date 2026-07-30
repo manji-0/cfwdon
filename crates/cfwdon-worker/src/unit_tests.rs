@@ -5825,7 +5825,7 @@ fn instance_v2_document_uses_conservative_defaults() {
     );
     assert_eq!(
         document.pointer("/api_versions/mastodon"),
-        Some(&serde_json::json!(6))
+        Some(&serde_json::json!(8))
     );
     assert_eq!(
         document.pointer("/configuration/urls/streaming"),
