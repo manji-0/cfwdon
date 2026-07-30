@@ -23,7 +23,9 @@ mod tags;
 mod timelines;
 
 pub(crate) use dispatch::dispatch_route;
-pub(crate) use http::HttpRequestContext;
+pub(crate) use http::{
+    HttpRequestContext, ensure_missing_content_type, error_response_with_plain_content_type,
+};
 
 #[cfg(test)]
 pub(crate) use http::is_cors_enabled_path;

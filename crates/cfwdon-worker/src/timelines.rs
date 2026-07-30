@@ -261,6 +261,21 @@ async fn preload_public_timeline_remote_edits(
     preload_remote_status_edit_updated_at(db, &status_ids).await
 }
 
+async fn preload_public_timeline_remote_federated_emojis(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+) -> Result<crate::RemoteStatusFederatedEmojisPreload> {
+    let status_ids = candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { .. } => None,
+            PublicTimelineCandidate::Remote { status, .. } => Some(status.id.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    preload_remote_status_federated_emojis(db, &status_ids).await
+}
+
 async fn preload_public_timeline_local_polls(
     db: &D1Database,
     candidates: &[PublicTimelineCandidateEntry],
@@ -464,6 +479,7 @@ async fn timeline_entries_from_candidates(
         remote_viewer_state_preload,
         remote_poll_preload,
         remote_edit_updated_at_preload,
+        remote_federated_emojis_preload,
         in_reply_to_account_ids,
         application_preload,
         mut remote_attachments_by_status_id,
@@ -481,6 +497,7 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_remote_viewer_state(db, &candidates, viewer),
         preload_public_timeline_remote_polls(db, &candidates, viewer),
         preload_public_timeline_remote_edits(db, &candidates),
+        preload_public_timeline_remote_federated_emojis(db, &candidates),
         preload_timeline_candidate_reply_account_ids(db, &candidates),
         preload_public_timeline_status_applications(db, config, &candidates),
         preload_public_timeline_remote_attachments(db, &candidates),
@@ -536,6 +553,7 @@ async fn timeline_entries_from_candidates(
                         Some(&remote_viewer_state_preload),
                         Some(&remote_poll_preload),
                         Some(&remote_edit_updated_at_preload),
+                        Some(&remote_federated_emojis_preload),
                         remote_attachments,
                         Some(&mention_preload),
                     )

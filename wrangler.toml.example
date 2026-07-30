@@ -46,6 +46,9 @@ MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
 # TERMS_OF_SERVICE_HTML = "<p>Terms of service for this instance.</p>"
 # TERMS_OF_SERVICE_EFFECTIVE_DATE = "2026-07-23"
 
+# Optional custom emoji registry (Mastodon CustomEmoji JSON array).
+# CUSTOM_EMOJIS_JSON = '[{"shortcode":"blobaww","url":"https://media.example.com/custom_emojis/blobaww.png"}]'
+
 # Optional e-mail confirmation dispatch via Resend.
 # RESEND_API_KEY should normally be configured as a secret, not here.
 EMAIL_FROM = "cfwdon <noreply@example.com>"

@@ -1,3 +1,4 @@
+use crate::custom_emoji::CustomEmoji;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,6 +38,7 @@ pub struct AppConfig {
     pub terms_of_service_effective_date: Option<String>,
     pub announcements_json: Option<String>,
     pub donation_campaign_json: Option<String>,
+    pub custom_emojis: Vec<CustomEmoji>,
     pub web_push_vapid_public_key: Option<String>,
     pub web_push_vapid_private_key: Option<String>,
     pub web_push_vapid_subject: Option<String>,
@@ -81,6 +83,7 @@ impl AppConfig {
             terms_of_service_effective_date: None,
             announcements_json: None,
             donation_campaign_json: None,
+            custom_emojis: Vec::new(),
             web_push_vapid_public_key: None,
             web_push_vapid_private_key: None,
             web_push_vapid_subject: None,

@@ -2007,6 +2007,20 @@ pub(crate) async fn auth0_callback_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
+    match auth0_callback_response_inner(req, ctx).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            worker::console_error!("Auth0 callback failed: {error}");
+            oauth_authorize_error_response(&auth0_callback_failure_message(&error), 500)
+        }
+    }
+}
+
+fn auth0_callback_failure_message(error: &worker::Error) -> String {
+    format!("Auth0 login failed: {error}")
+}
+
+async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
     let callback = match req.query::<Auth0CallbackRequest>() {
@@ -3123,6 +3137,15 @@ mod tests {
             description: "unsupported code_challenge_method".to_owned(),
         };
         assert!(!authorize_failure_should_use_html_page(&redirect_failure));
+    }
+
+    #[test]
+    fn auth0_callback_failure_message_is_browser_safe_html_source() {
+        let message = auth0_callback_failure_message(&worker::Error::RustError(
+            "Auth0 JWT audience mismatch".to_owned(),
+        ));
+        assert!(message.starts_with("Auth0 login failed: "));
+        assert!(message.contains("Auth0 JWT audience mismatch"));
     }
 
     #[test]

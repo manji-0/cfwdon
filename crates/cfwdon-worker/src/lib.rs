@@ -16,6 +16,7 @@ mod content_helpers;
 mod conversation_store;
 mod conversations;
 mod crypto_keys;
+mod custom_emojis;
 mod db_utils;
 mod delivery;
 mod discovery;
@@ -70,6 +71,7 @@ pub(crate) use collections_alpha::*;
 pub(crate) use content_helpers::*;
 pub(crate) use conversation_store::*;
 pub(crate) use conversations::*;
+pub(crate) use custom_emojis::*;
 pub(crate) use db_utils::*;
 pub(crate) use delivery::*;
 pub(crate) use discovery::*;
@@ -116,7 +118,13 @@ pub(crate) use timelines::*;
 
 #[event(fetch, respond_with_errors)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    router::handle_fetch(req, env).await
+    match router::handle_fetch(req, env).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            console_error!("request handler failed: {error}");
+            error_response_with_plain_content_type("Internal Server Error", 500)
+        }
+    }
 }
 
 fn optional_env_var(env: &Env, key: &str) -> Option<String> {

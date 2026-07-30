@@ -1,12 +1,13 @@
 use super::{
     AppConfig, LocalAccount, RemoteActorRow, RemoteStatusRow, Request, Response, Result,
-    RouteContext, StatusRow, build_local_status_response, build_remote_status_response,
-    find_account_by_id, find_authenticated_local_account, find_local_status_by_object_uri,
+    RouteContext, StatusRow, build_local_status_response,
+    build_remote_status_response_with_filter_matcher, find_account_by_id,
+    find_authenticated_local_account, find_local_status_by_object_uri,
     find_remote_actor_by_actor_uri, find_remote_status_by_id,
     find_remote_status_by_url_or_object_uri, find_status_by_id,
     find_visible_local_status_response_subject, is_public_activitypub_visibility, load_config,
-    load_visible_local_status_response_subject, resolve_remote_status_by_url,
-    status_id_from_context,
+    load_visible_local_status_response_subject, preload_remote_status_federated_emojis,
+    resolve_remote_status_by_url, status_id_from_context,
 };
 use serde::Deserialize;
 use worker::{D1Database, Error};
@@ -231,6 +232,12 @@ where
     FStatusId: Fn(&T) -> Option<&str>,
     FRemoteStatusId: Fn(&T) -> Option<&str>,
 {
+    let remote_status_ids = entries
+        .iter()
+        .filter_map(|entry| remote_status_id(entry).map(str::to_owned))
+        .collect::<Vec<_>>();
+    let federated_emojis_preload =
+        preload_remote_status_federated_emojis(db, &remote_status_ids).await?;
     let mut response_entries = Vec::new();
     for entry in entries {
         if let Some(local_status_id) = status_id(entry)
@@ -250,8 +257,16 @@ where
             && let Some(status) = find_remote_status_by_id(db, remote_status_id).await?
             && let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await?
         {
-            let response =
-                build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
+            let response = build_remote_status_response_with_filter_matcher(
+                db,
+                config,
+                Some(viewer),
+                &status,
+                &actor,
+                None,
+                Some(&federated_emojis_preload),
+            )
+            .await?;
             response_entries.push((
                 created_at(entry).to_owned(),
                 serde_json::to_value(response).unwrap_or_default(),

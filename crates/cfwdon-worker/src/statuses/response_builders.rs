@@ -10,17 +10,19 @@ use super::reblog_response::{
     local_reblog_wrapper_response_from_embedded, remote_reblog_wrapper_response_from_embedded,
 };
 use super::{
-    AccountFilterMatcher, AppConfig, LocalAccount, LocalStatusResponseDetails,
+    AccountFilterMatcher, AppConfig, FederatedEmojiMap, LocalAccount, LocalStatusResponseDetails,
     MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow,
     MentionAccountsPreload, RemoteActorRow, RemoteMastodonPollResponsePreload,
-    RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload, RemoteStatusResponseDetails,
-    RemoteStatusRow, StatusCountsPreload, StatusRow, accepted_quote_document_state,
-    account_has_thread_mutes, actor_url, build_remote_status_card_value, build_status_card_value,
-    build_status_mentions, build_status_mentions_with_preload, count_rows,
+    RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload,
+    RemoteStatusFederatedEmojisPreload, RemoteStatusResponseDetails, RemoteStatusRow,
+    StatusCountsPreload, StatusRow, accepted_quote_document_state, account_has_thread_mutes,
+    actor_url, build_remote_status_card_value, build_status_card_value, build_status_mentions,
+    build_status_mentions_with_preload, config_with_resolved_custom_emojis, count_rows,
     effective_remote_status_quote_state, effective_status_quote_state,
-    find_local_status_by_object_uri, find_oauth_app_by_id, find_oauth_apps_by_ids,
-    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
-    find_remote_status_by_url_or_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids,
+    extract_federated_emojis_from_activitypub_object, find_local_status_by_object_uri,
+    find_oauth_app_by_id, find_oauth_apps_by_ids, find_remote_actor_by_actor_uri,
+    find_remote_status_attachments_by_status_id, find_remote_status_by_url_or_object_uri,
+    find_remote_status_raw_object_by_id, find_statuses_by_ap_ids, find_statuses_by_ids,
     has_remote_status_edit_snapshots, is_blocking_actor, is_local_follower_authorized,
     is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
     is_local_status_reblogged_by, is_local_status_thread_muted_by, is_muted_actor,
@@ -954,10 +956,11 @@ async fn build_local_status_response_inner(
     mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
+    let config = config_with_resolved_custom_emojis(db, config).await?;
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
         return build_local_reblog_wrapper_response(
             db,
-            config,
+            &config,
             viewer,
             status,
             account,
@@ -977,13 +980,13 @@ async fn build_local_status_response_inner(
     let mut response = MastodonStatusResponse::from_row(
         status,
         account,
-        config,
+        &config,
         in_reply_to_account_id,
         media_attachments,
     );
     let details = load_local_status_response_details(
         db,
-        config,
+        &config,
         viewer,
         status,
         account,
@@ -1167,7 +1170,8 @@ pub(crate) async fn build_remote_status_response(
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
 ) -> Result<MastodonStatusResponse> {
-    build_remote_status_response_with_filter_matcher(db, config, viewer, status, actor, None).await
+    build_remote_status_response_with_filter_matcher(db, config, viewer, status, actor, None, None)
+        .await
 }
 
 pub(crate) async fn build_remote_status_response_with_filter_matcher(
@@ -1177,6 +1181,7 @@ pub(crate) async fn build_remote_status_response_with_filter_matcher(
     status: &RemoteStatusRow,
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
+    federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_with_preloads(
         db,
@@ -1186,6 +1191,7 @@ pub(crate) async fn build_remote_status_response_with_filter_matcher(
         actor,
         filter_matcher,
         None,
+        federated_emojis_preload,
     )
     .await
 }
@@ -1198,6 +1204,7 @@ pub(crate) async fn build_remote_status_response_with_preloads(
     actor: &RemoteActorRow,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_inner(
         db,
@@ -1211,6 +1218,7 @@ pub(crate) async fn build_remote_status_response_with_preloads(
         None,
         None,
         None,
+        federated_emojis_preload,
         None,
         None,
         true,
@@ -1230,6 +1238,7 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
     viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
     poll_preload: Option<&RemoteMastodonPollResponsePreload>,
     edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
+    federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
     remote_attachments: Vec<RemoteStatusAttachmentRow>,
     mention_preload: Option<&MentionAccountsPreload>,
 ) -> Result<MastodonStatusResponse> {
@@ -1245,11 +1254,24 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
         viewer_state_preload,
         poll_preload,
         edit_updated_at_preload,
+        federated_emojis_preload,
         Some(remote_attachments),
         mention_preload,
         true,
     )
     .await
+}
+
+async fn federated_emojis_for_remote_status(
+    db: &D1Database,
+    status_id: &str,
+    preload: Option<&RemoteStatusFederatedEmojisPreload>,
+) -> Result<Option<FederatedEmojiMap>> {
+    if let Some(preload) = preload {
+        return Ok(preload.get(status_id).cloned());
+    }
+    let object = find_remote_status_raw_object_by_id(db, status_id).await?;
+    Ok(object.map(|value| extract_federated_emojis_from_activitypub_object(&value)))
 }
 
 async fn build_remote_status_response_inner(
@@ -1264,6 +1286,7 @@ async fn build_remote_status_response_inner(
     viewer_state_preload: Option<&RemoteStatusViewerStatePreload>,
     poll_preload: Option<&RemoteMastodonPollResponsePreload>,
     edit_updated_at_preload: Option<&RemoteStatusEditUpdatedAtPreload>,
+    federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
     mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
@@ -1283,7 +1306,10 @@ async fn build_remote_status_response_inner(
         .await;
     }
 
-    let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
+    let federated_emojis =
+        federated_emojis_for_remote_status(db, &status.id, federated_emojis_preload).await?;
+    let mut response =
+        MastodonStatusResponse::from_remote_row(status, actor, config, federated_emojis.as_ref());
     let details = load_remote_status_response_details(
         db,
         config,
@@ -1573,7 +1599,14 @@ async fn build_remote_quoted_status_document(
         else {
             return Ok(None);
         };
-        let mut response = MastodonStatusResponse::from_remote_row(&remote_status, &actor, config);
+        let federated_emojis =
+            federated_emojis_for_remote_status(db, &remote_status.id, None).await?;
+        let mut response = MastodonStatusResponse::from_remote_row(
+            &remote_status,
+            &actor,
+            config,
+            federated_emojis.as_ref(),
+        );
         let text_content = strip_html_tags(&remote_status.content_html);
         let remote_attachments =
             find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
@@ -1864,6 +1897,7 @@ async fn build_remote_reblog_embedded_response(
             None,
             None,
             None,
+            None,
             include_quote,
         ))
         .await?,
@@ -2133,8 +2167,12 @@ mod tests {
             remote_status_row_fixture("wrapper-status", "https://remote.example/announce/1");
         let embedded_status =
             remote_status_row_fixture("embedded-status", "https://remote.example/statuses/1");
-        let mut embedded =
-            MastodonStatusResponse::from_remote_row(&embedded_status, &wrapper_actor, &config);
+        let mut embedded = MastodonStatusResponse::from_remote_row(
+            &embedded_status,
+            &wrapper_actor,
+            &config,
+            None,
+        );
         embedded.media_attachments = vec![serde_json::json!({"id": "media-1"})];
         embedded.quote = Some(serde_json::json!({"state": "accepted"}));
 

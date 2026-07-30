@@ -1,8 +1,9 @@
 use crate::{
-    AppConfig, LocalAccount, MastodonMediaAttachmentResponse, MastodonStatusResponse,
-    MastodonStatusTagResponse, MediaAttachmentRow, RemoteActorRow, RemoteStatusRow, StatusRow,
-    actor_url, extract_hashtags_from_html, extract_hashtags_from_text, tag_url,
-    timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
+    AppConfig, FederatedEmojiMap, LocalAccount, MastodonMediaAttachmentResponse,
+    MastodonStatusResponse, MastodonStatusTagResponse, MediaAttachmentRow, RemoteActorRow,
+    RemoteStatusRow, StatusRow, actor_url, custom_emojis_used_in_texts, extract_hashtags_from_html,
+    extract_hashtags_from_text, resolve_status_emojis, tag_url, timestamp_to_mastodon_iso8601,
+    timestamp_to_mastodon_iso8601_opt,
 };
 
 pub(crate) struct LocalStatusResponseDetails {
@@ -108,7 +109,10 @@ impl MastodonStatusResponse {
                 .collect(),
             mentions: Vec::new(),
             tags: status_tag_values(config, extract_hashtags_from_text(&row.text)),
-            emojis: Vec::new(),
+            emojis: custom_emojis_used_in_texts(
+                [row.text.as_str(), row.spoiler_text.as_str()],
+                config,
+            ),
             quote_approval: None,
             card: None,
             poll: None,
@@ -141,6 +145,7 @@ impl MastodonStatusResponse {
         row: &RemoteStatusRow,
         actor: &RemoteActorRow,
         config: &AppConfig,
+        federated_emojis: Option<&FederatedEmojiMap>,
     ) -> Self {
         let uri = row.object_uri.clone();
         let url = row.url.clone().unwrap_or_else(|| uri.clone());
@@ -173,7 +178,14 @@ impl MastodonStatusResponse {
             media_attachments: Vec::new(),
             mentions: Vec::new(),
             tags: status_tag_values(config, extract_hashtags_from_html(&row.content_html)),
-            emojis: Vec::new(),
+            emojis: resolve_status_emojis(
+                federated_emojis,
+                &[
+                    crate::strip_html_tags(&row.content_html).as_str(),
+                    row.spoiler_text.as_str(),
+                ],
+                config,
+            ),
             quote_approval: None,
             card: None,
             poll: None,

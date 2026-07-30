@@ -1,5 +1,5 @@
 use crate::{
-    HttpRequestContext, dispatch_route, install_remote_dns_cache,
+    HttpRequestContext, dispatch_route, ensure_missing_content_type, install_remote_dns_cache,
     kick_outbox_process_queue_after_request, load_config_from_env,
 };
 use worker::{Env, Request, Response, Result};
@@ -25,5 +25,5 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     )
     .await;
 
-    request_context.finish_response(response)
+    request_context.finish_response(ensure_missing_content_type(response)?)
 }

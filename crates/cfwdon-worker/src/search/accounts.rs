@@ -3,6 +3,7 @@ use super::helpers::{
 };
 use crate::accounts::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
 use crate::auth::find_account_by_username;
+use crate::config_with_resolved_custom_emojis;
 use crate::content_helpers::strip_html_tags;
 use crate::ensure_remote_actor_username_matches_handle;
 use crate::instance::{actor_url, instance_host, parse_lookup_handle};
@@ -488,11 +489,12 @@ async fn load_cached_account_search_candidates(
     following_only: bool,
     search_terms: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
+    let config = config_with_resolved_custom_emojis(db, config).await?;
     let viewer_account_id = viewer.map(|account| account.id());
     let (local_accounts, remote_actors) = futures_util::try_join!(
         search_local_accounts(
             db,
-            config,
+            &config,
             query,
             query_limit,
             0,
@@ -501,7 +503,7 @@ async fn load_cached_account_search_candidates(
         ),
         search_remote_accounts(
             db,
-            config,
+            &config,
             query,
             query_limit,
             0,
@@ -526,7 +528,7 @@ async fn load_cached_account_search_candidates(
     for account in local_accounts {
         if let Some(response) = local_search_account_response(
             &account,
-            config,
+            &config,
             local_stats.get(account.id()),
             search_terms,
         ) {

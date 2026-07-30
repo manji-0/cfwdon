@@ -1,9 +1,9 @@
 use crate::{
     LocalAccount, MastodonAccountResponse, RemoteActorProfile, RemoteActorRow,
-    RemoteCollectionFetchContext, Result, enrich_remote_account_response,
-    fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
-    find_remote_actor_by_actor_uri, load_account_stats, local_username_from_actor_uri,
-    log_json_event, upsert_remote_actor,
+    RemoteCollectionFetchContext, Result, config_with_resolved_custom_emojis,
+    enrich_remote_account_response, fetch_remote_actor_profile_with_context, find_account_by_id,
+    find_account_by_username, find_remote_actor_by_actor_uri, load_account_stats,
+    local_username_from_actor_uri, log_json_event, upsert_remote_actor,
 };
 use worker::D1Database;
 
@@ -13,8 +13,9 @@ pub(crate) async fn build_local_account_response(
     account: &LocalAccount,
 ) -> Result<MastodonAccountResponse> {
     let stats = load_account_stats(db, account.id()).await?;
+    let config = config_with_resolved_custom_emojis(db, config).await?;
     Ok(MastodonAccountResponse::from_account_with_stats(
-        account, config, &stats,
+        account, &config, &stats,
     ))
 }
 

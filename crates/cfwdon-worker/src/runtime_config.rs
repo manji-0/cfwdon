@@ -270,11 +270,18 @@ fn set_content_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppCo
         "DONATION_CAMPAIGN_JSON",
         &mut config.donation_campaign_json,
     );
+    set_custom_emojis_config(vars, config);
     set_trimmed_base_url(
         vars,
         "MEDIA_PUBLIC_BASE_URL",
         &mut config.media_public_base_url,
     );
+}
+
+fn set_custom_emojis_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    if let Some(raw) = trimmed_non_empty(vars("CUSTOM_EMOJIS_JSON").as_deref()) {
+        config.custom_emojis = crate::parse_custom_emojis_json(&raw).unwrap_or_default();
+    }
 }
 
 fn set_web_push_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {

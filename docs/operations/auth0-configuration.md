@@ -85,9 +85,12 @@ exports.onExecutePostLogin = async (event, api) => {
 
   if (event.user.email && event.user.email_verified) {
     api.accessToken.setCustomClaim(`${namespace}/email`, event.user.email);
+    api.accessToken.setCustomClaim(`${namespace}/email_verified`, true);
   }
 };
 ```
+
+`cfwdon` accepts either an explicit `email_verified` / namespaced `email_verified` claim set to true, or a non-empty configured e-mail claim when those verified claims are absent (Auth0 custom API access tokens often omit `email_verified`). An explicit false verified claim is always rejected.
 
 Use an HTTPS namespace that you control. If you keep `AUTH0_EMAIL_CLAIM = "email"`, verify with a real access token that the `email` claim is present in the access token issued for `AUTH0_AUDIENCE`; otherwise protected routes and the Auth0 callback will fail after JWT validation.
 

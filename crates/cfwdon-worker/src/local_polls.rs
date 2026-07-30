@@ -7,6 +7,7 @@ pub(crate) use votes::*;
 use super::CreateStatusPollRequest;
 use super::time_html::is_iso_timestamp_in_past;
 use super::timestamp_to_mastodon_iso8601;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -69,6 +70,7 @@ impl MastodonPollResponsePreload {
 
 pub(crate) fn normalize_status_poll(
     poll: Option<CreateStatusPollRequest>,
+    config: &AppConfig,
 ) -> std::result::Result<Option<PollDraft>, String> {
     let Some(poll) = poll else {
         return Ok(None);
@@ -77,7 +79,11 @@ pub(crate) fn normalize_status_poll(
         .options
         .unwrap_or_default()
         .into_iter()
-        .map(|value| value.trim().to_owned())
+        .map(|value| {
+            crate::sanitize_emoji_shortcodes(&value, config)
+                .trim()
+                .to_owned()
+        })
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
     if options.is_empty()

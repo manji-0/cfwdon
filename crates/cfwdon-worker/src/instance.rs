@@ -739,12 +739,22 @@ pub(crate) async fn trending_tags_response(
     cache_public_response(Response::from_json(&response)?, CACHE_TTL_TRENDS)
 }
 
-pub(crate) async fn custom_emojis_response(_ctx: RouteContext<()>) -> Result<Response> {
-    custom_emojis_response_direct()
+pub(crate) async fn custom_emojis_response(ctx: RouteContext<()>) -> Result<Response> {
+    let config = load_config(&ctx);
+    let db = ctx.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
+    custom_emojis_response_direct(&config)
 }
 
-pub(crate) fn custom_emojis_response_direct() -> Result<Response> {
-    cache_public_response(Response::from_json(&serde_json::json!([]))?, 300)
+pub(crate) fn custom_emojis_response_direct(config: &AppConfig) -> Result<Response> {
+    cache_public_response(Response::from_json(&list_custom_emojis(config))?, 300)
+}
+
+pub(crate) async fn custom_emojis_response_from_env(env: &Env) -> Result<Response> {
+    let config = load_config_from_env(env);
+    let db = env.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
+    custom_emojis_response_direct(&config)
 }
 
 pub(crate) async fn trending_link_target_is_known(

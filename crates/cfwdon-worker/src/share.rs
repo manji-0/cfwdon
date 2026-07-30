@@ -1,7 +1,8 @@
-use super::{
+use crate::{
     CreatePublishedStatusInput, Request, Response, Result, RouteContext,
-    auth0_login_redirect_response, create_published_status_and_response, escape_html,
-    find_authenticated_local_account, invalidate_account_dynamic_public_cache, load_config,
+    auth0_login_redirect_response, config_with_resolved_custom_emojis,
+    create_published_status_and_response, escape_html, find_authenticated_local_account,
+    invalidate_account_dynamic_public_cache, load_config, sanitize_status_draft,
 };
 use cfwdon_domain::{ComposingStatus, Visibility};
 use worker::ResponseBody;
@@ -39,6 +40,7 @@ pub(crate) async fn share_submit_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = ctx.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return share_login_redirect(&config, &req);
     };
@@ -47,7 +49,7 @@ pub(crate) async fn share_submit_response(
         Ok(form) => form,
         Err(message) => return Response::error(message, 422),
     };
-    let draft = match share_status_draft(&form.status) {
+    let draft = match share_status_draft(&form.status, &config) {
         Ok(draft) => draft,
         Err(message) => {
             return html_response(&share_document_with_error(&form.status, &message));
@@ -88,8 +90,11 @@ pub(crate) fn share_initial_text(
         .join("\n\n")
 }
 
-fn share_status_draft(status: &str) -> std::result::Result<cfwdon_domain::StatusDraft, String> {
-    ComposingStatus {
+fn share_status_draft(
+    status: &str,
+    config: &cfwdon_core::AppConfig,
+) -> std::result::Result<cfwdon_domain::StatusDraft, String> {
+    let draft = ComposingStatus {
         text: status.to_owned(),
         visibility: Visibility::Public,
         spoiler_text: String::new(),
@@ -102,7 +107,8 @@ fn share_status_draft(status: &str) -> std::result::Result<cfwdon_domain::Status
     }
     .validate(None)
     .map(|transition| transition.state)
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    sanitize_status_draft(draft, config)
 }
 
 async fn read_share_form(req: &mut Request) -> std::result::Result<ShareForm, String> {

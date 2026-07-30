@@ -203,17 +203,22 @@ async fn resolve_create_status_access(
 
 pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let parsed = match parse_status_draft(&mut req).await {
+    let db = ctx.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
+    let parsed = match parse_status_draft(&mut req, &config).await {
         Ok(draft) => draft,
         Err(message) => return Response::error(message, 422),
     };
     let super::ParsedStatusDraft {
-        draft,
+        mut draft,
         idempotency_key,
         scheduled_at,
         quoted_status_id,
     } = parsed;
-    let db = ctx.d1(&config.database_binding)?;
+    draft = match sanitize_status_draft(draft, &config) {
+        Ok(draft) => draft,
+        Err(message) => return Response::error(message, 422),
+    };
     let access = match resolve_create_status_access(&req, &db, &config).await {
         Ok(Some(access)) => access,
         Ok(None) => {
@@ -333,6 +338,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Err(message) => return Response::error(message, 422),
     };
     let db = ctx.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -345,14 +351,20 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         in_reply_to_account_id: current_in_reply_to_account_id,
     } = load_local_status_response_preload(&db, &status).await?;
 
-    let next_text = request.status.unwrap_or_else(|| status.text.clone());
-    let next_spoiler_text = request
-        .spoiler_text
-        .unwrap_or_else(|| status.spoiler_text.clone());
+    let next_text = sanitize_emoji_shortcodes(
+        &request.status.unwrap_or_else(|| status.text.clone()),
+        &config,
+    );
+    let next_spoiler_text = sanitize_emoji_shortcodes(
+        &request
+            .spoiler_text
+            .unwrap_or_else(|| status.spoiler_text.clone()),
+        &config,
+    );
     let next_sensitive = request.sensitive.unwrap_or(status.sensitive);
     let next_language = request.language.or(status.language.clone());
     let next_poll = match request.poll {
-        Some(poll) => match normalize_status_poll(Some(poll)) {
+        Some(poll) => match normalize_status_poll(Some(poll), &config) {
             Ok(poll) => poll,
             Err(message) => return Response::error(message, 422),
         },

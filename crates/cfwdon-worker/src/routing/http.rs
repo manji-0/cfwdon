@@ -155,9 +155,50 @@ fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<(
     Ok(())
 }
 
+/// Plain-text MIME for error bodies that workers-rs leaves without Content-Type.
+/// Missing Content-Type + nosniff makes Safari download the URL path segment
+/// (e.g. `/oauth/auth0/callback` → file named `callback`).
+pub(crate) const PLAIN_TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
+
+pub(crate) fn missing_content_type_fallback(
+    status: u16,
+    has_content_type: bool,
+) -> Option<&'static str> {
+    if has_content_type {
+        return None;
+    }
+    (status == 404).then_some(PLAIN_TEXT_CONTENT_TYPE)
+}
+
+pub(crate) fn ensure_missing_content_type(mut response: Response) -> Result<Response> {
+    let status = response.status_code();
+    let has_content_type = response
+        .headers()
+        .get("Content-Type")?
+        .is_some_and(|value| !value.trim().is_empty());
+    if let Some(content_type) = missing_content_type_fallback(status, has_content_type) {
+        response.headers_mut().set("Content-Type", content_type)?;
+    }
+    Ok(response)
+}
+
+pub(crate) fn error_response_with_plain_content_type(
+    message: impl Into<String>,
+    status: u16,
+) -> Result<Response> {
+    let mut response = Response::error(message, status)?;
+    response
+        .headers_mut()
+        .set("Content-Type", PLAIN_TEXT_CONTENT_TYPE)?;
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_cors_enabled_path, is_logged_api_path, sanitize_log_value};
+    use super::{
+        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path,
+        missing_content_type_fallback, sanitize_log_value,
+    };
 
     #[test]
     fn logged_api_path_scope_matches_browser_and_discovery_surfaces() {
@@ -186,5 +227,16 @@ mod tests {
 
         assert!(!sanitized.contains(['\n', '\r', '\t']));
         assert_eq!(sanitized.chars().count(), 200);
+    }
+
+    #[test]
+    fn missing_content_type_fallback_only_for_bare_404() {
+        assert_eq!(
+            missing_content_type_fallback(404, false),
+            Some(PLAIN_TEXT_CONTENT_TYPE)
+        );
+        assert_eq!(missing_content_type_fallback(404, true), None);
+        assert_eq!(missing_content_type_fallback(500, false), None);
+        assert_eq!(missing_content_type_fallback(200, false), None);
     }
 }

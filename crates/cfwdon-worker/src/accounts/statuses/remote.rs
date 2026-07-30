@@ -6,7 +6,8 @@ use crate::{
     MastodonPollOptionResponse, MastodonPollResponse, MastodonStatusResponse, RemoteActorRow,
     RemoteCollectionFetchContext, RemoteStatusRecord, RemoteStatusRow, Request, Response, Result,
     apply_remote_actor_social_counts, build_remote_status_response_with_timeline_preloads,
-    extract_remote_note_object, extract_remote_poll_draft, fetch_activitypub_document_with_context,
+    extract_federated_emojis_from_activitypub_object, extract_remote_note_object,
+    extract_remote_poll_draft, fetch_activitypub_document_with_context,
     fetch_remote_actor_profile_with_context, find_follow_by_target, find_remote_actor_by_actor_uri,
     find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
     is_public_activitypub_visibility, list_public_remote_statuses_by_actor_uri,
@@ -286,6 +287,7 @@ async fn remote_account_statuses_json_response(
         viewer_state_preload,
         poll_preload,
         edit_updated_at_preload,
+        federated_emojis_preload,
         mut remote_attachments_by_status_id,
         remote_status_ids_with_media,
     ) = futures_util::try_join!(
@@ -301,6 +303,7 @@ async fn remote_account_statuses_json_response(
         },
         preload_remote_mastodon_poll_responses(db, status_ids, viewer),
         preload_remote_status_edit_updated_at(db, status_ids),
+        crate::preload_remote_status_federated_emojis(db, status_ids),
         find_remote_status_attachments_by_status_ids(db, status_ids),
         find_remote_status_ids_with_media(db, status_ids),
     )?;
@@ -333,6 +336,7 @@ async fn remote_account_statuses_json_response(
             Some(&viewer_state_preload),
             Some(&poll_preload),
             Some(&edit_updated_at_preload),
+            Some(&federated_emojis_preload),
             remote_attachments_by_status_id
                 .remove(&status.id)
                 .unwrap_or_default(),
@@ -607,7 +611,9 @@ fn transient_mastodon_status_response(
     object: &serde_json::Value,
     attachments: &[crate::RemoteStatusAttachmentRow],
 ) -> MastodonStatusResponse {
-    let mut response = MastodonStatusResponse::from_remote_row(status, actor, config);
+    let federated = extract_federated_emojis_from_activitypub_object(object);
+    let mut response =
+        MastodonStatusResponse::from_remote_row(status, actor, config, Some(&federated));
     response.media_attachments = attachments
         .iter()
         .map(|attachment| {

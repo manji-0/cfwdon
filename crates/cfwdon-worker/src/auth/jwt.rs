@@ -133,9 +133,19 @@ pub(crate) fn require_auth0_email_verified(
 }
 
 pub(crate) fn auth0_email_verified(claims: &Auth0JwtClaims, email_claim: &str) -> bool {
-    email_verified_claim_names(email_claim)
-        .into_iter()
-        .any(|name| claim_value_is_true(claims.claim_value(&name)))
+    for name in email_verified_claim_names(email_claim) {
+        if let Some(value) = claims.claim_value(&name) {
+            return claim_value_is_true(Some(value));
+        }
+    }
+    // Auth0 custom API access tokens often omit `email_verified`. The documented
+    // Post Login Action only sets AUTH0_EMAIL_CLAIM when the Auth0 user e-mail is
+    // verified, so a non-empty configured e-mail claim is sufficient when no
+    // verified claim is present.
+    claims
+        .string_claim(email_claim)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 fn email_verified_claim_names(email_claim: &str) -> Vec<String> {
@@ -590,6 +600,40 @@ mod tests {
         let false_claims = claims_with_extra(false_extra);
         assert!(!auth0_email_verified(&false_claims, "email"));
         assert!(require_auth0_email_verified(&false_claims, "email").is_err());
+    }
+
+    #[test]
+    fn email_claim_without_verified_claim_is_accepted() {
+        let email_claim = "https://example.com/claims/email";
+        let mut extra = serde_json::Map::new();
+        extra.insert(email_claim.to_owned(), json!("user@example.com"));
+        assert!(auth0_email_verified(&claims_with_extra(extra), email_claim));
+        assert!(
+            require_auth0_email_verified(
+                &claims_with_extra({
+                    let mut extra = serde_json::Map::new();
+                    extra.insert(email_claim.to_owned(), json!("user@example.com"));
+                    extra
+                }),
+                email_claim
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn email_claim_with_explicit_unverified_claim_is_rejected() {
+        let email_claim = "https://example.com/claims/email";
+        let mut extra = serde_json::Map::new();
+        extra.insert(email_claim.to_owned(), json!("user@example.com"));
+        extra.insert(
+            "https://example.com/claims/email_verified".to_owned(),
+            json!(false),
+        );
+        assert!(!auth0_email_verified(
+            &claims_with_extra(extra),
+            email_claim
+        ));
     }
 
     #[test]

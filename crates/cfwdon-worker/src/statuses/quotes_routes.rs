@@ -318,6 +318,7 @@ async fn build_status_quote_values(
                     Some(&preloads.remote_viewer_state_preload),
                     Some(&preloads.remote_poll_preload),
                     Some(&preloads.remote_edit_updated_at_preload),
+                    None,
                     preloads
                         .remote_attachments_by_status_id
                         .remove(&quote.id)

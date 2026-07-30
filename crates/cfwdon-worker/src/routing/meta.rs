@@ -1,4 +1,6 @@
 use crate::{
+    admin_create_custom_emoji_response, admin_custom_emojis_response,
+    admin_delete_custom_emoji_response, admin_update_custom_emoji_response,
     announcement_reaction_mutation_response, announcements_response, annual_report_action_response,
     annual_report_response, annual_report_state_response, annual_reports_response,
     check_email_confirmation_response, create_email_confirmation_response, create_report,
@@ -71,6 +73,18 @@ pub(crate) fn add_meta_routes(router: Router<'static, ()>) -> Router<'static, ()
         })
         .get_async("/api/v1/custom_emojis", |_req, ctx| async move {
             custom_emojis_response(ctx).await
+        })
+        .get_async("/api/v1/admin/custom_emojis", |req, ctx| async move {
+            admin_custom_emojis_response(req, ctx).await
+        })
+        .post_async("/api/v1/admin/custom_emojis", |req, ctx| async move {
+            admin_create_custom_emoji_response(req, ctx).await
+        })
+        .patch_async("/api/v1/admin/custom_emojis/:id", |req, ctx| async move {
+            admin_update_custom_emoji_response(req, ctx).await
+        })
+        .delete_async("/api/v1/admin/custom_emojis/:id", |req, ctx| async move {
+            admin_delete_custom_emoji_response(req, ctx).await
         })
         .get_async("/api/oembed", |req, ctx| async move {
             oembed_response(req, ctx).await

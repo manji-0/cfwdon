@@ -78,10 +78,11 @@ pub(crate) struct AccountStatusesQuery {
 
 pub(crate) async fn parse_status_draft(
     req: &mut Request,
+    config: &crate::AppConfig,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let idempotency_key = read_idempotency_key(req)?;
     let request = read_create_status_request(req).await?;
-    parsed_status_draft_from_request(request, idempotency_key)
+    parsed_status_draft_from_request(request, idempotency_key, config)
 }
 
 fn read_idempotency_key(req: &Request) -> std::result::Result<Option<String>, String> {
@@ -142,9 +143,10 @@ fn create_status_request_from_form(
 fn parsed_status_draft_from_request(
     request: CreateStatusRequest,
     idempotency_key: Option<String>,
+    config: &crate::AppConfig,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let scheduled_at = normalize_scheduled_at(request.scheduled_at.as_deref())?;
-    let poll = normalize_status_poll(request.poll)?;
+    let poll = normalize_status_poll(request.poll, config)?;
     let media_ids = normalize_status_media_ids(request.media_ids);
     let quoted_status_id = normalized_optional_string(request.quoted_status_id);
     let visibility = status_visibility_from_request(request.visibility.as_deref())?;
@@ -407,7 +409,12 @@ mod tests {
             ..CreateStatusRequest::default()
         };
 
-        let parsed = parsed_status_draft_from_request(request, Some(" key ".to_owned())).unwrap();
+        let parsed = parsed_status_draft_from_request(
+            request,
+            Some(" key ".to_owned()),
+            &cfwdon_core::AppConfig::default(),
+        )
+        .unwrap();
 
         assert_eq!(parsed.draft.text(), "hello");
         assert_eq!(parsed.draft.in_reply_to_id(), Some("reply-1"));

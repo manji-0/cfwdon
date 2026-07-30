@@ -1,9 +1,10 @@
 use crate::{
     AccountStats, AppConfig, FetchedRemoteActorProfile, LocalAccount, MastodonAccountResponse,
     MastodonAccountRole, MastodonAccountSource, ProfileField, RemoteActorProfile, RemoteActorRow,
-    actor_url, escape_html, fetch_remote_activitypub_document, fetch_signed_activitypub_document,
-    load_remote_actor_status_summary, log_json_event, media_object_url,
-    parse_remote_actor_profile_document, remote_account_rest_id, update_remote_actor_social_counts,
+    actor_url, custom_emojis_used_in_texts, escape_html, fetch_remote_activitypub_document,
+    fetch_signed_activitypub_document, load_remote_actor_status_summary, log_json_event,
+    media_object_url, parse_remote_actor_profile_document, remote_account_rest_id,
+    resolve_account_emojis_from_document, update_remote_actor_social_counts,
     validate_remote_actor_profile_urls,
 };
 use std::cell::RefCell;
@@ -204,6 +205,20 @@ pub(crate) async fn enrich_remote_account_response(
     if let Err(error) = reconcile_remote_account_status_summary(db, actor_uri, account).await {
         log_remote_account_enrichment_failure(actor_uri, "status_summary", &error);
     }
+    account.emojis = resolve_account_emojis_from_document(
+        document,
+        &account.display_name,
+        &account.note,
+        &account
+            .fields
+            .iter()
+            .filter_map(|field| {
+                let name = field.get("name")?.as_str()?;
+                let value = field.get("value")?.as_str()?;
+                Some((name.to_owned(), value.to_owned()))
+            })
+            .collect::<Vec<_>>(),
+    );
     Ok(())
 }
 
@@ -474,6 +489,15 @@ pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::
     })
 }
 
+fn account_emojis(account: &LocalAccount, config: &AppConfig) -> Vec<serde_json::Value> {
+    let mut texts = vec![account.display_name(), account.bio_text()];
+    for field in account.fields() {
+        texts.push(field.name.as_str());
+        texts.push(field.value.as_str());
+    }
+    custom_emojis_used_in_texts(texts, config)
+}
+
 fn account_avatar_url(config: &AppConfig, account: &LocalAccount) -> String {
     account
         .avatar_object_key()
@@ -571,7 +595,7 @@ impl MastodonAccountResponse {
             header: account_header_url(config, account),
             header_static: account_header_url(config, account),
             header_description: String::new(),
-            emojis: Vec::new(),
+            emojis: account_emojis(account, config),
             fields: mastodon_account_fields(account.fields()),
             roles: Some(Vec::new()),
             feature_approval: local_feature_approval(),

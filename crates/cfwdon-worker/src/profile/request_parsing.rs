@@ -229,6 +229,33 @@ where
     )
 }
 
+pub(crate) fn sanitize_update_credentials_request(
+    request: &mut UpdateCredentialsRequest,
+    config: &crate::AppConfig,
+) {
+    sanitize_optional_text(&mut request.display_name, config);
+    sanitize_optional_text(&mut request.note, config);
+    sanitize_optional_text(&mut request.avatar_description, config);
+    sanitize_optional_text(&mut request.header_description, config);
+
+    if let FieldsAttributesUpdate::Set(fields) = &mut request.fields_attributes {
+        for field in fields {
+            if let Some(name) = field.name.as_mut() {
+                *name = crate::sanitize_emoji_shortcodes(name, config);
+            }
+            if let Some(value) = field.value.as_mut() {
+                *value = crate::sanitize_emoji_shortcodes(value, config);
+            }
+        }
+    }
+}
+
+fn sanitize_optional_text(value: &mut Option<String>, config: &crate::AppConfig) {
+    if let Some(current) = value.as_mut() {
+        *current = crate::sanitize_emoji_shortcodes(current, config);
+    }
+}
+
 fn normalize_optional_text(value: &mut Option<String>, clear_if_empty: bool) {
     if let Some(current) = value.as_mut() {
         *current = current.trim().to_owned();

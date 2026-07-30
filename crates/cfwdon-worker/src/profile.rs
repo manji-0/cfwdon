@@ -105,6 +105,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
         Some(AccountReference::Local(account)) => {
             let stats = load_account_stats(&db, account.id()).await?;
             let settings = load_account_profile_settings(&db, account.id()).await?;
+            let config = config_with_resolved_custom_emojis(&db, &config).await?;
             let response =
                 MastodonAccountResponse::from_account_with_stats(&account, &config, &stats)
                     .with_profile_settings(
@@ -219,6 +220,7 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let (stats, settings, featured_tags, follow_requests_count) = futures_util::try_join!(
         load_account_stats(&db, account.id()),
         load_account_profile_settings(&db, account.id()),
@@ -391,7 +393,7 @@ pub(crate) async fn update_credentials(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let (account, settings, stats, featured_tags) =
+    let (account, settings, stats, featured_tags, config) =
         update_profile_internal(req, &ctx, &config, &account).await?;
     let follow_requests_count = count_pending_follow_requests(&db, account.id()).await?;
     Response::from_json(&build_credentials_document(
@@ -415,7 +417,7 @@ pub(crate) async fn update_profile_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
 
-    let (account, settings, _stats, featured_tags) =
+    let (account, settings, _stats, featured_tags, config) =
         update_profile_internal(req, &ctx, &config, &account).await?;
     invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
     Response::from_json(&build_profile_document(
@@ -450,19 +452,22 @@ async fn update_profile_internal(
     AccountProfileSettings,
     crate::AccountStats,
     Vec<serde_json::Value>,
+    AppConfig,
 )> {
-    let update = parse_update_credentials_request(req)
+    let mut update = parse_update_credentials_request(req)
         .await
         .map_err(Error::RustError)?;
     let db = ctx.d1(&config.database_binding)?;
+    let config = config_with_resolved_custom_emojis(&db, config).await?;
+    sanitize_update_credentials_request(&mut update, &config);
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = apply_account_credentials_update(&db, &bucket, config, account, &update).await?;
+    let account = apply_account_credentials_update(&db, &bucket, &config, account, &update).await?;
     save_account_profile_settings(&db, account.id(), &update).await?;
     let stats = load_account_stats(&db, account.id()).await?;
     let settings = load_account_profile_settings(&db, account.id()).await?;
-    let featured_tags = featured_tags_payload(&db, config, &account).await?;
+    let featured_tags = featured_tags_payload(&db, &config, &account).await?;
 
-    Ok((account, settings, stats, featured_tags))
+    Ok((account, settings, stats, featured_tags, config))
 }
 
 async fn delete_profile_media_response(
@@ -488,6 +493,7 @@ async fn delete_profile_media_response(
     let settings = load_account_profile_settings(&db, account.id()).await?;
     let featured_tags = featured_tags_payload(&db, &config, &account).await?;
     let follow_requests_count = count_pending_follow_requests(&db, account.id()).await?;
+    let config = config_with_resolved_custom_emojis(&db, &config).await?;
 
     Response::from_json(&build_credentials_document(
         &account,

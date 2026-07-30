@@ -11,7 +11,7 @@ pub(super) fn remote_reblog_wrapper_response_from_embedded(
 ) -> MastodonStatusResponse {
     let reblog = embedded_reblog_value(&embedded);
     let mut response = embedded.unwrap_or_else(|| {
-        MastodonStatusResponse::from_remote_row(wrapper_status, wrapper_actor, config)
+        MastodonStatusResponse::from_remote_row(wrapper_status, wrapper_actor, config, None)
     });
     response.id = wrapper_status.id.clone();
     response.created_at = wrapper_status.published_at.clone();
