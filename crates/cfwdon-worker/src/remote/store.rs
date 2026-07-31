@@ -3,15 +3,15 @@ use crate::{
     count_followers_by_actor, delete_remote_status_poll_by_status_id, extract_remote_poll_draft,
     find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
     generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
-    now_iso_string, quote_target_uri_from_object,
+    now_iso_string, publish_remote_status_create_stream_notifications_soft,
+    publish_remote_status_update_stream_notifications_soft,
+    publish_remote_status_update_user_stream_fanout_soft, quote_target_uri_from_object,
     remote::adapters::{
         activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
     },
-    publish_remote_status_create_stream_notifications_soft,
-    publish_remote_status_update_stream_notifications_soft,
-    publish_remote_status_update_user_stream_fanout_soft, replace_remote_status_attachments,
-    replace_remote_status_hashtags, send_remote_status_quote_notification,
-    send_remote_status_update_notifications, upsert_remote_status_poll,
+    replace_remote_status_attachments, replace_remote_status_hashtags,
+    send_remote_status_quote_notification, send_remote_status_update_notifications,
+    upsert_remote_status_poll,
 };
 use cfwdon_domain::{
     QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
@@ -410,14 +410,8 @@ async fn send_remote_status_change_notifications(
             status.quote_of_uri.as_deref(),
         )
         .await;
-        publish_remote_status_create_stream_notifications_soft(
-            env,
-            db,
-            config,
-            actor,
-            status,
-        )
-        .await;
+        publish_remote_status_create_stream_notifications_soft(env, db, config, actor, status)
+            .await;
     } else if previous_raw_object_json != Some(intent.raw_object_json.as_str()) {
         let _ = send_remote_status_update_notifications(
             db,
@@ -427,23 +421,11 @@ async fn send_remote_status_change_notifications(
             &status.object_uri,
         )
         .await;
-        publish_remote_status_update_stream_notifications_soft(
-            env,
-            db,
-            config,
-            actor,
-            status,
-        )
-        .await;
-        if let Some(env) = env {
-            publish_remote_status_update_user_stream_fanout_soft(
-                env,
-                db,
-                config,
-                actor,
-                status,
-            )
+        publish_remote_status_update_stream_notifications_soft(env, db, config, actor, status)
             .await;
+        if let Some(env) = env {
+            publish_remote_status_update_user_stream_fanout_soft(env, db, config, actor, status)
+                .await;
         }
     }
 }

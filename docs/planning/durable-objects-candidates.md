@@ -249,12 +249,12 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
 2. Proxy WebSocket upgrades for all live channels (`user`, `user:notification`, `list`, `direct`, public variants, hashtag) through the DO; fall back to Worker poll on failure.
 3. Soft-publish live events (never fail API writes):
-   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; follower home fan-out (cap 200)
-   - `user:notification` hub: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request
-   - `public` / `public:local` (+ media variants), `hashtag:{tag}`, `list:{id}`, `direct:{id}` on local status create/delete when visibility matches
-4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path.
+   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; local follower home fan-out (cap 200); remote status edit `status.update` to local followers
+   - `user:notification` hub: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request; remote Create mention/quote/status(notify)/reply; remote Update update/quoted_update
+   - `public` / `public:local` (+ media variants), `hashtag:{tag}`, `list:{id}`, `direct:{id}` on local status create/delete when visibility matches; direct also publishes conversation `update` documents
+4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path (not yet a publish-bus consumer).
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
-6. Still open: remote inbound mention/quote/status notifications; public-channel sharding; SSE as DO consumer; inbox-host admission DOs.
+6. Still open: public-channel sharding under load; SSE as DO consumer; inbox-host admission DOs; remote Create/Delete timeline fan-out to public/hashtag hubs.
 
 ### Phase B — Channel coverage — largely implemented
 
