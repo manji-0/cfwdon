@@ -73,7 +73,8 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             upsert_reblog_local_status(
                 &action.auth.db,
                 &action.auth.config,
-                viewer.id(),
+                Some(&ctx.env),
+                viewer,
                 &subject.status,
                 &visibility,
                 outbound_activity_id.as_deref(),

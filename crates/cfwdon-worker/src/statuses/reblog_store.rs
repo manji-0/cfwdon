@@ -1,9 +1,10 @@
 use super::{
     AppConfig, D1Database, RemoteStatusRow, StatusRow, local_status_target_uri,
-    send_push_notification,
+    publish_local_status_interaction_notification_soft, send_push_notification,
 };
+use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
-use worker::Result;
+use worker::{Env, Result};
 use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
@@ -25,11 +26,13 @@ struct InteractionActorUriRow {
 pub(crate) async fn upsert_reblog_local_status(
     db: &D1Database,
     config: &AppConfig,
-    account_id: &str,
+    env: Option<&Env>,
+    actor: &LocalAccount,
     status: &StatusRow,
     visibility: &str,
     ap_activity_id: Option<&str>,
 ) -> Result<()> {
+    let account_id = actor.id();
     let target_uri = local_status_target_uri(status);
     let bindings = [
         D1Type::Text(account_id),
@@ -83,6 +86,17 @@ pub(crate) async fn upsert_reblog_local_status(
             "status_id": status.id,
             "visibility": visibility,
         }),
+    )
+    .await;
+
+    let _ = publish_local_status_interaction_notification_soft(
+        env,
+        db,
+        config,
+        &status.account_id,
+        actor,
+        "reblog",
+        status,
     )
     .await;
 
