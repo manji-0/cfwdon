@@ -293,6 +293,34 @@ pub(crate) fn stream_hub_id_name(
     }
 }
 
+pub(crate) async fn publish_stream_hub_event_soft(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    stream: &str,
+    account_id: Option<&str>,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let mut body = serde_json::json!({
+        "stream": stream,
+        "event": event,
+        "payload": payload,
+    });
+    if let Some(account_id) = account_id {
+        body["account_id"] = serde_json::json!(account_id);
+    }
+    if let Some(event_id) = event_id {
+        body["event_id"] = serde_json::json!(event_id);
+    }
+    if let Err(error) = publish_stream_hub_event(env, binding, hub_name, &body).await {
+        console_error!(
+            "failed to publish stream hub event ({event}) to hub {hub_name} stream {stream}: {error}"
+        );
+    }
+}
+
 pub(crate) async fn publish_user_stream_hub_event_soft(
     env: &Env,
     binding: &str,
@@ -302,20 +330,17 @@ pub(crate) async fn publish_user_stream_hub_event_soft(
     event_id: Option<&str>,
 ) {
     let hub_name = stream_hub_id_name("user", Some(account_id), None, None);
-    let mut body = serde_json::json!({
-        "stream": "user",
-        "account_id": account_id,
-        "event": event,
-        "payload": payload,
-    });
-    if let Some(event_id) = event_id {
-        body["event_id"] = serde_json::json!(event_id);
-    }
-    if let Err(error) = publish_stream_hub_event(env, binding, &hub_name, &body).await {
-        console_error!(
-            "failed to publish user stream hub event ({event}) for account {account_id}: {error}"
-        );
-    }
+    publish_stream_hub_event_soft(
+        env,
+        binding,
+        &hub_name,
+        "user",
+        Some(account_id),
+        event,
+        payload,
+        event_id,
+    )
+    .await;
 }
 
 pub(crate) async fn publish_notification_stream_hub_event_soft(
@@ -326,20 +351,17 @@ pub(crate) async fn publish_notification_stream_hub_event_soft(
     event_id: Option<&str>,
 ) {
     let hub_name = stream_hub_id_name("user:notification", Some(account_id), None, None);
-    let mut body = serde_json::json!({
-        "stream": "user:notification",
-        "account_id": account_id,
-        "event": "notification",
-        "payload": payload,
-    });
-    if let Some(event_id) = event_id {
-        body["event_id"] = serde_json::json!(event_id);
-    }
-    if let Err(error) = publish_stream_hub_event(env, binding, &hub_name, &body).await {
-        console_error!(
-            "failed to publish notification stream hub event for account {account_id}: {error}"
-        );
-    }
+    publish_stream_hub_event_soft(
+        env,
+        binding,
+        &hub_name,
+        "user:notification",
+        Some(account_id),
+        "notification",
+        payload,
+        event_id,
+    )
+    .await;
 }
 
 pub(crate) async fn publish_stream_hub_event(

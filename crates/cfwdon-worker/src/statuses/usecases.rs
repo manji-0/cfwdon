@@ -10,7 +10,8 @@ use super::{
     load_mastodon_poll_response, local_status_interaction_notification_id,
     normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
-    publish_local_actor_notification_soft, publish_user_stream_hub_event_soft,
+    publish_local_actor_notification_soft, publish_local_status_create_stream_fanout_soft,
+    publish_local_status_delete_stream_fanout_soft, publish_user_stream_hub_event_soft,
     replace_status_media, replace_status_poll, send_push_notification,
     send_status_quote_notification, send_status_update_notifications, update_local_status,
 };
@@ -85,6 +86,16 @@ pub(crate) async fn delete_owned_local_status(
             "delete",
             &status.id,
             Some(&status.id),
+        )
+        .await;
+
+        publish_local_status_delete_stream_fanout_soft(
+            env,
+            db,
+            config,
+            requester.id(),
+            &status,
+            !media.is_empty(),
         )
         .await;
     }
@@ -267,6 +278,7 @@ pub(crate) async fn create_published_status_and_response(
         }
     }
     let response_preload = load_local_status_response_preload(db, &status).await?;
+    let has_media = !response_preload.media.is_empty();
     let status_ids = vec![status.id.clone()];
     let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
     let status_refs = vec![&status];
@@ -313,6 +325,17 @@ pub(crate) async fn create_published_status_and_response(
             "update",
             &payload,
             Some(&status.id),
+        )
+        .await;
+
+        publish_local_status_create_stream_fanout_soft(
+            env,
+            db,
+            config,
+            input.account.id(),
+            &status,
+            &payload,
+            has_media,
         )
         .await;
 

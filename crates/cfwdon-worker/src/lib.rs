@@ -57,6 +57,7 @@ mod secret_storage;
 mod share;
 mod statuses;
 mod stream_hub;
+mod stream_hub_publish;
 mod streaming_types;
 mod suggestions;
 mod tag_actions;
@@ -113,6 +114,7 @@ pub(crate) use share::*;
 pub(crate) use statuses::*;
 #[allow(unused_imports)]
 pub(crate) use stream_hub::*;
+pub(crate) use stream_hub_publish::*;
 pub(crate) use streaming_types::*;
 pub(crate) use tag_actions::*;
 pub(crate) use tags::*;
