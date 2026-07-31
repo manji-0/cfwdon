@@ -168,7 +168,7 @@ pub(crate) async fn apply_local_status_update(
         }
     }
     enqueue_status_update_activity(db, config, input.account, &status).await?;
-    let _ = send_status_update_notifications(db, config, &status).await;
+    let _ = send_status_update_notifications(db, config, env, &status).await;
 
     let response = super::build_loaded_local_status_response(
         db,
