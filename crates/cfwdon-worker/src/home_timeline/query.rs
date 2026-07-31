@@ -48,7 +48,7 @@ pub(crate) const HOME_TIMELINE_LOCAL_CANDIDATE_SQL: &str = "SELECT source, statu
                 )
              )
              ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?7";
+             LIMIT ?6";
 
 pub(crate) const HOME_TIMELINE_LOCAL_CANDIDATE_SQL_WITH_TAGS: &str =
     "SELECT source, status_id, timestamp
@@ -124,7 +124,7 @@ pub(crate) const HOME_TIMELINE_LOCAL_CANDIDATE_SQL_WITH_TAGS: &str =
                 )
              )
              ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?7";
+             LIMIT ?6";
 
 pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL: &str = "SELECT source, status_id, timestamp
              FROM (
@@ -152,7 +152,7 @@ pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL: &str = "SELECT source, stat
                 )
              )
              ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?7";
+             LIMIT ?6";
 
 pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL_WITH_TAGS: &str =
     "SELECT source, status_id, timestamp
@@ -207,7 +207,7 @@ pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL_WITH_TAGS: &str =
                 )
              )
              ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?7";
+             LIMIT ?6";
 
 pub(crate) fn home_timeline_local_candidate_sql(include_followed_tags: bool) -> &'static str {
     if include_followed_tags {
@@ -225,12 +225,19 @@ pub(crate) fn home_timeline_remote_candidate_sql(include_followed_tags: bool) ->
     }
 }
 
+/// Binds the shared candidate query slots.
+///
+/// `?6` caps both each `UNION` branch and the merged result. One cap is enough
+/// for both: a row in the global top `limit` is also in its own branch's top
+/// `limit`, so the union of the per-branch caps always contains the rows the
+/// outer `ORDER BY` would pick. `limit` already carries the oversampling
+/// headroom for mute attrition (see `timeline_fetch_limit`), so multiplying it
+/// again per branch only widened the rows fetched, never the rows kept.
 pub(crate) fn home_timeline_candidate_bindings<'a>(
     viewer_account_id: &'a str,
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
-    branch_count: u32,
-) -> [D1Type<'a>; 7] {
+) -> [D1Type<'a>; 6] {
     [
         D1Type::Text(viewer_account_id),
         cursor
@@ -244,25 +251,7 @@ pub(crate) fn home_timeline_candidate_bindings<'a>(
             .map_or(D1Type::Null, D1Type::Text),
         cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
         D1Type::Integer(limit as i32),
-        D1Type::Integer(home_timeline_candidate_query_limit(limit, branch_count) as i32),
     ]
-}
-
-pub(crate) fn home_timeline_local_branch_count(include_followed_tags: bool) -> u32 {
-    if include_followed_tags { 3 } else { 2 }
-}
-
-pub(crate) fn home_timeline_remote_branch_count(include_followed_tags: bool) -> u32 {
-    if include_followed_tags { 2 } else { 1 }
-}
-
-pub(crate) fn home_timeline_candidate_query_limit(limit: u32, branch_count: u32) -> u32 {
-    limit.saturating_mul(branch_count.max(1))
-}
-
-pub(crate) fn home_timeline_candidate_merge_limit(limit: u32) -> u32 {
-    // Preserve prior oversampling headroom used for mute/filter attrition.
-    limit.saturating_mul(5)
 }
 
 #[cfg(test)]
@@ -279,15 +268,22 @@ mod tests {
     }
 
     #[test]
-    fn home_timeline_candidate_limits_scale_with_branch_count() {
-        assert_eq!(home_timeline_candidate_query_limit(20, 2), 40);
-        assert_eq!(home_timeline_candidate_query_limit(20, 3), 60);
-        assert_eq!(home_timeline_candidate_merge_limit(20), 100);
-        assert_eq!(home_timeline_candidate_query_limit(u32::MAX, 3), u32::MAX);
-        assert_eq!(home_timeline_local_branch_count(false), 2);
-        assert_eq!(home_timeline_local_branch_count(true), 3);
-        assert_eq!(home_timeline_remote_branch_count(false), 1);
-        assert_eq!(home_timeline_remote_branch_count(true), 2);
+    fn home_timeline_candidate_sql_caps_branches_and_merge_with_one_slot() {
+        for sql in [
+            home_timeline_local_candidate_sql(false),
+            home_timeline_local_candidate_sql(true),
+            home_timeline_remote_candidate_sql(false),
+            home_timeline_remote_candidate_sql(true),
+        ] {
+            assert!(
+                !sql.contains("?7"),
+                "candidate SQL should bind at most six slots"
+            );
+            // One cap per branch plus the outer merge cap.
+            let branches =
+                sql.matches("SELECT 'local'").count() + sql.matches("SELECT 'remote'").count();
+            assert_eq!(sql.matches("LIMIT ?6").count(), branches + 1);
+        }
     }
 
     #[test]
@@ -306,7 +302,7 @@ mod tests {
         cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
         cursor.min_id = Some("status-min".to_owned());
 
-        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 12, 3);
+        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 12);
 
         assert!(matches!(bindings[0], D1Type::Text("viewer")));
         assert!(matches!(bindings[1], D1Type::Text("2026-01-02T00:00:00Z")));
@@ -314,13 +310,12 @@ mod tests {
         assert!(matches!(bindings[3], D1Type::Text("2026-01-01T00:00:00Z")));
         assert!(matches!(bindings[4], D1Type::Text("status-min")));
         assert!(matches!(bindings[5], D1Type::Integer(12)));
-        assert!(matches!(bindings[6], D1Type::Integer(36)));
     }
 
     #[test]
     fn home_timeline_candidate_bindings_use_null_for_open_cursor_bounds() {
         let cursor = empty_cursor();
-        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 8, 2);
+        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 8);
 
         assert!(matches!(bindings[1], D1Type::Null));
         assert!(matches!(bindings[2], D1Type::Null));

@@ -1,8 +1,6 @@
 use super::{
     D1Database, ResolvedTimelineCursor, Result, home_timeline_candidate_bindings,
-    home_timeline_candidate_merge_limit, home_timeline_local_branch_count,
-    home_timeline_local_candidate_sql, home_timeline_remote_branch_count,
-    home_timeline_remote_candidate_sql,
+    home_timeline_local_candidate_sql, home_timeline_remote_candidate_sql,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -32,7 +30,6 @@ pub(crate) async fn list_home_timeline_candidate_ids(
             viewer_account_id,
             cursor,
             limit,
-            home_timeline_local_branch_count(include_followed_tags),
         ),
         list_home_timeline_candidate_ids_for_sql(
             db,
@@ -40,14 +37,15 @@ pub(crate) async fn list_home_timeline_candidate_ids(
             viewer_account_id,
             cursor,
             limit,
-            home_timeline_remote_branch_count(include_followed_tags),
         ),
     )?;
 
+    // Each side is already capped at `limit`, so the merged top `limit` is the
+    // most the caller can use. Keeping more only inflates the hydration set.
     Ok(merge_home_timeline_candidate_rows(
         local_rows,
         remote_rows,
-        home_timeline_candidate_merge_limit(limit),
+        limit,
     ))
 }
 
@@ -72,9 +70,8 @@ async fn list_home_timeline_candidate_ids_for_sql(
     viewer_account_id: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-    branch_count: u32,
 ) -> Result<Vec<HomeTimelineCandidateRow>> {
-    let bindings = home_timeline_candidate_bindings(viewer_account_id, cursor, limit, branch_count);
+    let bindings = home_timeline_candidate_bindings(viewer_account_id, cursor, limit);
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
     result.results::<HomeTimelineCandidateRow>()
 }
