@@ -1,9 +1,9 @@
-use std::collections::HashSet;
-
 use crate::{
     RemoteActorRow, RemoteStatusRecord, RemoteStatusRow, Result, StatusRecord, StatusRow,
-    remote_status_from_record, statuses_from_records,
+    append_timeline_cursor_bindings, remote_status_from_record,
+    seekable_resolved_timeline_cursor_predicates, statuses_from_records,
 };
+use std::collections::HashSet;
 use worker::D1Database;
 use worker::d1::D1Type;
 
@@ -81,13 +81,6 @@ fn search_patterns_match_everything(patterns: &[String]) -> bool {
     matches!(patterns, [pattern] if pattern == "%")
 }
 
-fn optional_text_binding(value: Option<&str>) -> D1Type<'_> {
-    match value {
-        Some(value) => D1Type::Text(value),
-        None => D1Type::Null,
-    }
-}
-
 fn push_search_pattern_bindings<'a>(bindings: &mut Vec<D1Type<'a>>, patterns: &'a [String]) {
     bindings.extend(
         patterns
@@ -96,60 +89,23 @@ fn push_search_pattern_bindings<'a>(bindings: &mut Vec<D1Type<'a>>, patterns: &'
     );
 }
 
-fn push_cursor_bindings<'a>(
+fn append_seekable_cursor_clause<'a>(
     bindings: &mut Vec<D1Type<'a>>,
     max_timestamp: Option<&'a str>,
     max_id: Option<&'a str>,
     min_timestamp: Option<&'a str>,
     min_id: Option<&'a str>,
+    timestamp_column: &str,
+    id_column: &str,
     limit: u32,
-) {
-    bindings.push(optional_text_binding(max_timestamp));
-    bindings.push(optional_text_binding(max_id));
-    bindings.push(optional_text_binding(min_timestamp));
-    bindings.push(optional_text_binding(min_id));
+) -> (String, usize) {
+    let slots =
+        append_timeline_cursor_bindings(bindings, max_timestamp, max_id, min_timestamp, min_id);
     bindings.push(D1Type::Integer(limit as i32));
-}
-
-fn cursor_window_clause(
-    timestamp_column: &str,
-    id_column: &str,
-    max_ts: usize,
-    max_id: usize,
-    min_ts: usize,
-    min_id: usize,
-) -> String {
-    format!(
-        "AND (?{max_ts} IS NULL
-                    OR {timestamp_column} < ?{max_ts}
-                    OR ({timestamp_column} = ?{max_ts} AND {id_column} < ?{max_id}))
-               AND (?{min_ts} IS NULL
-                    OR {timestamp_column} > ?{min_ts}
-                    OR ({timestamp_column} = ?{min_ts} AND {id_column} > ?{min_id}))"
-    )
-}
-
-fn cursor_window_clause_after_patterns(
-    timestamp_column: &str,
-    id_column: &str,
-    pattern_max_index: usize,
-) -> String {
-    cursor_window_clause(
-        timestamp_column,
-        id_column,
-        pattern_max_index + 1,
-        pattern_max_index + 2,
-        pattern_max_index + 3,
-        pattern_max_index + 4,
-    )
-}
-
-fn limit_binding_index(pattern_max_index: usize) -> usize {
-    pattern_max_index + 5
-}
-
-fn pattern_max_binding_index(pattern_count: usize, leading_filter_count: usize) -> usize {
-    leading_filter_count + pattern_count
+    let limit_slot = bindings.len();
+    let predicates =
+        seekable_resolved_timeline_cursor_predicates(timestamp_column, id_column, &slots);
+    (predicates, limit_slot)
 }
 
 fn json_string(value: &serde_json::Value, key: &str) -> String {
@@ -232,25 +188,23 @@ pub(crate) async fn search_local_status_rows(
         let mut bindings = Vec::with_capacity(2 + pattern_count + 5);
         bindings.push(D1Type::Text(account_id));
         push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
-        push_cursor_bindings(
+        let (cursor_clause, limit_slot) = append_seekable_cursor_clause(
             &mut bindings,
             max_timestamp,
             max_id,
             min_timestamp,
             min_id,
+            "created_at",
+            "id",
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
-        let cursor_clause =
-            cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE account_id = ?1
                AND {search_filter}
                {cursor_clause}
              ORDER BY created_at DESC, id DESC
-             LIMIT ?{limit}",
-            limit = limit_binding_index(pattern_max_index),
+             LIMIT ?{limit_slot}",
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -258,24 +212,22 @@ pub(crate) async fn search_local_status_rows(
     } else {
         let mut bindings = Vec::with_capacity(pattern_count + 5);
         push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
-        push_cursor_bindings(
+        let (cursor_clause, limit_slot) = append_seekable_cursor_clause(
             &mut bindings,
             max_timestamp,
             max_id,
             min_timestamp,
             min_id,
+            "created_at",
+            "id",
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
-        let cursor_clause =
-            cursor_window_clause_after_patterns("created_at", "id", pattern_max_index);
         db.prepare(format!(
             "{LOCAL_STATUS_SEARCH_SELECT}
              WHERE {search_filter}
                {cursor_clause}
              ORDER BY created_at DESC, id DESC
-             LIMIT ?{limit}",
-            limit = limit_binding_index(pattern_max_index),
+             LIMIT ?{limit_slot}",
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -313,25 +265,23 @@ pub(crate) async fn search_remote_status_rows(
         let mut bindings = Vec::with_capacity(2 + pattern_count + 5);
         bindings.push(D1Type::Text(actor_uri));
         push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
-        push_cursor_bindings(
+        let (cursor_clause, limit_slot) = append_seekable_cursor_clause(
             &mut bindings,
             max_timestamp,
             max_id,
             min_timestamp,
             min_id,
+            "rs.published_at",
+            "rs.id",
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(pattern_count, 1);
-        let cursor_clause =
-            cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE rs.actor_uri = ?1
                AND {search_filter}
                {cursor_clause}
              ORDER BY rs.published_at DESC, rs.id DESC
-             LIMIT ?{limit}",
-            limit = limit_binding_index(pattern_max_index),
+             LIMIT ?{limit_slot}",
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -339,24 +289,22 @@ pub(crate) async fn search_remote_status_rows(
     } else {
         let mut bindings = Vec::with_capacity(pattern_count + 5);
         push_search_pattern_bindings(&mut bindings, &patterns[..pattern_count]);
-        push_cursor_bindings(
+        let (cursor_clause, limit_slot) = append_seekable_cursor_clause(
             &mut bindings,
             max_timestamp,
             max_id,
             min_timestamp,
             min_id,
+            "rs.published_at",
+            "rs.id",
             limit,
         );
-        let pattern_max_index = pattern_max_binding_index(pattern_count, 0);
-        let cursor_clause =
-            cursor_window_clause_after_patterns("rs.published_at", "rs.id", pattern_max_index);
         db.prepare(format!(
             "{REMOTE_STATUS_SEARCH_SELECT}
              WHERE {search_filter}
                {cursor_clause}
              ORDER BY rs.published_at DESC, rs.id DESC
-             LIMIT ?{limit}",
-            limit = limit_binding_index(pattern_max_index),
+             LIMIT ?{limit_slot}",
         ))
         .bind_refs(bindings.iter())?
         .all()
@@ -403,30 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn cursor_window_clause_uses_supplied_columns_and_bindings() {
-        assert_eq!(
-            cursor_window_clause("rs.published_at", "rs.id", 4, 5, 6, 7),
-            "AND (?4 IS NULL\n                    OR rs.published_at < ?4\n                    OR (rs.published_at = ?4 AND rs.id < ?5))\n               AND (?6 IS NULL\n                    OR rs.published_at > ?6\n                    OR (rs.published_at = ?6 AND rs.id > ?7))"
+    fn append_seekable_cursor_clause_emits_index_friendly_bounds() {
+        let mut bindings = vec![
+            D1Type::Text("acct-1"),
+            D1Type::Text("%rust%"),
+            D1Type::Text("%wasm%"),
+        ];
+        let (clause, limit_slot) = append_seekable_cursor_clause(
+            &mut bindings,
+            Some("2026-01-02T00:00:00Z"),
+            Some("status-max"),
+            Some("2026-01-01T00:00:00Z"),
+            Some("status-min"),
+            "rs.published_at",
+            "rs.id",
+            20,
         );
-    }
 
-    #[test]
-    fn cursor_window_clause_after_patterns_offsets_cursor_bindings() {
-        assert_eq!(
-            cursor_window_clause_after_patterns("created_at", "id", 3),
-            cursor_window_clause("created_at", "id", 4, 5, 6, 7)
-        );
-    }
-
-    #[test]
-    fn limit_binding_index_follows_cursor_bindings() {
-        assert_eq!(limit_binding_index(3), 8);
-    }
-
-    #[test]
-    fn pattern_max_binding_index_accounts_for_leading_filters() {
-        assert_eq!(pattern_max_binding_index(2, 0), 2);
-        assert_eq!(pattern_max_binding_index(2, 1), 3);
+        assert!(clause.contains("rs.published_at <= ?4"));
+        assert!(clause.contains("(rs.published_at < ?4 OR rs.id < ?5)"));
+        assert!(clause.contains("rs.published_at >= ?6"));
+        assert!(!clause.contains("?4 IS NULL"));
+        assert_eq!(limit_slot, 8);
+        assert!(matches!(bindings[7], D1Type::Integer(20)));
     }
 
     #[test]

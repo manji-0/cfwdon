@@ -1,8 +1,10 @@
 use super::{
     AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
-    json_string_array, local_status_identity_from_uri, sql_in_json_each, status_from_record,
-    statuses_from_records, unique_ordered_refs,
+    find_remote_statuses_with_actors_by_ids, json_string_array, local_status_identity_from_uri,
+    remote_account_rest_id, sql_in_json_each, status_from_record, statuses_from_records,
+    unique_ordered_refs,
 };
+use crate::{append_local_status_id_cursor_parts, format_with_clauses};
 use std::collections::HashMap;
 use worker::d1::D1Type;
 
@@ -118,9 +120,7 @@ pub(crate) async fn load_in_reply_to_account_id(
     status: &StatusRow,
 ) -> Result<Option<String>> {
     match status.in_reply_to_id.as_deref() {
-        Some(reply_id) => Ok(find_status_by_id(db, reply_id)
-            .await?
-            .map(|reply| reply.account_id)),
+        Some(reply_id) => super::resolve_in_reply_to_account_id(db, reply_id).await,
         None => Ok(None),
     }
 }
@@ -153,11 +153,25 @@ pub(crate) async fn load_in_reply_to_account_ids(
     );
     let binding = D1Type::Text(reply_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let reply_accounts_by_status_id = result
+    let mut reply_accounts_by_status_id = result
         .results::<ReplyAccountIdRow>()?
         .into_iter()
         .map(|row| (row.id, row.account_id))
         .collect::<HashMap<_, _>>();
+
+    let unresolved_reply_ids = reply_ids
+        .iter()
+        .filter(|reply_id| !reply_accounts_by_status_id.contains_key(**reply_id))
+        .map(|reply_id| (*reply_id).to_owned())
+        .collect::<Vec<_>>();
+    if !unresolved_reply_ids.is_empty() {
+        for (remote_status, actor) in
+            find_remote_statuses_with_actors_by_ids(db, &unresolved_reply_ids).await?
+        {
+            reply_accounts_by_status_id
+                .insert(remote_status.id, remote_account_rest_id(&actor.actor_uri));
+        }
+    }
 
     Ok(statuses
         .iter()
@@ -237,35 +251,16 @@ pub(crate) async fn list_account_statuses(
         .map(|tag| tag.trim().trim_start_matches('#').to_ascii_lowercase())
         .filter(|tag| !tag.is_empty())
         .map(|tag| format!("%#{tag}%"));
-    let mut bindings = vec![
-        D1Type::Text(account_id),
-        options.max_id.map_or(D1Type::Null, D1Type::Text),
-        options.min_id.map_or(D1Type::Null, D1Type::Text),
-    ];
-    let mut next_binding = 4;
-    let mut predicates = vec![
-        "account_id = ?1".to_owned(),
-        "(
-            ?2 IS NULL
-            OR NOT EXISTS (SELECT 1 FROM max_cursor)
-            OR EXISTS (
-                SELECT 1 FROM max_cursor
-                WHERE statuses.created_at < max_cursor.created_at
-                   OR (statuses.created_at = max_cursor.created_at AND statuses.id < max_cursor.id)
-            )
-        )"
-        .to_owned(),
-        "(
-            ?3 IS NULL
-            OR NOT EXISTS (SELECT 1 FROM min_cursor)
-            OR EXISTS (
-                SELECT 1 FROM min_cursor
-                WHERE statuses.created_at > min_cursor.created_at
-                   OR (statuses.created_at = min_cursor.created_at AND statuses.id > min_cursor.id)
-            )
-        )"
-        .to_owned(),
-    ];
+    let mut bindings = vec![D1Type::Text(account_id)];
+    let cursor_parts = append_local_status_id_cursor_parts(
+        &mut bindings,
+        "statuses",
+        options.max_id,
+        options.min_id,
+    );
+    let mut next_binding = bindings.len() + 1;
+    let mut predicates = vec!["account_id = ?1".to_owned()];
+    predicates.extend(cursor_parts.predicates);
 
     match options.visibility {
         AccountStatusVisibilityScope::All => {}
@@ -308,14 +303,9 @@ pub(crate) async fn list_account_statuses(
 
     let limit_binding = next_binding;
     bindings.push(D1Type::Integer(options.limit as i32));
+    let with_clause = format_with_clauses(&cursor_parts.with_clauses);
     let sql = format!(
-        "WITH max_cursor AS (
-            SELECT id, created_at FROM statuses WHERE id = ?2 LIMIT 1
-         ),
-         min_cursor AS (
-            SELECT id, created_at FROM statuses WHERE id = ?3 LIMIT 1
-         )
-         SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
          FROM statuses
          WHERE {}
          ORDER BY created_at DESC, id DESC
@@ -336,52 +326,40 @@ pub(crate) async fn list_public_account_statuses(
     min_id: Option<&str>,
     limit: u32,
 ) -> Result<Vec<StatusRow>> {
-    let bindings = [
-        D1Type::Text(account_id),
-        max_id.map_or(D1Type::Null, D1Type::Text),
-        min_id.map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ];
-    let result = db
-        .prepare(
-            "WITH max_cursor AS (
-                SELECT id, created_at FROM statuses WHERE id = ?2 LIMIT 1
-             ),
-             min_cursor AS (
-                SELECT id, created_at FROM statuses WHERE id = ?3 LIMIT 1
-             )
-             SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
-             FROM statuses
-             WHERE account_id = ?1
-               AND visibility IN ('public', 'unlisted')
-               AND (
-                    ?2 IS NULL
-                    OR NOT EXISTS (SELECT 1 FROM max_cursor)
-                    OR EXISTS (
-                        SELECT 1 FROM max_cursor
-                        WHERE statuses.created_at < max_cursor.created_at
-                           OR (statuses.created_at = max_cursor.created_at AND statuses.id < max_cursor.id)
-                    )
-               )
-               AND (
-                    ?3 IS NULL
-                    OR NOT EXISTS (SELECT 1 FROM min_cursor)
-                    OR EXISTS (
-                        SELECT 1 FROM min_cursor
-                        WHERE statuses.created_at > min_cursor.created_at
-                           OR (statuses.created_at = min_cursor.created_at AND statuses.id > min_cursor.id)
-                    )
-               )
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?4",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+    let (sql, bindings) = public_account_statuses_sql(account_id, max_id, min_id, limit);
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     result
         .results::<StatusRecord>()
         .and_then(statuses_from_records)
+}
+
+fn public_account_statuses_sql<'a>(
+    account_id: &'a str,
+    max_id: Option<&'a str>,
+    min_id: Option<&'a str>,
+    limit: u32,
+) -> (String, Vec<D1Type<'a>>) {
+    let mut bindings = vec![D1Type::Text(account_id)];
+    let cursor_parts =
+        append_local_status_id_cursor_parts(&mut bindings, "statuses", max_id, min_id);
+    bindings.push(D1Type::Integer(limit as i32));
+    let limit_binding = bindings.len();
+    let with_clause = format_with_clauses(&cursor_parts.with_clauses);
+    let mut predicates = vec![
+        "account_id = ?1".to_owned(),
+        "visibility IN ('public', 'unlisted')".to_owned(),
+    ];
+    predicates.extend(cursor_parts.predicates);
+    let sql = format!(
+        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+         FROM statuses
+         WHERE {}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?{limit_binding}",
+        predicates.join("\n               AND ")
+    );
+    (sql, bindings)
 }
 
 pub(crate) async fn list_direct_local_replies(

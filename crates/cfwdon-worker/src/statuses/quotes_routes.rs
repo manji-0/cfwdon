@@ -21,6 +21,9 @@ use super::{
     update_local_status_quote_state, update_remote_status_quote_state,
 };
 use crate::timelines::TimelinePaginationQuery;
+use crate::{
+    append_resolved_timeline_cursor_bindings, seekable_resolved_timeline_cursor_predicates,
+};
 use cfwdon_domain::{OwnerQuoteAction, QuoteState};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -366,29 +369,18 @@ async fn list_local_status_quotes_by_uri(
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<crate::StatusRow>> {
-    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
-    let result = db
-        .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+    let (sql, bindings) = status_quotes_list_sql(
+        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses
              WHERE quote_of_uri = ?1
-               AND quote_state = 'accepted'
-               AND (
-                    ?2 IS NULL
-                    OR created_at < ?2
-                    OR (created_at = ?2 AND id < ?3)
-               )
-               AND (
-                    ?4 IS NULL
-                    OR created_at > ?4
-                    OR (created_at = ?4 AND id > ?5)
-               )
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?6",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+               AND quote_state = 'accepted'",
+        "created_at",
+        "id",
+        status_uri,
+        cursor,
+        limit,
+    );
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     result
         .results::<crate::StatusRecord>()
         .and_then(crate::statuses_from_records)
@@ -400,58 +392,78 @@ async fn list_remote_status_quotes_by_uri(
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<crate::RemoteStatusRow>> {
-    let bindings = quote_cursor_bindings(status_uri, cursor, limit);
-    let result = db
-        .prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+    let (sql, bindings) = status_quotes_list_sql(
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE quote_of_uri = ?1
-               AND quote_state = 'accepted'
-               AND (
-                    ?2 IS NULL
-                    OR published_at < ?2
-                    OR (published_at = ?2 AND id < ?3)
-               )
-               AND (
-                    ?4 IS NULL
-                    OR published_at > ?4
-                    OR (published_at = ?4 AND id > ?5)
-               )
-             ORDER BY published_at DESC, id DESC
-             LIMIT ?6",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+               AND quote_state = 'accepted'",
+        "published_at",
+        "id",
+        status_uri,
+        cursor,
+        limit,
+    );
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     result
         .results::<crate::RemoteStatusRecord>()
         .and_then(crate::remote_statuses_from_records)
 }
 
-fn quote_cursor_bindings<'a>(
+fn status_quotes_list_sql<'a>(
+    select_from_where: &str,
+    timestamp_column: &str,
+    id_column: &str,
     status_uri: &'a str,
     cursor: &'a crate::ResolvedTimelineCursor,
     limit: u32,
-) -> [D1Type<'a>; 6] {
-    [
-        D1Type::Text(status_uri),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ]
+) -> (String, Vec<D1Type<'a>>) {
+    let mut bindings = vec![D1Type::Text(status_uri)];
+    let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
+    bindings.push(D1Type::Integer(limit as i32));
+    let limit_slot = bindings.len();
+    let cursor_predicates =
+        seekable_resolved_timeline_cursor_predicates(timestamp_column, id_column, &slots);
+    let sql = format!(
+        "{select_from_where}{cursor_predicates}
+             ORDER BY {timestamp_column} DESC, {id_column} DESC
+             LIMIT ?{limit_slot}"
+    );
+    (sql, bindings)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sort_status_quote_entries;
+    use super::{sort_status_quote_entries, status_quotes_list_sql};
+    use crate::ResolvedTimelineCursor;
+    use worker::d1::D1Type;
+
+    #[test]
+    fn status_quotes_list_sql_emits_seekable_cursor_bounds() {
+        let cursor = ResolvedTimelineCursor {
+            max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
+            max_id: Some("quote-max".to_owned()),
+            min_timestamp: None,
+            min_id: None,
+        };
+        let (sql, bindings) = status_quotes_list_sql(
+            "SELECT id FROM statuses WHERE quote_of_uri = ?1",
+            "created_at",
+            "id",
+            "https://example.com/statuses/1",
+            &cursor,
+            20,
+        );
+
+        assert!(sql.contains("created_at <= ?2"));
+        assert!(sql.contains("(created_at < ?2 OR id < ?3)"));
+        assert!(sql.contains("LIMIT ?4"));
+        assert!(!sql.contains("?2 IS NULL"));
+        assert!(matches!(
+            bindings[0],
+            D1Type::Text("https://example.com/statuses/1")
+        ));
+        assert!(matches!(bindings[3], D1Type::Integer(20)));
+    }
 
     #[test]
     fn status_quote_entries_sort_newest_first_then_id() {

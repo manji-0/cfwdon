@@ -8,7 +8,10 @@
 //! slower. Emitting the bound only when it exists lets the index seek straight to
 //! it.
 
-use crate::ResolvedTimelineCursor;
+use crate::{
+    ResolvedTimelineCursor, append_resolved_timeline_cursor_bindings,
+    seekable_resolved_timeline_cursor_predicates,
+};
 use worker::d1::D1Type;
 
 /// One `UNION` arm of a candidate query.
@@ -107,13 +110,7 @@ pub(crate) struct HomeTimelineCandidateQuery<'a> {
 }
 
 /// Bind slots assigned to whichever cursor bounds are present.
-#[derive(Default)]
-struct CursorSlots {
-    /// `(timestamp slot, id slot)` for the upper bound.
-    max: Option<(usize, usize)>,
-    /// `(timestamp slot, id slot)` for the lower bound.
-    min: Option<(usize, usize)>,
-}
+type CursorSlots = crate::ResolvedTimelineCursorSlots;
 
 /// Builds the candidate query for one source.
 ///
@@ -128,23 +125,7 @@ pub(crate) fn home_timeline_candidate_query<'a>(
 ) -> HomeTimelineCandidateQuery<'a> {
     // `?1` is always the viewer; cursor bounds and then the limit follow.
     let mut bindings = vec![D1Type::Text(viewer_account_id)];
-    let mut slots = CursorSlots::default();
-
-    // A resolved cursor always carries both a timestamp and an id: the timestamp
-    // is looked up from the id, and a request whose id did not resolve is
-    // answered with an empty page before reaching this point.
-    if let (Some(timestamp), Some(id)) = (cursor.max_timestamp.as_deref(), cursor.max_id.as_deref())
-    {
-        bindings.push(D1Type::Text(timestamp));
-        bindings.push(D1Type::Text(id));
-        slots.max = Some((bindings.len() - 1, bindings.len()));
-    }
-    if let (Some(timestamp), Some(id)) = (cursor.min_timestamp.as_deref(), cursor.min_id.as_deref())
-    {
-        bindings.push(D1Type::Text(timestamp));
-        bindings.push(D1Type::Text(id));
-        slots.min = Some((bindings.len() - 1, bindings.len()));
-    }
+    let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
     let limit_slot = bindings.len();
 
@@ -174,7 +155,8 @@ fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) 
         timestamp_column,
         id_column,
     } = branch;
-    let cursor_predicates = cursor_predicates(timestamp_column, id_column, slots);
+    let cursor_predicates =
+        seekable_resolved_timeline_cursor_predicates(timestamp_column, id_column, slots);
 
     format!(
         "SELECT source, status_id, timestamp
@@ -185,30 +167,6 @@ fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) 
                     LIMIT ?{limit_slot}
                 )"
     )
-}
-
-/// Renders the cursor bounds as seekable range constraints.
-///
-/// Each bound leads with a bare comparison on the timestamp so the index can
-/// seek to it, then breaks ties on the id. Writing the pair as a single
-/// disjunction instead would leave nothing for the planner to seek on.
-fn cursor_predicates(timestamp_column: &str, id_column: &str, slots: &CursorSlots) -> String {
-    let mut predicates = String::new();
-    if let Some((timestamp_slot, id_slot)) = slots.max {
-        predicates.push_str(&format!(
-            "
-                      AND {timestamp_column} <= ?{timestamp_slot}
-                      AND ({timestamp_column} < ?{timestamp_slot} OR {id_column} < ?{id_slot})"
-        ));
-    }
-    if let Some((timestamp_slot, id_slot)) = slots.min {
-        predicates.push_str(&format!(
-            "
-                      AND {timestamp_column} >= ?{timestamp_slot}
-                      AND ({timestamp_column} > ?{timestamp_slot} OR {id_column} > ?{id_slot})"
-        ));
-    }
-    predicates
 }
 
 #[cfg(test)]

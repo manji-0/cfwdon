@@ -1,8 +1,15 @@
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
+mod cursor_sql;
 mod request_parsing;
 mod search;
+pub(crate) use cursor_sql::{
+    ResolvedTimelineCursorSlots, StatusIdCursorParts, append_local_status_id_cursor_parts,
+    append_min_timestamp_cursor_bindings, append_remote_status_id_cursor_parts,
+    append_resolved_timeline_cursor_bindings, append_timeline_cursor_bindings, format_with_clauses,
+    seekable_min_timestamp_cursor_predicates, seekable_resolved_timeline_cursor_predicates,
+};
 pub(crate) use request_parsing::*;
 #[allow(unused_imports)]
 pub(crate) use search::*;
