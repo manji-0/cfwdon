@@ -252,7 +252,8 @@ Architecture docs already ask whether delivery should move further onto Queues. 
    - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`
    - `user:notification` hub: favourite, reblog, follow/follow_request, mention, reply (`status`), quote, poll end, local status `update` / `quoted_update` for reblog/quote recipients
 4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path.
-5. Still open: public/hashtag/list/direct hubs, remote inbound notification publishes, announcements, follower home-timeline fan-out beyond the author.
+5. Still open: public/hashtag/list/direct hubs, remote inbound notification publishes, follower home-timeline fan-out beyond the author.
+6. Announcements: `announcement.reaction` and dismiss (`announcement` refresh with `read: true`) publish to `user:{account_id}` on API mutation. Config-only announcement create/update/delete (`announcements_json`) has no write API and no efficient fan-out — those events remain poll-only until config reload.
 
 ### Phase B — Channel coverage
 
