@@ -1,4 +1,4 @@
-use crate::{D1Database, Result, d1_in_value_chunk_size, generate_entity_id, sql_placeholders};
+use crate::{D1Database, Result, generate_entity_id, json_string_array, sql_in_json_each};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -134,18 +134,15 @@ pub(crate) async fn preload_remote_status_edit_updated_at(
         return Ok(RemoteStatusEditUpdatedAtPreload::default());
     }
 
-    let mut updated_at_by_status_id = HashMap::new();
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let sql = remote_status_edit_updated_at_preload_sql(chunk.len());
-        let bindings = remote_status_edit_updated_at_preload_bindings(chunk);
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        updated_at_by_status_id.extend(
-            result
-                .results::<RemoteStatusUpdatedAtRow>()?
-                .into_iter()
-                .map(|row| (row.id, row.updated_at)),
-        );
-    }
+    let ids_json = json_string_array(&ids);
+    let sql = remote_status_edit_updated_at_preload_sql();
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
+    let updated_at_by_status_id = result
+        .results::<RemoteStatusUpdatedAtRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.updated_at))
+        .collect::<HashMap<_, _>>();
 
     Ok(RemoteStatusEditUpdatedAtPreload {
         updated_at_by_status_id,
@@ -161,23 +158,19 @@ fn unique_remote_status_edit_preload_ids(status_ids: &[String]) -> Vec<&str> {
         .collect()
 }
 
-fn remote_status_edit_updated_at_preload_sql(id_count: usize) -> String {
-    let placeholders = sql_placeholders(1, id_count);
+fn remote_status_edit_updated_at_preload_sql() -> String {
     format!(
         "SELECT rs.id, rs.updated_at
          FROM remote_statuses rs
-         WHERE rs.id IN ({placeholders})
+         WHERE rs.id {}
            AND EXISTS (
                SELECT 1
                FROM remote_status_edits rse
                WHERE rse.status_id = rs.id
                LIMIT 1
-           )"
+           )",
+        sql_in_json_each(1)
     )
-}
-
-fn remote_status_edit_updated_at_preload_bindings<'a>(ids: &[&'a str]) -> Vec<D1Type<'a>> {
-    ids.iter().copied().map(D1Type::Text).collect()
 }
 
 #[cfg(test)]
@@ -200,10 +193,10 @@ mod tests {
     }
 
     #[test]
-    fn remote_status_edit_updated_at_preload_sql_uses_expected_slots() {
-        let sql = remote_status_edit_updated_at_preload_sql(3);
+    fn remote_status_edit_updated_at_preload_sql_uses_json_each() {
+        let sql = remote_status_edit_updated_at_preload_sql();
 
-        assert!(sql.contains("rs.id IN (?1, ?2, ?3)"));
+        assert!(sql.contains("rs.id IN (SELECT value FROM json_each(?1))"));
         assert!(sql.contains("EXISTS"));
         assert!(sql.contains("rse.status_id = rs.id"));
     }

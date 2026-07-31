@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
 
-use crate::{d1_in_value_chunk_size, sql_placeholders};
+use crate::{json_string_array, sql_in_json_each};
 
 #[derive(Debug, Deserialize)]
 struct StatusCountsRow {
@@ -67,22 +67,18 @@ pub(crate) async fn load_local_status_counts_map(
         .map(|id| ((*id).clone(), (0, 0)))
         .collect::<HashMap<_, _>>();
 
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT status_id, favourites_count, reblogs_count
-             FROM status_counts
-             WHERE status_id IN ({placeholders})"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let ids_json = json_string_array(&ids);
+    let sql = format!(
+        "SELECT status_id, favourites_count, reblogs_count
+         FROM status_counts
+         WHERE status_id {}",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-        for row in result.results::<StatusCountsRow>()? {
-            counts.insert(row.status_id, (row.favourites_count, row.reblogs_count));
-        }
+    for row in result.results::<StatusCountsRow>()? {
+        counts.insert(row.status_id, (row.favourites_count, row.reblogs_count));
     }
     Ok(counts)
 }
@@ -124,25 +120,21 @@ pub(crate) async fn load_remote_status_counts_map(
         .map(|id| ((*id).clone(), (0, 0)))
         .collect::<HashMap<_, _>>();
 
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT remote_status_id, favourites_count, reblogs_count
-             FROM remote_status_counts
-             WHERE remote_status_id IN ({placeholders})"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let ids_json = json_string_array(&ids);
+    let sql = format!(
+        "SELECT remote_status_id, favourites_count, reblogs_count
+         FROM remote_status_counts
+         WHERE remote_status_id {}",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-        for row in result.results::<StatusCountsRow>()? {
-            counts.insert(
-                row.remote_status_id,
-                (row.favourites_count, row.reblogs_count),
-            );
-        }
+    for row in result.results::<StatusCountsRow>()? {
+        counts.insert(
+            row.remote_status_id,
+            (row.favourites_count, row.reblogs_count),
+        );
     }
     Ok(counts)
 }

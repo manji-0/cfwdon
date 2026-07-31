@@ -314,26 +314,20 @@ async fn preload_timeline_candidate_reply_account_ids(
         return Ok(HashMap::new());
     }
 
-    let mut reply_accounts_by_status_id = HashMap::new();
-    for chunk in reply_ids.chunks(crate::d1_in_value_chunk_size(0)) {
-        let placeholders = crate::sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT id, account_id
-             FROM statuses
-             WHERE id IN ({placeholders})"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        reply_accounts_by_status_id.extend(
-            result
-                .results::<ReplyAccountIdRow>()?
-                .into_iter()
-                .map(|row| (row.id, row.account_id)),
-        );
-    }
+    let reply_ids_json = crate::json_string_array(&reply_ids);
+    let sql = format!(
+        "SELECT id, account_id
+         FROM statuses
+         WHERE id {}",
+        crate::sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(reply_ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
+    let reply_accounts_by_status_id = result
+        .results::<ReplyAccountIdRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.account_id))
+        .collect::<HashMap<_, _>>();
 
     Ok(candidates
         .iter()

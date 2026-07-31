@@ -1,7 +1,7 @@
 use super::{
     Error, Request, Response, Result, RouteContext, build_local_status_response,
-    d1_in_value_chunk_size, find_visible_local_status_response_subject, load_config,
-    require_authenticated_local_account, sql_placeholders, unique_ordered_refs,
+    find_visible_local_status_response_subject, json_string_array, load_config,
+    require_authenticated_local_account, sql_in_json_each, unique_ordered_refs,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -104,28 +104,21 @@ async fn load_status_reply_links(
         return Ok(HashMap::new());
     }
 
-    let mut links = HashMap::new();
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT id, in_reply_to_id
-             FROM statuses
-             WHERE id IN ({placeholders})"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        links.extend(
-            result
-                .results::<StatusReplyLinkRow>()?
-                .into_iter()
-                .map(|row| (row.id, row.in_reply_to_id)),
-        );
-    }
+    let ids_json = json_string_array(&ids);
+    let sql = format!(
+        "SELECT id, in_reply_to_id
+         FROM statuses
+         WHERE id {}",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(links)
+    Ok(result
+        .results::<StatusReplyLinkRow>()?
+        .into_iter()
+        .map(|row| (row.id, row.in_reply_to_id))
+        .collect())
 }
 
 async fn load_muted_thread_root_status_ids(
@@ -138,28 +131,22 @@ async fn load_muted_thread_root_status_ids(
         return Ok(HashSet::new());
     }
 
-    let mut muted = HashSet::new();
-    for chunk in roots.chunks(d1_in_value_chunk_size(1)) {
-        let placeholders = sql_placeholders(2, chunk.len());
-        let sql = format!(
-            "SELECT thread_root_status_id
-             FROM thread_mutes
-             WHERE account_id = ?1
-               AND thread_root_status_id IN ({placeholders})"
-        );
-        let mut bindings = Vec::with_capacity(chunk.len() + 1);
-        bindings.push(D1Type::Text(account_id));
-        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        muted.extend(
-            result
-                .results::<ThreadRootStatusIdRow>()?
-                .into_iter()
-                .map(|row| row.thread_root_status_id),
-        );
-    }
+    let roots_json = json_string_array(&roots);
+    let sql = format!(
+        "SELECT thread_root_status_id
+         FROM thread_mutes
+         WHERE account_id = ?1
+           AND thread_root_status_id {}",
+        sql_in_json_each(2)
+    );
+    let bindings = [D1Type::Text(account_id), D1Type::Text(roots_json.as_str())];
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(muted)
+    Ok(result
+        .results::<ThreadRootStatusIdRow>()?
+        .into_iter()
+        .map(|row| row.thread_root_status_id)
+        .collect())
 }
 
 /// Return the subset of status ids whose thread root is muted by `account_id`.

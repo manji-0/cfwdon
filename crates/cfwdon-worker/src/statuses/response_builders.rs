@@ -36,7 +36,7 @@ use super::{
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
 
-use crate::{d1_in_value_chunk_size, sql_placeholders};
+use crate::{json_string_array, sql_in_json_each};
 
 async fn build_status_application(
     db: &D1Database,
@@ -356,28 +356,22 @@ async fn load_viewer_target_uri_set(
         return Ok(HashSet::new());
     }
 
-    let mut matched = HashSet::new();
-    for chunk in target_uris.chunks(d1_in_value_chunk_size(1)) {
-        let placeholders = sql_placeholders(2, chunk.len());
-        let sql = format!(
-            "SELECT target_uri
-             FROM {table}
-             WHERE account_id = ?1
-               AND target_uri IN ({placeholders})"
-        );
-        let mut bindings = Vec::with_capacity(chunk.len() + 1);
-        bindings.push(D1Type::Text(account_id));
-        bindings.extend(chunk.iter().map(|uri| D1Type::Text(uri.as_str())));
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        matched.extend(
-            result
-                .results::<TargetUriRow>()?
-                .into_iter()
-                .map(|row| row.target_uri),
-        );
-    }
+    let uris_json = json_string_array(target_uris);
+    let sql = format!(
+        "SELECT target_uri
+         FROM {table}
+         WHERE account_id = ?1
+           AND target_uri {}",
+        sql_in_json_each(2)
+    );
+    let bindings = [D1Type::Text(account_id), D1Type::Text(uris_json.as_str())];
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(matched)
+    Ok(result
+        .results::<TargetUriRow>()?
+        .into_iter()
+        .map(|row| row.target_uri)
+        .collect())
 }
 
 async fn load_viewer_remote_status_id_set(
@@ -390,28 +384,22 @@ async fn load_viewer_remote_status_id_set(
         return Ok(HashSet::new());
     }
 
-    let mut matched = HashSet::new();
-    for chunk in status_ids.chunks(d1_in_value_chunk_size(1)) {
-        let placeholders = sql_placeholders(2, chunk.len());
-        let sql = format!(
-            "SELECT remote_status_id
-             FROM {table}
-             WHERE account_id = ?1
-               AND remote_status_id IN ({placeholders})"
-        );
-        let mut bindings = Vec::with_capacity(chunk.len() + 1);
-        bindings.push(D1Type::Text(account_id));
-        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        matched.extend(
-            result
-                .results::<RemoteStatusIdRow>()?
-                .into_iter()
-                .map(|row| row.remote_status_id),
-        );
-    }
+    let ids_json = json_string_array(status_ids);
+    let sql = format!(
+        "SELECT remote_status_id
+         FROM {table}
+         WHERE account_id = ?1
+           AND remote_status_id {}",
+        sql_in_json_each(2)
+    );
+    let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(matched)
+    Ok(result
+        .results::<RemoteStatusIdRow>()?
+        .into_iter()
+        .map(|row| row.remote_status_id)
+        .collect())
 }
 
 async fn load_viewer_pinned_status_ids(
@@ -423,28 +411,22 @@ async fn load_viewer_pinned_status_ids(
         return Ok(HashSet::new());
     }
 
-    let mut matched = HashSet::new();
-    for chunk in status_ids.chunks(d1_in_value_chunk_size(1)) {
-        let placeholders = sql_placeholders(2, chunk.len());
-        let sql = format!(
-            "SELECT status_id
-             FROM status_pins
-             WHERE account_id = ?1
-               AND status_id IN ({placeholders})"
-        );
-        let mut bindings = Vec::with_capacity(chunk.len() + 1);
-        bindings.push(D1Type::Text(account_id));
-        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        matched.extend(
-            result
-                .results::<StatusIdRow>()?
-                .into_iter()
-                .map(|row| row.status_id),
-        );
-    }
+    let ids_json = json_string_array(status_ids);
+    let sql = format!(
+        "SELECT status_id
+         FROM status_pins
+         WHERE account_id = ?1
+           AND status_id {}",
+        sql_in_json_each(2)
+    );
+    let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
+    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(matched)
+    Ok(result
+        .results::<StatusIdRow>()?
+        .into_iter()
+        .map(|row| row.status_id)
+        .collect())
 }
 
 pub(crate) async fn preload_local_status_viewer_state(
@@ -550,38 +532,32 @@ pub(crate) async fn preload_status_quote_counts(
         .map(|uri| (*uri).clone())
         .collect::<HashSet<_>>();
 
-    let mut counts = HashMap::new();
-    for chunk in uris.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT quote_of_uri, SUM(count) AS count
-             FROM (
-                 SELECT quote_of_uri, COUNT(*) AS count
-                 FROM statuses
-                 WHERE quote_state = 'accepted'
-                   AND quote_of_uri IN ({placeholders})
-                 GROUP BY quote_of_uri
-                 UNION ALL
-                 SELECT quote_of_uri, COUNT(*) AS count
-                 FROM remote_statuses
-                 WHERE quote_state = 'accepted'
-                   AND quote_of_uri IN ({placeholders})
-                 GROUP BY quote_of_uri
-             )
-             GROUP BY quote_of_uri"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|uri| D1Type::Text(uri.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        counts.extend(
-            result
-                .results::<StatusQuoteCountRow>()?
-                .into_iter()
-                .map(|row| (row.quote_of_uri, row.count)),
-        );
-    }
+    let uris_json = json_string_array(&uris);
+    let sql = format!(
+        "SELECT quote_of_uri, SUM(count) AS count
+         FROM (
+             SELECT quote_of_uri, COUNT(*) AS count
+             FROM statuses
+             WHERE quote_state = 'accepted'
+               AND quote_of_uri {in_clause}
+             GROUP BY quote_of_uri
+             UNION ALL
+             SELECT quote_of_uri, COUNT(*) AS count
+             FROM remote_statuses
+             WHERE quote_state = 'accepted'
+               AND quote_of_uri {in_clause}
+             GROUP BY quote_of_uri
+         )
+         GROUP BY quote_of_uri",
+        in_clause = sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(uris_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
+    let counts = result
+        .results::<StatusQuoteCountRow>()?
+        .into_iter()
+        .map(|row| (row.quote_of_uri, row.count))
+        .collect::<HashMap<_, _>>();
 
     Ok(StatusQuoteCountsPreload {
         counts,

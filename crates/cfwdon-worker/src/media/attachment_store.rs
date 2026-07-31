@@ -1,8 +1,8 @@
 use crate::{
     AppConfig, D1Database, Error, LocalAccount, MediaAttachmentRow, OrphanMediaRow, Result,
-    UpdateMediaRequest, d1_in_value_chunk_size, enqueue_addressed_create_activity,
-    enqueue_direct_create_activity, outbox_create_insert_statement_with_attachments,
-    parse_media_focus, sql_placeholders,
+    UpdateMediaRequest, enqueue_addressed_create_activity, enqueue_direct_create_activity,
+    json_string_array, outbox_create_insert_statement_with_attachments, parse_media_focus,
+    sql_in_json_each,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -120,26 +120,22 @@ pub(crate) async fn find_media_attachments_by_status_ids(
         return Ok(HashMap::new());
     }
 
+    let ids_json = json_string_array(&ids);
+    let sql = format!(
+        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
+         FROM media_attachments
+         WHERE status_id {}
+         ORDER BY status_id ASC, created_at ASC, id ASC",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
-             FROM media_attachments
-             WHERE status_id IN ({placeholders})
-             ORDER BY status_id ASC, created_at ASC, id ASC"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        for row in result.results::<MediaAttachmentRow>()? {
-            by_status_id
-                .entry(row.status_id.clone().unwrap_or_default())
-                .or_insert_with(Vec::new)
-                .push(row);
-        }
+    for row in result.results::<MediaAttachmentRow>()? {
+        by_status_id
+            .entry(row.status_id.clone().unwrap_or_default())
+            .or_insert_with(Vec::new)
+            .push(row);
     }
 
     Ok(by_status_id)
@@ -177,26 +173,22 @@ pub(crate) async fn find_remote_status_attachments_by_status_ids(
         return Ok(HashMap::new());
     }
 
+    let ids_json = json_string_array(&ids);
+    let sql = format!(
+        "SELECT id, status_id, remote_url, preview_url, content_type, description, blurhash, width, height, created_at
+         FROM remote_status_attachments
+         WHERE status_id {}
+         ORDER BY status_id ASC, created_at ASC, id ASC",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let placeholders = sql_placeholders(1, chunk.len());
-        let sql = format!(
-            "SELECT id, status_id, remote_url, preview_url, content_type, description, blurhash, width, height, created_at
-             FROM remote_status_attachments
-             WHERE status_id IN ({placeholders})
-             ORDER BY status_id ASC, created_at ASC, id ASC"
-        );
-        let bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-        for row in result.results::<RemoteStatusAttachmentRow>()? {
-            by_status_id
-                .entry(row.status_id.clone())
-                .or_insert_with(Vec::new)
-                .push(row);
-        }
+    for row in result.results::<RemoteStatusAttachmentRow>()? {
+        by_status_id
+            .entry(row.status_id.clone())
+            .or_insert_with(Vec::new)
+            .push(row);
     }
 
     Ok(by_status_id)

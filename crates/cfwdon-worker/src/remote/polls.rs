@@ -5,14 +5,13 @@ use super::timestamp_to_mastodon_iso8601;
 use super::{MastodonPollOptionResponse, MastodonPollResponse};
 use super::{
     RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusPollVoteRow, RemoteStatusRow, build_poll_vote_activity, d1_in_value_chunk_size,
-    extract_remote_note_object, extract_remote_poll_draft, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_remote_status_poll_by_status_id,
-    find_remote_status_raw_object_by_id, has_remote_poll_votes_created_after,
-    is_local_account_following_remote_actor, list_remote_poll_votes_for_account,
-    list_remote_status_poll_options, note_targets_account, note_targets_followers,
-    remap_remote_poll_vote_positions, sql_placeholders, upsert_remote_actor, upsert_remote_status,
-    validate_poll_vote_submission,
+    RemoteStatusPollVoteRow, RemoteStatusRow, build_poll_vote_activity, extract_remote_note_object,
+    extract_remote_poll_draft, fetch_remote_activitypub_document, fetch_remote_actor_profile,
+    find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
+    has_remote_poll_votes_created_after, is_local_account_following_remote_actor,
+    json_string_array, list_remote_poll_votes_for_account, list_remote_status_poll_options,
+    note_targets_account, note_targets_followers, remap_remote_poll_vote_positions,
+    sql_in_json_each, upsert_remote_actor, upsert_remote_status, validate_poll_vote_submission,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, StoredRemotePollVoteIntent};
@@ -140,26 +139,16 @@ async fn load_remote_status_polls_for_status_ids(
     db: &D1Database,
     ids: &[&String],
 ) -> Result<Vec<RemoteStatusPollRow>> {
-    let mut polls = Vec::new();
-    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
-        let status_placeholders = sql_placeholders(1, chunk.len());
-        let poll_sql = format!(
-            "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
-             FROM remote_status_polls
-             WHERE status_id IN ({status_placeholders})"
-        );
-        let status_bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let result = db
-            .prepare(&poll_sql)
-            .bind_refs(status_bindings.iter())?
-            .all()
-            .await?;
-        polls.extend(result.results::<RemoteStatusPollRow>()?);
-    }
-    Ok(polls)
+    let ids_json = json_string_array(ids);
+    let poll_sql = format!(
+        "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
+         FROM remote_status_polls
+         WHERE status_id {}",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
+    result.results::<RemoteStatusPollRow>()
 }
 
 fn remote_poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
@@ -174,34 +163,30 @@ async fn preload_remote_poll_options_by_poll_id(
     poll_ids: &[String],
     _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, Vec<RemoteStatusPollOptionRow>>> {
+    let poll_ids_json = json_string_array(poll_ids);
+    let options_sql = format!(
+        "SELECT poll_id, title, votes_count
+         FROM remote_status_poll_options
+         WHERE poll_id {}
+         ORDER BY poll_id ASC, position ASC",
+        sql_in_json_each(1)
+    );
+    let binding = D1Type::Text(poll_ids_json.as_str());
+    let option_rows = db
+        .prepare(&options_sql)
+        .bind_refs(&binding)?
+        .all()
+        .await?
+        .results::<RemoteStatusPollOptionPreloadRow>()?;
     let mut options_by_poll_id: HashMap<String, Vec<RemoteStatusPollOptionRow>> = HashMap::new();
-    for chunk in poll_ids.chunks(d1_in_value_chunk_size(0)) {
-        let poll_placeholders = sql_placeholders(1, chunk.len());
-        let options_sql = format!(
-            "SELECT poll_id, title, votes_count
-             FROM remote_status_poll_options
-             WHERE poll_id IN ({poll_placeholders})
-             ORDER BY poll_id ASC, position ASC"
-        );
-        let poll_bindings = chunk
-            .iter()
-            .map(|id| D1Type::Text(id.as_str()))
-            .collect::<Vec<_>>();
-        let option_rows = db
-            .prepare(&options_sql)
-            .bind_refs(poll_bindings.iter())?
-            .all()
-            .await?
-            .results::<RemoteStatusPollOptionPreloadRow>()?;
-        for row in option_rows {
-            options_by_poll_id
-                .entry(row.poll_id)
-                .or_default()
-                .push(RemoteStatusPollOptionRow {
-                    title: row.title,
-                    votes_count: row.votes_count,
-                });
-        }
+    for row in option_rows {
+        options_by_poll_id
+            .entry(row.poll_id)
+            .or_default()
+            .push(RemoteStatusPollOptionRow {
+                title: row.title,
+                votes_count: row.votes_count,
+            });
     }
     Ok(options_by_poll_id)
 }
@@ -214,34 +199,34 @@ async fn preload_remote_poll_votes_by_poll_id(
     let Some(viewer) = viewer else {
         return Ok(HashMap::new());
     };
+    let poll_ids_json = json_string_array(poll_ids);
+    let vote_sql = format!(
+        "SELECT poll_id, option_position, option_title
+             FROM remote_status_poll_votes
+             WHERE account_id = ?1
+               AND poll_id {}
+             ORDER BY poll_id ASC, option_position ASC",
+        sql_in_json_each(2)
+    );
+    let vote_bindings = [
+        D1Type::Text(viewer.id()),
+        D1Type::Text(poll_ids_json.as_str()),
+    ];
+    let vote_rows = db
+        .prepare(&vote_sql)
+        .bind_refs(vote_bindings.iter())?
+        .all()
+        .await?
+        .results::<RemoteStatusPollVotePreloadRow>()?;
     let mut rows_by_poll_id: HashMap<String, Vec<RemoteStatusPollVoteRow>> = HashMap::new();
-    for chunk in poll_ids.chunks(d1_in_value_chunk_size(1)) {
-        let vote_sql = format!(
-            "SELECT poll_id, option_position, option_title
-                 FROM remote_status_poll_votes
-                 WHERE account_id = ?1
-                   AND poll_id IN ({})
-                 ORDER BY poll_id ASC, option_position ASC",
-            sql_placeholders(2, chunk.len())
-        );
-        let mut vote_bindings = Vec::with_capacity(chunk.len() + 1);
-        vote_bindings.push(D1Type::Text(viewer.id()));
-        vote_bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
-        let vote_rows = db
-            .prepare(&vote_sql)
-            .bind_refs(vote_bindings.iter())?
-            .all()
-            .await?
-            .results::<RemoteStatusPollVotePreloadRow>()?;
-        for row in vote_rows {
-            rows_by_poll_id
-                .entry(row.poll_id)
-                .or_default()
-                .push(RemoteStatusPollVoteRow {
-                    option_position: row.option_position,
-                    option_title: row.option_title,
-                });
-        }
+    for row in vote_rows {
+        rows_by_poll_id
+            .entry(row.poll_id)
+            .or_default()
+            .push(RemoteStatusPollVoteRow {
+                option_position: row.option_position,
+                option_title: row.option_title,
+            });
     }
     Ok(rows_by_poll_id)
 }
