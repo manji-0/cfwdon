@@ -3275,10 +3275,12 @@ fn stream_hub_proxy_target(
     let list = list.map(str::trim).filter(|value| !value.is_empty());
 
     match stream {
-        "user" | "user:notification" | "direct" => viewer.map(|viewer| (
-            stream_hub_id_name(stream, Some(viewer.id()), None, None),
-            Some(viewer.id().to_owned()),
-        )),
+        "user" | "user:notification" | "direct" => viewer.map(|viewer| {
+            (
+                stream_hub_id_name(stream, Some(viewer.id()), None, None),
+                Some(viewer.id().to_owned()),
+            )
+        }),
         "list" => {
             if let (Some(viewer), Some(list_id)) = (viewer, list) {
                 Some((
@@ -3289,15 +3291,21 @@ fn stream_hub_proxy_target(
                 None
             }
         }
-        "public" | "public:media" | "public:local" | "public:local:media"
-        | "public:remote" | "public:remote:media" => Some((
+        "public"
+        | "public:media"
+        | "public:local"
+        | "public:local:media"
+        | "public:remote"
+        | "public:remote:media" => Some((
             stream_hub_id_name(stream, None, None, None),
             viewer.map(|viewer| viewer.id().to_owned()),
         )),
-        "hashtag" | "hashtag:local" => tag.map(|tag_value| (
-            stream_hub_id_name(stream, None, Some(tag_value), None),
-            viewer.map(|viewer| viewer.id().to_owned()),
-        )),
+        "hashtag" | "hashtag:local" => tag.map(|tag_value| {
+            (
+                stream_hub_id_name(stream, None, Some(tag_value), None),
+                viewer.map(|viewer| viewer.id().to_owned()),
+            )
+        }),
         _ => None,
     }
 }
@@ -3314,12 +3322,8 @@ async fn streaming_websocket_upgrade_response(
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
     if let Some(stream) = initial_stream.as_deref()
-        && let Some((hub_name, account_id)) = stream_hub_proxy_target(
-            stream,
-            viewer.as_ref(),
-            tag.as_deref(),
-            list.as_deref(),
-        )
+        && let Some((hub_name, account_id)) =
+            stream_hub_proxy_target(stream, viewer.as_ref(), tag.as_deref(), list.as_deref())
     {
         if let Ok(headers) = req.headers_mut() {
             headers.set("X-Stream", stream)?;
@@ -3902,9 +3906,9 @@ mod tests {
     }
 
     fn stream_hub_proxy_test_account() -> cfwdon_domain::LocalAccount {
-        cfwdon_domain::LocalAccount::from_record(
-            cfwdon_domain::LocalAccountRecord::test_fixture("acct-1", "alice"),
-        )
+        cfwdon_domain::LocalAccount::from_record(cfwdon_domain::LocalAccountRecord::test_fixture(
+            "acct-1", "alice",
+        ))
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, actor_url,
     build_accept_activity, delete_remote_follow_request_by_actor, follow_targets_local_actor,
-    handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject,
-    now_iso_string, publish_remote_actor_notification_soft, queue_remote_actor_activity_required,
+    handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject, now_iso_string,
+    publish_remote_actor_notification_soft, queue_remote_actor_activity_required,
     update_follow_state_from_response, upsert_follower, upsert_remote_follow_request,
 };
 use cfwdon_domain::FollowInboxResponse;

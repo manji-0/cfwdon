@@ -166,16 +166,8 @@ pub(crate) async fn shared_inbox_response(
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
 
     if activitypub_has_type(&activity, "Delete") {
-        return handle_inbox_request(
-            &req,
-            &db,
-            &config,
-            None,
-            &body,
-            &activity,
-            Some(&ctx.env),
-        )
-        .await;
+        return handle_inbox_request(&req, &db, &config, None, &body, &activity, Some(&ctx.env))
+            .await;
     }
 
     let remote_actor = match verify_incoming_activitypub_request(&req, &db, &body, &activity).await

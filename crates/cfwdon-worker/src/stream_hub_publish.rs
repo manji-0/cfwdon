@@ -1,10 +1,10 @@
 use crate::{
     AppConfig, D1Database, Env, STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT,
     StatusRow, extract_hashtags_from_html, extract_hashtags_from_text, extract_mentions_from_text,
-    find_account_by_id, find_account_by_username,
-    list_local_account_list_stream_fanout, list_local_follower_account_ids_for_stream_fanout,
-    list_membership_variants_for_local_account, local_status_visible_on_list_timeline,
-    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_id_name,
+    find_account_by_id, find_account_by_username, list_local_account_list_stream_fanout,
+    list_local_follower_account_ids_for_stream_fanout, list_membership_variants_for_local_account,
+    local_status_visible_on_list_timeline, publish_stream_hub_event_soft,
+    publish_user_stream_hub_event_soft, stream_hub_id_name,
 };
 use cfwdon_domain::Visibility;
 use std::collections::HashSet;
@@ -190,14 +190,7 @@ async fn publish_list_timeline_events_soft(
         }
         let hub_name = stream_hub_id_name("list", None, None, Some(&list.list_id));
         publish_stream_hub_event_soft(
-            env,
-            binding,
-            &hub_name,
-            "list",
-            None,
-            event,
-            payload,
-            event_id,
+            env, binding, &hub_name, "list", None, event, payload, event_id,
         )
         .await;
     }
