@@ -249,12 +249,12 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
 2. Proxy WebSocket upgrades for all live channels (`user`, `user:notification`, `list`, `direct`, public variants, hashtag) through the DO; fall back to Worker poll on failure.
 3. Soft-publish live events (never fail API writes):
-   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; local follower home fan-out (cap 200); remote status edit `status.update` to local followers
+   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; local follower home fan-out (cap 200); remote status create/update/delete fan-out to local followers
    - `user:notification` hub: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request; remote Create mention/quote/status(notify)/reply; remote Update update/quoted_update
-   - `public` / `public:local` (+ media variants), `hashtag:{tag}`, `list:{id}`, `direct:{id}` on local status create/delete when visibility matches; direct also publishes conversation `update` documents
-4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path (not yet a publish-bus consumer).
+   - `public` / `public:remote` (+ media), `hashtag:{tag}` (stream `hashtag` only), `list:{id}`, `direct:{id}` for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`; direct also publishes conversation `update` documents
+4. SSE for StreamHub-backed channels uses an internal hub WebSocket bridge with 30s D1 catch-up; falls back to 3s D1 poll if the hub is unavailable. Plain Worker WebSocket upgrade path unchanged.
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
-6. Still open: public-channel sharding under load; SSE as DO consumer; inbox-host admission DOs; remote Create/Delete timeline fan-out to public/hashtag hubs.
+6. Still open: public-channel sharding under load; inbox-host admission DOs; Announce Undo delete fan-out without Env.
 
 ### Phase B — Channel coverage — implemented
 
