@@ -155,16 +155,36 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
     }
 }
 
+fn inbox_backpressure_response(retry_after_secs: u64) -> Result<Response> {
+    inbox_backpressure_response_with_secs(inbox_backpressure_retry_after_secs(retry_after_secs))
+}
+
+fn inbox_backpressure_retry_after_secs(retry_after_secs: u64) -> u64 {
+    retry_after_secs.max(1)
+}
+
+fn inbox_backpressure_response_with_secs(secs: u64) -> Result<Response> {
+    let mut response = Response::empty()?.with_status(503);
+    response
+        .headers_mut()
+        .set("Retry-After", &secs.to_string())?;
+    Ok(response)
+}
+
 async fn try_inbox_host_admission(
     config: &AppConfig,
     env: Option<&Env>,
     activity_id: &str,
     activity_type: &str,
     remote_actor: &RemoteActorProfile,
-) -> bool {
+) -> InboxHostAdmitResult {
     let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
         Some(host_key) => host_key,
-        None => return true,
+        None => return InboxHostAdmitResult {
+            allowed: true,
+            count: 0,
+            retry_after_secs: 0,
+        },
     };
     admit_inbox_host_soft(
         env,
@@ -221,15 +241,15 @@ pub(crate) async fn shared_inbox_response(
             let activity_type = inbox_activity_type(&activity).to_owned();
             let activity_id =
                 inbox_activity_dedupe_id(&activity, &remote_actor.actor_uri, &body).await?;
-            if !try_inbox_host_admission(
+            let admission = try_inbox_host_admission(
                 &config,
                 Some(&ctx.env),
                 &activity_id,
                 &activity_type,
                 &remote_actor,
             )
-            .await
-            {
+            .await;
+            if !admission.allowed {
                 log_federation_event(
                     "inbox_host_admission_rejected",
                     "rate_limited",
@@ -243,24 +263,25 @@ pub(crate) async fn shared_inbox_response(
                         "activity_id": activity_id,
                         "actor_uri": remote_actor.actor_uri,
                         "reason": "no_local_targets",
+                        "retry_after_secs": admission.retry_after_secs,
                     }),
                 );
-            } else {
-                log_federation_event(
-                    "inbox_accepted_no_targets",
-                    "skipped",
-                    format!(
-                        "shared inbox accepted with no local targets: activity_type={} actor={}",
-                        inbox_activity_type(&activity),
-                        remote_actor.actor_uri
-                    ),
-                    serde_json::json!({
-                        "inbox": "shared",
-                        "activity_type": inbox_activity_type(&activity),
-                        "actor_uri": remote_actor.actor_uri,
-                    }),
-                );
+                return inbox_backpressure_response(admission.retry_after_secs);
             }
+            log_federation_event(
+                "inbox_accepted_no_targets",
+                "skipped",
+                format!(
+                    "shared inbox accepted with no local targets: activity_type={} actor={}",
+                    inbox_activity_type(&activity),
+                    remote_actor.actor_uri
+                ),
+                serde_json::json!({
+                    "inbox": "shared",
+                    "activity_type": inbox_activity_type(&activity),
+                    "actor_uri": remote_actor.actor_uri,
+                }),
+            );
             Ok(Response::empty()?.with_status(202))
         }
         SharedInboxPreprocessOutcome::Process => {
@@ -365,7 +386,9 @@ async fn process_verified_inbox_activity(
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    if !try_inbox_host_admission(config, env, &activity_id, &activity_type, &remote_actor).await {
+    let admission =
+        try_inbox_host_admission(config, env, &activity_id, &activity_type, &remote_actor).await;
+    if !admission.allowed {
         log_federation_event(
             "inbox_host_admission_rejected",
             "rate_limited",
@@ -378,9 +401,10 @@ async fn process_verified_inbox_activity(
                 "activity_id": activity_id,
                 "actor_uri": remote_actor.actor_uri,
                 "target_count": accounts.len(),
+                "retry_after_secs": admission.retry_after_secs,
             }),
         );
-        return Ok(Response::empty()?.with_status(202));
+        return inbox_backpressure_response(admission.retry_after_secs);
     }
     if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
         log_federation_event(
@@ -496,6 +520,12 @@ mod tests {
                     | "Delete"
             ));
         }
+    }
+
+    #[test]
+    fn inbox_backpressure_response_clamps_retry_after_to_at_least_one() {
+        assert_eq!(inbox_backpressure_retry_after_secs(0), 1);
+        assert_eq!(inbox_backpressure_retry_after_secs(30), 30);
     }
 
     #[test]
