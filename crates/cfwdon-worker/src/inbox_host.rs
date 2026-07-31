@@ -27,6 +27,14 @@ struct InboxHostAdmitRequest {
 struct InboxHostAdmitResponse {
     allowed: bool,
     count: u64,
+    retry_after_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InboxHostAdmitResult {
+    pub allowed: bool,
+    pub count: u32,
+    pub retry_after_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,9 +94,16 @@ impl InboxHost {
             storage.put(STORAGE_COUNT_KEY, admission.count).await?;
         }
 
+        let retry_after_secs = if admission.allowed {
+            0
+        } else {
+            fixed_window_retry_after_secs(admission.window_start_ms, now_ms, window_ms)
+        };
+
         Response::from_json(&InboxHostAdmitResponse {
             allowed: admission.allowed,
             count: admission.count,
+            retry_after_secs,
         })
     }
 }
@@ -134,6 +149,36 @@ fn inbox_host_now_millis() -> u64 {
     js_sys::Date::now() as u64
 }
 
+/// Seconds until the fixed window resets; at least 1 when the caller is denied.
+pub(crate) fn fixed_window_retry_after_secs(
+    window_start_ms: u64,
+    now_ms: u64,
+    window_ms: u64,
+) -> u64 {
+    let window_end_ms = window_start_ms.saturating_add(window_ms);
+    if now_ms >= window_end_ms {
+        return 1;
+    }
+    let remaining_ms = window_end_ms - now_ms;
+    ((remaining_ms + 999) / 1000).max(1)
+}
+
+fn inbox_host_admit_result_from_response(admit: InboxHostAdmitResponse) -> InboxHostAdmitResult {
+    InboxHostAdmitResult {
+        allowed: admit.allowed,
+        count: u32::try_from(admit.count).unwrap_or(u32::MAX),
+        retry_after_secs: admit.retry_after_secs,
+    }
+}
+
+fn inbox_host_admit_allowed_open() -> InboxHostAdmitResult {
+    InboxHostAdmitResult {
+        allowed: true,
+        count: 0,
+        retry_after_secs: 0,
+    }
+}
+
 pub(crate) async fn admit_inbox_host(
     env: &Env,
     binding: &str,
@@ -141,7 +186,7 @@ pub(crate) async fn admit_inbox_host(
     activity_id: &str,
     actor_uri: &str,
     activity_type: &str,
-) -> Result<bool> {
+) -> Result<InboxHostAdmitResult> {
     let namespace = env.durable_object(binding)?;
     let object_name = inbox_host_id_name(host_key);
     let stub = namespace.get_by_name(&object_name)?;
@@ -174,7 +219,7 @@ pub(crate) async fn admit_inbox_host(
     }
 
     let admit = response.json::<InboxHostAdmitResponse>().await?;
-    Ok(admit.allowed)
+    Ok(inbox_host_admit_result_from_response(admit))
 }
 
 pub(crate) async fn admit_inbox_host_soft(
@@ -184,9 +229,9 @@ pub(crate) async fn admit_inbox_host_soft(
     activity_id: &str,
     actor_uri: &str,
     activity_type: &str,
-) -> bool {
+) -> InboxHostAdmitResult {
     match env {
-        None => true,
+        None => inbox_host_admit_allowed_open(),
         Some(env) => match admit_inbox_host(
             env,
             binding,
@@ -197,12 +242,12 @@ pub(crate) async fn admit_inbox_host_soft(
         )
         .await
         {
-            Ok(allowed) => allowed,
+            Ok(result) => result,
             Err(error) => {
                 console_error!(
                     "failed inbox host admission for host {host_key} activity_id={activity_id}: {error}"
                 );
-                true
+                inbox_host_admit_allowed_open()
             }
         },
     }
@@ -274,5 +319,22 @@ mod tests {
                 allowed: true,
             }
         );
+    }
+
+    #[test]
+    fn fixed_window_retry_after_secs_is_full_window_at_start() {
+        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_000_000, 60_000), 60);
+    }
+
+    #[test]
+    fn fixed_window_retry_after_secs_counts_down_within_window() {
+        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_030_000, 60_000), 30);
+        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_059_999, 60_000), 1);
+    }
+
+    #[test]
+    fn fixed_window_retry_after_secs_minimum_is_one_when_denied() {
+        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_060_000, 60_000), 1);
+        assert_eq!(fixed_window_retry_after_secs(1_000_000, 2_000_000, 60_000), 1);
     }
 }
