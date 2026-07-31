@@ -458,6 +458,20 @@ async fn preload_muted_timeline_actor_uris(
     list_active_muted_actor_uris(db, viewer.id(), &actor_uris).await
 }
 
+/// Boost target URIs referenced by a page, for [`crate::preload_boost_targets`].
+fn boost_of_uris(candidates: &[PublicTimelineCandidateEntry]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    candidates
+        .iter()
+        .filter_map(|entry| match &entry.candidate {
+            PublicTimelineCandidate::Local { status, .. } => status.boost_of_uri.as_ref(),
+            PublicTimelineCandidate::Remote { status, .. } => status.boost_of_uri.as_ref(),
+        })
+        .filter(|uri| seen.insert(uri.as_str()))
+        .cloned()
+        .collect()
+}
+
 async fn timeline_entries_from_candidates(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
@@ -483,6 +497,7 @@ async fn timeline_entries_from_candidates(
     for text in &remote_text_owned {
         mention_texts.push(text.as_str());
     }
+    let boost_of_uris = boost_of_uris(&candidates);
 
     let (
         counts_preload,
@@ -498,6 +513,7 @@ async fn timeline_entries_from_candidates(
         mut remote_attachments_by_status_id,
         mention_preload,
         emoji_resolved_config,
+        boost_target_preload,
     ) = futures_util::try_join!(
         preload_public_timeline_candidate_counts(db, &candidates),
         preload_public_timeline_quote_counts(db, config, &candidates, local_accounts_by_id),
@@ -517,6 +533,7 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_remote_attachments(db, &candidates),
         crate::preload_mention_accounts_from_texts(db, config, &mention_texts),
         crate::config_with_resolved_custom_emojis(db, config),
+        crate::preload_boost_targets(db, config, &boost_of_uris),
     )?;
     // Take everything each candidate owns up front so the renders below only
     // hold shared borrows and can therefore run concurrently.
@@ -582,6 +599,7 @@ async fn timeline_entries_from_candidates(
                         Some(&local_viewer_state_preload),
                         Some(&application_preload),
                         Some(&mention_preload),
+                        Some(&boost_target_preload),
                     )
                     .await?,
                 )
@@ -606,6 +624,7 @@ async fn timeline_entries_from_candidates(
                         Some(&remote_federated_emojis_preload),
                         attachments,
                         Some(&mention_preload),
+                        Some(&boost_target_preload),
                     )
                     .await?,
                 )

@@ -10,9 +10,9 @@ use super::reblog_response::{
     local_reblog_wrapper_response_from_embedded, remote_reblog_wrapper_response_from_embedded,
 };
 use super::{
-    AccountFilterMatcher, AppConfig, FederatedEmojiMap, LocalAccount, LocalStatusResponseDetails,
-    MastodonPollResponsePreload, MastodonStatusResponse, MediaAttachmentRow,
-    MentionAccountsPreload, RemoteActorRow, RemoteMastodonPollResponsePreload,
+    AccountFilterMatcher, AppConfig, BoostTarget, BoostTargetPreload, FederatedEmojiMap,
+    LocalAccount, LocalStatusResponseDetails, MastodonPollResponsePreload, MastodonStatusResponse,
+    MediaAttachmentRow, MentionAccountsPreload, RemoteActorRow, RemoteMastodonPollResponsePreload,
     RemoteStatusAttachmentRow, RemoteStatusEditUpdatedAtPreload,
     RemoteStatusFederatedEmojisPreload, RemoteStatusResponseDetails, RemoteStatusRow,
     StatusCountsPreload, StatusRow, accepted_quote_document_state, account_has_thread_mutes,
@@ -32,8 +32,8 @@ use super::{
     load_status_filtered, load_status_updated_at, local_status_identity_from_uri,
     local_status_ids_thread_muted_by, local_status_target_uri, pending_quote_document,
     quote_document_for_local_state, quote_document_from_response,
-    remote_quote_visibility_is_embeddable, resolve_local_status_response_subject, strip_html_tags,
-    unauthorized_quote_document,
+    remote_quote_visibility_is_embeddable, resolve_boost_target,
+    resolve_local_status_response_subject, strip_html_tags, unauthorized_quote_document,
 };
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -870,6 +870,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -905,6 +906,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
         viewer_state_preload,
         application_preload,
         None,
+        None,
     )
     .await
 }
@@ -925,6 +927,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
     mention_preload: Option<&MentionAccountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_local_status_response_inner(
         db,
@@ -942,6 +945,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
         viewer_state_preload,
         application_preload,
         mention_preload,
+        boost_target_preload,
         true,
     )
     .await
@@ -963,6 +967,7 @@ async fn build_local_status_response_inner(
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
     mention_preload: Option<&MentionAccountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let config = status_response_config(db, config, resolved_config).await?;
@@ -981,6 +986,7 @@ async fn build_local_status_response_inner(
             poll_preload,
             viewer_state_preload,
             application_preload,
+            boost_target_preload,
             include_quote,
         )
         .await;
@@ -1230,6 +1236,7 @@ pub(crate) async fn build_remote_status_response_with_preloads(
         federated_emojis_preload,
         None,
         None,
+        None,
         true,
     )
     .await
@@ -1250,6 +1257,7 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
     federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
     remote_attachments: Vec<RemoteStatusAttachmentRow>,
     mention_preload: Option<&MentionAccountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
 ) -> Result<MastodonStatusResponse> {
     build_remote_status_response_inner(
         db,
@@ -1266,6 +1274,7 @@ pub(crate) async fn build_remote_status_response_with_timeline_preloads(
         federated_emojis_preload,
         Some(remote_attachments),
         mention_preload,
+        boost_target_preload,
         true,
     )
     .await
@@ -1298,6 +1307,7 @@ async fn build_remote_status_response_inner(
     federated_emojis_preload: Option<&RemoteStatusFederatedEmojisPreload>,
     remote_attachments: Option<Vec<RemoteStatusAttachmentRow>>,
     mention_preload: Option<&MentionAccountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
@@ -1310,6 +1320,7 @@ async fn build_remote_status_response_inner(
             boost_of_uri,
             filter_matcher,
             counts_preload,
+            boost_target_preload,
             include_quote,
         )
         .await;
@@ -1752,6 +1763,7 @@ async fn build_remote_reblog_wrapper_response(
     boost_of_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     let embedded = build_reblog_embedded_response(
@@ -1766,6 +1778,7 @@ async fn build_remote_reblog_wrapper_response(
         None,
         None,
         None,
+        boost_target_preload,
         include_quote,
     )
     .await?;
@@ -1790,40 +1803,48 @@ async fn build_reblog_embedded_response(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
-    if let Some(local_status) = find_local_status_by_object_uri(db, config, boost_of_uri).await? {
-        return build_local_reblog_embedded_response(
-            db,
-            config,
-            resolved_config,
-            viewer,
-            local_status,
-            filter_matcher,
-            counts_preload,
-            quote_counts_preload,
-            poll_preload,
-            viewer_state_preload,
-            application_preload,
-            include_quote,
-        )
-        .await;
-    }
+    let target = match boost_target_preload.and_then(|targets| targets.target(boost_of_uri)) {
+        Some(target) => target.cloned(),
+        None => resolve_boost_target(db, config, boost_of_uri).await?,
+    };
 
-    if let Some(remote_status) = find_remote_status_by_url_or_object_uri(db, boost_of_uri).await? {
-        return build_remote_reblog_embedded_response(
-            db,
-            config,
-            viewer,
-            remote_status,
-            filter_matcher,
-            counts_preload,
-            include_quote,
-        )
-        .await;
+    match target {
+        Some(BoostTarget::Local(local_status)) => {
+            build_local_reblog_embedded_response(
+                db,
+                config,
+                resolved_config,
+                viewer,
+                local_status,
+                filter_matcher,
+                counts_preload,
+                quote_counts_preload,
+                poll_preload,
+                viewer_state_preload,
+                application_preload,
+                boost_target_preload,
+                include_quote,
+            )
+            .await
+        }
+        Some(BoostTarget::Remote(remote_status)) => {
+            build_remote_reblog_embedded_response(
+                db,
+                config,
+                viewer,
+                remote_status,
+                filter_matcher,
+                counts_preload,
+                boost_target_preload,
+                include_quote,
+            )
+            .await
+        }
+        None => Ok(None),
     }
-
-    Ok(None)
 }
 
 async fn build_local_reblog_embedded_response(
@@ -1838,6 +1859,7 @@ async fn build_local_reblog_embedded_response(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
     let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
@@ -1873,6 +1895,7 @@ async fn build_local_reblog_embedded_response(
             viewer_state_preload,
             application_preload,
             None,
+            boost_target_preload,
             include_quote,
         ))
         .await?,
@@ -1886,6 +1909,7 @@ async fn build_remote_reblog_embedded_response(
     remote_status: RemoteStatusRow,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
     if !matches!(remote_status.visibility.as_str(), "public" | "unlisted") {
@@ -1912,6 +1936,7 @@ async fn build_remote_reblog_embedded_response(
             None,
             None,
             None,
+            boost_target_preload,
             include_quote,
         ))
         .await?,
@@ -1932,6 +1957,7 @@ async fn build_local_reblog_wrapper_response(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     // The only caller resolves the emoji registry before delegating here, so the
@@ -1948,6 +1974,7 @@ async fn build_local_reblog_wrapper_response(
         poll_preload,
         viewer_state_preload,
         application_preload,
+        boost_target_preload,
         include_quote,
     )
     .await?;

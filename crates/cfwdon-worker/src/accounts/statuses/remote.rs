@@ -341,6 +341,7 @@ async fn remote_account_statuses_json_response(
                 .remove(&status.id)
                 .unwrap_or_default(),
             None,
+            None,
         )
         .await?;
         if let Some(counts) = actor_social_counts

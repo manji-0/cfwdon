@@ -324,6 +324,7 @@ async fn build_status_quote_values(
                         .remove(&quote.id)
                         .unwrap_or_default(),
                     None,
+                    None,
                 )
                 .await?,
             )?,

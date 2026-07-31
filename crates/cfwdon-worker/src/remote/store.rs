@@ -123,6 +123,38 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
     .and_then(|row| row.map(remote_status_from_record).transpose())
 }
 
+/// Batch form of [`find_remote_status_by_url_or_object_uri`].
+///
+/// Matches the single-value lookup: a row qualifies when either its
+/// `object_uri` or its `url` is in `values`. Callers resolve which requested
+/// value produced a row by checking both columns.
+pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
+    db: &D1Database,
+    values: &[String],
+) -> Result<Vec<RemoteStatusRow>> {
+    let values = crate::unique_ordered_refs(values);
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let values_json = crate::json_string_array(&values);
+    let in_list = crate::sql_in_json_each(1);
+    let sql = format!(
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+         FROM remote_statuses
+         WHERE object_uri {in_list}
+            OR url {in_list}"
+    );
+    let binding = D1Type::Text(values_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
+
+    result
+        .results::<RemoteStatusRecord>()?
+        .into_iter()
+        .map(remote_status_from_record)
+        .collect()
+}
+
 #[derive(Debug, Deserialize)]
 struct RemoteStatusEditStateRow {
     #[serde(flatten)]
