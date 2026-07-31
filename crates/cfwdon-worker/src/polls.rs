@@ -11,7 +11,6 @@ use super::auth::{
 };
 use super::enqueue_status_update_activity;
 use super::runtime_config::load_config;
-use cfwdon_core::AppConfig;
 use super::time_html::is_iso_timestamp_in_past;
 use super::{
     apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
@@ -20,6 +19,7 @@ use super::{
     find_status_by_id, find_status_poll_by_id, refresh_remote_poll_if_needed,
     remote_poll_is_visible_to_viewer, send_poll_end_notifications,
 };
+use cfwdon_core::AppConfig;
 use serde::{Deserialize, Serialize};
 use worker::{Env, Error, Request, Response, Result, RouteContext};
 
@@ -222,7 +222,6 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
     }
 
     let db = ctx.d1(&config.database_binding)?;
-    let summary =
-        process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
+    let summary = process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
     Response::from_json(&summary)
 }
