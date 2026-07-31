@@ -1,11 +1,11 @@
 use crate::{
     AccountReference, AppConfig, D1Database, Error, FollowAccountRequest, FormEntry, LocalAccount,
     Request, ResolvedRelationshipTarget, Response, Result, RouteContext, SocialActionError,
-    actor_url, parse_optional_bool, require_authenticated_local_account, resolve_account_reference,
-    send_push_notification,
+    actor_url, now_iso_string, parse_optional_bool, publish_local_actor_notification_soft,
+    require_authenticated_local_account, resolve_account_reference, send_push_notification,
 };
 use cfwdon_domain::{LocalFollowState, initial_local_follow_state, local_follow_notification_type};
-use worker::d1::D1Type;
+use worker::{d1::D1Type, Env};
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct MuteAccountRequest {
@@ -169,6 +169,7 @@ pub(crate) async fn parse_follow_account_request(
 pub(crate) async fn upsert_local_follow(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     follower: &LocalAccount,
     target: &LocalAccount,
     request: &FollowAccountRequest,
@@ -177,14 +178,32 @@ pub(crate) async fn upsert_local_follow(
     let draft = LocalFollowUpsertDraft::new(follower, target, target_actor_uri, request)?;
     upsert_local_follow_row(db, &draft).await?;
 
+    let notification_type = local_follow_notification_type(draft.state);
     let _ = send_push_notification(
         db,
         config,
         &draft.target_account_id,
-        local_follow_notification_type(draft.state),
+        notification_type,
         local_follow_notification_payload(&draft),
     )
     .await;
+
+    if let Ok(created_at) = now_iso_string() {
+        let id = local_follow_stream_notification_id(notification_type, &draft.follower_account_id);
+        publish_local_actor_notification_soft(
+            env,
+            db,
+            config,
+            &draft.target_account_id,
+            follower,
+            notification_type,
+            id.clone(),
+            id,
+            created_at,
+            None,
+        )
+        .await;
+    }
 
     Ok(())
 }
@@ -310,6 +329,13 @@ fn local_follow_upsert_bindings(draft: &LocalFollowUpsertDraft) -> [D1Type<'_>; 
     ]
 }
 
+fn local_follow_stream_notification_id(notification_type: &str, follower_account_id: &str) -> String {
+    match notification_type {
+        "follow_request" => format!("follow-request-local-{}", follower_account_id),
+        _ => format!("follow-local-{}", follower_account_id),
+    }
+}
+
 fn local_follow_notification_payload(draft: &LocalFollowUpsertDraft) -> serde_json::Value {
     serde_json::json!({
         "follower_account_id": draft.follower_account_id,
@@ -401,6 +427,18 @@ mod tests {
         assert!(matches!(bindings[4], D1Type::Integer(0)));
         assert!(matches!(bindings[5], D1Type::Integer(1)));
         assert!(matches!(bindings[6], D1Type::Text("[\"ja\"]")));
+    }
+
+    #[test]
+    fn local_follow_stream_notification_id_matches_collectors() {
+        assert_eq!(
+            local_follow_stream_notification_id("follow", "viewer"),
+            "follow-local-viewer"
+        );
+        assert_eq!(
+            local_follow_stream_notification_id("follow_request", "viewer"),
+            "follow-request-local-viewer"
+        );
     }
 
     #[test]

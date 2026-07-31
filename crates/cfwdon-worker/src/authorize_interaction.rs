@@ -55,6 +55,7 @@ pub(crate) async fn authorize_interaction_submit_response(
             upsert_local_follow(
                 &db,
                 &config,
+                Some(&ctx.env),
                 &follower,
                 &target,
                 &FollowAccountRequest::default(),
