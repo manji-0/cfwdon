@@ -340,8 +340,11 @@ pub(crate) async fn create_published_status_and_response(
             if let Some(account) = find_account_by_username(db, &handle.username).await?
                 && account.id() != input.account.id()
             {
-                let id =
-                    local_status_interaction_notification_id("mention", input.account.id(), &status.id);
+                let id = local_status_interaction_notification_id(
+                    "mention",
+                    input.account.id(),
+                    &status.id,
+                );
                 publish_local_actor_notification_soft(
                     Some(env),
                     db,

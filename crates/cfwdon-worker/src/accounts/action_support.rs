@@ -5,7 +5,7 @@ use crate::{
     require_authenticated_local_account, resolve_account_reference, send_push_notification,
 };
 use cfwdon_domain::{LocalFollowState, initial_local_follow_state, local_follow_notification_type};
-use worker::{d1::D1Type, Env};
+use worker::{Env, d1::D1Type};
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct MuteAccountRequest {
@@ -329,7 +329,10 @@ fn local_follow_upsert_bindings(draft: &LocalFollowUpsertDraft) -> [D1Type<'_>; 
     ]
 }
 
-fn local_follow_stream_notification_id(notification_type: &str, follower_account_id: &str) -> String {
+fn local_follow_stream_notification_id(
+    notification_type: &str,
+    follower_account_id: &str,
+) -> String {
     match notification_type {
         "follow_request" => format!("follow-request-local-{}", follower_account_id),
         _ => format!("follow-local-{}", follower_account_id),

@@ -248,9 +248,11 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
 2. Proxy WebSocket upgrades for authenticated `user` / `user:notification` through the DO (hibernation accept); fall back to Worker poll on failure.
-3. On local status create/delete, soft-publish prebuilt events to `user:{account_id}` hubs.
+3. Soft-publish live events (never fail API writes):
+   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`
+   - `user:notification` hub: favourite, reblog, follow/follow_request, mention, reply (`status`), quote, poll end, local status `update` / `quoted_update` for reblog/quote recipients
 4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path.
-5. Next: measure reconnect/hibernation/publish latency; expand notification publish and public/hashtag hubs.
+5. Still open: public/hashtag/list/direct hubs, remote inbound notification publishes, announcements, follower home-timeline fan-out beyond the author.
 
 ### Phase B — Channel coverage
 

@@ -4,8 +4,8 @@ use super::{
 };
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
-use worker::{Env, Result};
 use worker::d1::D1Type;
+use worker::{Env, Result};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogActivityRow {

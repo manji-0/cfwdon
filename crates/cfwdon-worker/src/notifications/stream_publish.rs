@@ -1,12 +1,12 @@
+use super::types::MastodonNotificationResponse;
 use super::{
     AppConfig, MastodonAccountResponse, MastodonStatusResponse, StatusRow,
     build_local_status_response, find_account_by_id, find_media_attachments_by_status_id,
     load_in_reply_to_account_id, now_iso_string, publish_notification_stream_hub_event_soft,
 };
-use super::types::MastodonNotificationResponse;
 use crate::timestamp_to_mastodon_iso8601;
 use cfwdon_domain::LocalAccount;
-use worker::{console_error, D1Database, Env, Result};
+use worker::{D1Database, Env, Result, console_error};
 
 pub(crate) fn local_notification_response(
     id: String,

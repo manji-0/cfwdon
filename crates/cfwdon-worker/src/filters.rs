@@ -1,7 +1,6 @@
 use crate::{
     Error, Request, Response, Result, RouteContext, generate_entity_id, load_config,
-    parse_optional_bool, publish_user_stream_hub_event_soft,
-    require_authenticated_local_account,
+    parse_optional_bool, publish_user_stream_hub_event_soft, require_authenticated_local_account,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
