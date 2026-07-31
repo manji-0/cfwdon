@@ -7,6 +7,11 @@ pub(crate) use votes::*;
 use super::CreateStatusPollRequest;
 use super::time_html::is_iso_timestamp_in_past;
 use super::timestamp_to_mastodon_iso8601;
+<<<<<<< HEAD
+=======
+use crate::{d1_in_value_chunk_size, sql_placeholders};
+use cfwdon_core::AppConfig;
+>>>>>>> d03d281 (fix(worker): chunk D1 IN queries under the 100-bind limit)
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -172,25 +177,26 @@ async fn load_status_polls_for_status_ids(
     db: &D1Database,
     ids: &[&String],
 ) -> Result<Vec<StatusPollRow>> {
-    let status_placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let poll_sql = format!(
-        "SELECT id, status_id, multiple, hide_totals, expires_at
-         FROM status_polls
-         WHERE status_id IN ({status_placeholders})"
-    );
-    let status_bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let poll_result = db
-        .prepare(&poll_sql)
-        .bind_refs(status_bindings.iter())?
-        .all()
-        .await?;
-    poll_result.results::<StatusPollRow>()
+    let mut polls = Vec::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let status_placeholders = sql_placeholders(1, chunk.len());
+        let poll_sql = format!(
+            "SELECT id, status_id, multiple, hide_totals, expires_at
+             FROM status_polls
+             WHERE status_id IN ({status_placeholders})"
+        );
+        let status_bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let poll_result = db
+            .prepare(&poll_sql)
+            .bind_refs(status_bindings.iter())?
+            .all()
+            .await?;
+        polls.extend(poll_result.results::<StatusPollRow>()?);
+    }
+    Ok(polls)
 }
 
 fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
@@ -203,32 +209,35 @@ fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
 async fn preload_poll_options_by_poll_id(
     db: &D1Database,
     poll_ids: &[String],
-    poll_bindings: &[D1Type<'_>],
+    _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, Vec<StatusPollOptionRow>>> {
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let options_sql = format!(
-        "SELECT poll_id, title, votes_count
-         FROM status_poll_options
-         WHERE poll_id IN ({poll_placeholders})
-         ORDER BY poll_id ASC, position ASC"
-    );
-    let options_result = db
-        .prepare(&options_sql)
-        .bind_refs(poll_bindings.iter())?
-        .all()
-        .await?;
     let mut options_by_poll_id: HashMap<String, Vec<StatusPollOptionRow>> = HashMap::new();
-    for row in options_result.results::<PreloadedStatusPollOptionRow>()? {
-        options_by_poll_id
-            .entry(row.poll_id)
-            .or_default()
-            .push(StatusPollOptionRow {
-                title: row.title,
-                votes_count: row.votes_count,
-            });
+    for chunk in poll_ids.chunks(d1_in_value_chunk_size(0)) {
+        let poll_placeholders = sql_placeholders(1, chunk.len());
+        let options_sql = format!(
+            "SELECT poll_id, title, votes_count
+             FROM status_poll_options
+             WHERE poll_id IN ({poll_placeholders})
+             ORDER BY poll_id ASC, position ASC"
+        );
+        let poll_bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let options_result = db
+            .prepare(&options_sql)
+            .bind_refs(poll_bindings.iter())?
+            .all()
+            .await?;
+        for row in options_result.results::<PreloadedStatusPollOptionRow>()? {
+            options_by_poll_id
+                .entry(row.poll_id)
+                .or_default()
+                .push(StatusPollOptionRow {
+                    title: row.title,
+                    votes_count: row.votes_count,
+                });
+        }
     }
     Ok(options_by_poll_id)
 }
@@ -240,31 +249,30 @@ async fn preload_own_votes_by_poll_id(
 ) -> Result<HashMap<String, Vec<u32>>> {
     let mut own_votes_by_poll_id: HashMap<String, Vec<u32>> = HashMap::new();
     if let Some(viewer) = viewer {
-        let vote_placeholders = (2..=(poll_ids.len() + 1))
-            .map(|index| format!("?{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let vote_sql = format!(
-            "SELECT poll_id, option_position
-             FROM status_poll_votes
-             WHERE account_id = ?1
-               AND poll_id IN ({vote_placeholders})
-             ORDER BY poll_id ASC, option_position ASC"
-        );
-        let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-        vote_bindings.push(D1Type::Text(viewer.id()));
-        vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
-        let vote_result = db
-            .prepare(&vote_sql)
-            .bind_refs(vote_bindings.iter())?
-            .all()
-            .await?;
-        for row in vote_result.results::<PreloadedPollVotePositionRow>()? {
-            if let Ok(position) = u32::try_from(row.option_position) {
-                own_votes_by_poll_id
-                    .entry(row.poll_id)
-                    .or_default()
-                    .push(position);
+        for chunk in poll_ids.chunks(d1_in_value_chunk_size(1)) {
+            let vote_placeholders = sql_placeholders(2, chunk.len());
+            let vote_sql = format!(
+                "SELECT poll_id, option_position
+                 FROM status_poll_votes
+                 WHERE account_id = ?1
+                   AND poll_id IN ({vote_placeholders})
+                 ORDER BY poll_id ASC, option_position ASC"
+            );
+            let mut vote_bindings = Vec::with_capacity(chunk.len() + 1);
+            vote_bindings.push(D1Type::Text(viewer.id()));
+            vote_bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
+            let vote_result = db
+                .prepare(&vote_sql)
+                .bind_refs(vote_bindings.iter())?
+                .all()
+                .await?;
+            for row in vote_result.results::<PreloadedPollVotePositionRow>()? {
+                if let Ok(position) = u32::try_from(row.option_position) {
+                    own_votes_by_poll_id
+                        .entry(row.poll_id)
+                        .or_default()
+                        .push(position);
+                }
             }
         }
     }
@@ -274,28 +282,34 @@ async fn preload_own_votes_by_poll_id(
 async fn preload_voters_count_by_poll_id(
     db: &D1Database,
     poll_ids: &[String],
-    poll_bindings: &[D1Type<'_>],
+    _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, u64>> {
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let voters_sql = format!(
-        "SELECT poll_id, COUNT(DISTINCT account_id) AS count
-         FROM status_poll_votes
-         WHERE poll_id IN ({poll_placeholders})
-         GROUP BY poll_id"
-    );
-    let voters_result = db
-        .prepare(&voters_sql)
-        .bind_refs(poll_bindings.iter())?
-        .all()
-        .await?;
-    Ok(voters_result
-        .results::<PreloadedPollVotersCountRow>()?
-        .into_iter()
-        .map(|row| (row.poll_id, row.count))
-        .collect::<HashMap<_, _>>())
+    let mut voters_by_poll_id = HashMap::new();
+    for chunk in poll_ids.chunks(d1_in_value_chunk_size(0)) {
+        let poll_placeholders = sql_placeholders(1, chunk.len());
+        let voters_sql = format!(
+            "SELECT poll_id, COUNT(DISTINCT account_id) AS count
+             FROM status_poll_votes
+             WHERE poll_id IN ({poll_placeholders})
+             GROUP BY poll_id"
+        );
+        let poll_bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let voters_result = db
+            .prepare(&voters_sql)
+            .bind_refs(poll_bindings.iter())?
+            .all()
+            .await?;
+        voters_by_poll_id.extend(
+            voters_result
+                .results::<PreloadedPollVotersCountRow>()?
+                .into_iter()
+                .map(|row| (row.poll_id, row.count)),
+        );
+    }
+    Ok(voters_by_poll_id)
 }
 
 fn mastodon_poll_response_from_rows(

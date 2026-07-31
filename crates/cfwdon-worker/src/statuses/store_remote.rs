@@ -1,7 +1,7 @@
 use super::{
     AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
-    ResolvedTimelineCursor, Result, normalize_hashtag, remote_status_from_record,
-    remote_statuses_from_records, sql_placeholders, unique_ordered_refs,
+    ResolvedTimelineCursor, Result, d1_in_value_chunk_size, normalize_hashtag,
+    remote_status_from_record, remote_statuses_from_records, sql_placeholders, unique_ordered_refs,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -174,10 +174,14 @@ pub(crate) async fn find_remote_statuses_with_actors_by_ids(
         return Ok(Vec::new());
     }
 
-    let sql = remote_statuses_with_actors_by_ids_sql(ids.len());
-    let bindings = remote_statuses_with_actors_by_ids_bindings(&ids);
+    let mut rows = Vec::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let sql = remote_statuses_with_actors_by_ids_sql(chunk.len());
+        let bindings = remote_statuses_with_actors_by_ids_bindings(chunk);
+        rows.extend(query_remote_statuses_with_actor(db, &sql, &bindings).await?);
+    }
 
-    query_remote_statuses_with_actor(db, &sql, &bindings).await
+    Ok(rows)
 }
 
 fn remote_statuses_with_actors_by_ids_bindings<'a>(ids: &[&'a String]) -> Vec<D1Type<'a>> {

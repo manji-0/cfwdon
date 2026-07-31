@@ -36,6 +36,8 @@ use super::{
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
 
+use crate::{d1_in_value_chunk_size, sql_placeholders};
+
 async fn build_status_application(
     db: &D1Database,
     application_id: Option<i64>,
@@ -354,26 +356,28 @@ async fn load_viewer_target_uri_set(
         return Ok(HashSet::new());
     }
 
-    let placeholders = (2..=(target_uris.len() + 1))
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT target_uri
-         FROM {table}
-         WHERE account_id = ?1
-           AND target_uri IN ({placeholders})"
-    );
-    let mut bindings = Vec::with_capacity(target_uris.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(target_uris.iter().map(|uri| D1Type::Text(uri.as_str())));
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut matched = HashSet::new();
+    for chunk in target_uris.chunks(d1_in_value_chunk_size(1)) {
+        let placeholders = sql_placeholders(2, chunk.len());
+        let sql = format!(
+            "SELECT target_uri
+             FROM {table}
+             WHERE account_id = ?1
+               AND target_uri IN ({placeholders})"
+        );
+        let mut bindings = Vec::with_capacity(chunk.len() + 1);
+        bindings.push(D1Type::Text(account_id));
+        bindings.extend(chunk.iter().map(|uri| D1Type::Text(uri.as_str())));
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        matched.extend(
+            result
+                .results::<TargetUriRow>()?
+                .into_iter()
+                .map(|row| row.target_uri),
+        );
+    }
 
-    Ok(result
-        .results::<TargetUriRow>()?
-        .into_iter()
-        .map(|row| row.target_uri)
-        .collect())
+    Ok(matched)
 }
 
 async fn load_viewer_remote_status_id_set(
@@ -386,26 +390,28 @@ async fn load_viewer_remote_status_id_set(
         return Ok(HashSet::new());
     }
 
-    let placeholders = (2..=(status_ids.len() + 1))
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT remote_status_id
-         FROM {table}
-         WHERE account_id = ?1
-           AND remote_status_id IN ({placeholders})"
-    );
-    let mut bindings = Vec::with_capacity(status_ids.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(status_ids.iter().map(|id| D1Type::Text(id.as_str())));
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut matched = HashSet::new();
+    for chunk in status_ids.chunks(d1_in_value_chunk_size(1)) {
+        let placeholders = sql_placeholders(2, chunk.len());
+        let sql = format!(
+            "SELECT remote_status_id
+             FROM {table}
+             WHERE account_id = ?1
+               AND remote_status_id IN ({placeholders})"
+        );
+        let mut bindings = Vec::with_capacity(chunk.len() + 1);
+        bindings.push(D1Type::Text(account_id));
+        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        matched.extend(
+            result
+                .results::<RemoteStatusIdRow>()?
+                .into_iter()
+                .map(|row| row.remote_status_id),
+        );
+    }
 
-    Ok(result
-        .results::<RemoteStatusIdRow>()?
-        .into_iter()
-        .map(|row| row.remote_status_id)
-        .collect())
+    Ok(matched)
 }
 
 async fn load_viewer_pinned_status_ids(
@@ -417,26 +423,28 @@ async fn load_viewer_pinned_status_ids(
         return Ok(HashSet::new());
     }
 
-    let placeholders = (2..=(status_ids.len() + 1))
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT status_id
-         FROM status_pins
-         WHERE account_id = ?1
-           AND status_id IN ({placeholders})"
-    );
-    let mut bindings = Vec::with_capacity(status_ids.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(status_ids.iter().map(|id| D1Type::Text(id.as_str())));
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut matched = HashSet::new();
+    for chunk in status_ids.chunks(d1_in_value_chunk_size(1)) {
+        let placeholders = sql_placeholders(2, chunk.len());
+        let sql = format!(
+            "SELECT status_id
+             FROM status_pins
+             WHERE account_id = ?1
+               AND status_id IN ({placeholders})"
+        );
+        let mut bindings = Vec::with_capacity(chunk.len() + 1);
+        bindings.push(D1Type::Text(account_id));
+        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        matched.extend(
+            result
+                .results::<StatusIdRow>()?
+                .into_iter()
+                .map(|row| row.status_id),
+        );
+    }
 
-    Ok(result
-        .results::<StatusIdRow>()?
-        .into_iter()
-        .map(|row| row.status_id)
-        .collect())
+    Ok(matched)
 }
 
 pub(crate) async fn preload_local_status_viewer_state(
@@ -542,37 +550,38 @@ pub(crate) async fn preload_status_quote_counts(
         .map(|uri| (*uri).clone())
         .collect::<HashSet<_>>();
 
-    let placeholders = (1..=uris.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT quote_of_uri, SUM(count) AS count
-         FROM (
-             SELECT quote_of_uri, COUNT(*) AS count
-             FROM statuses
-             WHERE quote_state = 'accepted'
-               AND quote_of_uri IN ({placeholders})
-             GROUP BY quote_of_uri
-             UNION ALL
-             SELECT quote_of_uri, COUNT(*) AS count
-             FROM remote_statuses
-             WHERE quote_state = 'accepted'
-               AND quote_of_uri IN ({placeholders})
-             GROUP BY quote_of_uri
-         )
-         GROUP BY quote_of_uri"
-    );
-    let bindings = uris
-        .iter()
-        .map(|uri| D1Type::Text(uri.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    let counts = result
-        .results::<StatusQuoteCountRow>()?
-        .into_iter()
-        .map(|row| (row.quote_of_uri, row.count))
-        .collect::<HashMap<_, _>>();
+    let mut counts = HashMap::new();
+    for chunk in uris.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT quote_of_uri, SUM(count) AS count
+             FROM (
+                 SELECT quote_of_uri, COUNT(*) AS count
+                 FROM statuses
+                 WHERE quote_state = 'accepted'
+                   AND quote_of_uri IN ({placeholders})
+                 GROUP BY quote_of_uri
+                 UNION ALL
+                 SELECT quote_of_uri, COUNT(*) AS count
+                 FROM remote_statuses
+                 WHERE quote_state = 'accepted'
+                   AND quote_of_uri IN ({placeholders})
+                 GROUP BY quote_of_uri
+             )
+             GROUP BY quote_of_uri"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|uri| D1Type::Text(uri.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        counts.extend(
+            result
+                .results::<StatusQuoteCountRow>()?
+                .into_iter()
+                .map(|row| (row.quote_of_uri, row.count)),
+        );
+    }
 
     Ok(StatusQuoteCountsPreload {
         counts,

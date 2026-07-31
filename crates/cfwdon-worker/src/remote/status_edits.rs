@@ -1,4 +1,4 @@
-use crate::{D1Database, Result, generate_entity_id};
+use crate::{D1Database, Result, d1_in_value_chunk_size, generate_entity_id, sql_placeholders};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -134,14 +134,18 @@ pub(crate) async fn preload_remote_status_edit_updated_at(
         return Ok(RemoteStatusEditUpdatedAtPreload::default());
     }
 
-    let sql = remote_status_edit_updated_at_preload_sql(ids.len());
-    let bindings = remote_status_edit_updated_at_preload_bindings(&ids);
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    let updated_at_by_status_id = result
-        .results::<RemoteStatusUpdatedAtRow>()?
-        .into_iter()
-        .map(|row| (row.id, row.updated_at))
-        .collect::<HashMap<_, _>>();
+    let mut updated_at_by_status_id = HashMap::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let sql = remote_status_edit_updated_at_preload_sql(chunk.len());
+        let bindings = remote_status_edit_updated_at_preload_bindings(chunk);
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        updated_at_by_status_id.extend(
+            result
+                .results::<RemoteStatusUpdatedAtRow>()?
+                .into_iter()
+                .map(|row| (row.id, row.updated_at)),
+        );
+    }
 
     Ok(RemoteStatusEditUpdatedAtPreload {
         updated_at_by_status_id,
@@ -158,10 +162,7 @@ fn unique_remote_status_edit_preload_ids(status_ids: &[String]) -> Vec<&str> {
 }
 
 fn remote_status_edit_updated_at_preload_sql(id_count: usize) -> String {
-    let placeholders = (1..=id_count)
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let placeholders = sql_placeholders(1, id_count);
     format!(
         "SELECT rs.id, rs.updated_at
          FROM remote_statuses rs

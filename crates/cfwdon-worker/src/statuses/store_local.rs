@@ -1,7 +1,7 @@
 use super::{
-    AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
-    local_status_identity_from_uri, sql_placeholders, status_from_record, statuses_from_records,
-    unique_ordered_refs,
+    AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, d1_in_value_chunk_size,
+    find_account_by_id, local_status_identity_from_uri, sql_placeholders, status_from_record,
+    statuses_from_records, unique_ordered_refs,
 };
 use std::collections::HashMap;
 use worker::d1::D1Type;
@@ -57,21 +57,27 @@ pub(crate) async fn find_statuses_by_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders = sql_placeholders(1, ids.len());
-    let sql = format!(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
-         FROM statuses
-         WHERE id IN ({placeholders})"
-    );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut rows = Vec::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+             FROM statuses
+             WHERE id IN ({placeholders})"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        rows.extend(
+            result
+                .results::<StatusRecord>()
+                .and_then(statuses_from_records)?,
+        );
+    }
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    Ok(rows)
 }
 
 pub(crate) async fn find_status_by_ap_id(
@@ -100,21 +106,27 @@ pub(crate) async fn find_statuses_by_ap_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders = sql_placeholders(1, ap_ids.len());
-    let sql = format!(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
-         FROM statuses
-         WHERE ap_id IN ({placeholders})"
-    );
-    let bindings = ap_ids
-        .iter()
-        .map(|ap_id| D1Type::Text(ap_id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut rows = Vec::new();
+    for chunk in ap_ids.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+             FROM statuses
+             WHERE ap_id IN ({placeholders})"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|ap_id| D1Type::Text(ap_id.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        rows.extend(
+            result
+                .results::<StatusRecord>()
+                .and_then(statuses_from_records)?,
+        );
+    }
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    Ok(rows)
 }
 
 pub(crate) async fn load_in_reply_to_account_id(
@@ -148,22 +160,26 @@ pub(crate) async fn load_in_reply_to_account_ids(
         account_id: String,
     }
 
-    let placeholders = sql_placeholders(1, reply_ids.len());
-    let sql = format!(
-        "SELECT id, account_id
-         FROM statuses
-         WHERE id IN ({placeholders})"
-    );
-    let bindings = reply_ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    let reply_accounts_by_status_id = result
-        .results::<ReplyAccountIdRow>()?
-        .into_iter()
-        .map(|row| (row.id, row.account_id))
-        .collect::<HashMap<_, _>>();
+    let mut reply_accounts_by_status_id = HashMap::new();
+    for chunk in reply_ids.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT id, account_id
+             FROM statuses
+             WHERE id IN ({placeholders})"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        reply_accounts_by_status_id.extend(
+            result
+                .results::<ReplyAccountIdRow>()?
+                .into_iter()
+                .map(|row| (row.id, row.account_id)),
+        );
+    }
 
     Ok(statuses
         .iter()

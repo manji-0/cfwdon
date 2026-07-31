@@ -1,7 +1,7 @@
 use super::{
     Error, Request, Response, Result, RouteContext, build_local_status_response,
-    find_visible_local_status_response_subject, load_config, require_authenticated_local_account,
-    sql_placeholders, unique_ordered_refs,
+    d1_in_value_chunk_size, find_visible_local_status_response_subject, load_config,
+    require_authenticated_local_account, sql_placeholders, unique_ordered_refs,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -104,23 +104,28 @@ async fn load_status_reply_links(
         return Ok(HashMap::new());
     }
 
-    let placeholders = sql_placeholders(1, ids.len());
-    let sql = format!(
-        "SELECT id, in_reply_to_id
-         FROM statuses
-         WHERE id IN ({placeholders})"
-    );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut links = HashMap::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT id, in_reply_to_id
+             FROM statuses
+             WHERE id IN ({placeholders})"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        links.extend(
+            result
+                .results::<StatusReplyLinkRow>()?
+                .into_iter()
+                .map(|row| (row.id, row.in_reply_to_id)),
+        );
+    }
 
-    Ok(result
-        .results::<StatusReplyLinkRow>()?
-        .into_iter()
-        .map(|row| (row.id, row.in_reply_to_id))
-        .collect())
+    Ok(links)
 }
 
 async fn load_muted_thread_root_status_ids(
@@ -133,23 +138,28 @@ async fn load_muted_thread_root_status_ids(
         return Ok(HashSet::new());
     }
 
-    let placeholders = sql_placeholders(2, roots.len());
-    let sql = format!(
-        "SELECT thread_root_status_id
-         FROM thread_mutes
-         WHERE account_id = ?1
-           AND thread_root_status_id IN ({placeholders})"
-    );
-    let mut bindings = Vec::with_capacity(roots.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(roots.iter().map(|id| D1Type::Text(id.as_str())));
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let mut muted = HashSet::new();
+    for chunk in roots.chunks(d1_in_value_chunk_size(1)) {
+        let placeholders = sql_placeholders(2, chunk.len());
+        let sql = format!(
+            "SELECT thread_root_status_id
+             FROM thread_mutes
+             WHERE account_id = ?1
+               AND thread_root_status_id IN ({placeholders})"
+        );
+        let mut bindings = Vec::with_capacity(chunk.len() + 1);
+        bindings.push(D1Type::Text(account_id));
+        bindings.extend(chunk.iter().map(|id| D1Type::Text(id.as_str())));
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        muted.extend(
+            result
+                .results::<ThreadRootStatusIdRow>()?
+                .into_iter()
+                .map(|row| row.thread_root_status_id),
+        );
+    }
 
-    Ok(result
-        .results::<ThreadRootStatusIdRow>()?
-        .into_iter()
-        .map(|row| row.thread_root_status_id)
-        .collect())
+    Ok(muted)
 }
 
 /// Return the subset of status ids whose thread root is muted by `account_id`.

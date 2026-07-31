@@ -1,4 +1,4 @@
-use crate::{sql_placeholders, unique_ordered_refs};
+use crate::{d1_in_value_chunk_size, sql_placeholders, unique_ordered_refs};
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -219,24 +219,24 @@ pub(crate) async fn find_accounts_by_ids(
         return Ok(HashMap::new());
     }
 
-    let placeholders = sql_placeholders(1, ids.len());
-    let sql = format!(
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
-         FROM accounts
-         WHERE id IN ({placeholders})"
-    );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    Ok(result
-        .results::<AccountRow>()?
-        .into_iter()
-        .map(|row| {
+    let mut accounts = HashMap::new();
+    for chunk in ids.chunks(d1_in_value_chunk_size(0)) {
+        let placeholders = sql_placeholders(1, chunk.len());
+        let sql = format!(
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
+             FROM accounts
+             WHERE id IN ({placeholders})"
+        );
+        let bindings = chunk
+            .iter()
+            .map(|id| D1Type::Text(id.as_str()))
+            .collect::<Vec<_>>();
+        let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        accounts.extend(result.results::<AccountRow>()?.into_iter().map(|row| {
             let id = row.id.clone();
             (id, LocalAccount::from_record(row))
-        })
-        .collect())
+        }));
+    }
+
+    Ok(accounts)
 }
