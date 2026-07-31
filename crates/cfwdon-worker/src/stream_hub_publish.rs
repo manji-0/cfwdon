@@ -1,10 +1,14 @@
 use crate::{
-    AppConfig, D1Database, Env, STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT,
-    StatusRow, extract_hashtags_from_html, extract_hashtags_from_text, extract_mentions_from_text,
-    find_account_by_id, find_account_by_username, list_local_account_list_stream_fanout,
+    AppConfig, D1Database, Env, RemoteActorProfile, RemoteStatusRow,
+    STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT, StatusRow,
+    build_remote_status_response, conversation_document, extract_hashtags_from_html,
+    extract_hashtags_from_text, extract_mentions_from_text, find_account_by_id,
+    find_account_by_username, find_conversation_for_account, find_conversation_id_by_status_id,
+    find_remote_actor_by_actor_uri, is_muted_actor, list_local_account_list_stream_fanout,
+    list_local_follower_account_ids_for_remote_actor_stream_fanout,
     list_local_follower_account_ids_for_stream_fanout, list_membership_variants_for_local_account,
-    local_status_visible_on_list_timeline, publish_stream_hub_event_soft,
-    publish_user_stream_hub_event_soft, stream_hub_id_name,
+    load_remote_status_updated_at, local_status_visible_on_list_timeline,
+    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_id_name,
 };
 use cfwdon_domain::Visibility;
 use std::collections::HashSet;
@@ -196,6 +200,24 @@ async fn publish_list_timeline_events_soft(
     }
 }
 
+async fn direct_status_recipient_account_ids(
+    db: &D1Database,
+    config: &AppConfig,
+    author_account_id: &str,
+    status: &StatusRow,
+) -> HashSet<String> {
+    let mut recipient_ids = HashSet::new();
+    recipient_ids.insert(author_account_id.to_owned());
+
+    for handle in extract_mentions_from_text(&status.text, config) {
+        if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await {
+            recipient_ids.insert(account.id().to_owned());
+        }
+    }
+
+    recipient_ids
+}
+
 async fn publish_direct_timeline_events_soft(
     env: &Env,
     db: &D1Database,
@@ -207,16 +229,9 @@ async fn publish_direct_timeline_events_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
-    let mut recipient_ids = HashSet::new();
-    recipient_ids.insert(author_account_id.to_owned());
-
-    for handle in extract_mentions_from_text(&status.text, config) {
-        if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await {
-            recipient_ids.insert(account.id().to_owned());
-        }
-    }
-
-    for recipient_id in recipient_ids {
+    for recipient_id in
+        direct_status_recipient_account_ids(db, config, author_account_id, status).await
+    {
         let hub_name = stream_hub_id_name("direct", Some(&recipient_id), None, None);
         publish_stream_hub_event_soft(
             env,
@@ -227,6 +242,84 @@ async fn publish_direct_timeline_events_soft(
             event,
             payload,
             event_id,
+        )
+        .await;
+    }
+}
+
+async fn publish_direct_conversation_stream_events_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    binding: &str,
+    author_account_id: &str,
+    status: &StatusRow,
+) {
+    let conversation_id = match find_conversation_id_by_status_id(db, &status.id).await {
+        Ok(Some(conversation_id)) => conversation_id,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to resolve conversation for direct status {} stream fan-out: {error}",
+                status.id
+            );
+            return;
+        }
+    };
+
+    for recipient_id in
+        direct_status_recipient_account_ids(db, config, author_account_id, status).await
+    {
+        let recipient = match find_account_by_id(db, &recipient_id).await {
+            Ok(Some(recipient)) => recipient,
+            Ok(None) => continue,
+            Err(error) => {
+                console_error!(
+                    "failed to load direct conversation stream recipient {recipient_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let conversation = match find_conversation_for_account(db, &recipient_id, &conversation_id)
+            .await
+        {
+            Ok(Some(conversation)) => conversation,
+            Ok(None) => continue,
+            Err(error) => {
+                console_error!(
+                    "failed to load conversation {conversation_id} for recipient {recipient_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let document = match conversation_document(db, config, &recipient, &conversation).await {
+            Ok(document) => document,
+            Err(error) => {
+                console_error!(
+                    "failed to build conversation document for recipient {recipient_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let payload = match serde_json::to_string(&document) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize conversation document for recipient {recipient_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let hub_name = stream_hub_id_name("direct", Some(&recipient_id), None, None);
+        publish_stream_hub_event_soft(
+            env,
+            binding,
+            &hub_name,
+            "direct",
+            Some(&recipient_id),
+            "update",
+            &payload,
+            Some(&conversation.id),
         )
         .await;
     }
@@ -305,6 +398,132 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             "update",
             payload,
             event_id,
+        )
+        .await;
+        publish_direct_conversation_stream_events_soft(
+            env,
+            db,
+            config,
+            &config.stream_hub_binding,
+            author_account_id,
+            status,
+        )
+        .await;
+    }
+}
+
+pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    remote_actor: &RemoteActorProfile,
+    remote_status: &RemoteStatusRow,
+) {
+    if !visibility_reaches_follower_home_timelines(remote_status.visibility) {
+        return;
+    }
+
+    let updated_at = match load_remote_status_updated_at(db, &remote_status.id).await {
+        Ok(Some(updated_at)) => updated_at,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to load remote status updated_at for stream fan-out (status {}): {error}",
+                remote_status.id
+            );
+            return;
+        }
+    };
+    if updated_at == remote_status.published_at {
+        return;
+    }
+
+    let actor_row = match find_remote_actor_by_actor_uri(db, &remote_actor.actor_uri).await {
+        Ok(Some(actor_row)) => actor_row,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to load remote actor for stream fan-out ({}): {error}",
+                remote_actor.actor_uri
+            );
+            return;
+        }
+    };
+
+    let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
+        db,
+        &remote_actor.actor_uri,
+    )
+    .await
+    {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            console_error!(
+                "failed to list local followers for remote status stream fan-out ({}): {error}",
+                remote_actor.actor_uri
+            );
+            return;
+        }
+    };
+
+    if fanout.truncated {
+        console_error!(
+            "stream hub follower fan-out truncated to {} for remote actor {}",
+            STREAM_HUB_FOLLOWER_FANOUT_LIMIT,
+            remote_actor.actor_uri
+        );
+    }
+
+    for follower_id in fanout.account_ids {
+        if is_muted_actor(db, &follower_id, &remote_actor.actor_uri)
+            .await
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let recipient = match find_account_by_id(db, &follower_id).await {
+            Ok(Some(recipient)) => recipient,
+            Ok(None) => continue,
+            Err(error) => {
+                console_error!(
+                    "failed to load follower {follower_id} for remote status stream fan-out: {error}"
+                );
+                continue;
+            }
+        };
+        let response = match build_remote_status_response(
+            db,
+            config,
+            Some(&recipient),
+            remote_status,
+            &actor_row,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                console_error!(
+                    "failed to build remote status stream payload for follower {follower_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let payload = match serde_json::to_string(&response) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize remote status stream payload for follower {follower_id}: {error}"
+                );
+                continue;
+            }
+        };
+        publish_user_stream_hub_event_soft(
+            env,
+            &config.stream_hub_binding,
+            &follower_id,
+            "status.update",
+            &payload,
+            Some(&remote_status.id),
         )
         .await;
     }
