@@ -1,6 +1,6 @@
 use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
-    delete_remote_favourite, delete_remote_reblog, delete_remote_status_by_object_uri,
+    delete_remote_favourite, delete_remote_reblog, fanout_and_delete_remote_status_by_object_uri_soft,
     extract_remote_note_object, find_conversation_id_by_status_id, find_local_status_by_object_uri,
     is_blocking_actor, is_remote_actor_following_local_account, list_conversation_participants,
     object_attributed_to_remote_actor, publish_remote_status_interaction_notification_soft,
@@ -144,6 +144,8 @@ pub(crate) async fn handle_inbox_interaction_undo(
     db: &D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
+    config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object") else {
         return Ok(());
@@ -163,7 +165,14 @@ pub(crate) async fn handle_inbox_interaction_undo(
             delete_remote_reblog(db, &remote_actor.actor_uri, target_uri, activity_uri).await?;
             if let Some(announce_activity_id) = object.get("id").and_then(serde_json::Value::as_str)
             {
-                delete_remote_status_by_object_uri(db, announce_activity_id).await?;
+                fanout_and_delete_remote_status_by_object_uri_soft(
+                    env,
+                    db,
+                    config,
+                    remote_actor,
+                    announce_activity_id,
+                )
+                .await?;
             }
         }
         _ => {}

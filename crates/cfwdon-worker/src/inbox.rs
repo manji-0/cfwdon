@@ -91,7 +91,7 @@ async fn dispatch_inbox_activity(
         }
         "Undo" => {
             if let Some(account) = account {
-                handle_inbox_undo(db, account, activity, remote_actor, config).await
+                handle_inbox_undo(db, account, activity, remote_actor, config, env).await
             } else {
                 Ok(())
             }

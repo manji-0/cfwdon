@@ -83,21 +83,13 @@ pub(crate) async fn handle_inbox_update(
     upsert_remote_status(db, config, remote_actor, object, env).await
 }
 
-pub(crate) async fn handle_inbox_delete(
+pub(crate) async fn fanout_and_delete_remote_status_by_object_uri_soft(
+    env: Option<&Env>,
     db: &D1Database,
     config: &AppConfig,
-    activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
-    env: Option<&Env>,
+    object_uri: &str,
 ) -> Result<()> {
-    if handle_inbox_collection_feature_authorization_delete(db, config, activity, remote_actor)
-        .await?
-    {
-        return Ok(());
-    }
-    let Some(object_uri) = activity_object_id(activity.get("object")) else {
-        return Ok(());
-    };
     let Some(status) = find_remote_status_by_object_uri(db, object_uri).await? else {
         return Ok(());
     };
@@ -125,4 +117,23 @@ pub(crate) async fn handle_inbox_delete(
     .await;
 
     delete_remote_status_by_id(db, &status.id).await
+}
+
+pub(crate) async fn handle_inbox_delete(
+    db: &D1Database,
+    config: &AppConfig,
+    activity: &serde_json::Value,
+    remote_actor: &RemoteActorProfile,
+    env: Option<&Env>,
+) -> Result<()> {
+    if handle_inbox_collection_feature_authorization_delete(db, config, activity, remote_actor)
+        .await?
+    {
+        return Ok(());
+    }
+    let Some(object_uri) = activity_object_id(activity.get("object")) else {
+        return Ok(());
+    };
+    fanout_and_delete_remote_status_by_object_uri_soft(env, db, config, remote_actor, object_uri)
+        .await
 }
