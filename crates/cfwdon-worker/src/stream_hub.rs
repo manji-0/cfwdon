@@ -426,11 +426,9 @@ pub(crate) async fn connect_stream_hub_websocket(
     let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
     let request = Request::new_with_init(&url, &init)?;
     let response = stub.fetch_with_request(request).await?;
-    let websocket = response
-        .websocket()
-        .ok_or_else(|| worker::Error::RustError(
-            "stream hub websocket upgrade did not return a socket".to_owned(),
-        ))?;
+    let websocket = response.websocket().ok_or_else(|| {
+        worker::Error::RustError("stream hub websocket upgrade did not return a socket".to_owned())
+    })?;
     websocket.accept()?;
     Ok(websocket)
 }

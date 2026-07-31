@@ -256,11 +256,11 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
 6. Still open: public-channel sharding under load; SSE as DO consumer; inbox-host admission DOs; remote Create/Delete timeline fan-out to public/hashtag hubs.
 
-### Phase B — Channel coverage — largely implemented
+### Phase B — Channel coverage — implemented
 
-1. `list`, `direct`, public, and hashtag hubs are proxied and published for local status create/delete.
+1. `list`, `direct`, public, and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only).
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths.
-3. SSE remains Worker poll (not yet a second consumer of the publish bus).
+3. SSE consumes StreamHub live events with D1 catch-up backup.
 4. Public-channel shard plan deferred until metrics show hotspots.
 
 ### Phase C — Inbox host admission + schedule (optional)

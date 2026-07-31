@@ -12,20 +12,20 @@ use crate::{
     build_app_verify_credentials_document_from_row, build_local_status_response,
     build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
     build_remote_status_response, cache_public_response, can_view_local_status,
-    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, escape_html, extract_hashtags_from_html,
-    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
-    find_conversation_id_by_status_id, find_follower_follow_activity_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
-    generate_entity_id, instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
-    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
-    list_followed_tag_names, list_local_direct_timeline_statuses,
-    list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
-    list_local_public_timeline_statuses, list_membership_refs,
+    collect_visible_notifications, connect_stream_hub_websocket, delete_follow_by_target,
+    delete_follower_by_actor, delete_remote_follow_request_by_actor, escape_html,
+    extract_hashtags_from_html, extract_hashtags_from_text, filter_notification_entries_by_query,
+    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    find_conversation_for_account, find_conversation_id_by_status_id,
+    find_follower_follow_activity_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, instance_base_url,
+    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
+    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
+    list_local_direct_timeline_statuses, list_local_home_timeline_statuses,
+    list_local_public_statuses_by_tag, list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
@@ -37,7 +37,7 @@ use crate::{
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
     store_account_private_key, stream_hub_id_name, streaming_batch_from_entries,
-    connect_stream_hub_websocket, upgrade_stream_hub_websocket,
+    upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -1585,7 +1585,7 @@ fn stream_hub_websocket_text_to_sse_bytes(
     if !state.emitted_event_ids.insert(dedupe_key) {
         return None;
     }
-  Some(sse_named_event_bytes(event_name, &data))
+    Some(sse_named_event_bytes(event_name, &data))
 }
 
 async fn yield_streaming_poll_round(
@@ -1599,34 +1599,25 @@ async fn yield_streaming_poll_round(
     poll_rounds: &mut u32,
 ) -> StreamingPollYield {
     *poll_rounds = poll_rounds.saturating_add(1);
-    let events = match poll_streaming_events(
-        db,
-        config,
-        stream_name,
-        tag,
-        list,
-        viewer,
-        state,
-    )
-    .await
-    {
-        Ok(events) => events,
-        Err(error) => {
-            console_error!(
-                "streaming poll failed stream={} tag={} list={} error={}",
-                stream_name,
-                tag.unwrap_or_default(),
-                list.unwrap_or_default(),
-                error
-            );
-            if streaming_error_is_subrequest_limit(&error)
-                || streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds)
-            {
-                return StreamingPollYield::Recycle;
+    let events =
+        match poll_streaming_events(db, config, stream_name, tag, list, viewer, state).await {
+            Ok(events) => events,
+            Err(error) => {
+                console_error!(
+                    "streaming poll failed stream={} tag={} list={} error={}",
+                    stream_name,
+                    tag.unwrap_or_default(),
+                    list.unwrap_or_default(),
+                    error
+                );
+                if streaming_error_is_subrequest_limit(&error)
+                    || streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds)
+                {
+                    return StreamingPollYield::Recycle;
+                }
+                return StreamingPollYield::PollFailed;
             }
-            return StreamingPollYield::PollFailed;
-        }
-    };
+        };
     if streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds) {
         return StreamingPollYield::Recycle;
     }

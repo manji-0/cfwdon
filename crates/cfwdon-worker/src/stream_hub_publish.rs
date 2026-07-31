@@ -392,8 +392,15 @@ async fn publish_remote_follower_home_create_events_soft(
                 continue;
             }
         };
-        publish_user_stream_hub_event_soft(env, binding, &follower_id, "update", &payload, event_id)
-            .await;
+        publish_user_stream_hub_event_soft(
+            env,
+            binding,
+            &follower_id,
+            "update",
+            &payload,
+            event_id,
+        )
+        .await;
     }
 }
 
@@ -440,18 +447,17 @@ async fn build_remote_status_public_stream_payload_soft(
     remote_status: &RemoteStatusRow,
     actor_row: &RemoteActorRow,
 ) -> Option<String> {
-    let response = match build_remote_status_response(db, config, None, remote_status, actor_row)
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => {
-            console_error!(
-                "failed to build remote status public stream payload (status {}): {error}",
-                remote_status.id
-            );
-            return None;
-        }
-    };
+    let response =
+        match build_remote_status_response(db, config, None, remote_status, actor_row).await {
+            Ok(response) => response,
+            Err(error) => {
+                console_error!(
+                    "failed to build remote status public stream payload (status {}): {error}",
+                    remote_status.id
+                );
+                return None;
+            }
+        };
     match serde_json::to_string(&response) {
         Ok(payload) => Some(payload),
         Err(error) => {
@@ -840,36 +846,22 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         return;
     }
 
-    let payload = match build_remote_status_public_stream_payload_soft(
-        db,
-        config,
-        remote_status,
-        &actor_row,
-    )
-    .await
-    {
-        Some(payload) => payload,
-        None => return,
-    };
+    let payload =
+        match build_remote_status_public_stream_payload_soft(db, config, remote_status, &actor_row)
+            .await
+        {
+            Some(payload) => payload,
+            None => return,
+        };
 
     publish_remote_public_timeline_events_soft(
-        env,
-        binding,
-        has_media,
-        "update",
-        &payload,
-        event_id,
+        env, binding, has_media, "update", &payload, event_id,
     )
     .await;
 
     if !tags.is_empty() {
         publish_remote_hashtag_timeline_events_soft(
-            env,
-            binding,
-            &tags,
-            "update",
-            &payload,
-            event_id,
+            env, binding, &tags, "update", &payload, event_id,
         )
         .await;
     }
@@ -921,12 +913,7 @@ pub(crate) async fn publish_remote_status_delete_stream_fanout_soft(
     }
 
     publish_remote_public_timeline_events_soft(
-        env,
-        binding,
-        has_media,
-        "delete",
-        payload,
-        event_id,
+        env, binding, has_media, "delete", payload, event_id,
     )
     .await;
 
@@ -1118,7 +1105,12 @@ mod tests {
         );
         assert_eq!(
             remote_public_timeline_streams(true),
-            vec!["public", "public:remote", "public:media", "public:remote:media"]
+            vec![
+                "public",
+                "public:remote",
+                "public:media",
+                "public:remote:media"
+            ]
         );
     }
 
