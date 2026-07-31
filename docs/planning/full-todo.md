@@ -93,4 +93,5 @@ Streaming already validates channels and serves SSE/WebSocket clients by polling
 - Spike a `StreamHub` DO for one authenticated channel (`user` or `user:notification`) with hibernation.
 - Publish prebuilt Mastodon streaming payloads after D1 commits; keep D1 as source of truth.
 - Evaluate keyed DO rate limiters for shared inbox / remote fetch abuse separately from streaming.
+- Prefer per-remote-host **admission** DOs behind the existing shared/personal inbox URLs; do not invent per-host public inbox paths.
 - Keep outbound ActivityPub delivery on Queues; do not move fan-out HTTP delivery into DOs.
