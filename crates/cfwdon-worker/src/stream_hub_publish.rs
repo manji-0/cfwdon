@@ -10,7 +10,7 @@ use crate::{
     list_membership_variants_for_remote_actor, load_remote_status_hashtag_names,
     load_remote_status_updated_at, local_status_visible_on_list_timeline,
     publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, remote_status_has_media,
-    stream_hub_id_name,
+    stream_hub_id_name, stream_hub_sharded_id_name,
 };
 use cfwdon_domain::Visibility;
 use std::collections::HashSet;
@@ -64,6 +64,39 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
         visibility,
         Visibility::Public | Visibility::Unlisted | Visibility::FollowersOnly
     )
+}
+
+fn stream_hub_public_publish_hub_names(
+    base_hub: &str,
+    shard_key: &str,
+    shard_count: u32,
+) -> Vec<String> {
+    if shard_count <= 1 {
+        return vec![base_hub.to_owned()];
+    }
+    vec![
+        base_hub.to_owned(),
+        stream_hub_sharded_id_name(base_hub, shard_key, shard_count),
+    ]
+}
+
+async fn publish_public_stream_hub_event_dual_soft(
+    env: &Env,
+    binding: &str,
+    base_hub_name: &str,
+    stream: &str,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+    shard_count: u32,
+) {
+    let shard_key = event_id.unwrap_or("");
+    for hub_name in stream_hub_public_publish_hub_names(base_hub_name, shard_key, shard_count) {
+        publish_stream_hub_event_soft(
+            env, binding, &hub_name, stream, None, event, payload, event_id,
+        )
+        .await;
+    }
 }
 
 async fn publish_to_hub_streams_soft(
@@ -129,11 +162,19 @@ async fn publish_public_timeline_events_soft(
     event: &str,
     payload: &str,
     event_id: Option<&str>,
+    shard_count: u32,
 ) {
     for stream in public_timeline_streams(has_media) {
         let hub_name = stream_hub_id_name(stream, None, None, None);
-        publish_stream_hub_event_soft(
-            env, binding, &hub_name, stream, None, event, payload, event_id,
+        publish_public_stream_hub_event_dual_soft(
+            env,
+            binding,
+            &hub_name,
+            stream,
+            event,
+            payload,
+            event_id,
+            shard_count,
         )
         .await;
     }
@@ -146,11 +187,19 @@ async fn publish_remote_public_timeline_events_soft(
     event: &str,
     payload: &str,
     event_id: Option<&str>,
+    shard_count: u32,
 ) {
     for stream in remote_public_timeline_streams(has_media) {
         let hub_name = stream_hub_id_name(stream, None, None, None);
-        publish_stream_hub_event_soft(
-            env, binding, &hub_name, stream, None, event, payload, event_id,
+        publish_public_stream_hub_event_dual_soft(
+            env,
+            binding,
+            &hub_name,
+            stream,
+            event,
+            payload,
+            event_id,
+            shard_count,
         )
         .await;
     }
@@ -628,6 +677,7 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             "update",
             payload,
             event_id,
+            config.stream_hub_public_shard_count,
         )
         .await;
 
@@ -855,7 +905,13 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         };
 
     publish_remote_public_timeline_events_soft(
-        env, binding, has_media, "update", &payload, event_id,
+        env,
+        binding,
+        has_media,
+        "update",
+        &payload,
+        event_id,
+        config.stream_hub_public_shard_count,
     )
     .await;
 
@@ -913,7 +969,13 @@ pub(crate) async fn publish_remote_status_delete_stream_fanout_soft(
     }
 
     publish_remote_public_timeline_events_soft(
-        env, binding, has_media, "delete", payload, event_id,
+        env,
+        binding,
+        has_media,
+        "delete",
+        payload,
+        event_id,
+        config.stream_hub_public_shard_count,
     )
     .await;
 
@@ -1031,6 +1093,7 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
             "delete",
             payload,
             event_id,
+            config.stream_hub_public_shard_count,
         )
         .await;
 
@@ -1079,6 +1142,30 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_hub_public_publish_hub_names_returns_base_only_when_unsharded() {
+        assert_eq!(
+            stream_hub_public_publish_hub_names("public", "status-1", 1),
+            vec!["public"]
+        );
+        assert_eq!(
+            stream_hub_public_publish_hub_names("public:local", "status-1", 0),
+            vec!["public:local"]
+        );
+    }
+
+    #[test]
+    fn stream_hub_public_publish_hub_names_dual_publishes_to_sharded_hub() {
+        let hubs = stream_hub_public_publish_hub_names("public", "status-abc", 4);
+        assert_eq!(hubs.len(), 2);
+        assert_eq!(hubs[0], "public");
+        assert_eq!(
+            hubs[1],
+            stream_hub_sharded_id_name("public", "status-abc", 4)
+        );
+        assert!(hubs[1].starts_with("public#"));
+    }
 
     #[test]
     fn public_timeline_streams_include_media_variants_when_needed() {
