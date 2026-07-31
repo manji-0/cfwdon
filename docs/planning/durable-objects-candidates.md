@@ -259,7 +259,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Public and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only); `list` and `direct` are served by the account session hub.
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths. Local edits publish `status.update` to the same channels as create.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
-4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, the Worker publishes once to the unsharded hub, which relays to **all** shards. Only anonymous clients sticky-route to a shard via `CF-Connecting-IP` / `anon`.
+4. Public-channel sharding: **deferred.** A hash-sharded variant was spiked and pulled back out — a single public hub is nowhere near the ~500–1000 msgs/sec where sharding starts to pay, and with authenticated clients on session hubs the shards would only ever hold anonymous sockets. Revisit when a public hub is measured near that ceiling.
 5. Open-channel forwarding: authenticated clients always connect to their session hub. When such a socket subscribes to `public*` / `hashtag*`, the session hub registers itself on the open channel's unsharded hub (`POST /forward/register`), which relays matching events to it. Registrations are dropped lazily when a relay reports zero subscribers or fails, so disconnects need no explicit unregister.
 
 ### Phase C — Inbox host admission + schedule (optional)

@@ -19,8 +19,6 @@ const DEFAULT_INSTANCE_DOMAIN: &str = "example.com";
 const DEFAULT_INSTANCE_NAME: &str = "cfwdon";
 const DEFAULT_INSTANCE_DESCRIPTION: &str =
     "Cloudflare Workers + D1 + R2 based Mastodon-compatible server";
-const DEFAULT_STREAM_HUB_PUBLIC_SHARD_COUNT: u32 = 1;
-const MAX_STREAM_HUB_PUBLIC_SHARD_COUNT: u32 = 64;
 const TIMELINE_ACCESS_PUBLIC: &str = "public";
 const TIMELINE_ACCESS_AUTHENTICATED: &str = "authenticated";
 const TIMELINE_ACCESS_DISABLED: &str = "disabled";
@@ -243,7 +241,6 @@ where
     set_instance_document_config(&vars, &mut config);
 
     set_timeline_access_config(&vars, &mut config);
-    set_stream_hub_config(&vars, &mut config);
 
     set_content_config(&vars, &mut config);
     set_auth0_config(&vars, &mut config);
@@ -428,22 +425,6 @@ fn set_timeline_access_level(
     }
 }
 
-fn parse_clamped_u32(value: Option<String>, default: u32, min: u32, max: u32) -> u32 {
-    match value {
-        Some(raw) => raw.trim().parse::<u32>().unwrap_or(default).clamp(min, max),
-        None => default,
-    }
-}
-
-fn set_stream_hub_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
-    config.stream_hub_public_shard_count = parse_clamped_u32(
-        vars("STREAM_HUB_PUBLIC_SHARD_COUNT"),
-        DEFAULT_STREAM_HUB_PUBLIC_SHARD_COUNT,
-        1,
-        MAX_STREAM_HUB_PUBLIC_SHARD_COUNT,
-    );
-}
-
 fn set_timeline_access_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
     set_timeline_access_level(
         vars,
@@ -498,18 +479,6 @@ fn optional_var<D>(ctx: &RouteContext<D>, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_clamped_u32_clamps_and_defaults() {
-        assert_eq!(
-            parse_clamped_u32(None, DEFAULT_STREAM_HUB_PUBLIC_SHARD_COUNT, 1, 64),
-            1
-        );
-        assert_eq!(parse_clamped_u32(Some("4".to_owned()), 1, 1, 64), 4);
-        assert_eq!(parse_clamped_u32(Some("0".to_owned()), 1, 1, 64), 1);
-        assert_eq!(parse_clamped_u32(Some("128".to_owned()), 1, 1, 64), 64);
-        assert_eq!(parse_clamped_u32(Some("bad".to_owned()), 1, 1, 64), 1);
-    }
 
     #[test]
     fn parse_timeline_access_level_accepts_supported_values() {

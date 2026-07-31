@@ -68,29 +68,6 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
     )
 }
 
-/// Publishes to the unsharded hub only. That hub holds the forwarding registry
-/// for authenticated session hubs and relays the event to its shards, so the
-/// Worker spends one subrequest regardless of shard count.
-async fn publish_public_stream_hub_event_dual_soft(
-    env: &Env,
-    binding: &str,
-    base_hub_name: &str,
-    stream: &str,
-    event: &str,
-    payload: &str,
-    event_id: Option<&str>,
-    shard_count: u32,
-) {
-    publish_stream_hub_event_soft(
-        env,
-        binding,
-        base_hub_name,
-        &StreamHubEvent::new(stream, event, payload, event_id)
-            .with_shard_fanout(base_hub_name, shard_count),
-    )
-    .await;
-}
-
 async fn publish_to_hub_streams_soft(
     env: &Env,
     binding: &str,
@@ -183,22 +160,17 @@ async fn publish_public_timeline_events_soft(
     event: &str,
     payload: &str,
     event_id: Option<&str>,
-    shard_count: u32,
 ) {
     let publishes = public_timeline_streams(has_media)
         .into_iter()
         .map(|stream| {
             let hub_name = stream_hub_channel_id_name(stream, None);
             async move {
-                publish_public_stream_hub_event_dual_soft(
+                publish_stream_hub_event_soft(
                     env,
                     binding,
                     &hub_name,
-                    stream,
-                    event,
-                    payload,
-                    event_id,
-                    shard_count,
+                    &StreamHubEvent::new(stream, event, payload, event_id),
                 )
                 .await;
             }
@@ -213,22 +185,17 @@ async fn publish_remote_public_timeline_events_soft(
     event: &str,
     payload: &str,
     event_id: Option<&str>,
-    shard_count: u32,
 ) {
     let publishes = remote_public_timeline_streams(has_media)
         .into_iter()
         .map(|stream| {
             let hub_name = stream_hub_channel_id_name(stream, None);
             async move {
-                publish_public_stream_hub_event_dual_soft(
+                publish_stream_hub_event_soft(
                     env,
                     binding,
                     &hub_name,
-                    stream,
-                    event,
-                    payload,
-                    event_id,
-                    shard_count,
+                    &StreamHubEvent::new(stream, event, payload, event_id),
                 )
                 .await;
             }
@@ -697,7 +664,6 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             "update",
             payload,
             event_id,
-            config.stream_hub_public_shard_count,
         )
         .await;
 
@@ -919,13 +885,7 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         };
 
     publish_remote_public_timeline_events_soft(
-        env,
-        binding,
-        has_media,
-        "update",
-        &payload,
-        event_id,
-        config.stream_hub_public_shard_count,
+        env, binding, has_media, "update", &payload, event_id,
     )
     .await;
 
@@ -983,13 +943,7 @@ pub(crate) async fn publish_remote_status_delete_stream_fanout_soft(
     }
 
     publish_remote_public_timeline_events_soft(
-        env,
-        binding,
-        has_media,
-        "delete",
-        payload,
-        event_id,
-        config.stream_hub_public_shard_count,
+        env, binding, has_media, "delete", payload, event_id,
     )
     .await;
 
@@ -1110,7 +1064,6 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
             "delete",
             payload,
             event_id,
-            config.stream_hub_public_shard_count,
         )
         .await;
 
@@ -1194,7 +1147,6 @@ pub(crate) async fn publish_local_status_update_stream_fanout_soft(
             "status.update",
             payload,
             event_id,
-            config.stream_hub_public_shard_count,
         )
         .await;
 

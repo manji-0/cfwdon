@@ -38,7 +38,7 @@ use crate::{
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
     store_account_private_key, stream_hub_channel_id_name, stream_hub_session_id_name,
-    stream_hub_sharded_id_name, streaming_batch_from_entries, upgrade_stream_hub_websocket,
+    streaming_batch_from_entries, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -3496,8 +3496,6 @@ fn stream_hub_proxy_target(
     viewer: Option<&cfwdon_domain::LocalAccount>,
     tag: Option<&str>,
     list: Option<&str>,
-    public_shard_count: u32,
-    sticky_key: Option<&str>,
 ) -> Option<(String, Option<String>)> {
     let tag = tag.map(str::trim).filter(|value| !value.is_empty());
     let list = list.map(str::trim).filter(|value| !value.is_empty());
@@ -3533,17 +3531,7 @@ fn stream_hub_proxy_target(
                     Some(viewer.id().to_owned()),
                 ));
             }
-            let base = stream_hub_channel_id_name(stream, None);
-            let hub_name = if public_shard_count > 1 {
-                let key = sticky_key
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("anon");
-                stream_hub_sharded_id_name(&base, key, public_shard_count)
-            } else {
-                base
-            };
-            Some((hub_name, None))
+            Some((stream_hub_channel_id_name(stream, None), None))
         }
         "hashtag" | "hashtag:local" => {
             let tag_value = tag?;
@@ -3559,22 +3547,6 @@ fn stream_hub_proxy_target(
     }
 }
 
-fn stream_hub_sticky_key_from_request(
-    req: &Request,
-    viewer: Option<&cfwdon_domain::LocalAccount>,
-) -> String {
-    if let Some(viewer) = viewer {
-        return format!("account:{}", viewer.id());
-    }
-    if let Ok(Some(ip)) = req.headers().get("CF-Connecting-IP") {
-        let trimmed = ip.trim();
-        if !trimmed.is_empty() {
-            return format!("ip:{trimmed}");
-        }
-    }
-    "anon".to_owned()
-}
-
 async fn streaming_websocket_upgrade_response(
     env: &Env,
     req: Request,
@@ -3586,16 +3558,9 @@ async fn streaming_websocket_upgrade_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
-    let sticky_key = stream_hub_sticky_key_from_request(&req, viewer.as_ref());
     if let Some(stream) = initial_stream.as_deref()
-        && let Some((hub_name, account_id)) = stream_hub_proxy_target(
-            stream,
-            viewer.as_ref(),
-            tag.as_deref(),
-            list.as_deref(),
-            config.stream_hub_public_shard_count,
-            Some(sticky_key.as_str()),
-        )
+        && let Some((hub_name, account_id)) =
+            stream_hub_proxy_target(stream, viewer.as_ref(), tag.as_deref(), list.as_deref())
     {
         // The hub reads the subscription from these params, not from anything the
         // client sent, so a forged X-Account-Id or X-Stream cannot take effect.
@@ -3645,17 +3610,10 @@ fn streaming_sse_response(
     tag: Option<String>,
     list: Option<String>,
     viewer: Option<cfwdon_domain::LocalAccount>,
-    sticky_key: &str,
 ) -> Result<Response> {
     if streaming_channel_supports_live_events(&stream) {
-        let hub_target = stream_hub_proxy_target(
-            &stream,
-            viewer.as_ref(),
-            tag.as_deref(),
-            list.as_deref(),
-            config.stream_hub_public_shard_count,
-            Some(sticky_key),
-        );
+        let hub_target =
+            stream_hub_proxy_target(&stream, viewer.as_ref(), tag.as_deref(), list.as_deref());
         let env_for_hub = if hub_target.is_some() {
             Some(env.clone())
         } else {
@@ -3780,7 +3738,6 @@ pub(crate) async fn streaming_placeholder_response(
         );
     };
 
-    let sticky_key = stream_hub_sticky_key_from_request(&req, authenticated.as_ref());
     streaming_sse_response(
         &ctx.env,
         db,
@@ -3789,7 +3746,6 @@ pub(crate) async fn streaming_placeholder_response(
         query.tag,
         query.list,
         authenticated,
-        &sticky_key,
     )
 }
 
@@ -4260,80 +4216,48 @@ mod tests {
     fn stream_hub_proxy_target_maps_authenticated_channels() {
         let viewer = stream_hub_proxy_test_account();
         assert_eq!(
-            stream_hub_proxy_target("user", Some(&viewer), None, None, 1, None),
+            stream_hub_proxy_target("user", Some(&viewer), None, None),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert_eq!(
-            stream_hub_proxy_target("user:notification", Some(&viewer), None, None, 1, None),
+            stream_hub_proxy_target("user:notification", Some(&viewer), None, None),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert_eq!(
-            stream_hub_proxy_target("direct", Some(&viewer), None, None, 1, None),
+            stream_hub_proxy_target("direct", Some(&viewer), None, None),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         // A list id from another account still resolves to the viewer's own hub.
         assert_eq!(
-            stream_hub_proxy_target(
-                "list",
-                Some(&viewer),
-                None,
-                Some("list-of-someone-else"),
-                1,
-                None
-            ),
+            stream_hub_proxy_target("list", Some(&viewer), None, Some("list-of-someone-else")),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
-        assert!(stream_hub_proxy_target("user", None, None, None, 1, None).is_none());
-        assert!(stream_hub_proxy_target("list", Some(&viewer), None, None, 1, None).is_none());
-        assert!(stream_hub_proxy_target("list", None, None, Some("list-1"), 1, None).is_none());
+        assert!(stream_hub_proxy_target("user", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("list", Some(&viewer), None, None).is_none());
+        assert!(stream_hub_proxy_target("list", None, None, Some("list-1")).is_none());
     }
 
     #[test]
     fn stream_hub_proxy_target_maps_public_and_hashtag_channels() {
         let viewer = stream_hub_proxy_test_account();
         assert_eq!(
-            stream_hub_proxy_target("public:local", None, None, None, 1, None),
+            stream_hub_proxy_target("public:local", None, None, None),
             Some(("public:local".to_owned(), None))
         );
         assert_eq!(
-            stream_hub_proxy_target("public", Some(&viewer), None, None, 1, None),
+            stream_hub_proxy_target("public", Some(&viewer), None, None),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert_eq!(
-            stream_hub_proxy_target("hashtag", None, Some("rust"), None, 1, None),
+            stream_hub_proxy_target("hashtag", None, Some("rust"), None),
             Some(("hashtag:rust".to_owned(), None))
         );
         assert_eq!(
-            stream_hub_proxy_target("hashtag:local", Some(&viewer), Some("rust"), None, 1, None),
+            stream_hub_proxy_target("hashtag:local", Some(&viewer), Some("rust"), None),
             Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
-        assert!(stream_hub_proxy_target("hashtag", None, None, None, 1, None).is_none());
-        assert!(stream_hub_proxy_target("unknown", None, None, None, 1, None).is_none());
-    }
-
-    #[test]
-    fn stream_hub_proxy_target_uses_sticky_public_shards_when_enabled() {
-        let viewer = stream_hub_proxy_test_account();
-        // Authenticated clients bypass sharding entirely: their session hub
-        // receives forwarded public events.
-        let hub = stream_hub_proxy_target(
-            "public",
-            Some(&viewer),
-            None,
-            None,
-            4,
-            Some("account:acct-1"),
-        )
-        .expect("public hub");
-        assert_eq!(hub.0, "user:acct-1");
-
-        let anon =
-            stream_hub_proxy_target("public:remote", None, None, None, 4, Some("ip:1.2.3.4"))
-                .expect("public remote hub");
-        assert_eq!(
-            anon.0,
-            stream_hub_sharded_id_name("public:remote", "ip:1.2.3.4", 4)
-        );
+        assert!(stream_hub_proxy_target("hashtag", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("unknown", None, None, None).is_none());
     }
 
     #[test]
