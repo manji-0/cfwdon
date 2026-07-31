@@ -59,6 +59,7 @@ pub(crate) async fn share_submit_response(
     let response = create_published_status_and_response(
         &db,
         &config,
+        Some(&ctx.env),
         CreatePublishedStatusInput {
             account: &account,
             application_id: None,
