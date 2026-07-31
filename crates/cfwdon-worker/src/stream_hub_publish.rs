@@ -317,6 +317,50 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
     }
 }
 
+pub(crate) async fn publish_announcement_reaction_user_stream_soft(
+    env: &Env,
+    binding: &str,
+    account_id: &str,
+    announcement_id: &str,
+    reaction_name: &str,
+    count: u64,
+) {
+    let payload = serde_json::json!({
+        "name": reaction_name,
+        "count": count,
+        "announcement_id": announcement_id,
+    })
+    .to_string();
+    let event_id = format!("{announcement_id}:{reaction_name}");
+    publish_user_stream_hub_event_soft(
+        env,
+        binding,
+        account_id,
+        "announcement.reaction",
+        &payload,
+        Some(&event_id),
+    )
+    .await;
+}
+
+pub(crate) async fn publish_announcement_user_stream_soft(
+    env: &Env,
+    binding: &str,
+    account_id: &str,
+    announcement_id: &str,
+    payload: &str,
+) {
+    publish_user_stream_hub_event_soft(
+        env,
+        binding,
+        account_id,
+        "announcement",
+        payload,
+        Some(announcement_id),
+    )
+    .await;
+}
+
 pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
     env: &Env,
     db: &D1Database,
