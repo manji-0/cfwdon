@@ -261,7 +261,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. `list`, `direct`, public, and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only).
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
-4. Public-channel shard plan deferred until metrics show hotspots.
+4. Public-channel sharding: dormant `stream_hub_sharded_id_name` helper exists in `stream_hub.rs` (`public#0` … `public#N`); activation still deferred until metrics show hotspots — needs env var (shard count) plus dual-publish or client sticky routing.
 
 ### Phase C — Inbox host admission + schedule (optional)
 

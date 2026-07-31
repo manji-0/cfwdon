@@ -275,6 +275,28 @@ fn websocket_upgrade_requested(req: &Request) -> Result<bool> {
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket")))
 }
 
+/// Optional shard suffix for hot public hubs. When `shard_count <= 1`, returns `base_hub` unchanged.
+pub(crate) fn stream_hub_sharded_id_name(
+    base_hub: &str,
+    shard_key: &str,
+    shard_count: u32,
+) -> String {
+    if shard_count <= 1 {
+        return base_hub.to_owned();
+    }
+    let index = (stream_hub_shard_hash(shard_key) % u64::from(shard_count)) as u32;
+    format!("{base_hub}#{index}")
+}
+
+fn stream_hub_shard_hash(shard_key: &str) -> u64 {
+    let mut hash = 14695981039346656037_u64;
+    for byte in shard_key.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    hash
+}
+
 pub(crate) fn stream_hub_id_name(
     stream: &str,
     account_id: Option<&str>,
@@ -533,6 +555,36 @@ fn stream_hub_websocket_error_message(message: &str, status: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_hub_sharded_id_name_returns_base_hub_when_unsharded() {
+        assert_eq!(
+            stream_hub_sharded_id_name("public", "status-1", 1),
+            "public"
+        );
+        assert_eq!(
+            stream_hub_sharded_id_name("public:local", "status-1", 0),
+            "public:local"
+        );
+    }
+
+    #[test]
+    fn stream_hub_sharded_id_name_is_stable_and_within_shard_range() {
+        let first = stream_hub_sharded_id_name("public", "status-abc", 4);
+        let second = stream_hub_sharded_id_name("public", "status-abc", 4);
+        assert_eq!(first, second);
+        assert!(first.starts_with("public#"));
+        let index = first
+            .strip_prefix("public#")
+            .and_then(|suffix| suffix.parse::<u32>().ok())
+            .expect("shard suffix");
+        assert!(index < 4);
+
+        assert_ne!(
+            stream_hub_sharded_id_name("public", "status-abc", 4),
+            stream_hub_sharded_id_name("public", "status-xyz", 4)
+        );
+    }
 
     #[test]
     fn stream_hub_id_name_maps_phase_a_user_channels() {
