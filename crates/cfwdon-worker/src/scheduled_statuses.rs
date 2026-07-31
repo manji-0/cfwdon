@@ -4,7 +4,7 @@ use crate::{
     AppConfig, CreatePublishedStatusInput, D1Database, Env, MastodonMediaAttachmentResponse,
     Request, Response, Result, RouteContext, StatusDraft, app_bearer_token_from_request,
     authenticate_local_api_request, build_internal_cursor_link_for_url_with_min_id,
-    create_published_status_and_response, find_account_by_id, find_local_status_owner_id,
+    create_published_status_and_response, find_account_by_id, resolve_in_reply_to_account_id,
     find_media_attachment_by_id, find_oauth_app_id_by_bearer_token, generate_entity_id,
     load_config, normalize_scheduled_at, now_iso_string, oauth_access_token_has_any_scope,
     parse_internal_pagination_id, require_authenticated_local_account, resolve_attachable_media,
@@ -413,11 +413,11 @@ pub(crate) async fn publish_due_scheduled_status(
     };
 
     let in_reply_to_account_id = if let Some(status_id) = due.draft.in_reply_to_id() {
-        match find_local_status_owner_id(db, status_id).await {
+        match resolve_in_reply_to_account_id(db, status_id).await {
             Ok(Some(account_id)) => Some(account_id),
             Ok(None) => {
                 console_error!(
-                    "scheduled status publish failed: in_reply_to_id {} references unknown local status for scheduled status {}",
+                    "scheduled status publish failed: in_reply_to_id {} references unknown status for scheduled status {}",
                     status_id,
                     due.id
                 );

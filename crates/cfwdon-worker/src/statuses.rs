@@ -245,9 +245,9 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
             Err(message) => return Response::error(message, 422),
         };
     let in_reply_to_account_id = match draft.in_reply_to_id() {
-        Some(status_id) => match find_local_status_owner_id(&db, status_id).await? {
+        Some(status_id) => match resolve_in_reply_to_account_id(&db, status_id).await? {
             Some(account_id) => Some(account_id),
-            None => return Response::error("in_reply_to_id references unknown local status", 422),
+            None => return Response::error("in_reply_to_id references unknown status", 422),
         },
         None => None,
     };

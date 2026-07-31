@@ -12,8 +12,8 @@ pub(crate) async fn resolve_in_reply_to_account_id(
     db: &D1Database,
     reply_id: &str,
 ) -> Result<Option<String>> {
-    if let Some(reply) = find_status_by_id(db, reply_id).await? {
-        return Ok(Some(reply.account_id));
+    if let Some(account_id) = find_local_status_owner_id(db, reply_id).await? {
+        return Ok(Some(account_id));
     }
     Ok(
         find_remote_statuses_with_actors_by_ids(db, &[reply_id.to_owned()])
