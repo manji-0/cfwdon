@@ -247,20 +247,21 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 ### Phase A — Streaming hub spike (highest value) — implemented
 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
-2. Proxy WebSocket upgrades for authenticated `user` / `user:notification` through the DO (hibernation accept); fall back to Worker poll on failure.
+2. Proxy WebSocket upgrades for all live channels (`user`, `user:notification`, `list`, `direct`, public variants, hashtag) through the DO; fall back to Worker poll on failure.
 3. Soft-publish live events (never fail API writes):
-   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`
-   - `user:notification` hub: favourite, reblog, follow/follow_request, mention, reply (`status`), quote, poll end, local status `update` / `quoted_update` for reblog/quote recipients
+   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; follower home fan-out (cap 200)
+   - `user:notification` hub: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request
+   - `public` / `public:local` (+ media variants), `hashtag:{tag}`, `list:{id}`, `direct:{id}` on local status create/delete when visibility matches
 4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path.
-5. Still open: public/hashtag/list/direct hubs, remote inbound notification publishes, follower home-timeline fan-out beyond the author.
-6. Announcements: `announcement.reaction` and dismiss (`announcement` refresh with `read: true`) publish to `user:{account_id}` on API mutation. Config-only announcement create/update/delete (`announcements_json`) has no write API and no efficient fan-out — those events remain poll-only until config reload.
+5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
+6. Still open: remote inbound mention/quote/status notifications; public-channel sharding; SSE as DO consumer; inbox-host admission DOs.
 
-### Phase B — Channel coverage
+### Phase B — Channel coverage — largely implemented
 
-1. Add `list`, `direct`, public, and hashtag hubs.
-2. Wire delete / edit / filter / conversation side-effect publishers from existing mutation paths.
-3. Keep SSE either as thin Worker poll or as a second consumer of the same publish bus.
-4. Add public-channel shard plan if metrics show hotspots.
+1. `list`, `direct`, public, and hashtag hubs are proxied and published for local status create/delete.
+2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths.
+3. SSE remains Worker poll (not yet a second consumer of the publish bus).
+4. Public-channel shard plan deferred until metrics show hotspots.
 
 ### Phase C — Inbox host admission + schedule (optional)
 
