@@ -182,6 +182,11 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         if let Err(error) = process_expired_polls_for_config(&db, &config, Some(&env)).await {
             console_error!("expired poll processing failed: {error}");
         }
+        if let Err(error) =
+            process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
+        {
+            console_error!("due scheduled status processing failed: {error}");
+        }
         Ok::<(), Error>(())
     }
     .await;
