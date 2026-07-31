@@ -479,6 +479,7 @@ async fn timeline_entries_from_candidates(
         application_preload,
         mut remote_attachments_by_status_id,
         mention_preload,
+        emoji_resolved_config,
     ) = futures_util::try_join!(
         preload_public_timeline_candidate_counts(db, &candidates),
         preload_public_timeline_quote_counts(db, config, &candidates, local_accounts_by_id),
@@ -497,6 +498,7 @@ async fn timeline_entries_from_candidates(
         preload_public_timeline_status_applications(db, config, &candidates),
         preload_public_timeline_remote_attachments(db, &candidates),
         crate::preload_mention_accounts_from_texts(db, config, &mention_texts),
+        crate::config_with_resolved_custom_emojis(db, config),
     )?;
     let mut entries = Vec::with_capacity(candidates.len());
 
@@ -510,6 +512,7 @@ async fn timeline_entries_from_candidates(
                     build_local_status_response_with_timeline_preloads(
                         db,
                         config,
+                        Some(&emoji_resolved_config),
                         viewer,
                         &status,
                         account,

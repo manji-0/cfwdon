@@ -35,10 +35,29 @@ use super::{
     remote_quote_visibility_is_embeddable, resolve_local_status_response_subject, strip_html_tags,
     unauthorized_quote_document,
 };
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use worker::{D1Database, Result, d1::D1Type};
 
 use crate::{json_string_array, sql_in_json_each};
+
+/// Resolves the custom emoji registry a status response needs.
+///
+/// Batch callers (timelines) resolve the registry once per request and pass it
+/// as `resolved_config`; single-status callers pass `None` and pay for one
+/// lookup. Without this, every status in a page re-reads `custom_emojis`.
+async fn status_response_config<'a>(
+    db: &D1Database,
+    config: &'a AppConfig,
+    resolved_config: Option<&'a AppConfig>,
+) -> Result<Cow<'a, AppConfig>> {
+    match resolved_config {
+        Some(resolved) => Ok(Cow::Borrowed(resolved)),
+        None => Ok(Cow::Owned(
+            config_with_resolved_custom_emojis(db, config).await?,
+        )),
+    }
+}
 
 async fn build_status_application(
     db: &D1Database,
@@ -838,6 +857,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
     build_local_status_response_with_timeline_preloads(
         db,
         config,
+        None,
         viewer,
         status,
         account,
@@ -872,6 +892,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
     build_local_status_response_with_timeline_preloads(
         db,
         config,
+        None,
         viewer,
         status,
         account,
@@ -891,6 +912,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
 pub(crate) async fn build_local_status_response_with_timeline_preloads(
     db: &D1Database,
     config: &AppConfig,
+    resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
     status: &StatusRow,
     account: &LocalAccount,
@@ -907,6 +929,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
     build_local_status_response_inner(
         db,
         config,
+        resolved_config,
         viewer,
         status,
         account,
@@ -927,6 +950,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
 async fn build_local_status_response_inner(
     db: &D1Database,
     config: &AppConfig,
+    resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
     status: &StatusRow,
     account: &LocalAccount,
@@ -941,7 +965,7 @@ async fn build_local_status_response_inner(
     mention_preload: Option<&MentionAccountsPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
-    let config = config_with_resolved_custom_emojis(db, config).await?;
+    let config = status_response_config(db, config, resolved_config).await?;
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
         return build_local_reblog_wrapper_response(
             db,
@@ -1733,6 +1757,7 @@ async fn build_remote_reblog_wrapper_response(
     let embedded = build_reblog_embedded_response(
         db,
         config,
+        None,
         viewer,
         boost_of_uri,
         filter_matcher,
@@ -1756,6 +1781,7 @@ async fn build_remote_reblog_wrapper_response(
 async fn build_reblog_embedded_response(
     db: &D1Database,
     config: &AppConfig,
+    resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
     boost_of_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
@@ -1770,6 +1796,7 @@ async fn build_reblog_embedded_response(
         return build_local_reblog_embedded_response(
             db,
             config,
+            resolved_config,
             viewer,
             local_status,
             filter_matcher,
@@ -1802,6 +1829,7 @@ async fn build_reblog_embedded_response(
 async fn build_local_reblog_embedded_response(
     db: &D1Database,
     config: &AppConfig,
+    resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
     local_status: StatusRow,
     filter_matcher: Option<&AccountFilterMatcher>,
@@ -1832,6 +1860,7 @@ async fn build_local_reblog_embedded_response(
         Box::pin(build_local_status_response_inner(
             db,
             config,
+            resolved_config,
             viewer,
             &local_status,
             &local_account,
@@ -1905,9 +1934,12 @@ async fn build_local_reblog_wrapper_response(
     application_preload: Option<&StatusApplicationPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
+    // The only caller resolves the emoji registry before delegating here, so the
+    // embedded status can reuse it instead of re-reading `custom_emojis`.
     let embedded = build_reblog_embedded_response(
         db,
         config,
+        Some(config),
         viewer,
         boost_of_uri,
         filter_matcher,
