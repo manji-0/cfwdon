@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use worker::{
-    durable_object, DurableObject, Env, Method, Request, RequestInit, Response, Result, State,
-    WebSocket, WebSocketIncomingMessage, WebSocketPair,
+    console_error, durable_object, DurableObject, Env, Method, Request, RequestInit, Response,
+    Result, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
 };
 
 const STREAM_HUB_WEBSOCKET_PATH: &str = "/websocket";
@@ -290,6 +290,31 @@ pub(crate) fn stream_hub_id_name(
             format!("hashtag:{}", tag.unwrap_or_default())
         }
         other => other.to_string(),
+    }
+}
+
+pub(crate) async fn publish_user_stream_hub_event_soft(
+    env: &Env,
+    binding: &str,
+    account_id: &str,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let hub_name = stream_hub_id_name("user", Some(account_id), None, None);
+    let mut body = serde_json::json!({
+        "stream": "user",
+        "account_id": account_id,
+        "event": event,
+        "payload": payload,
+    });
+    if let Some(event_id) = event_id {
+        body["event_id"] = serde_json::json!(event_id);
+    }
+    if let Err(error) = publish_stream_hub_event(env, binding, &hub_name, &body).await {
+        console_error!(
+            "failed to publish user stream hub event ({event}) for account {account_id}: {error}"
+        );
     }
 }
 

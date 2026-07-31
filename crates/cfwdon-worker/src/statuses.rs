@@ -286,6 +286,7 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let response = create_published_status_and_response(
         &db,
         &config,
+        Some(&ctx.env),
         CreatePublishedStatusInput {
             account: &access.account,
             application_id: access.application_id,
@@ -314,7 +315,14 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let Some(deleted) = delete_owned_local_status(&db, &config, &requester, &status_id).await?
+    let Some(deleted) = delete_owned_local_status(
+        &db,
+        &config,
+        Some(&ctx.env),
+        &requester,
+        &status_id,
+    )
+    .await?
     else {
         return Response::error("status not found", 404);
     };
