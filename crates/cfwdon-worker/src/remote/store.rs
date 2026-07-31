@@ -7,9 +7,10 @@ use crate::{
     remote::adapters::{
         activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
     },
-    replace_remote_status_attachments, replace_remote_status_hashtags,
-    send_remote_status_quote_notification, send_remote_status_update_notifications,
-    upsert_remote_status_poll,
+    publish_remote_status_create_stream_notifications_soft,
+    publish_remote_status_update_stream_notifications_soft, replace_remote_status_attachments,
+    replace_remote_status_hashtags, send_remote_status_quote_notification,
+    send_remote_status_update_notifications, upsert_remote_status_poll,
 };
 use cfwdon_domain::{
     QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
@@ -18,7 +19,7 @@ use cfwdon_domain::{
 };
 use serde::Deserialize;
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{D1Database, Env, Error, Result};
 
 pub(crate) type RemoteStatusRow = RemoteStatus;
 
@@ -422,8 +423,10 @@ async fn replace_remote_status_dependents(
 }
 
 async fn send_remote_status_change_notifications(
+    env: Option<&Env>,
     db: &D1Database,
     config: &AppConfig,
+    actor: &RemoteActorProfile,
     previous_raw_object_json: Option<&str>,
     status: &RemoteStatusRow,
     intent: &StoredRemoteStatusIntent,
@@ -438,6 +441,14 @@ async fn send_remote_status_change_notifications(
             status.quote_of_uri.as_deref(),
         )
         .await;
+        publish_remote_status_create_stream_notifications_soft(
+            env,
+            db,
+            config,
+            actor,
+            status,
+        )
+        .await;
     } else if previous_raw_object_json != Some(intent.raw_object_json.as_str()) {
         let _ = send_remote_status_update_notifications(
             db,
@@ -445,6 +456,14 @@ async fn send_remote_status_change_notifications(
             &status.id,
             &status.actor_uri,
             &status.object_uri,
+        )
+        .await;
+        publish_remote_status_update_stream_notifications_soft(
+            env,
+            db,
+            config,
+            actor,
+            status,
         )
         .await;
     }
@@ -455,6 +474,7 @@ pub(crate) async fn upsert_remote_status(
     config: &AppConfig,
     actor: &RemoteActorProfile,
     object: &serde_json::Value,
+    env: Option<&Env>,
 ) -> Result<()> {
     let object_uri = object
         .get("id")
@@ -483,8 +503,10 @@ pub(crate) async fn upsert_remote_status(
     let status = reload_upserted_remote_status(db, &intent).await?;
     replace_remote_status_dependents(db, &status, object).await?;
     send_remote_status_change_notifications(
+        env,
         db,
         config,
+        actor,
         previous
             .as_ref()
             .map(|value| value.raw_object_json.as_str()),

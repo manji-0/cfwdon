@@ -6,6 +6,7 @@ use super::{
     object_has_activitypub_actor_type, object_has_supported_remote_status_type,
     upsert_remote_actor, upsert_remote_status,
 };
+use worker::Env;
 
 pub(crate) async fn handle_inbox_create(
     db: &D1Database,
@@ -13,6 +14,7 @@ pub(crate) async fn handle_inbox_create(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
@@ -43,7 +45,7 @@ pub(crate) async fn handle_inbox_create(
     }
 
     upsert_remote_actor(db, remote_actor).await?;
-    upsert_remote_status(db, config, remote_actor, object).await
+    upsert_remote_status(db, config, remote_actor, object, env).await
 }
 
 pub(crate) async fn handle_inbox_update(
@@ -52,6 +54,7 @@ pub(crate) async fn handle_inbox_update(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
@@ -76,7 +79,7 @@ pub(crate) async fn handle_inbox_update(
     }
 
     upsert_remote_actor(db, remote_actor).await?;
-    upsert_remote_status(db, config, remote_actor, object).await
+    upsert_remote_status(db, config, remote_actor, object, env).await
 }
 
 pub(crate) async fn handle_inbox_delete(

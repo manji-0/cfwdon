@@ -107,7 +107,7 @@ async fn dispatch_inbox_activity(
         }
         "Create" => {
             if let Some(account) = account {
-                handle_inbox_create(db, activity, remote_actor, account, config).await
+                handle_inbox_create(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }
@@ -135,7 +135,7 @@ async fn dispatch_inbox_activity(
         }
         "Update" => {
             if let Some(account) = account {
-                handle_inbox_update(db, activity, remote_actor, account, config).await
+                handle_inbox_update(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }

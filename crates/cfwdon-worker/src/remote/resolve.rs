@@ -293,7 +293,7 @@ pub(crate) async fn resolve_remote_status_by_url(
 
     let actor = fetch_remote_actor_profile_with_context(actor_uri, Some(&fetch_context)).await?;
     upsert_remote_actor(db, &actor.profile).await?;
-    upsert_remote_status(db, config, &actor.profile, object).await?;
+    upsert_remote_status(db, config, &actor.profile, object, None).await?;
     let Some(status) = find_remote_status_by_object_uri(db, object_id).await? else {
         return Ok(None);
     };

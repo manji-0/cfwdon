@@ -95,7 +95,7 @@ pub(crate) async fn handle_inbox_announce(
     }) {
         upsert_remote_actor(db, remote_actor).await?;
         actor_upserted = true;
-        upsert_remote_status(db, config, remote_actor, object).await?;
+        upsert_remote_status(db, config, remote_actor, object, None).await?;
     }
 
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
