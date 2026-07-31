@@ -7,7 +7,7 @@ Investigation of where Cloudflare Durable Objects (DOs) would help `cfwdon`, esp
 
 ## Summary
 
-Durable Objects fit features that need **long-lived connections**, **per-entity coordination**, or **exact-once-per-key scheduling**. The strongest fit today is **timeline streaming fan-out**. Outbound ActivityPub delivery should stay on **Queues**. Rate limiting and per-entity schedules (scheduled statuses, poll expiry) are secondary DO candidates. Pure request/response Mastodon API and D1-backed reads should stay on the Worker + D1 path.
+Durable Objects fit features that need **long-lived connections**, **per-entity coordination**, or **exact-once-per-key scheduling**. The strongest fit today is **timeline streaming fan-out**. A strong federation fit is **per-remote-host inbox admission** (rate limit / backlog / ordered handoff), not separate public inbox URLs. Outbound ActivityPub delivery should stay on **Queues**. Per-entity schedules (scheduled statuses, poll expiry) are secondary DO candidates. Pure request/response Mastodon API and D1-backed reads should stay on the Worker + D1 path.
 
 ## Why Durable Objects Here
 
@@ -96,14 +96,73 @@ Read path (client connect)
 
 **Implementation note.** `workers-rs` already exposes `#[durable_object]`, `accept_web_socket`, and hibernation handlers. No Durable Object bindings exist in `wrangler.toml` yet.
 
-### 2. Per-key rate limiting / abuse control — strong secondary fit
+### 2. Per-remote-host inbox admission — strong federation fit
+<!-- derived-from ../../crates/cfwdon-worker/src/inbox.rs -->
+<!-- derived-from ../../crates/cfwdon-worker/src/inbox/activity_store.rs -->
 
-`full-todo.md` calls for rate limits on shared inbox and expensive remote resolution. DOs fit **keyed** limiters:
+**Question.** Should inbound federation isolate “receivers” per remote server?
+
+**Do not split the public ActivityPub inbox URL per remote host.** Remotes discover a fixed personal inbox (`/users/:username/inbox`) or shared inbox from actor documents. Inventing `/inbox/by-host/mastodon.social` forces non-standard discovery and breaks ordinary federation. Isolation belongs **behind** the existing inbox HTTP surface.
+
+**Current baseline.**
+
+- Signature verification and target resolution run in the Worker.
+- Replay protection is D1 `inbox_activities` keyed by `(actor_uri, activity_id)` with in-flight / processed / release-on-failure semantics (also modeled in `cfwdon-domain`).
+- Processing is **inline** in the request path: one floody remote host can consume Worker CPU/D1 budget that other hosts need.
+- Dedupe is already per actor, not per host; there is no host-level backpressure or fair scheduling.
+
+**DO shape that does fit.**
+
+| Atom | `idFromName` example | Role |
+| --- | --- | --- |
+| Remote host admission | `inbox-host:{normalized_domain}` | Rate limit, backlog, fair queue for that host |
+| Hot-host shard | `inbox-host:{domain}#{n}` | Split very large senders without a global bottleneck |
+| Optional per-actor finer key | `inbox-actor:{actor_uri}` | Only if one actor on a quiet host is abusive |
+
+**Recommended flow.**
+
+```text
+POST /inbox or /users/:name/inbox   (unchanged public URL)
+  Worker: parse body, verify HTTP signature, resolve local targets
+  Worker: derive host key from signing keyId / actor URI host
+  Worker -> InboxHost DO: admit(activity_id, actor, payload ref)
+       DO: enforce per-host rate / max in-flight / short backlog
+       DO: return accept | 429/503 soft reject | duplicate
+  On accept: enqueue durable work (Queue preferred) or continue process
+  Keep D1 inbox_activities as durable replay source of truth
+```
+
+**Why DO helps here.**
+
+- One noisy remote instance cannot starve every other sender’s CPU path as easily; backpressure is **per host**.
+- Single-threaded DO admission gives exact counters and ordered handoff without a global lock.
+- Matches the existing security follow-up (“rate limiting and abuse controls for shared inbox”).
+- Complements actor-level D1 dedupe: host DO decides *whether to accept work now*; D1 still decides *whether this activity_id already ran*.
+
+**What not to put in the DO.**
+
+- Full Create/Announce/Like handlers, remote object fetches, and media work. Those stay Worker/Queue + D1.
+- Authoritative replay state. Keep `inbox_activities` in D1 so DO eviction/hibernation cannot lose processed IDs.
+- Public URL routing keyed by remote domain.
+
+**Host key choice.** Prefer the host of the verified signing `keyId` (or verified actor URI) after signature success, not the TCP peer IP alone. Shared hosting and reverse proxies make IP-only keys weak; unsigned requests must still fail closed before any host probe.
+
+**When this is worth building.**
+
+- Shared-inbox abuse or retry storms from one large instance are observed.
+- Inline processing latency under load starts rejecting healthy remotes.
+- Operators want host-scoped 429/503 without blocking the whole instance.
+
+Until then, a thinner `rl:inbox-host:{domain}` limiter DO (counters only, no backlog) or even Cache/KV soft limits may be enough. Full per-host queue DOs are the escalation path.
+
+### 3. Per-key rate limiting / abuse control — strong secondary fit
+
+`full-todo.md` calls for rate limits on shared inbox and expensive remote resolution. DOs fit **keyed** limiters; host inbox admission above is the federation-specialized form of the same idea.
 
 | Key | Purpose |
 | --- | --- |
 | `rl:ip:{cf-connecting-ip}` | Client API / streaming connect abuse |
-| `rl:inbox-host:{domain}` | Shared-inbox flood from one remote host |
+| `rl:inbox-host:{domain}` | Shared-inbox flood from one remote host (thin limiter; see §2 for full admission) |
 | `rl:actor:{actor_id}` | Per remote actor delivery/inbox pressure |
 | `rl:account:{account_id}` | Authenticated API write bursts |
 
@@ -111,7 +170,7 @@ Use sliding or fixed windows in DO storage. Avoid one global limiter DO.
 
 KV or Cache API can approximate soft limits, but DOs give stronger per-key consistency when rejecting abuse must be exact.
 
-### 3. Per-entity alarms — selective fit
+### 4. Per-entity alarms — selective fit
 
 | Feature | Current approach | DO alarm alternative |
 | --- | --- | --- |
@@ -121,7 +180,7 @@ KV or Cache API can approximate soft limits, but DOs give stronger per-key consi
 
 Alarms help when work is **sparse and time-exact** (one status fires once). Cron sweeps remain fine while volume is low. Prefer introducing alarms only after streaming hubs prove DO operational cost is acceptable.
 
-### 4. Presence / multi-device coordination — optional later
+### 5. Presence / multi-device coordination — optional later
 
 If multiple devices for one account should share markers, streaming subscriptions, or “which device got the push,” a `presence:{account_id}` DO can coordinate. Mastodon markers already live in D1 and do not need DO consistency today. Defer until a concrete multi-device product need appears.
 
@@ -129,12 +188,14 @@ If multiple devices for one account should share markers, streaming subscription
 
 | Feature | Prefer | Why |
 | --- | --- | --- |
+| Separate public inbox URL per remote host | Keep fixed shared/personal inbox | Breaks ActivityPub discovery; remotes will not learn custom per-host paths |
 | Outbound ActivityPub delivery | Cloudflare Queues (already wired as `OUTBOX_PROCESS_QUEUE`) | High fan-out, independent HTTP deliveries, retry/backoff already modeled in D1 |
 | WebPush send | Queues / `waitUntil` | Per-subscription HTTP posts; no shared session state |
 | Stateless Mastodon REST | Worker + D1 | No long-lived coordination |
 | Media upload / R2 | Worker + R2 | Object storage, not session coordination |
 | Remote DNS SSRF cache | KV (`REMOTE_DNS_CACHE`) | Already a cache problem |
 | Full timeline materialization | D1 | Relational queries, pagination, visibility rules stay in SQL |
+| Authoritative inbox replay ledger | D1 `inbox_activities` | Must survive DO eviction; already actor+activity keyed |
 
 Architecture docs already ask whether delivery should move further onto Queues. That remains the right direction; DOs should not replace the outbox consumer.
 
@@ -155,10 +216,11 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 3. Keep SSE either as thin Worker poll or as a second consumer of the same publish bus.
 4. Add public-channel shard plan if metrics show hotspots.
 
-### Phase C — Abuse + schedule (optional)
+### Phase C — Inbox host admission + schedule (optional)
 
-1. Per-host / per-IP DO rate limiters in front of shared inbox and remote fetch.
-2. Evaluate alarm-based scheduled status / poll expiry versus cron sweeps.
+1. Start with thin per-host / per-IP DO rate limiters in front of shared inbox and remote fetch.
+2. If one remote host still dominates processing, escalate to `InboxHost` admission DO + Queue handoff while keeping public inbox URLs unchanged.
+3. Evaluate alarm-based scheduled status / poll expiry versus cron sweeps.
 
 ## Decision Criteria Before Committing
 
@@ -181,6 +243,9 @@ Stay on Worker poll streaming when:
 - Publish hooks: inline after D1 commit, or enqueue a “stream-publish” Queue message that wakes hubs?
 - Keep streaming logic in `meta_placeholder_routes.rs`, or extract a `streaming/` module before DO work?
 - Separate DO Worker script vs same Worker export — same Worker is simpler for Rust/`workers-rs` initially.
+- For inbox host keys: prefer signing `keyId` host, actor URI host, or both with mismatch rejection?
+- At what backlog depth should `InboxHost` return 503 versus accept-and-queue?
+- Should hot remote hosts shard by hash of `activity_id` or by actor URI?
 
 ## References
 
