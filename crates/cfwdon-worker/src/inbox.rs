@@ -140,7 +140,7 @@ async fn dispatch_inbox_activity(
                 Ok(())
             }
         }
-        "Delete" => handle_inbox_delete(db, config, activity, remote_actor).await,
+        "Delete" => handle_inbox_delete(db, config, activity, remote_actor, env).await,
         _ => Ok(()),
     }
 }
