@@ -145,7 +145,7 @@ pub(crate) async fn delete_owned_local_status(
             env,
             db,
             config,
-            requester.id(),
+            requester,
             &status,
             !media.is_empty(),
         )
@@ -402,7 +402,7 @@ pub(crate) async fn create_published_status_and_response(
             env,
             db,
             config,
-            input.account.id(),
+            input.account,
             &status,
             &fanout_payload,
             has_media,

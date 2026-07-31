@@ -3,6 +3,7 @@ use crate::db_utils::{sql_placeholders, unique_ordered_refs};
 use crate::relationship::{FollowerTargetRow, UsernameRow};
 use crate::remote::RemoteActorRow;
 use cfwdon_domain::LocalAccount;
+use serde::Deserialize;
 use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{D1Database, Result};
@@ -344,36 +345,71 @@ pub(crate) struct LocalFollowerFanoutIds {
     pub(crate) truncated: bool,
 }
 
-pub(crate) async fn list_local_follower_account_ids_for_stream_fanout(
+#[derive(Debug, Deserialize)]
+struct FollowerAccountIdRow {
+    follower_account_id: String,
+}
+
+/// Followers who muted or blocked the author must not receive stream events:
+/// the D1 timeline queries hide those statuses, so fan-out has to match.
+const FOLLOWER_FANOUT_QUERY_BY_ACCOUNT: &str = "SELECT f.follower_account_id
+     FROM follows f
+     WHERE f.target_account_id = ?1
+       AND f.state = 'accepted'
+       AND NOT EXISTS (
+           SELECT 1
+           FROM blocks b
+           WHERE b.blocker_account_id = f.follower_account_id
+             AND b.target_actor_uri = ?3
+       )
+       AND NOT EXISTS (
+           SELECT 1
+           FROM mutes m
+           WHERE m.account_id = f.follower_account_id
+             AND m.target_actor_uri = ?3
+             AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
+       )
+     ORDER BY f.created_at DESC, f.rowid DESC
+     LIMIT ?2";
+
+const FOLLOWER_FANOUT_QUERY_BY_ACTOR_URI: &str = "SELECT f.follower_account_id
+     FROM follows f
+     WHERE f.target_actor_uri = ?1
+       AND f.state = 'accepted'
+       AND NOT EXISTS (
+           SELECT 1
+           FROM blocks b
+           WHERE b.blocker_account_id = f.follower_account_id
+             AND b.target_actor_uri = ?3
+       )
+       AND NOT EXISTS (
+           SELECT 1
+           FROM mutes m
+           WHERE m.account_id = f.follower_account_id
+             AND m.target_actor_uri = ?3
+             AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
+       )
+     ORDER BY f.created_at DESC, f.rowid DESC
+     LIMIT ?2";
+
+async fn list_local_follower_account_ids_for_fanout(
     db: &D1Database,
-    target_account_id: &str,
+    sql: &str,
+    follow_key: &str,
+    author_actor_uri: &str,
 ) -> Result<LocalFollowerFanoutIds> {
     let probe_limit = STREAM_HUB_FOLLOWER_FANOUT_LIMIT + 1;
     let bindings = [
-        D1Type::Text(target_account_id),
+        D1Type::Text(follow_key),
         D1Type::Integer(probe_limit as i32),
+        D1Type::Text(author_actor_uri),
     ];
-    let result = db
-        .prepare(
-            "SELECT follower_account_id
-             FROM follows
-             WHERE target_account_id = ?1
-               AND state = 'accepted'
-             ORDER BY created_at DESC, rowid DESC
-             LIMIT ?2",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
+    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
     let ids = result
-        .results::<serde_json::Value>()?
+        .results::<FollowerAccountIdRow>()?
         .into_iter()
-        .filter_map(|row| {
-            row.get("follower_account_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
+        .map(|row| row.follower_account_id)
         .collect::<Vec<_>>();
 
     let truncated = ids.len() > STREAM_HUB_FOLLOWER_FANOUT_LIMIT as usize;
@@ -391,48 +427,31 @@ pub(crate) async fn list_local_follower_account_ids_for_stream_fanout(
     })
 }
 
+pub(crate) async fn list_local_follower_account_ids_for_stream_fanout(
+    db: &D1Database,
+    target_account_id: &str,
+    author_actor_uri: &str,
+) -> Result<LocalFollowerFanoutIds> {
+    list_local_follower_account_ids_for_fanout(
+        db,
+        FOLLOWER_FANOUT_QUERY_BY_ACCOUNT,
+        target_account_id,
+        author_actor_uri,
+    )
+    .await
+}
+
 pub(crate) async fn list_local_follower_account_ids_for_remote_actor_stream_fanout(
     db: &D1Database,
     actor_uri: &str,
 ) -> Result<LocalFollowerFanoutIds> {
-    let probe_limit = STREAM_HUB_FOLLOWER_FANOUT_LIMIT + 1;
-    let bindings = [D1Type::Text(actor_uri), D1Type::Integer(probe_limit as i32)];
-    let result = db
-        .prepare(
-            "SELECT follower_account_id
-             FROM follows
-             WHERE target_actor_uri = ?1
-               AND state = 'accepted'
-             ORDER BY created_at DESC, rowid DESC
-             LIMIT ?2",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-
-    let ids = result
-        .results::<serde_json::Value>()?
-        .into_iter()
-        .filter_map(|row| {
-            row.get("follower_account_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect::<Vec<_>>();
-
-    let truncated = ids.len() > STREAM_HUB_FOLLOWER_FANOUT_LIMIT as usize;
-    let account_ids = if truncated {
-        ids.into_iter()
-            .take(STREAM_HUB_FOLLOWER_FANOUT_LIMIT as usize)
-            .collect()
-    } else {
-        ids
-    };
-
-    Ok(LocalFollowerFanoutIds {
-        account_ids,
-        truncated,
-    })
+    list_local_follower_account_ids_for_fanout(
+        db,
+        FOLLOWER_FANOUT_QUERY_BY_ACTOR_URI,
+        actor_uri,
+        actor_uri,
+    )
+    .await
 }
 
 pub(crate) async fn list_local_followers_for_account(

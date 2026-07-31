@@ -1,11 +1,10 @@
-use crate::StreamHubEvent;
 use crate::{
     AppConfig, D1Database, Env, RemoteActorProfile, RemoteActorRow, RemoteStatusRow,
     STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT, StatusRow,
     build_remote_status_response, conversation_document, extract_hashtags_from_html,
     extract_hashtags_from_text, extract_mentions_from_text, find_account_by_id,
     find_account_by_username, find_conversation_for_account, find_conversation_id_by_status_id,
-    find_remote_actor_by_actor_uri, is_muted_actor, list_local_account_list_stream_fanout,
+    find_remote_actor_by_actor_uri, list_local_account_list_stream_fanout,
     list_local_follower_account_ids_for_remote_actor_stream_fanout,
     list_local_follower_account_ids_for_stream_fanout, list_membership_variants_for_local_account,
     list_membership_variants_for_remote_actor, load_remote_status_hashtag_names,
@@ -14,7 +13,8 @@ use crate::{
     publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, remote_status_has_media,
     stream_hub_channel_id_name,
 };
-use cfwdon_domain::Visibility;
+use crate::{StreamHubEvent, actor_url};
+use cfwdon_domain::{LocalAccount, Visibility};
 use std::collections::HashSet;
 use worker::console_error;
 
@@ -126,12 +126,17 @@ async fn publish_follower_home_timeline_events_soft(
     db: &D1Database,
     binding: &str,
     author_account_id: &str,
+    author_actor_uri: &str,
     event: &str,
     payload: &str,
     event_id: Option<&str>,
 ) {
-    let fanout = match list_local_follower_account_ids_for_stream_fanout(db, author_account_id)
-        .await
+    let fanout = match list_local_follower_account_ids_for_stream_fanout(
+        db,
+        author_account_id,
+        author_actor_uri,
+    )
+    .await
     {
         Ok(fanout) => fanout,
         Err(error) => {
@@ -262,7 +267,7 @@ async fn publish_list_timeline_events_soft(
     db: &D1Database,
     config: &AppConfig,
     binding: &str,
-    author_account_id: &str,
+    author: &LocalAccount,
     status: &StatusRow,
     event: &str,
     payload: &str,
@@ -272,18 +277,8 @@ async fn publish_list_timeline_events_soft(
         return;
     }
 
-    let author = match find_account_by_id(db, author_account_id).await {
-        Ok(Some(author)) => author,
-        Ok(None) => return,
-        Err(error) => {
-            console_error!(
-                "failed to load author for list stream fan-out (author {author_account_id}): {error}"
-            );
-            return;
-        }
-    };
-
-    let membership_refs = list_membership_variants_for_local_account(&author, config);
+    let author_account_id = author.id();
+    let membership_refs = list_membership_variants_for_local_account(author, config);
     let fanout = match list_local_account_list_stream_fanout(db, &membership_refs).await {
         Ok(fanout) => fanout,
         Err(error) => {
@@ -413,12 +408,6 @@ async fn publish_remote_follower_home_create_events_soft(
 
     let event_id = Some(remote_status.id.as_str());
     for follower_id in fanout.account_ids {
-        if is_muted_actor(db, &follower_id, &remote_actor.actor_uri)
-            .await
-            .unwrap_or(false)
-        {
-            continue;
-        }
         let recipient = match find_account_by_id(db, &follower_id).await {
             Ok(Some(recipient)) => recipient,
             Ok(None) => continue,
@@ -649,13 +638,15 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
     env: &Env,
     db: &D1Database,
     config: &AppConfig,
-    author_account_id: &str,
+    author: &LocalAccount,
     status: &StatusRow,
     payload: &str,
     has_media: bool,
 ) {
     let tags = status_hashtag_tags(status);
     let event_id = Some(status.id.as_str());
+    let author_account_id = author.id();
+    let author_actor_uri = actor_url(config, author.username());
 
     if visibility_reaches_follower_home_timelines(status.visibility) {
         publish_follower_home_timeline_events_soft(
@@ -663,6 +654,7 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             db,
             &config.stream_hub_binding,
             author_account_id,
+            &author_actor_uri,
             "update",
             payload,
             event_id,
@@ -699,7 +691,7 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             db,
             config,
             &config.stream_hub_binding,
-            author_account_id,
+            author,
             status,
             "update",
             payload,
@@ -796,12 +788,6 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
     }
 
     for follower_id in fanout.account_ids {
-        if is_muted_actor(db, &follower_id, &remote_actor.actor_uri)
-            .await
-            .unwrap_or(false)
-        {
-            continue;
-        }
         let recipient = match find_account_by_id(db, &follower_id).await {
             Ok(Some(recipient)) => recipient,
             Ok(None) => continue,
@@ -1065,13 +1051,15 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
     env: &Env,
     db: &D1Database,
     config: &AppConfig,
-    author_account_id: &str,
+    author: &LocalAccount,
     status: &StatusRow,
     has_media: bool,
 ) {
     let tags = status_hashtag_tags(status);
     let payload = status.id.as_str();
     let event_id = Some(status.id.as_str());
+    let author_account_id = author.id();
+    let author_actor_uri = actor_url(config, author.username());
 
     if visibility_reaches_follower_home_timelines(status.visibility) {
         publish_follower_home_timeline_events_soft(
@@ -1079,6 +1067,7 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
             db,
             &config.stream_hub_binding,
             author_account_id,
+            &author_actor_uri,
             "delete",
             payload,
             event_id,
@@ -1115,7 +1104,7 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
             db,
             config,
             &config.stream_hub_binding,
-            author_account_id,
+            author,
             status,
             "delete",
             payload,
