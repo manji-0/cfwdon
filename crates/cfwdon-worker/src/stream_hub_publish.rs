@@ -10,7 +10,7 @@ use crate::{
     list_membership_variants_for_remote_actor, load_remote_status_hashtag_names,
     load_remote_status_updated_at, local_status_visible_on_list_timeline,
     publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, remote_status_has_media,
-    stream_hub_id_name, stream_hub_sharded_id_name,
+    stream_hub_id_name,
 };
 use cfwdon_domain::Visibility;
 use std::collections::HashSet;
@@ -66,18 +66,14 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
     )
 }
 
-fn stream_hub_public_publish_hub_names(
-    base_hub: &str,
-    shard_key: &str,
-    shard_count: u32,
-) -> Vec<String> {
+fn stream_hub_public_publish_hub_names(base_hub: &str, shard_count: u32) -> Vec<String> {
     if shard_count <= 1 {
         return vec![base_hub.to_owned()];
     }
-    vec![
-        base_hub.to_owned(),
-        stream_hub_sharded_id_name(base_hub, shard_key, shard_count),
-    ]
+    // Every public event must reach every sticky subscriber shard.
+    (0..shard_count)
+        .map(|index| format!("{base_hub}#{index}"))
+        .collect()
 }
 
 async fn publish_public_stream_hub_event_dual_soft(
@@ -90,8 +86,7 @@ async fn publish_public_stream_hub_event_dual_soft(
     event_id: Option<&str>,
     shard_count: u32,
 ) {
-    let shard_key = event_id.unwrap_or("");
-    for hub_name in stream_hub_public_publish_hub_names(base_hub_name, shard_key, shard_count) {
+    for hub_name in stream_hub_public_publish_hub_names(base_hub_name, shard_count) {
         publish_stream_hub_event_soft(
             env, binding, &hub_name, stream, None, event, payload, event_id,
         )
@@ -1146,25 +1141,21 @@ mod tests {
     #[test]
     fn stream_hub_public_publish_hub_names_returns_base_only_when_unsharded() {
         assert_eq!(
-            stream_hub_public_publish_hub_names("public", "status-1", 1),
+            stream_hub_public_publish_hub_names("public", 1),
             vec!["public"]
         );
         assert_eq!(
-            stream_hub_public_publish_hub_names("public:local", "status-1", 0),
+            stream_hub_public_publish_hub_names("public:local", 0),
             vec!["public:local"]
         );
     }
 
     #[test]
-    fn stream_hub_public_publish_hub_names_dual_publishes_to_sharded_hub() {
-        let hubs = stream_hub_public_publish_hub_names("public", "status-abc", 4);
-        assert_eq!(hubs.len(), 2);
-        assert_eq!(hubs[0], "public");
+    fn stream_hub_public_publish_hub_names_fans_out_to_all_shards() {
         assert_eq!(
-            hubs[1],
-            stream_hub_sharded_id_name("public", "status-abc", 4)
+            stream_hub_public_publish_hub_names("public", 4),
+            vec!["public#0", "public#1", "public#2", "public#3"]
         );
-        assert!(hubs[1].starts_with("public#"));
     }
 
     #[test]

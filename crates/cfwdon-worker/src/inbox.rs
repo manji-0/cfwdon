@@ -177,6 +177,7 @@ async fn try_inbox_host_admission(
     activity_id: &str,
     activity_type: &str,
     remote_actor: &RemoteActorProfile,
+    lease: bool,
 ) -> InboxHostAdmitResult {
     let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
         Some(host_key) => host_key,
@@ -184,6 +185,7 @@ async fn try_inbox_host_admission(
             return InboxHostAdmitResult {
                 allowed: true,
                 count: 0,
+                in_flight: 0,
                 retry_after_secs: 0,
             };
         }
@@ -195,8 +197,24 @@ async fn try_inbox_host_admission(
         activity_id,
         &remote_actor.actor_uri,
         activity_type,
+        lease,
     )
     .await
+}
+
+async fn release_inbox_host_lease_soft(
+    config: &AppConfig,
+    env: Option<&Env>,
+    remote_actor: &RemoteActorProfile,
+    leased: bool,
+) {
+    if !leased {
+        return;
+    }
+    let Some(host_key) = peer_authority_from_uri(config, &remote_actor.actor_uri) else {
+        return;
+    };
+    release_inbox_host_soft(env, &config.inbox_host_binding, &host_key).await;
 }
 
 pub(crate) async fn shared_inbox_response(
@@ -249,6 +267,7 @@ pub(crate) async fn shared_inbox_response(
                 &activity_id,
                 &activity_type,
                 &remote_actor,
+                false,
             )
             .await;
             if !admission.allowed {
@@ -388,8 +407,15 @@ async fn process_verified_inbox_activity(
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    let admission =
-        try_inbox_host_admission(config, env, &activity_id, &activity_type, &remote_actor).await;
+    let admission = try_inbox_host_admission(
+        config,
+        env,
+        &activity_id,
+        &activity_type,
+        &remote_actor,
+        true,
+    )
+    .await;
     if !admission.allowed {
         log_federation_event(
             "inbox_host_admission_rejected",
@@ -404,11 +430,13 @@ async fn process_verified_inbox_activity(
                 "actor_uri": remote_actor.actor_uri,
                 "target_count": accounts.len(),
                 "retry_after_secs": admission.retry_after_secs,
+                "in_flight": admission.in_flight,
             }),
         );
         return inbox_backpressure_response(admission.retry_after_secs);
     }
     if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
+        release_inbox_host_lease_soft(config, env, &remote_actor, true).await;
         log_federation_event(
             "inbox_replay_skipped",
             "replay",
@@ -444,6 +472,7 @@ async fn process_verified_inbox_activity(
         outcome
     };
     finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
+    release_inbox_host_lease_soft(config, env, &remote_actor, true).await;
     match &result {
         Ok(()) => log_federation_event(
             "inbox_processed",
