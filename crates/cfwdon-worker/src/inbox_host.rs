@@ -323,18 +323,33 @@ mod tests {
 
     #[test]
     fn fixed_window_retry_after_secs_is_full_window_at_start() {
-        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_000_000, 60_000), 60);
+        assert_eq!(
+            fixed_window_retry_after_secs(1_000_000, 1_000_000, 60_000),
+            60
+        );
     }
 
     #[test]
     fn fixed_window_retry_after_secs_counts_down_within_window() {
-        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_030_000, 60_000), 30);
-        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_059_999, 60_000), 1);
+        assert_eq!(
+            fixed_window_retry_after_secs(1_000_000, 1_030_000, 60_000),
+            30
+        );
+        assert_eq!(
+            fixed_window_retry_after_secs(1_000_000, 1_059_999, 60_000),
+            1
+        );
     }
 
     #[test]
     fn fixed_window_retry_after_secs_minimum_is_one_when_denied() {
-        assert_eq!(fixed_window_retry_after_secs(1_000_000, 1_060_000, 60_000), 1);
-        assert_eq!(fixed_window_retry_after_secs(1_000_000, 2_000_000, 60_000), 1);
+        assert_eq!(
+            fixed_window_retry_after_secs(1_000_000, 1_060_000, 60_000),
+            1
+        );
+        assert_eq!(
+            fixed_window_retry_after_secs(1_000_000, 2_000_000, 60_000),
+            1
+        );
     }
 }

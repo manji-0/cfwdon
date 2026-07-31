@@ -180,11 +180,13 @@ async fn try_inbox_host_admission(
 ) -> InboxHostAdmitResult {
     let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
         Some(host_key) => host_key,
-        None => return InboxHostAdmitResult {
-            allowed: true,
-            count: 0,
-            retry_after_secs: 0,
-        },
+        None => {
+            return InboxHostAdmitResult {
+                allowed: true,
+                count: 0,
+                retry_after_secs: 0,
+            };
+        }
     };
     admit_inbox_host_soft(
         env,
