@@ -1,5 +1,5 @@
-use crate::auth::extract_authenticated_user;
 use crate::auth::LocalApiAuthentication;
+use crate::auth::extract_authenticated_user;
 use crate::{
     AppConfig, CreatePublishedStatusInput, D1Database, Env, MastodonMediaAttachmentResponse,
     Request, Response, Result, RouteContext, StatusDraft, app_bearer_token_from_request,
@@ -7,12 +7,12 @@ use crate::{
     create_published_status_and_response, find_account_by_id, find_local_status_owner_id,
     find_media_attachment_by_id, find_oauth_app_id_by_bearer_token, generate_entity_id,
     load_config, normalize_scheduled_at, now_iso_string, oauth_access_token_has_any_scope,
-    parse_internal_pagination_id, require_authenticated_local_account,
-    resolve_attachable_media, validate_local_quote_creation, validate_scheduled_at_minimum_offset,
+    parse_internal_pagination_id, require_authenticated_local_account, resolve_attachable_media,
+    validate_local_quote_creation, validate_scheduled_at_minimum_offset,
 };
 use cfwdon_domain::{QuoteApprovalPolicy, Visibility};
 use serde::{Deserialize, Serialize};
-use worker::{console_error, Error, d1::D1Type};
+use worker::{Error, console_error, d1::D1Type};
 
 #[derive(Clone, Debug)]
 struct ScheduledStatus {
@@ -244,7 +244,10 @@ fn is_scheduled_status_due(scheduled_at: &str, now_iso: &str) -> bool {
 }
 
 #[cfg(test)]
-fn compare_due_scheduled_status_order(left: &DueScheduledStatus, right: &DueScheduledStatus) -> std::cmp::Ordering {
+fn compare_due_scheduled_status_order(
+    left: &DueScheduledStatus,
+    right: &DueScheduledStatus,
+) -> std::cmp::Ordering {
     left.scheduled_at
         .cmp(&right.scheduled_at)
         .then_with(|| left.id.cmp(&right.id))
@@ -255,10 +258,7 @@ pub(crate) async fn list_due_scheduled_statuses(
     now_iso: &str,
     limit: u32,
 ) -> Result<Vec<DueScheduledStatus>> {
-    let bindings = [
-        D1Type::Text(now_iso),
-        D1Type::Integer(limit as i32),
-    ];
+    let bindings = [D1Type::Text(now_iso), D1Type::Integer(limit as i32)];
     let rows = db
         .prepare(
             "SELECT
@@ -521,7 +521,10 @@ mod tests {
 
     #[test]
     fn is_scheduled_status_due_compares_iso_timestamps() {
-        assert!(is_scheduled_status_due("2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"));
+        assert!(is_scheduled_status_due(
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-02T00:00:00.000Z"
+        ));
         assert!(is_scheduled_status_due(
             "2026-01-02T00:00:00.000Z",
             "2026-01-02T00:00:00.000Z"

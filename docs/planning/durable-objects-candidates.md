@@ -254,20 +254,20 @@ Architecture docs already ask whether delivery should move further onto Queues. 
    - `public` / `public:remote` (+ media), `hashtag:{tag}` (stream `hashtag` only), `list:{id}`, `direct:{id}` for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`; direct also publishes conversation `update` documents
 4. SSE for StreamHub-backed channels uses an internal hub WebSocket bridge with 30s D1 catch-up; falls back to 3s D1 poll if the hub is unavailable. Plain Worker WebSocket upgrade path unchanged.
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
-6. Remaining polish: activate public sharding under measured load; escalate InboxHost to Queue handoff / backlog 503; alarm-based schedules vs cron.
+6. Remaining polish: escalate InboxHost to Queue handoff after D1 staging; alarm-based schedules vs cron.
 
 ### Phase B — Channel coverage — implemented
 
 1. `list`, `direct`, public, and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only).
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
-4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, public timeline publishes dual-publish to base + sharded hub (status id shard key). WS/SSE connect stays on unsharded base hubs until client sticky routing is added.
+4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, each public event fans out to **all** shards, and WS/SSE clients sticky-route to one shard via account id / `CF-Connecting-IP` / `anon`.
 
 ### Phase C — Inbox host admission + schedule (optional)
 
-1. **Landed (spike):** `InboxHost` Durable Object with `INBOX_HOST` binding and wrangler `v2` migration. Per-remote-host fixed-window admission (`60s` window, `120` admits) via `POST /admit` on the DO; Worker calls `admit_inbox_host_soft` before `begin_inbox_activity_if_needed` in verified inbox processing and on shared-inbox `AcceptedNoTargets` after signature verify. **AcceptedNoTargets** stays a cheap HTTP `202` without D1 dedupe slot. **InboxHost deny** (rate/backpressure) returns HTTP `503` with `Retry-After`; do **not** queue work on deny—remotes must retry the original POST. DO/binding errors fail-open.
-2. Poll sweep on cron landed; scheduled-status due publish on cron landed (hourly sweep via `process_due_scheduled_statuses_for_config`, internal `POST /internal/scheduled_statuses/process` for ops). DO alarms still deferred. Still open: alarm-based scheduled status versus cron sweeps; backlog depth / 503 policy refinement. Full **`INBOX_PROCESS_QUEUE` handoff is deferred** until a D1 staging table (`inbox_pending_work`) exists so the queue carries durable work keys only. Queue messages must be `{actor_uri, activity_id}` (well under Cloudflare Queues' **128KB** message limit); never enqueue large Create bodies by default—the Worker stages payload refs in D1 and consumers rehydrate from `inbox_activities` / staging.
-3. If one remote host still dominates processing after the thin limiter, escalate to full `InboxHost` admission + deferred Queue handoff while keeping public inbox URLs unchanged.
+1. **Landed (spike):** `InboxHost` Durable Object with `INBOX_HOST` binding and wrangler `v2` migration. Per-remote-host fixed-window admission (`60s` window, `120` admits) plus in-flight lease backlog (`max 32`) via `POST /admit` / `POST /release` on the DO. Worker calls `admit_inbox_host_soft` before `begin_inbox_activity_if_needed` in verified inbox processing (**`lease: true`**, release after finish/replay skip) and on shared-inbox `AcceptedNoTargets` after signature verify (**`lease: false`**, rate-only). **AcceptedNoTargets** stays a cheap HTTP `202` without D1 dedupe slot. **InboxHost deny** (rate or backlog) returns HTTP `503` with `Retry-After`; do **not** queue work on deny—remotes must retry the original POST. DO/binding errors fail-open.
+2. Poll sweep on cron landed; scheduled-status due publish on cron landed (hourly sweep via `process_due_scheduled_statuses_for_config`, internal `POST /internal/scheduled_statuses/process` for ops). DO alarms still deferred. Still open: alarm-based scheduled status versus cron sweeps. Full **`INBOX_PROCESS_QUEUE` handoff is deferred** until a D1 staging table (`inbox_pending_work`) exists so the queue carries durable work keys only. Queue messages must be `{actor_uri, activity_id}` (well under Cloudflare Queues' **128KB** message limit); never enqueue large Create bodies by default—the Worker stages payload refs in D1 and consumers rehydrate from `inbox_activities` / staging.
+3. If one remote host still dominates processing after the thin limiter + in-flight backlog, escalate to deferred Queue handoff while keeping public inbox URLs unchanged.
 
 ## Decision Criteria Before Committing
 
@@ -291,7 +291,7 @@ Stay on Worker poll streaming when:
 - Keep streaming logic in `meta_placeholder_routes.rs`, or extract a `streaming/` module before DO work?
 - Separate DO Worker script vs same Worker export — same Worker is simpler for Rust/`workers-rs` initially.
 - For inbox host keys: prefer signing `keyId` host, actor URI host, or both with mismatch rejection?
-- At what backlog depth should `InboxHost` return 503 versus accept-and-queue?
+- At what backlog depth should `InboxHost` return 503 versus accept-and-queue? (current spike: deny at `in_flight >= 32` with `Retry-After: 5`)
 - Should hot remote hosts shard by hash of `activity_id` or by actor URI?
 
 ## References
