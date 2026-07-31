@@ -33,7 +33,7 @@ struct SocketSubscriptionState {
     list: Option<String>,
 }
 
-#[durable_object(websocket)]
+#[durable_object]
 pub struct StreamHub {
     state: State,
     env: Env,
