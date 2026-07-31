@@ -13,6 +13,18 @@ const STORAGE_FORWARD_TARGETS_KEY: &str = "forward_targets";
 /// forwarding. Keep in sync with `AppConfig::stream_hub_binding`.
 const STREAM_HUB_BINDING_VAR: &str = "STREAM_HUB_BINDING";
 const STREAM_HUB_DEFAULT_BINDING: &str = "STREAM_HUB";
+/// Internal headers the Worker sets on hub requests. They are stripped from
+/// forwarded client headers so a client cannot claim another account or channel.
+const STREAM_HUB_STREAM_HEADER: &str = "X-Stream";
+const STREAM_HUB_TAG_HEADER: &str = "X-Stream-Tag";
+const STREAM_HUB_LIST_HEADER: &str = "X-Stream-List";
+const STREAM_HUB_ACCOUNT_HEADER: &str = "X-Account-Id";
+const STREAM_HUB_INTERNAL_HEADERS: [&str; 4] = [
+    STREAM_HUB_STREAM_HEADER,
+    STREAM_HUB_TAG_HEADER,
+    STREAM_HUB_LIST_HEADER,
+    STREAM_HUB_ACCOUNT_HEADER,
+];
 
 /// Publish body accepted by the hub. Extra fields (`account_id`, `event_id`) are
 /// carried by the Worker for logging and ignored here.
@@ -415,39 +427,25 @@ impl StreamHub {
         let params = stream_hub_connect_params(&req)?;
         let pair = WebSocketPair::new()?;
 
-        let mut tags = Vec::new();
-        if let Some(stream) = params.stream.as_deref() {
-            tags.push(stream_subscription_tag(stream));
-            if let Some(account_id) = params.account_id.as_deref() {
-                tags.push(account_subscription_tag(account_id));
-            }
-            if let Some(tag) = params.tag.as_deref() {
-                tags.push(tag_subscription_tag(tag));
-            }
-            if let Some(list) = params.list.as_deref() {
-                tags.push(list_subscription_tag(list));
-            }
-        }
+        // Accept-time tags cannot express the subscription set: clients add and
+        // drop channels over the life of the socket, and tags are fixed at
+        // accept. Routing therefore reads the attachment instead.
+        self.state.accept_web_socket(&pair.server);
 
-        let tag_refs: Vec<&str> = tags.iter().map(String::as_str).collect();
-        if tag_refs.is_empty() {
-            self.state.accept_web_socket(&pair.server);
-        } else {
-            self.state
-                .accept_websocket_with_tags(&pair.server, &tag_refs);
-        }
-
-        let mut state = SocketSubscriptionState::default();
-        state.session_hub = params
+        let session_hub = params
             .account_id
             .as_deref()
-            .map(stream_hub_session_id_name)
-            .filter(|session_hub| !session_hub.ends_with(':'));
-        if let Some(stream) = params.stream {
-            state
-                .subscriptions
-                .push(StreamSubscription::new(stream, params.tag, params.list));
-        }
+            .map(str::trim)
+            .filter(|account_id| !account_id.is_empty())
+            .map(stream_hub_session_id_name);
+        let subscriptions = params
+            .stream
+            .map(|stream| vec![StreamSubscription::new(stream, params.tag, params.list)])
+            .unwrap_or_default();
+        let state = SocketSubscriptionState {
+            subscriptions,
+            session_hub,
+        };
         pair.server.serialize_attachment(&state)?;
 
         if let Some(session_hub) = state.session_hub.clone() {
@@ -479,24 +477,18 @@ struct StreamHubConnectParams {
     account_id: Option<String>,
 }
 
+/// The Worker authenticates the connection and states the subscription in
+/// internal headers. Those win over the query string, which is client-supplied
+/// and forwarded verbatim on proxied upgrades.
 fn stream_hub_connect_params(req: &Request) -> Result<StreamHubConnectParams> {
-    let mut params = req.query::<StreamHubConnectParams>().unwrap_or_default();
+    let query = req.query::<StreamHubConnectParams>().unwrap_or_default();
 
-    if params.account_id.is_none() {
-        params.account_id =
-            header_value(req, "X-Account-Id").or_else(|| header_value(req, "Cf-Account-Id"));
-    }
-    if params.stream.is_none() {
-        params.stream = header_value(req, "X-Stream");
-    }
-    if params.tag.is_none() {
-        params.tag = header_value(req, "X-Stream-Tag");
-    }
-    if params.list.is_none() {
-        params.list = header_value(req, "X-Stream-List");
-    }
-
-    Ok(params)
+    Ok(StreamHubConnectParams {
+        stream: header_value(req, STREAM_HUB_STREAM_HEADER).or(query.stream),
+        tag: header_value(req, STREAM_HUB_TAG_HEADER).or(query.tag),
+        list: header_value(req, STREAM_HUB_LIST_HEADER).or(query.list),
+        account_id: header_value(req, STREAM_HUB_ACCOUNT_HEADER).or(query.account_id),
+    })
 }
 
 fn header_value(req: &Request, name: &str) -> Option<String> {
@@ -856,16 +848,15 @@ pub(crate) async fn connect_stream_hub_websocket(
 
     let headers = worker::Headers::new();
     headers.set("Upgrade", "websocket")?;
-    headers.set("X-Stream", stream)?;
-    if let Some(tag_value) = tag.map(str::trim).filter(|value| !value.is_empty()) {
-        headers.set("X-Stream-Tag", tag_value)?;
-    }
-    if let Some(list_value) = list.map(str::trim).filter(|value| !value.is_empty()) {
-        headers.set("X-Stream-List", list_value)?;
-    }
-    if let Some(account_id) = account_id.map(str::trim).filter(|value| !value.is_empty()) {
-        headers.set("X-Account-Id", account_id)?;
-    }
+    set_stream_hub_subscription_headers(
+        &headers,
+        &StreamHubUpgradeParams {
+            stream,
+            tag,
+            list,
+            account_id,
+        },
+    )?;
 
     let mut init = RequestInit::new();
     init.with_method(Method::Get).with_headers(headers);
@@ -879,11 +870,47 @@ pub(crate) async fn connect_stream_hub_websocket(
     Ok(websocket)
 }
 
+/// Subscription the Worker authorised for a hub connection.
+pub(crate) struct StreamHubUpgradeParams<'a> {
+    pub(crate) stream: &'a str,
+    pub(crate) tag: Option<&'a str>,
+    pub(crate) list: Option<&'a str>,
+    pub(crate) account_id: Option<&'a str>,
+}
+
+fn set_stream_hub_subscription_headers(
+    headers: &worker::Headers,
+    params: &StreamHubUpgradeParams<'_>,
+) -> Result<()> {
+    headers.set(STREAM_HUB_STREAM_HEADER, params.stream)?;
+    if let Some(tag) = params.tag.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.set(STREAM_HUB_TAG_HEADER, tag)?;
+    }
+    if let Some(list) = params.list.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.set(STREAM_HUB_LIST_HEADER, list)?;
+    }
+    if let Some(account_id) = params
+        .account_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.set(STREAM_HUB_ACCOUNT_HEADER, account_id)?;
+    }
+    Ok(())
+}
+
+fn is_internal_stream_hub_header(name: &str) -> bool {
+    STREAM_HUB_INTERNAL_HEADERS
+        .iter()
+        .any(|internal| internal.eq_ignore_ascii_case(name))
+}
+
 pub(crate) async fn upgrade_stream_hub_websocket(
     env: &Env,
     binding: &str,
     hub_name: &str,
     req: Request,
+    params: &StreamHubUpgradeParams<'_>,
 ) -> Result<Response> {
     let namespace = env.durable_object(binding)?;
     let stub = namespace.get_by_name(hub_name)?;
@@ -897,8 +924,12 @@ pub(crate) async fn upgrade_stream_hub_websocket(
 
     let headers = worker::Headers::new();
     for (name, value) in req.headers().entries() {
+        if is_internal_stream_hub_header(&name) {
+            continue;
+        }
         headers.set(&name, &value)?;
     }
+    set_stream_hub_subscription_headers(&headers, params)?;
     if !headers
         .get("Upgrade")?
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
@@ -910,22 +941,6 @@ pub(crate) async fn upgrade_stream_hub_websocket(
     init.with_method(Method::Get).with_headers(headers);
     let request = Request::new_with_init(&url, &init)?;
     stub.fetch_with_request(request).await
-}
-
-fn stream_subscription_tag(stream: &str) -> String {
-    format!("stream:{stream}")
-}
-
-fn account_subscription_tag(account_id: &str) -> String {
-    format!("account:{account_id}")
-}
-
-fn tag_subscription_tag(tag: &str) -> String {
-    format!("tag:{tag}")
-}
-
-fn list_subscription_tag(list: &str) -> String {
-    format!("list:{list}")
 }
 
 fn stream_hub_stream_labels(

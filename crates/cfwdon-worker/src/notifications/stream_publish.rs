@@ -297,41 +297,37 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
         .await;
     }
 
-    if remote_status.visibility != Visibility::Direct {
-        if let Ok(follower_ids) = list_notify_follower_account_ids_for_remote_actor(
+    if remote_status.visibility != Visibility::Direct
+        && let Ok(follower_ids) = list_notify_follower_account_ids_for_remote_actor(
             db,
             &remote_actor.actor_uri,
             &created_at,
         )
         .await
-        {
-            for recipient_account_id in follower_ids {
-                let id = remote_status_interaction_notification_id(
-                    "status",
-                    &remote_id,
-                    &remote_status.id,
-                );
-                let status_response = build_remote_status_response_for_recipient_soft(
-                    db,
-                    config,
-                    &recipient_account_id,
-                    remote_status,
-                    remote_actor,
-                )
-                .await;
-                publish_remote_status_stream_notification_soft(
-                    env,
-                    config,
-                    &recipient_account_id,
-                    remote_actor,
-                    "status",
-                    id.clone(),
-                    id,
-                    created_at.clone(),
-                    status_response,
-                )
-                .await;
-            }
+    {
+        for recipient_account_id in follower_ids {
+            let id =
+                remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
+            let status_response = build_remote_status_response_for_recipient_soft(
+                db,
+                config,
+                &recipient_account_id,
+                remote_status,
+                remote_actor,
+            )
+            .await;
+            publish_remote_status_stream_notification_soft(
+                env,
+                config,
+                &recipient_account_id,
+                remote_actor,
+                "status",
+                id.clone(),
+                id,
+                created_at.clone(),
+                status_response,
+            )
+            .await;
         }
     }
 

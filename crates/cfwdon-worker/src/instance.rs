@@ -175,9 +175,7 @@ fn find_configured_announcement_item(
     config: &cfwdon_core::AppConfig,
     announcement_id: &str,
 ) -> Option<serde_json::Value> {
-    let Some(raw) = config.announcements_json.as_deref() else {
-        return None;
-    };
+    let raw = config.announcements_json.as_deref()?;
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) else {
         return None;
     };

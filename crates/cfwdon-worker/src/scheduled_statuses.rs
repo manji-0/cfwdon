@@ -589,9 +589,15 @@ mod tests {
 
     #[test]
     fn scheduled_status_stale_claim_threshold_is_one_ttl_back() {
+        use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+        let now = "2026-01-01T00:10:00Z";
+        let threshold = scheduled_status_stale_claim_threshold(now).expect("threshold");
+        let parsed_now = OffsetDateTime::parse(now, &Rfc3339).expect("now");
+        let parsed_threshold = OffsetDateTime::parse(&threshold, &Rfc3339).expect("threshold");
         assert_eq!(
-            scheduled_status_stale_claim_threshold("2026-01-01T00:10:00Z").expect("threshold"),
-            "2026-01-01T00:05:00Z"
+            (parsed_now - parsed_threshold).whole_seconds(),
+            SCHEDULED_STATUS_CLAIM_TTL_SECS
         );
     }
 
@@ -599,7 +605,7 @@ mod tests {
     fn scheduled_status_stale_claim_threshold_precedes_now() {
         let now = "2026-01-01T00:10:00Z";
         let threshold = scheduled_status_stale_claim_threshold(now).expect("threshold");
-        assert!(threshold < now.to_owned());
+        assert!(threshold.as_str() < now);
     }
 
     #[test]
@@ -665,7 +671,7 @@ mod tests {
             std::cmp::Ordering::Less
         );
 
-        let mut ordered = vec![much_later, later_same_time, earlier];
+        let mut ordered = [much_later, later_same_time, earlier];
         ordered.sort_by(compare_due_scheduled_status_order);
         assert_eq!(ordered[0].id, "b");
         assert_eq!(ordered[1].id, "c");

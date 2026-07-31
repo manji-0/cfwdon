@@ -1,3 +1,4 @@
+use crate::StreamHubUpgradeParams;
 use crate::auth::find_account_by_email;
 use crate::crypto_keys::generate_account_key_material;
 use crate::timelines::{
@@ -3083,12 +3084,13 @@ fn build_streaming_event_stream(
                 event = hub_events.as_mut().unwrap().next().fuse() => {
                     match event {
                         Some(Ok(WebsocketEvent::Message(message))) => {
-                            if let Some(text) = message.text() {
-                                if let Some(bytes) =
+                            if let Some(bytes) = message
+                                .text()
+                                .and_then(|text| {
                                     stream_hub_websocket_text_to_sse_bytes(&text, &mut state)
-                                {
-                                    yield bytes;
-                                }
+                                })
+                            {
+                                yield bytes;
                             }
                         }
                         Some(Ok(WebsocketEvent::Close(_))) | None => {
@@ -3575,7 +3577,7 @@ fn stream_hub_sticky_key_from_request(
 
 async fn streaming_websocket_upgrade_response(
     env: &Env,
-    mut req: Request,
+    req: Request,
     db: worker::D1Database,
     config: cfwdon_core::AppConfig,
     initial_stream: Option<String>,
@@ -3595,28 +3597,18 @@ async fn streaming_websocket_upgrade_response(
             Some(sticky_key.as_str()),
         )
     {
-        if let Ok(headers) = req.headers_mut() {
-            headers.set("X-Stream", stream)?;
-            if let Some(tag_value) = tag
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                headers.set("X-Stream-Tag", tag_value)?;
-            }
-            if let Some(list_value) = list
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                headers.set("X-Stream-List", list_value)?;
-            }
-            if let Some(account_id) = account_id {
-                headers.set("X-Account-Id", &account_id)?;
-            }
-        }
+        // The hub reads the subscription from these params, not from anything the
+        // client sent, so a forged X-Account-Id or X-Stream cannot take effect.
+        let params = StreamHubUpgradeParams {
+            stream,
+            tag: tag.as_deref(),
+            list: list.as_deref(),
+            account_id: account_id.as_deref(),
+        };
 
-        match upgrade_stream_hub_websocket(env, &config.stream_hub_binding, &hub_name, req).await {
+        match upgrade_stream_hub_websocket(env, &config.stream_hub_binding, &hub_name, req, &params)
+            .await
+        {
             Ok(response) => return Ok(response),
             Err(error) => {
                 console_log!(
