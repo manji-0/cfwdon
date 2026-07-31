@@ -1,7 +1,9 @@
 use crate::{
-    AppConfig, D1Database, Env, STREAM_HUB_FOLLOWER_FANOUT_LIMIT, StatusRow,
-    extract_hashtags_from_html, extract_hashtags_from_text, extract_mentions_from_text,
-    find_account_by_username, list_local_follower_account_ids_for_stream_fanout,
+    AppConfig, D1Database, Env, STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT,
+    StatusRow, extract_hashtags_from_html, extract_hashtags_from_text, extract_mentions_from_text,
+    find_account_by_id, find_account_by_username,
+    list_local_account_list_stream_fanout, list_local_follower_account_ids_for_stream_fanout,
+    list_membership_variants_for_local_account, local_status_visible_on_list_timeline,
     publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_id_name,
 };
 use cfwdon_domain::Visibility;
@@ -133,6 +135,74 @@ async fn publish_hashtag_timeline_events_soft(
     }
 }
 
+async fn publish_list_timeline_events_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    binding: &str,
+    author_account_id: &str,
+    status: &StatusRow,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    if status.visibility != Visibility::Public {
+        return;
+    }
+
+    let author = match find_account_by_id(db, author_account_id).await {
+        Ok(Some(author)) => author,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to load author for list stream fan-out (author {author_account_id}): {error}"
+            );
+            return;
+        }
+    };
+
+    let membership_refs = list_membership_variants_for_local_account(&author, config);
+    let fanout = match list_local_account_list_stream_fanout(db, &membership_refs).await {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            console_error!(
+                "failed to list memberships for list stream fan-out (author {author_account_id}): {error}"
+            );
+            return;
+        }
+    };
+
+    if fanout.truncated {
+        console_error!(
+            "stream hub list fan-out truncated to {} for author {}",
+            STREAM_HUB_LIST_FANOUT_LIMIT,
+            author_account_id
+        );
+    }
+
+    for list in fanout.lists {
+        if !local_status_visible_on_list_timeline(
+            status.visibility,
+            &list.replies_policy,
+            status.in_reply_to_id.as_deref(),
+        ) {
+            continue;
+        }
+        let hub_name = stream_hub_id_name("list", None, None, Some(&list.list_id));
+        publish_stream_hub_event_soft(
+            env,
+            binding,
+            &hub_name,
+            "list",
+            None,
+            event,
+            payload,
+            event_id,
+        )
+        .await;
+    }
+}
+
 async fn publish_direct_timeline_events_soft(
     env: &Env,
     db: &D1Database,
@@ -216,6 +286,19 @@ pub(crate) async fn publish_local_status_create_stream_fanout_soft(
             )
             .await;
         }
+
+        publish_list_timeline_events_soft(
+            env,
+            db,
+            config,
+            &config.stream_hub_binding,
+            author_account_id,
+            status,
+            "update",
+            payload,
+            event_id,
+        )
+        .await;
     }
 
     if status.visibility == Visibility::Direct {
@@ -281,6 +364,19 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
             )
             .await;
         }
+
+        publish_list_timeline_events_soft(
+            env,
+            db,
+            config,
+            &config.stream_hub_binding,
+            author_account_id,
+            status,
+            "delete",
+            payload,
+            event_id,
+        )
+        .await;
     }
 
     if status.visibility == Visibility::Direct {
@@ -333,6 +429,42 @@ mod tests {
         ));
         assert!(!visibility_reaches_follower_home_timelines(
             Visibility::Direct
+        ));
+    }
+
+    #[test]
+    fn list_timeline_visibility_matches_public_timeline_query() {
+        use crate::local_status_visible_on_list_timeline;
+
+        assert!(local_status_visible_on_list_timeline(
+            Visibility::Public,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            Visibility::Unlisted,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            Visibility::FollowersOnly,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            Visibility::Direct,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            Visibility::Public,
+            "none",
+            Some("status-parent")
+        ));
+        assert!(local_status_visible_on_list_timeline(
+            Visibility::Public,
+            "none",
+            None
         ));
     }
 }

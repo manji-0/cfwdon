@@ -279,6 +279,66 @@ async fn delete_list_row(db: &worker::D1Database, account_id: &str, list_id: &st
     Ok(true)
 }
 
+/// Lists that include a local account as a member, for list-timeline stream fan-out (capped).
+pub(crate) const STREAM_HUB_LIST_FANOUT_LIMIT: u32 = 50;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ListStreamFanoutRow {
+    pub(crate) list_id: String,
+    pub(crate) replies_policy: String,
+}
+
+pub(crate) struct ListStreamFanout {
+    pub(crate) lists: Vec<ListStreamFanoutRow>,
+    pub(crate) truncated: bool,
+}
+
+pub(crate) fn local_status_visible_on_list_timeline(
+    visibility: cfwdon_domain::Visibility,
+    replies_policy: &str,
+    in_reply_to_id: Option<&str>,
+) -> bool {
+    visibility == cfwdon_domain::Visibility::Public
+        && !(replies_policy == "none" && in_reply_to_id.is_some())
+}
+
+pub(crate) async fn list_local_account_list_stream_fanout(
+    db: &worker::D1Database,
+    membership_refs: &[String; 2],
+) -> Result<ListStreamFanout> {
+    let probe_limit = STREAM_HUB_LIST_FANOUT_LIMIT + 1;
+    let bindings = [
+        D1Type::Text(membership_refs[0].as_str()),
+        D1Type::Text(membership_refs[1].as_str()),
+        D1Type::Integer(probe_limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT m.list_id, l.replies_policy
+             FROM account_list_memberships m
+             INNER JOIN account_lists l ON l.id = m.list_id
+             WHERE m.target_account_ref IN (?1, ?2)
+             ORDER BY m.created_at DESC, m.list_id DESC
+             LIMIT ?3",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    let lists = result.results::<ListStreamFanoutRow>()?;
+    let truncated = lists.len() > STREAM_HUB_LIST_FANOUT_LIMIT as usize;
+    let lists = if truncated {
+        lists
+            .into_iter()
+            .take(STREAM_HUB_LIST_FANOUT_LIMIT as usize)
+            .collect()
+    } else {
+        lists
+    };
+
+    Ok(ListStreamFanout { lists, truncated })
+}
+
 pub(crate) async fn list_membership_refs(
     db: &worker::D1Database,
     list_id: &str,
@@ -817,6 +877,25 @@ mod tests {
             list_membership_variants_for_local_account(&account, &config),
             ["acct-1".to_owned(), "alice@social.example".to_owned()]
         );
+    }
+
+    #[test]
+    fn local_status_visible_on_list_timeline_respects_public_and_replies_policy() {
+        assert!(local_status_visible_on_list_timeline(
+            cfwdon_domain::Visibility::Public,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            cfwdon_domain::Visibility::Direct,
+            "list",
+            None
+        ));
+        assert!(!local_status_visible_on_list_timeline(
+            cfwdon_domain::Visibility::Public,
+            "none",
+            Some("status-1")
+        ));
     }
 
     #[test]
