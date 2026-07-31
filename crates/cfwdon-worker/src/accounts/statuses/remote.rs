@@ -462,7 +462,7 @@ async fn hydrate_remote_actor_statuses_from_outbox(
             if remote_status_actor_uri(object, item).as_deref() != Some(actor.actor_uri.as_str()) {
                 continue;
             }
-            upsert_remote_status(db, config, actor, object).await?;
+            upsert_remote_status(db, config, actor, object, None).await?;
             inserted += 1;
         }
         if inserted >= limit {

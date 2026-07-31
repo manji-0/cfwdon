@@ -404,7 +404,7 @@ pub(crate) async fn refresh_remote_poll_if_needed(
         Err(_) => return Ok(()),
     };
     upsert_remote_actor(db, &actor).await?;
-    upsert_remote_status(db, config, &actor, object).await
+    upsert_remote_status(db, config, &actor, object, None).await
 }
 
 pub(crate) fn remote_poll_draft_acknowledges_vote(
@@ -553,7 +553,7 @@ async fn refresh_remote_poll_after_vote_if_acknowledged(
         Err(_) => return Ok(false),
     };
     upsert_remote_actor(db, &actor_profile).await?;
-    upsert_remote_status(db, config, &actor_profile, object).await?;
+    upsert_remote_status(db, config, &actor_profile, object, None).await?;
     Ok(true)
 }
 

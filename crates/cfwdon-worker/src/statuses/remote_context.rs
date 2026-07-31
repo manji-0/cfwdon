@@ -266,7 +266,7 @@ async fn hydrate_remote_reply_descendants(
             Err(_) => continue,
         };
         upsert_remote_actor(db, &actor).await?;
-        upsert_remote_status(db, config, &actor, &reply_document).await?;
+        upsert_remote_status(db, config, &actor, &reply_document, None).await?;
         let _ = Box::pin(hydrate_remote_reply_descendants(
             db,
             config,
