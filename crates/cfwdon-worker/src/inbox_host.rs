@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use worker::{
-    console_error, durable_object, DurableObject, Env, Method, Request, RequestInit, Response,
-    Result, State,
+    DurableObject, Env, Method, Request, RequestInit, Response, Result, State, console_error,
+    durable_object,
 };
 
 const INBOX_HOST_ADMIT_PATH: &str = "/admit";
@@ -69,10 +69,7 @@ impl InboxHost {
             .get::<u64>(STORAGE_WINDOW_START_KEY)
             .await?
             .unwrap_or(now_ms);
-        let count = storage
-            .get::<u64>(STORAGE_COUNT_KEY)
-            .await?
-            .unwrap_or(0);
+        let count = storage.get::<u64>(STORAGE_COUNT_KEY).await?.unwrap_or(0);
 
         let admission = fixed_window_admission(
             Some(window_start_ms),

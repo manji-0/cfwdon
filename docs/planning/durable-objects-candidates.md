@@ -254,7 +254,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
    - `public` / `public:remote` (+ media), `hashtag:{tag}` (stream `hashtag` only), `list:{id}`, `direct:{id}` for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`; direct also publishes conversation `update` documents
 4. SSE for StreamHub-backed channels uses an internal hub WebSocket bridge with 30s D1 catch-up; falls back to 3s D1 poll if the hub is unavailable. Plain Worker WebSocket upgrade path unchanged.
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
-6. Still open: public-channel sharding under load; inbox-host admission DOs; Announce Undo delete fan-out without Env.
+6. Remaining polish: activate public sharding under measured load; escalate InboxHost to Queue handoff / backlog 503; alarm-based schedules vs cron.
 
 ### Phase B — Channel coverage — implemented
 
