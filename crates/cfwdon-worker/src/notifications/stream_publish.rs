@@ -167,7 +167,7 @@ async fn build_remote_status_response_for_recipient_soft(
         .ok()
 }
 
-async fn build_local_status_response_for_recipient_soft(
+pub(crate) async fn build_local_status_response_for_recipient_soft(
     db: &D1Database,
     config: &AppConfig,
     recipient_account_id: &str,

@@ -2,6 +2,7 @@ use super::{
     AppConfig, D1Database, Env, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
     MediaAttachmentRow, Result, StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest,
     apply_media_update, attach_media_and_enqueue_outbox, build_local_status_response,
+    build_local_status_response_for_recipient_soft,
     build_local_status_response_with_quote_count_preloads, delete_local_status_with_outbox,
     enqueue_status_update_activity, ensure_direct_conversation_for_status,
     extract_mentions_from_text, find_account_by_username, find_local_status_by_object_uri,
@@ -17,6 +18,57 @@ use super::{
 };
 use cfwdon_domain::{PollDraft, QuoteState, StatusDraft};
 use worker::console_error;
+
+/// Builds the stream payload used for fan-out to accounts other than the
+/// author. Viewer-dependent fields are left unset so no per-account state
+/// (filters, favourites, bookmarks) leaks to other subscribers.
+#[allow(clippy::too_many_arguments)]
+async fn viewer_agnostic_local_status_stream_payload(
+    db: &D1Database,
+    config: &AppConfig,
+    status: &StatusRow,
+    author: &LocalAccount,
+    response_preload: &LocalStatusResponsePreload,
+    counts_preload: &crate::StatusCountsPreload,
+    quote_counts_preload: &crate::StatusQuoteCountsPreload,
+) -> Option<String> {
+    let response = match build_local_status_response_with_quote_count_preloads(
+        db,
+        config,
+        None,
+        status,
+        author,
+        response_preload.in_reply_to_account_id.clone(),
+        response_preload.media.clone(),
+        None,
+        Some(counts_preload),
+        Some(quote_counts_preload),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            console_error!(
+                "failed to build viewer-agnostic stream payload for status {}: {error}",
+                status.id
+            );
+            return None;
+        }
+    };
+    match serde_json::to_string(&response) {
+        Ok(payload) => Some(payload),
+        Err(error) => {
+            console_error!(
+                "failed to serialize viewer-agnostic stream payload for status {}: {error}",
+                status.id
+            );
+            None
+        }
+    }
+}
 
 pub(crate) struct DeleteLocalStatusResult {
     pub(crate) response: MastodonStatusResponse,
@@ -296,8 +348,8 @@ pub(crate) async fn create_published_status_and_response(
         Some(input.account),
         &status,
         input.account,
-        response_preload.in_reply_to_account_id,
-        response_preload.media,
+        response_preload.in_reply_to_account_id.clone(),
+        response_preload.media.clone(),
         Some(&filter_matcher),
         Some(&counts_preload),
         Some(&quote_counts_preload),
@@ -328,13 +380,31 @@ pub(crate) async fn create_published_status_and_response(
         )
         .await;
 
+        // Fan-out reaches accounts other than the author, so the payload must
+        // not carry the author's viewer state (`filtered` would leak their
+        // filter keywords, and `favourited` and friends would be wrong).
+        let fanout_payload = match viewer_agnostic_local_status_stream_payload(
+            db,
+            config,
+            &status,
+            input.account,
+            &response_preload,
+            &counts_preload,
+            &quote_counts_preload,
+        )
+        .await
+        {
+            Some(payload) => payload,
+            None => return Ok(response),
+        };
+
         publish_local_status_create_stream_fanout_soft(
             env,
             db,
             config,
             input.account.id(),
             &status,
-            &payload,
+            &fanout_payload,
             has_media,
         )
         .await;
@@ -344,6 +414,14 @@ pub(crate) async fn create_published_status_and_response(
         {
             let id =
                 local_status_interaction_notification_id("status", input.account.id(), &status.id);
+            let status_response = build_local_status_response_for_recipient_soft(
+                db,
+                config,
+                recipient_account_id,
+                &status,
+                input.account,
+            )
+            .await;
             publish_local_actor_notification_soft(
                 Some(env),
                 db,
@@ -354,7 +432,7 @@ pub(crate) async fn create_published_status_and_response(
                 id.clone(),
                 id,
                 status.created_at.clone(),
-                Some(response.clone()),
+                status_response,
             )
             .await;
         }
@@ -368,6 +446,14 @@ pub(crate) async fn create_published_status_and_response(
                     input.account.id(),
                     &status.id,
                 );
+                let status_response = build_local_status_response_for_recipient_soft(
+                    db,
+                    config,
+                    account.id(),
+                    &status,
+                    input.account,
+                )
+                .await;
                 publish_local_actor_notification_soft(
                     Some(env),
                     db,
@@ -378,7 +464,7 @@ pub(crate) async fn create_published_status_and_response(
                     id.clone(),
                     id,
                     status.created_at.clone(),
-                    Some(response.clone()),
+                    status_response,
                 )
                 .await;
             }
@@ -391,6 +477,14 @@ pub(crate) async fn create_published_status_and_response(
         {
             let id =
                 local_status_interaction_notification_id("quote", input.account.id(), &status.id);
+            let status_response = build_local_status_response_for_recipient_soft(
+                db,
+                config,
+                &target.account_id,
+                &status,
+                input.account,
+            )
+            .await;
             publish_local_actor_notification_soft(
                 Some(env),
                 db,
@@ -401,7 +495,7 @@ pub(crate) async fn create_published_status_and_response(
                 id.clone(),
                 id,
                 status.created_at.clone(),
-                Some(response.clone()),
+                status_response,
             )
             .await;
         }

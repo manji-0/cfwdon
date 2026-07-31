@@ -1,12 +1,10 @@
 use crate::{
-    AppConfig, Error, MastodonStatusResponse, Result, StatusRow, build_local_status_response,
-    find_account_by_id, find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_status_by_id, find_status_poll_by_id, load_in_reply_to_account_id, load_push_subscription,
-    local_status_target_uri, notification_timestamp_sort_token,
+    AppConfig, Error, Result, StatusRow, build_local_status_response_for_recipient_soft,
+    find_account_by_id, find_local_status_by_object_uri, find_status_by_id, find_status_poll_by_id,
+    load_push_subscription, local_status_target_uri, notification_timestamp_sort_token,
     publish_local_actor_notification_soft, push_subscription_alert_enabled,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use cfwdon_domain::LocalAccount;
 use js_sys::Uint8Array;
 use serde::Deserialize;
 use serde_json::json;
@@ -32,34 +30,6 @@ async fn load_account_ids(
         .into_iter()
         .map(|row| row.account_id)
         .collect())
-}
-
-async fn build_local_status_response_for_recipient_soft(
-    db: &D1Database,
-    config: &AppConfig,
-    recipient_account_id: &str,
-    status: &StatusRow,
-    author: &LocalAccount,
-) -> Option<MastodonStatusResponse> {
-    let recipient = find_account_by_id(db, recipient_account_id)
-        .await
-        .ok()
-        .flatten()?;
-    let media = find_media_attachments_by_status_id(db, &status.id)
-        .await
-        .ok()?;
-    let in_reply_to = load_in_reply_to_account_id(db, status).await.ok()?;
-    build_local_status_response(
-        db,
-        config,
-        Some(&recipient),
-        status,
-        author,
-        in_reply_to,
-        media,
-    )
-    .await
-    .ok()
 }
 
 async fn publish_poll_end_stream_notifications_soft(
