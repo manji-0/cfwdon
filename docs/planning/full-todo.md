@@ -95,3 +95,4 @@ Streaming already validates channels and serves SSE/WebSocket clients by polling
 - Evaluate keyed DO rate limiters for shared inbox / remote fetch abuse separately from streaming.
 - Prefer per-remote-host **admission** DOs behind the existing shared/personal inbox URLs; do not invent per-host public inbox paths.
 - Keep outbound ActivityPub delivery on Queues; do not move fan-out HTTP delivery into DOs.
+- Reserve the Agents SDK for optional ops/AI/MCP/email session products, not for Mastodon streaming or inbox wire paths.
