@@ -16,10 +16,14 @@ pub(crate) const INBOX_HOST_ADMIT_LIMIT: u64 = 120;
 pub(crate) const INBOX_HOST_MAX_IN_FLIGHT: u64 = 32;
 /// Retry-After hint when deny is due to in-flight backlog (not rate window).
 pub(crate) const INBOX_HOST_BACKLOG_RETRY_AFTER_SECS: u64 = 5;
+/// A lease older than this is treated as abandoned. Workers can die between
+/// admit and release (CPU limit, eviction, panic), so leases must expire or the
+/// backlog would deny that host forever.
+pub(crate) const INBOX_HOST_LEASE_TTL_MS: u64 = 30_000;
 
 const STORAGE_WINDOW_START_KEY: &str = "admit_window_start_ms";
 const STORAGE_COUNT_KEY: &str = "admit_count";
-const STORAGE_IN_FLIGHT_KEY: &str = "in_flight";
+const STORAGE_LEASES_KEY: &str = "in_flight_leases";
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -40,6 +44,9 @@ fn default_lease_true() -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 struct InboxHostAdmitResponse {
     allowed: bool,
+    /// True only when this admit took an in-flight lease that the caller must release.
+    #[serde(default)]
+    leased: bool,
     count: u64,
     in_flight: u64,
     retry_after_secs: u64,
@@ -55,6 +62,8 @@ struct InboxHostReleaseResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InboxHostAdmitResult {
     pub allowed: bool,
+    /// Release is only correct when this admit actually leased a slot.
+    pub leased: bool,
     pub count: u32,
     pub in_flight: u32,
     pub retry_after_secs: u64,
@@ -104,10 +113,13 @@ impl InboxHost {
             .await?
             .unwrap_or(now_ms);
         let count = storage.get::<u64>(STORAGE_COUNT_KEY).await?.unwrap_or(0);
-        let in_flight = storage
-            .get::<u64>(STORAGE_IN_FLIGHT_KEY)
+        let stored_leases = storage
+            .get::<Vec<u64>>(STORAGE_LEASES_KEY)
             .await?
-            .unwrap_or(0);
+            .unwrap_or_default();
+        let mut leases = retain_live_leases(stored_leases.clone(), now_ms, INBOX_HOST_LEASE_TTL_MS);
+        let expired_leases = leases.len() != stored_leases.len();
+        let in_flight = leases.len() as u64;
 
         let admission = fixed_window_admission(
             Some(window_start_ms),
@@ -118,8 +130,12 @@ impl InboxHost {
         );
 
         if !admission.allowed {
+            if expired_leases {
+                storage.put(STORAGE_LEASES_KEY, &leases).await?;
+            }
             return Response::from_json(&InboxHostAdmitResponse {
                 allowed: false,
+                leased: false,
                 count: admission.count,
                 in_flight,
                 retry_after_secs: fixed_window_retry_after_secs(
@@ -131,9 +147,13 @@ impl InboxHost {
             });
         }
 
-        if admit.lease && in_flight >= INBOX_HOST_MAX_IN_FLIGHT {
+        if admit.lease && !backlog_admission(in_flight, INBOX_HOST_MAX_IN_FLIGHT) {
+            if expired_leases {
+                storage.put(STORAGE_LEASES_KEY, &leases).await?;
+            }
             return Response::from_json(&InboxHostAdmitResponse {
                 allowed: false,
+                leased: false,
                 count,
                 in_flight,
                 retry_after_secs: INBOX_HOST_BACKLOG_RETRY_AFTER_SECS,
@@ -146,18 +166,18 @@ impl InboxHost {
             .await?;
         storage.put(STORAGE_COUNT_KEY, admission.count).await?;
 
-        let next_in_flight = if admit.lease {
-            let next = in_flight.saturating_add(1);
-            storage.put(STORAGE_IN_FLIGHT_KEY, next).await?;
-            next
-        } else {
-            in_flight
-        };
+        if admit.lease {
+            leases.push(now_ms);
+        }
+        if admit.lease || expired_leases {
+            storage.put(STORAGE_LEASES_KEY, &leases).await?;
+        }
 
         Response::from_json(&InboxHostAdmitResponse {
             allowed: true,
+            leased: admit.lease,
             count: admission.count,
-            in_flight: next_in_flight,
+            in_flight: leases.len() as u64,
             retry_after_secs: 0,
             reason: None,
         })
@@ -165,13 +185,17 @@ impl InboxHost {
 
     async fn handle_release(&self) -> Result<Response> {
         let storage = self.state.storage();
-        let in_flight = storage
-            .get::<u64>(STORAGE_IN_FLIGHT_KEY)
+        let now_ms = inbox_host_now_millis();
+        let leases = storage
+            .get::<Vec<u64>>(STORAGE_LEASES_KEY)
             .await?
-            .unwrap_or(0);
-        let next = in_flight.saturating_sub(1);
-        storage.put(STORAGE_IN_FLIGHT_KEY, next).await?;
-        Response::from_json(&InboxHostReleaseResponse { in_flight: next })
+            .unwrap_or_default();
+        let leases =
+            release_oldest_lease(retain_live_leases(leases, now_ms, INBOX_HOST_LEASE_TTL_MS));
+        storage.put(STORAGE_LEASES_KEY, &leases).await?;
+        Response::from_json(&InboxHostReleaseResponse {
+            in_flight: leases.len() as u64,
+        })
     }
 }
 
@@ -227,25 +251,51 @@ pub(crate) fn fixed_window_retry_after_secs(
         return 1;
     }
     let remaining_ms = window_end_ms - now_ms;
-    ((remaining_ms + 999) / 1000).max(1)
+    remaining_ms.div_ceil(1000).max(1)
 }
 
 fn inbox_host_admit_result_from_response(admit: InboxHostAdmitResponse) -> InboxHostAdmitResult {
     InboxHostAdmitResult {
         allowed: admit.allowed,
+        leased: admit.leased,
         count: u32::try_from(admit.count).unwrap_or(u32::MAX),
         in_flight: u32::try_from(admit.in_flight).unwrap_or(u32::MAX),
         retry_after_secs: admit.retry_after_secs,
     }
 }
 
-fn inbox_host_admit_allowed_open() -> InboxHostAdmitResult {
+/// Fail-open result used when the Durable Object is unreachable. It holds no
+/// lease, so the caller must not release one.
+pub(crate) fn inbox_host_admit_allowed_open() -> InboxHostAdmitResult {
     InboxHostAdmitResult {
         allowed: true,
+        leased: false,
         count: 0,
         in_flight: 0,
         retry_after_secs: 0,
     }
+}
+
+/// Drops leases whose holder never released them within the TTL.
+pub(crate) fn retain_live_leases(mut leases: Vec<u64>, now_ms: u64, lease_ttl_ms: u64) -> Vec<u64> {
+    leases.retain(|acquired_ms| now_ms.saturating_sub(*acquired_ms) < lease_ttl_ms);
+    leases
+}
+
+/// Releases the lease that has been held longest.
+pub(crate) fn release_oldest_lease(mut leases: Vec<u64>) -> Vec<u64> {
+    if leases.is_empty() {
+        return leases;
+    }
+    let oldest = leases
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, acquired_ms)| **acquired_ms)
+        .map(|(index, _)| index);
+    if let Some(index) = oldest {
+        leases.remove(index);
+    }
+    leases
 }
 
 pub(crate) async fn admit_inbox_host(
@@ -358,7 +408,7 @@ pub(crate) async fn release_inbox_host_soft(env: Option<&Env>, binding: &str, ho
 }
 
 /// Pure helper for backlog admission decisions (unit-tested without Durable Object storage).
-pub(crate) fn backlog_admission(in_flight: u64, max_in_flight: u64) -> bool {
+fn backlog_admission(in_flight: u64, max_in_flight: u64) -> bool {
     in_flight < max_in_flight
 }
 
@@ -460,6 +510,58 @@ mod tests {
             fixed_window_retry_after_secs(1_000_000, 2_000_000, 60_000),
             1
         );
+    }
+
+    #[test]
+    fn retain_live_leases_drops_expired_holders() {
+        let leases = vec![1_000_000, 1_020_000, 1_040_000];
+        assert_eq!(
+            retain_live_leases(leases.clone(), 1_045_000, INBOX_HOST_LEASE_TTL_MS),
+            vec![1_020_000, 1_040_000]
+        );
+        assert_eq!(
+            retain_live_leases(leases.clone(), 1_040_000, INBOX_HOST_LEASE_TTL_MS),
+            vec![1_020_000, 1_040_000]
+        );
+        assert!(retain_live_leases(leases, 2_000_000, INBOX_HOST_LEASE_TTL_MS).is_empty());
+    }
+
+    #[test]
+    fn abandoned_leases_stop_denying_the_host_forever() {
+        let saturated = (0..INBOX_HOST_MAX_IN_FLIGHT)
+            .map(|_| 1_000_000)
+            .collect::<Vec<_>>();
+        assert!(!backlog_admission(
+            retain_live_leases(saturated.clone(), 1_000_000, INBOX_HOST_LEASE_TTL_MS).len() as u64,
+            INBOX_HOST_MAX_IN_FLIGHT
+        ));
+        // One TTL later the same stuck leases no longer block admission.
+        assert!(backlog_admission(
+            retain_live_leases(
+                saturated,
+                1_000_000 + INBOX_HOST_LEASE_TTL_MS,
+                INBOX_HOST_LEASE_TTL_MS
+            )
+            .len() as u64,
+            INBOX_HOST_MAX_IN_FLIGHT
+        ));
+    }
+
+    #[test]
+    fn release_oldest_lease_removes_one_holder() {
+        assert_eq!(
+            release_oldest_lease(vec![1_020_000, 1_000_000, 1_040_000]),
+            vec![1_020_000, 1_040_000]
+        );
+        assert!(release_oldest_lease(vec![1_000_000]).is_empty());
+        assert!(release_oldest_lease(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn fail_open_admission_holds_no_lease() {
+        let open = inbox_host_admit_allowed_open();
+        assert!(open.allowed);
+        assert!(!open.leased);
     }
 
     #[test]

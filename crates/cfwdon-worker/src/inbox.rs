@@ -182,12 +182,7 @@ async fn try_inbox_host_admission(
     let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
         Some(host_key) => host_key,
         None => {
-            return InboxHostAdmitResult {
-                allowed: true,
-                count: 0,
-                in_flight: 0,
-                retry_after_secs: 0,
-            };
+            return inbox_host_admit_allowed_open();
         }
     };
     admit_inbox_host_soft(
@@ -283,7 +278,7 @@ pub(crate) async fn shared_inbox_response(
                         "activity_type": activity_type,
                         "activity_id": activity_id,
                         "actor_uri": remote_actor.actor_uri,
-                        "reason": "no_local_targets",
+                        "reason": "rate_limited",
                         "retry_after_secs": admission.retry_after_secs,
                     }),
                 );
@@ -435,8 +430,35 @@ async fn process_verified_inbox_activity(
         );
         return inbox_backpressure_response(admission.retry_after_secs);
     }
-    if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
-        release_inbox_host_lease_soft(config, env, &remote_actor, true).await;
+    let response = process_admitted_inbox_activity(
+        db,
+        config,
+        accounts,
+        activity,
+        &remote_actor,
+        env,
+        &activity_id,
+        &activity_type,
+    )
+    .await;
+    // Runs on every exit of the admitted path, including errors, so a lease is
+    // never stranded while the request is still counted as in-flight.
+    release_inbox_host_lease_soft(config, env, &remote_actor, admission.leased).await;
+    response
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_admitted_inbox_activity(
+    db: &D1Database,
+    config: &AppConfig,
+    accounts: &[LocalAccount],
+    activity: &serde_json::Value,
+    remote_actor: &RemoteActorProfile,
+    env: Option<&Env>,
+    activity_id: &str,
+    activity_type: &str,
+) -> Result<Response> {
+    if !begin_inbox_activity_if_needed(db, remote_actor, activity_id, activity_type).await? {
         log_federation_event(
             "inbox_replay_skipped",
             "replay",
@@ -455,11 +477,11 @@ async fn process_verified_inbox_activity(
     }
 
     let result = if accounts.is_empty() {
-        dispatch_inbox_activity(db, config, None, activity, &remote_actor, env).await
+        dispatch_inbox_activity(db, config, None, activity, remote_actor, env).await
     } else {
         let mut outcome = Ok(());
         for account in accounts {
-            match dispatch_inbox_activity(db, config, Some(account), activity, &remote_actor, env)
+            match dispatch_inbox_activity(db, config, Some(account), activity, remote_actor, env)
                 .await
             {
                 Ok(()) => {}
@@ -471,8 +493,7 @@ async fn process_verified_inbox_activity(
         }
         outcome
     };
-    finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
-    release_inbox_host_lease_soft(config, env, &remote_actor, true).await;
+    finish_inbox_activity_if_needed(db, remote_actor, activity_id, &result).await?;
     match &result {
         Ok(()) => log_federation_event(
             "inbox_processed",
