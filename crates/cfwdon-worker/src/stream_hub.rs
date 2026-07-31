@@ -36,6 +36,7 @@ struct SocketSubscriptionState {
 #[durable_object]
 pub struct StreamHub {
     state: State,
+    #[allow(dead_code)]
     env: Env,
 }
 
