@@ -76,7 +76,7 @@ pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_followe
         .unwrap_or(false)
 }
 
-async fn validate_local_quote_creation(
+pub(crate) async fn validate_local_quote_creation(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &LocalAccount,

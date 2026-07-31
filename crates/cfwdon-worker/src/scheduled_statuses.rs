@@ -1,15 +1,18 @@
+use crate::auth::extract_authenticated_user;
 use crate::auth::LocalApiAuthentication;
 use crate::{
-    AppConfig, D1Database, MastodonMediaAttachmentResponse, Request, Response, Result,
-    RouteContext, StatusDraft, app_bearer_token_from_request, authenticate_local_api_request,
-    build_internal_cursor_link_for_url_with_min_id, find_media_attachment_by_id,
-    find_oauth_app_id_by_bearer_token, generate_entity_id, load_config, normalize_scheduled_at,
-    now_iso_string, oauth_access_token_has_any_scope, parse_internal_pagination_id,
-    require_authenticated_local_account, validate_scheduled_at_minimum_offset,
+    AppConfig, CreatePublishedStatusInput, D1Database, Env, MastodonMediaAttachmentResponse,
+    Request, Response, Result, RouteContext, StatusDraft, app_bearer_token_from_request,
+    authenticate_local_api_request, build_internal_cursor_link_for_url_with_min_id,
+    create_published_status_and_response, find_account_by_id, find_local_status_owner_id,
+    find_media_attachment_by_id, find_oauth_app_id_by_bearer_token, generate_entity_id,
+    load_config, normalize_scheduled_at, now_iso_string, oauth_access_token_has_any_scope,
+    parse_internal_pagination_id, require_authenticated_local_account,
+    resolve_attachable_media, validate_local_quote_creation, validate_scheduled_at_minimum_offset,
 };
 use cfwdon_domain::{QuoteApprovalPolicy, Visibility};
-use serde::Deserialize;
-use worker::{Error, d1::D1Type};
+use serde::{Deserialize, Serialize};
+use worker::{console_error, Error, d1::D1Type};
 
 #[derive(Clone, Debug)]
 struct ScheduledStatus {
@@ -209,6 +212,258 @@ fn scheduled_status_poll(value: &serde_json::Value) -> Option<cfwdon_domain::Pol
         .and_then(|value| serde_json::from_str(value).ok())
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DueScheduledStatus {
+    pub(crate) id: String,
+    pub(crate) account_id: String,
+    pub(crate) draft: StatusDraft,
+    pub(crate) idempotency_key: Option<String>,
+    pub(crate) application_id: Option<i64>,
+    pub(crate) quote_of_uri: Option<String>,
+    pub(crate) scheduled_at: String,
+}
+
+fn due_scheduled_status_from_value(
+    value: &serde_json::Value,
+) -> Result<DueScheduledStatus, worker::Error> {
+    Ok(DueScheduledStatus {
+        id: json_string(value, "id").unwrap_or_default(),
+        account_id: json_string(value, "account_id").unwrap_or_default(),
+        draft: scheduled_status_draft_from_value(value)?,
+        idempotency_key: json_string(value, "idempotency_key"),
+        application_id: json_i64(value, "application_id"),
+        quote_of_uri: json_string(value, "quote_of_uri"),
+        scheduled_at: json_string(value, "scheduled_at")
+            .unwrap_or_else(|| "2099-01-01T00:00:00.000Z".to_owned()),
+    })
+}
+
+#[cfg(test)]
+fn is_scheduled_status_due(scheduled_at: &str, now_iso: &str) -> bool {
+    scheduled_at <= now_iso
+}
+
+#[cfg(test)]
+fn compare_due_scheduled_status_order(left: &DueScheduledStatus, right: &DueScheduledStatus) -> std::cmp::Ordering {
+    left.scheduled_at
+        .cmp(&right.scheduled_at)
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+pub(crate) async fn list_due_scheduled_statuses(
+    db: &D1Database,
+    now_iso: &str,
+    limit: u32,
+) -> Result<Vec<DueScheduledStatus>> {
+    let bindings = [
+        D1Type::Text(now_iso),
+        D1Type::Integer(limit as i32),
+    ];
+    let rows = db
+        .prepare(
+            "SELECT
+                id,
+                account_id,
+                text_content,
+                visibility,
+                spoiler_text,
+                sensitive,
+                language,
+                quote_approval_policy,
+                in_reply_to_id,
+                media_ids_json,
+                poll_json,
+                idempotency_key,
+                application_id,
+                quote_of_uri,
+                scheduled_at
+             FROM scheduled_statuses
+             WHERE scheduled_at <= ?1
+             ORDER BY scheduled_at ASC, id ASC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?
+        .results::<serde_json::Value>()?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| due_scheduled_status_from_value(row).ok())
+        .collect())
+}
+
+async fn delete_scheduled_status_by_id(db: &D1Database, id: &str) -> Result<bool> {
+    let id_binding = D1Type::Text(id);
+    let result = db
+        .prepare("DELETE FROM scheduled_statuses WHERE id = ?1")
+        .bind_refs(&id_binding)?
+        .run()
+        .await?;
+    scheduled_status_did_change(&result)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PublishDueScheduledStatusOutcome {
+    Published,
+    Skipped,
+    Failed,
+}
+
+pub(crate) async fn publish_due_scheduled_status(
+    db: &D1Database,
+    config: &AppConfig,
+    env: Option<&Env>,
+    due: &DueScheduledStatus,
+) -> PublishDueScheduledStatusOutcome {
+    let account = match find_account_by_id(db, &due.account_id).await {
+        Ok(Some(account)) => account,
+        Ok(None) => {
+            console_error!(
+                "scheduled status publish skipped: account {} not found for scheduled status {}",
+                due.account_id,
+                due.id
+            );
+            return PublishDueScheduledStatusOutcome::Skipped;
+        }
+        Err(error) => {
+            console_error!(
+                "scheduled status publish failed: could not load account {} for scheduled status {}: {error}",
+                due.account_id,
+                due.id
+            );
+            return PublishDueScheduledStatusOutcome::Failed;
+        }
+    };
+
+    let pending_media = match resolve_attachable_media(db, &account, due.draft.media_ids()).await {
+        Ok(media) => media,
+        Err(message) => {
+            console_error!(
+                "scheduled status publish failed: media resolution for scheduled status {}: {message}",
+                due.id
+            );
+            return PublishDueScheduledStatusOutcome::Failed;
+        }
+    };
+
+    let in_reply_to_account_id = if let Some(status_id) = due.draft.in_reply_to_id() {
+        match find_local_status_owner_id(db, status_id).await {
+            Ok(Some(account_id)) => Some(account_id),
+            Ok(None) => {
+                console_error!(
+                    "scheduled status publish failed: in_reply_to_id {} references unknown local status for scheduled status {}",
+                    status_id,
+                    due.id
+                );
+                return PublishDueScheduledStatusOutcome::Failed;
+            }
+            Err(error) => {
+                console_error!(
+                    "scheduled status publish failed: could not resolve in_reply_to for scheduled status {}: {error}",
+                    due.id
+                );
+                return PublishDueScheduledStatusOutcome::Failed;
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(quote_of_uri) = due.quote_of_uri.as_deref() {
+        match validate_local_quote_creation(db, config, &account, &due.draft, quote_of_uri).await {
+            Ok(None) => {}
+            Ok(Some(message)) => {
+                console_error!(
+                    "scheduled status publish failed: quote validation for scheduled status {}: {message}",
+                    due.id
+                );
+                return PublishDueScheduledStatusOutcome::Failed;
+            }
+            Err(error) => {
+                console_error!(
+                    "scheduled status publish failed: quote validation error for scheduled status {}: {error}",
+                    due.id
+                );
+                return PublishDueScheduledStatusOutcome::Failed;
+            }
+        }
+    }
+
+    match create_published_status_and_response(
+        db,
+        config,
+        env,
+        CreatePublishedStatusInput {
+            account: &account,
+            application_id: due.application_id,
+            draft: &due.draft,
+            pending_media: &pending_media,
+            in_reply_to_account_id,
+            quote_of_uri: due.quote_of_uri.as_deref(),
+        },
+    )
+    .await
+    {
+        Ok(_) => {
+            if let Err(error) = delete_scheduled_status_by_id(db, &due.id).await {
+                console_error!(
+                    "scheduled status publish warning: published scheduled status {} but failed to delete row: {error}",
+                    due.id
+                );
+            }
+            PublishDueScheduledStatusOutcome::Published
+        }
+        Err(error) => {
+            console_error!(
+                "scheduled status publish failed: could not publish scheduled status {}: {error}",
+                due.id
+            );
+            PublishDueScheduledStatusOutcome::Failed
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct DueScheduledStatusProcessSummary {
+    pub(crate) published: u32,
+    pub(crate) skipped: u32,
+    pub(crate) failed: u32,
+}
+
+pub(crate) async fn process_due_scheduled_statuses_for_config(
+    db: &D1Database,
+    config: &AppConfig,
+    env: Option<&Env>,
+    limit: u32,
+) -> Result<DueScheduledStatusProcessSummary> {
+    let now_iso = now_iso_string()?;
+    let mut summary = DueScheduledStatusProcessSummary::default();
+    for due in list_due_scheduled_statuses(db, &now_iso, limit).await? {
+        match publish_due_scheduled_status(db, config, env, &due).await {
+            PublishDueScheduledStatusOutcome::Published => summary.published += 1,
+            PublishDueScheduledStatusOutcome::Skipped => summary.skipped += 1,
+            PublishDueScheduledStatusOutcome::Failed => summary.failed += 1,
+        }
+    }
+    Ok(summary)
+}
+
+pub(crate) async fn process_due_scheduled_statuses(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    let config = load_config(&ctx);
+    match extract_authenticated_user(&req, &config).await? {
+        Some(_) => {}
+        None => return Response::error("Auth0 authentication required", 401),
+    }
+
+    let db = ctx.d1(&config.database_binding)?;
+    let summary =
+        process_due_scheduled_statuses_for_config(&db, &config, Some(&ctx.env), 32).await?;
+    Response::from_json(&summary)
+}
+
 fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -229,6 +484,110 @@ fn json_boolish(value: &serde_json::Value, key: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn due_scheduled_status_from_value_maps_stored_fields() {
+        let value = serde_json::json!({
+            "id": "sched-due-1",
+            "account_id": "acct-1",
+            "text_content": "due later",
+            "visibility": "public",
+            "spoiler_text": "",
+            "sensitive": 0,
+            "language": "en",
+            "quote_approval_policy": null,
+            "in_reply_to_id": null,
+            "media_ids_json": "[]",
+            "poll_json": null,
+            "idempotency_key": "idem-due",
+            "application_id": 3,
+            "quote_of_uri": "https://social.example/users/alice/statuses/42",
+            "scheduled_at": "2026-01-01T00:00:00.000Z"
+        });
+
+        let due = due_scheduled_status_from_value(&value).expect("due scheduled status");
+
+        assert_eq!(due.id, "sched-due-1");
+        assert_eq!(due.account_id, "acct-1");
+        assert_eq!(due.draft.text(), "due later");
+        assert_eq!(due.idempotency_key.as_deref(), Some("idem-due"));
+        assert_eq!(due.application_id, Some(3));
+        assert_eq!(
+            due.quote_of_uri.as_deref(),
+            Some("https://social.example/users/alice/statuses/42")
+        );
+        assert_eq!(due.scheduled_at, "2026-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn is_scheduled_status_due_compares_iso_timestamps() {
+        assert!(is_scheduled_status_due("2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"));
+        assert!(is_scheduled_status_due(
+            "2026-01-02T00:00:00.000Z",
+            "2026-01-02T00:00:00.000Z"
+        ));
+        assert!(!is_scheduled_status_due(
+            "2026-01-03T00:00:00.000Z",
+            "2026-01-02T00:00:00.000Z"
+        ));
+    }
+
+    #[test]
+    fn compare_due_scheduled_status_order_sorts_by_scheduled_at_then_id() {
+        let earlier = DueScheduledStatus {
+            id: "b".to_owned(),
+            account_id: "acct".to_owned(),
+            draft: StatusDraft::try_from_persisted(
+                "a".to_owned(),
+                Visibility::Public,
+                "".to_owned(),
+                false,
+                None,
+                None,
+                None,
+                Vec::new(),
+                None,
+            )
+            .expect("draft"),
+            idempotency_key: None,
+            application_id: None,
+            quote_of_uri: None,
+            scheduled_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        };
+        let later_same_time = DueScheduledStatus {
+            id: "c".to_owned(),
+            account_id: "acct".to_owned(),
+            draft: earlier.draft.clone(),
+            idempotency_key: None,
+            application_id: None,
+            quote_of_uri: None,
+            scheduled_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        };
+        let much_later = DueScheduledStatus {
+            id: "a".to_owned(),
+            account_id: "acct".to_owned(),
+            draft: earlier.draft.clone(),
+            idempotency_key: None,
+            application_id: None,
+            quote_of_uri: None,
+            scheduled_at: "2026-01-02T00:00:00.000Z".to_owned(),
+        };
+
+        assert_eq!(
+            compare_due_scheduled_status_order(&earlier, &later_same_time),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_due_scheduled_status_order(&later_same_time, &much_later),
+            std::cmp::Ordering::Less
+        );
+
+        let mut ordered = vec![much_later, later_same_time, earlier];
+        ordered.sort_by(compare_due_scheduled_status_order);
+        assert_eq!(ordered[0].id, "b");
+        assert_eq!(ordered[1].id, "c");
+        assert_eq!(ordered[2].id, "a");
+    }
 
     #[test]
     fn scheduled_status_from_value_maps_stored_fields() {
