@@ -9,6 +9,8 @@ Investigation of where Cloudflare Durable Objects (DOs) would help `cfwdon`, esp
 
 Durable Objects fit features that need **long-lived connections**, **per-entity coordination**, or **exact-once-per-key scheduling**. The strongest fit today is **timeline streaming fan-out**. A strong federation fit is **per-remote-host inbox admission** (rate limit / backlog / ordered handoff), not separate public inbox URLs. Outbound ActivityPub delivery should stay on **Queues**. Per-entity schedules (scheduled statuses, poll expiry) are secondary DO candidates. Pure request/response Mastodon API and D1-backed reads should stay on the Worker + D1 path.
 
+The Cloudflare **Agents SDK** sits on Durable Objects but targets assistant/session products (chat, MCP, email, workflows with UI). It is a poor default for Mastodon wire protocols and cfwdon’s Rust Worker core; see [Agents SDK Versus Bare Durable Objects](#agents-sdk-versus-bare-durable-objects).
+
 ## Why Durable Objects Here
 
 Cloudflare Workers are short-lived and isolate-scoped. DOs add:
@@ -184,7 +186,48 @@ Alarms help when work is **sparse and time-exact** (one status fires once). Cron
 
 If multiple devices for one account should share markers, streaming subscriptions, or “which device got the push,” a `presence:{account_id}` DO can coordinate. Mastodon markers already live in D1 and do not need DO consistency today. Defer until a concrete multi-device product need appears.
 
-## Poor Fits (Prefer Other Primitives)
+## Agents SDK Versus Bare Durable Objects
+
+Cloudflare **Agents** are Durable Objects with an opinionated TypeScript SDK on top (`Agent` → PartyServer `Server` → `DurableObject`). They add client state sync, `/agents/{name}/{instance}` routing, `@callable` RPC, richer scheduling, React hooks, chat/MCP/email helpers, and optional `AgentWorkflow` durable steps.
+
+They are **not** a separate runtime from DOs. The question is whether the Agents abstraction helps more than it constrains.
+
+### Prefer bare Durable Objects (or Queues) for cfwdon core
+
+| Surface | Why Agents is a weak fit |
+| --- | --- |
+| Mastodon streaming (`/api/v1/streaming`) | Clients speak Mastodon SSE/WebSocket JSON, not `useAgent` / Agents protocol. Hibernation fan-out needs a thin protocol adapter, not Agents client sync. |
+| Inbox host admission | Admission counters + Queue handoff are small coordination; Agents state sync / chat / routing add little. |
+| Outbound delivery / WebPush | Already Queues-shaped; Agents would be overhead. |
+| Rust Worker codebase | Agents SDK is a JS/TS (`agents`) package. cfwdon’s Worker is `workers-rs`. Using Agents implies a second TS Worker or rewriting surfaces. |
+
+For StreamHub and `InboxHost`, implement **`#[durable_object]` in Rust** (or a small dedicated TS DO Worker if hibernation ergonomics demand it). Do not route Mastodon clients through `routeAgentRequest`.
+
+### Where Agents *is* a better product fit
+
+Agents shine when the unit of work is a **long-lived assistant or operator session** with tools, conversational UI, and resumable interaction—not when the unit is a Mastodon wire protocol endpoint.
+
+| Case | Why Agents over raw DO |
+| --- | --- |
+| Instance operator / moderation copilot | Chat UI, tool calls (suspend user, inspect delivery DLQ, search reports), `setState` transcript, human-in-the-loop approvals via Workflows |
+| Remote MCP server for cfwdon ops | `McpAgent` + OAuth-shaped tooling around D1/queue inspection without inventing a custom WS protocol |
+| Email → draft status / report intake | Agents email routing + secure reply, then hand off to existing status/report APIs |
+| Resumable admin workflows | Multi-step “review report → fetch remote actor → decide” with `AgentWorkflow` retries and progress to a browser client |
+| Optional AI features on a web UI | Workers AI / external LLM with `AIChatAgent`, while Mastodon API stays on the Rust Worker |
+
+These are **adjacent products** (ops console, MCP, email bridge), not replacements for streaming hubs or inbox admission.
+
+### Decision rule
+
+```text
+Need Mastodon/ActivityPub wire compatibility or tiny keyed coordination?
+  → bare Durable Object (Rust) or Queues/D1
+
+Need conversational/tool-using session with first-party web/MCP/email clients?
+  → Agents SDK (likely a separate TS Worker bound to the same Cloudflare account)
+```
+
+Avoid wrapping StreamHub in `Agent` “because WebSockets.” Hibernation WebSockets on a DO already cover that; Agents’ value is the **session/tool/UI layer**, which Mastodon clients do not use.
 
 | Feature | Prefer | Why |
 | --- | --- | --- |
