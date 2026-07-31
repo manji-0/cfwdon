@@ -266,7 +266,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 ### Phase C — Inbox host admission + schedule (optional)
 
 1. **Landed (spike):** `InboxHost` Durable Object with `INBOX_HOST` binding and wrangler `v2` migration. Per-remote-host fixed-window admission (`60s` window, `120` admits) via `POST /admit` on the DO; Worker calls `admit_inbox_host_soft` before `begin_inbox_activity_if_needed` in verified inbox processing and on shared-inbox `AcceptedNoTargets` after signature verify. Soft reject returns HTTP `202` without D1 dedupe slot; DO/binding errors fail-open.
-2. Still open: Queue handoff after admission, backlog depth / 503 policy, alarm-based scheduled status / poll expiry versus cron sweeps.
+2. Poll sweep on cron landed; DO alarms still deferred; scheduled-status due publish still missing. Still open: Queue handoff after admission, backlog depth / 503 policy, alarm-based scheduled status versus cron sweeps.
 3. If one remote host still dominates processing after the thin limiter, escalate to full `InboxHost` admission + Queue handoff while keeping public inbox URLs unchanged.
 
 ## Decision Criteria Before Committing

@@ -11,6 +11,7 @@ use super::auth::{
 };
 use super::enqueue_status_update_activity;
 use super::runtime_config::load_config;
+use cfwdon_core::AppConfig;
 use super::time_html::is_iso_timestamp_in_past;
 use super::{
     apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
@@ -20,10 +21,10 @@ use super::{
     remote_poll_is_visible_to_viewer, send_poll_end_notifications,
 };
 use serde::{Deserialize, Serialize};
-use worker::{Error, Request, Response, Result, RouteContext};
+use worker::{Env, Error, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Serialize)]
-struct PollExpirationProcessResponse {
+pub(crate) struct PollExpirationProcessResponse {
     queued: u32,
 }
 
@@ -178,6 +179,41 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
     Response::error("poll not found", 404)
 }
 
+pub(crate) async fn process_expired_polls_for_config(
+    db: &D1Database,
+    config: &AppConfig,
+    env: Option<&Env>,
+) -> Result<PollExpirationProcessResponse> {
+    let mut summary = PollExpirationProcessResponse::default();
+
+    for row in list_expired_polls_requiring_federation_close(db, 64).await? {
+        let Some(status) = find_status_by_id(db, &row.status_id).await? else {
+            continue;
+        };
+        let Some(account) = find_account_by_id(db, &row.account_id).await? else {
+            continue;
+        };
+        if enqueue_status_update_activity(db, config, &account, &status)
+            .await
+            .is_ok()
+        {
+            let _ = send_poll_end_notifications(
+                db,
+                config,
+                env,
+                &row.poll_id,
+                &row.status_id,
+                &row.account_id,
+            )
+            .await;
+            mark_status_poll_federated_closed(db, &row.poll_id).await?;
+            summary.queued += 1;
+        }
+    }
+
+    Ok(summary)
+}
+
 pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     match extract_authenticated_user(&req, &config).await? {
@@ -186,32 +222,7 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
     }
 
     let db = ctx.d1(&config.database_binding)?;
-    let mut summary = PollExpirationProcessResponse::default();
-
-    for row in list_expired_polls_requiring_federation_close(&db, 64).await? {
-        let Some(status) = find_status_by_id(&db, &row.status_id).await? else {
-            continue;
-        };
-        let Some(account) = find_account_by_id(&db, &row.account_id).await? else {
-            continue;
-        };
-        if enqueue_status_update_activity(&db, &config, &account, &status)
-            .await
-            .is_ok()
-        {
-            let _ = send_poll_end_notifications(
-                &db,
-                &config,
-                Some(&ctx.env),
-                &row.poll_id,
-                &row.status_id,
-                &row.account_id,
-            )
-            .await;
-            mark_status_poll_federated_closed(&db, &row.poll_id).await?;
-            summary.queued += 1;
-        }
-    }
-
+    let summary =
+        process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
     Response::from_json(&summary)
 }
