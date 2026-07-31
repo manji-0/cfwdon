@@ -396,6 +396,45 @@ pub(crate) async fn publish_stream_hub_event(
     Ok(())
 }
 
+pub(crate) async fn connect_stream_hub_websocket(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    stream: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    account_id: Option<&str>,
+) -> Result<WebSocket> {
+    let namespace = env.durable_object(binding)?;
+    let stub = namespace.get_by_name(hub_name)?;
+
+    let headers = worker::Headers::new();
+    headers.set("Upgrade", "websocket")?;
+    headers.set("X-Stream", stream)?;
+    if let Some(tag_value) = tag.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.set("X-Stream-Tag", tag_value)?;
+    }
+    if let Some(list_value) = list.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.set("X-Stream-List", list_value)?;
+    }
+    if let Some(account_id) = account_id.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.set("X-Account-Id", account_id)?;
+    }
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
+    let request = Request::new_with_init(&url, &init)?;
+    let response = stub.fetch_with_request(request).await?;
+    let websocket = response
+        .websocket()
+        .ok_or_else(|| worker::Error::RustError(
+            "stream hub websocket upgrade did not return a socket".to_owned(),
+        ))?;
+    websocket.accept()?;
+    Ok(websocket)
+}
+
 pub(crate) async fn upgrade_stream_hub_websocket(
     env: &Env,
     binding: &str,

@@ -37,7 +37,7 @@ use crate::{
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
     store_account_private_key, stream_hub_id_name, streaming_batch_from_entries,
-    upgrade_stream_hub_websocket,
+    connect_stream_hub_websocket, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -51,6 +51,7 @@ use worker::{
 };
 
 const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
+const STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS: u64 = 30;
 const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
 const STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION: u32 = 200;
 
@@ -1510,6 +1511,134 @@ fn sse_event_bytes(event: &StreamingEvent) -> Vec<u8> {
     format!("event: {}\ndata: {}\n\n", event.event, event.data).into_bytes()
 }
 
+fn sse_named_event_bytes(event: &str, data: &str) -> Vec<u8> {
+    format!("event: {event}\ndata: {data}\n\n").into_bytes()
+}
+
+fn streaming_event_identity_from_payload(event_name: &str, data: &str) -> (String, String) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+        let id = value
+            .get("id")
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .or_else(|| value.as_i64().map(|id| id.to_string()))
+            })
+            .unwrap_or_else(|| format!("{event_name}:{data}"));
+        let created_at = value
+            .get("created_at")
+            .and_then(|value| value.as_str())
+            .unwrap_or("1970-01-01T00:00:00Z")
+            .to_owned();
+        return (id, created_at);
+    }
+
+    (
+        format!("{event_name}:{}", data.chars().take(64).collect::<String>()),
+        "1970-01-01T00:00:00Z".to_owned(),
+    )
+}
+
+fn stream_hub_websocket_text_to_sse_bytes(
+    text: &str,
+    state: &mut StreamingLoopState,
+) -> Option<Vec<u8>> {
+    let value = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    if value.get("error").is_some() {
+        return None;
+    }
+    let event_name = value
+        .get("event")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if event_name.is_empty() {
+        return None;
+    }
+    let data = if event_name == "filters_changed" {
+        "undefined".to_owned()
+    } else {
+        value
+            .get("payload")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let (id, _created_at) = if event_name == "filters_changed" {
+        (
+            state
+                .last_filter_updated_at
+                .clone()
+                .unwrap_or_else(|| "filters_changed".to_owned()),
+            state
+                .last_filter_updated_at
+                .clone()
+                .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
+        )
+    } else {
+        streaming_event_identity_from_payload(event_name, &data)
+    };
+    let dedupe_key = format!("{event_name}:{id}");
+    if !state.emitted_event_ids.insert(dedupe_key) {
+        return None;
+    }
+  Some(sse_named_event_bytes(event_name, &data))
+}
+
+async fn yield_streaming_poll_round(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    viewer: Option<&crate::LocalAccount>,
+    state: &mut StreamingLoopState,
+    poll_rounds: &mut u32,
+) -> StreamingPollYield {
+    *poll_rounds = poll_rounds.saturating_add(1);
+    let events = match poll_streaming_events(
+        db,
+        config,
+        stream_name,
+        tag,
+        list,
+        viewer,
+        state,
+    )
+    .await
+    {
+        Ok(events) => events,
+        Err(error) => {
+            console_error!(
+                "streaming poll failed stream={} tag={} list={} error={}",
+                stream_name,
+                tag.unwrap_or_default(),
+                list.unwrap_or_default(),
+                error
+            );
+            if streaming_error_is_subrequest_limit(&error)
+                || streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds)
+            {
+                return StreamingPollYield::Recycle;
+            }
+            return StreamingPollYield::PollFailed;
+        }
+    };
+    if streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds) {
+        return StreamingPollYield::Recycle;
+    }
+    StreamingPollYield::Events(events)
+}
+
+enum StreamingPollYield {
+    Events(Vec<StreamingEvent>),
+    PollFailed,
+    Recycle,
+}
+
 fn streaming_websocket_subscription_key(
     stream_name: &str,
     tag: Option<&str>,
@@ -2896,12 +3025,14 @@ fn retain_new_streaming_events(state: &mut StreamingLoopState, events: &mut Vec<
 }
 
 fn build_streaming_event_stream(
+    env: Option<Env>,
     db: D1Database,
     config: cfwdon_core::AppConfig,
     stream_name: String,
     tag: Option<String>,
     list: Option<String>,
     viewer: Option<crate::LocalAccount>,
+    hub_target: Option<(String, Option<String>)>,
 ) -> impl futures_util::TryStream<
     Ok = Vec<u8>,
     Error = worker::Error,
@@ -2911,48 +3042,160 @@ fn build_streaming_event_stream(
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut state = StreamingLoopState::new();
         let mut poll_rounds = 0_u32;
-        loop {
-            poll_rounds = poll_rounds.saturating_add(1);
-            let events = match poll_streaming_events(
-                    &db,
-                    &config,
-                    &stream_name,
-                    tag.as_deref(),
-                    list.as_deref(),
-                    viewer.as_ref(),
-                    &mut state,
-                )
-                .await {
-                    Ok(events) => events,
-                    Err(error) => {
-                        console_error!(
-                            "streaming poll failed stream={} tag={} list={} error={}",
+        let hub_websocket = if let (Some(env), Some((hub_name, account_id))) =
+            (env.as_ref(), hub_target.as_ref())
+        {
+            yield sse_comment_bytes("source=stream-hub");
+            match connect_stream_hub_websocket(
+                env,
+                &config.stream_hub_binding,
+                hub_name,
+                &stream_name,
+                tag.as_deref(),
+                list.as_deref(),
+                account_id.as_deref(),
+            )
+            .await
+            {
+                Ok(websocket) => {
+                    if let Err(error) = poll_streaming_events(
+                        &db,
+                        &config,
+                        &stream_name,
+                        tag.as_deref(),
+                        list.as_deref(),
+                        viewer.as_ref(),
+                        &mut state,
+                    )
+                    .await
+                    {
+                        console_log!(
+                            "stream hub sse initial sync failed stream={} error={}",
                             stream_name,
-                            tag.as_deref().unwrap_or(""),
-                            list.as_deref().unwrap_or(""),
                             error
                         );
-                        yield sse_comment_bytes("error=streaming_poll_failed");
-                        if streaming_error_is_subrequest_limit(&error)
-                            || streaming_poll_budget_exhausted(poll_rounds, poll_rounds)
-                        {
-                            yield sse_comment_bytes("stream=recycle");
-                            break;
-                        }
-                        worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
-                        continue;
                     }
-                };
-            if events.is_empty() {
-                yield sse_comment_bytes("thump");
-            } else {
-                for event in events {
-                    yield sse_event_bytes(&event);
+                    Some(websocket)
+                }
+                Err(error) => {
+                    console_log!(
+                        "stream hub sse connect failed for hub {}: {:?}; falling back to d1 poll",
+                        hub_name,
+                        error
+                    );
+                    None
                 }
             }
-            if streaming_poll_budget_exhausted(poll_rounds, poll_rounds) {
-                yield sse_comment_bytes("stream=recycle");
-                break;
+        } else {
+            None
+        };
+
+        let mut hub_events = hub_websocket
+            .as_ref()
+            .and_then(|websocket| websocket.events().ok());
+        while hub_events.is_some() {
+            let backup_tick =
+                worker::Delay::from(Duration::from_secs(STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS))
+                    .fuse();
+            pin_mut!(backup_tick);
+            select! {
+                event = hub_events.as_mut().unwrap().next().fuse() => {
+                    match event {
+                        Some(Ok(WebsocketEvent::Message(message))) => {
+                            if let Some(text) = message.text() {
+                                if let Some(bytes) =
+                                    stream_hub_websocket_text_to_sse_bytes(&text, &mut state)
+                                {
+                                    yield bytes;
+                                }
+                            }
+                        }
+                        Some(Ok(WebsocketEvent::Close(_))) | None => {
+                            if let Some((hub_name, _)) = hub_target.as_ref() {
+                                console_log!(
+                                    "stream hub sse websocket closed for hub {}; falling back to d1 poll",
+                                    hub_name
+                                );
+                            }
+                            hub_events = None;
+                        }
+                        Some(Err(error)) => {
+                            if let Some((hub_name, _)) = hub_target.as_ref() {
+                                console_error!(
+                                    "stream hub sse websocket error for hub {}: {}",
+                                    hub_name,
+                                    error
+                                );
+                            }
+                            hub_events = None;
+                        }
+                    }
+                }
+                _ = backup_tick => {
+                    match yield_streaming_poll_round(
+                        &db,
+                        &config,
+                        &stream_name,
+                        tag.as_deref(),
+                        list.as_deref(),
+                        viewer.as_ref(),
+                        &mut state,
+                        &mut poll_rounds,
+                    )
+                    .await
+                    {
+                        StreamingPollYield::Events(events) => {
+                            if events.is_empty() {
+                                yield sse_comment_bytes("thump");
+                            } else {
+                                for event in events {
+                                    yield sse_event_bytes(&event);
+                                }
+                            }
+                        }
+                        StreamingPollYield::PollFailed => {
+                            yield sse_comment_bytes("error=streaming_poll_failed");
+                        }
+                        StreamingPollYield::Recycle => {
+                            yield sse_comment_bytes("stream=recycle");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        loop {
+            match yield_streaming_poll_round(
+                &db,
+                &config,
+                &stream_name,
+                tag.as_deref(),
+                list.as_deref(),
+                viewer.as_ref(),
+                &mut state,
+                &mut poll_rounds,
+            )
+            .await
+            {
+                StreamingPollYield::Events(events) => {
+                    if events.is_empty() {
+                        yield sse_comment_bytes("thump");
+                    } else {
+                        for event in events {
+                            yield sse_event_bytes(&event);
+                        }
+                    }
+                }
+                StreamingPollYield::PollFailed => {
+                    yield sse_comment_bytes("error=streaming_poll_failed");
+                    worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
+                    continue;
+                }
+                StreamingPollYield::Recycle => {
+                    yield sse_comment_bytes("stream=recycle");
+                    break;
+                }
             }
             worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
         }
@@ -3376,6 +3619,7 @@ async fn streaming_websocket_upgrade_response(
 }
 
 fn streaming_sse_response(
+    env: &Env,
     db: worker::D1Database,
     config: cfwdon_core::AppConfig,
     stream: String,
@@ -3384,7 +3628,23 @@ fn streaming_sse_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
 ) -> Result<Response> {
     if streaming_channel_supports_live_events(&stream) {
-        let stream_body = build_streaming_event_stream(db, config, stream, tag, list, viewer);
+        let hub_target =
+            stream_hub_proxy_target(&stream, viewer.as_ref(), tag.as_deref(), list.as_deref());
+        let env_for_hub = if hub_target.is_some() {
+            Some(env.clone())
+        } else {
+            None
+        };
+        let stream_body = build_streaming_event_stream(
+            env_for_hub,
+            db,
+            config,
+            stream,
+            tag,
+            list,
+            viewer,
+            hub_target,
+        );
         let mut response = Response::from_stream(stream_body)?;
         response
             .headers_mut()
@@ -3494,7 +3754,15 @@ pub(crate) async fn streaming_placeholder_response(
         );
     };
 
-    streaming_sse_response(db, config, stream, query.tag, query.list, authenticated)
+    streaming_sse_response(
+        &ctx.env,
+        db,
+        config,
+        stream,
+        query.tag,
+        query.list,
+        authenticated,
+    )
 }
 
 pub(crate) async fn statuses_index_placeholder_response(
@@ -3853,6 +4121,50 @@ mod tests {
         assert_eq!(
             sse_event_bytes(&event),
             b"event: update\ndata: {\"id\":\"status-1\"}\n\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_matches_event_stream_format() {
+        let mut state = StreamingLoopState::new();
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "update",
+            "payload": "{\"id\":\"status-1\"}",
+        });
+
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: update\ndata: {\"id\":\"status-1\"}\n\n".to_vec())
+        );
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_dedupes_repeated_events() {
+        let mut state = StreamingLoopState::new();
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "update",
+            "payload": "{\"id\":\"status-1\"}",
+        })
+        .to_string();
+
+        assert!(stream_hub_websocket_text_to_sse_bytes(&message, &mut state).is_some());
+        assert!(stream_hub_websocket_text_to_sse_bytes(&message, &mut state).is_none());
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_handles_filters_changed() {
+        let mut state = StreamingLoopState::new();
+        state.last_filter_updated_at = Some("2025-01-02T00:00:00Z".to_owned());
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "filters_changed",
+        });
+
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
         );
     }
 
