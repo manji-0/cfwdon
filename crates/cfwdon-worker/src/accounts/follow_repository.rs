@@ -3,15 +3,17 @@ use crate::{
     AppConfig, D1Database, LocalAccount, Result, actor_url, build_relationship_for_target,
     delete_follow_by_target, follow_remote_account, unfollow_remote_account,
 };
+use worker::Env;
 
 pub(crate) async fn follow_local_account(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     follower: &LocalAccount,
     target: &LocalAccount,
     request: &FollowAccountRequest,
 ) -> Result<crate::RelationshipResponse> {
-    upsert_local_follow(db, config, follower, target, request).await?;
+    upsert_local_follow(db, config, env, follower, target, request).await?;
     build_relationship_for_target(
         db,
         config,
