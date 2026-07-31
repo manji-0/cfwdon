@@ -803,10 +803,11 @@ pub(crate) async fn home_timeline_response(
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return empty_timeline_response();
     }
-    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags) = futures_util::try_join!(
+    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = futures_util::try_join!(
         load_account_filter_matcher(&db, viewer.id()),
         account_has_thread_mutes(&db, viewer.id()),
         account_has_followed_tags(&db, viewer.id()),
+        list_active_muted_actor_uris_for_account(&db, viewer.id()),
     )?;
     let candidate_rows = list_home_timeline_candidate_ids(
         &db,
@@ -843,29 +844,20 @@ pub(crate) async fn home_timeline_response(
         .into_iter()
         .map(|(status, actor)| (status.id.clone(), (status, actor)))
         .collect::<HashMap<_, _>>();
-    let (local_accounts_by_id, mut media_by_status_id, muted_actor_uris) = {
+    // Thread mutes key off the candidate statuses, not their authors, so they no
+    // longer have to wait for the account lookup.
+    let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) = {
         let local_status_refs = local_statuses_by_id.values().collect::<Vec<_>>();
-        let remote_status_refs = remote_statuses_by_id.values().collect::<Vec<_>>();
-        let (local_accounts_by_id, media_by_status_id) =
-            preload_local_timeline_rows_from_status_refs(&db, &local_status_refs).await?;
-        let muted_actor_uris = preload_muted_timeline_actor_uris(
-            &db,
-            &config,
-            &viewer,
-            &local_status_refs,
-            &remote_status_refs,
-            &local_accounts_by_id,
-        )
-        .await?;
-        (local_accounts_by_id, media_by_status_id, muted_actor_uris)
+        futures_util::try_join!(
+            preload_local_timeline_rows_from_status_refs(&db, &local_status_refs),
+            muted_local_timeline_status_ids(
+                &db,
+                viewer.id(),
+                viewer_has_thread_mutes,
+                &local_status_refs,
+            ),
+        )?
     };
-    let muted_local_status_ids = muted_local_timeline_status_ids(
-        &db,
-        viewer.id(),
-        viewer_has_thread_mutes,
-        &local_statuses_by_id.values().collect::<Vec<_>>(),
-    )
-    .await?;
     let mut candidates = Vec::new();
     let mut seen_status_ids = HashSet::new();
 

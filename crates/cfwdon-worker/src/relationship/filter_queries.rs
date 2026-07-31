@@ -147,6 +147,40 @@ pub(crate) async fn list_active_muted_actor_uris(
         .collect())
 }
 
+/// Every actor URI the account currently mutes.
+///
+/// Timelines used to ask "which of these N candidate actors are muted?", which
+/// forced the candidates' authors to be known first and so serialized behind the
+/// account lookup. A viewer's mute list is small and candidate-independent, so
+/// fetching it whole lets the check run as a plain set membership test and start
+/// as early as authentication.
+///
+/// Unlike [`list_active_muted_actor_uris`] this does not delete expired rows: a
+/// timeline read should not write. Expired mutes are filtered out here and are
+/// still collected by [`list_mutes_for_account`].
+pub(crate) async fn list_active_muted_actor_uris_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<HashSet<String>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT target_actor_uri
+             FROM mutes
+             WHERE account_id = ?1
+               AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<MutedActorUriRow>()?
+        .into_iter()
+        .map(|row| row.target_actor_uri)
+        .collect())
+}
+
 pub(crate) async fn muted_notifications_for_actor(
     db: &D1Database,
     account_id: &str,
