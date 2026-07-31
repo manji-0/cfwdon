@@ -1,3 +1,4 @@
+use crate::StreamHubEvent;
 use crate::{
     AppConfig, D1Database, Env, RemoteActorProfile, RemoteActorRow, RemoteStatusRow,
     STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT, StatusRow,
@@ -88,7 +89,10 @@ async fn publish_public_stream_hub_event_dual_soft(
 ) {
     for hub_name in stream_hub_public_publish_hub_names(base_hub_name, shard_count) {
         publish_stream_hub_event_soft(
-            env, binding, &hub_name, stream, None, event, payload, event_id,
+            env,
+            binding,
+            &hub_name,
+            &StreamHubEvent::new(stream, event, payload, event_id),
         )
         .await;
     }
@@ -99,14 +103,17 @@ async fn publish_to_hub_streams_soft(
     binding: &str,
     hub_name: &str,
     streams: &[&str],
-    account_id: Option<&str>,
+    tag: Option<&str>,
     event: &str,
     payload: &str,
     event_id: Option<&str>,
 ) {
     for stream in streams {
         publish_stream_hub_event_soft(
-            env, binding, hub_name, stream, account_id, event, payload, event_id,
+            env,
+            binding,
+            hub_name,
+            &StreamHubEvent::new(stream, event, payload, event_id).with_tag(tag),
         )
         .await;
     }
@@ -215,7 +222,7 @@ async fn publish_hashtag_timeline_events_soft(
             binding,
             &hub_name,
             &HASHTAG_STREAMS,
-            None,
+            Some(tag),
             event,
             payload,
             event_id,
@@ -239,7 +246,7 @@ async fn publish_remote_hashtag_timeline_events_soft(
             binding,
             &hub_name,
             &REMOTE_HASHTAG_STREAMS,
-            None,
+            Some(tag),
             event,
             payload,
             event_id,
@@ -303,7 +310,10 @@ async fn publish_list_timeline_events_soft(
         }
         let hub_name = stream_hub_id_name("list", None, None, Some(&list.list_id));
         publish_stream_hub_event_soft(
-            env, binding, &hub_name, "list", None, event, payload, event_id,
+            env,
+            binding,
+            &hub_name,
+            &StreamHubEvent::new("list", event, payload, event_id).with_list(Some(&list.list_id)),
         )
         .await;
     }
@@ -353,7 +363,10 @@ async fn publish_remote_list_timeline_events_soft(
         }
         let hub_name = stream_hub_id_name("list", None, None, Some(&list.list_id));
         publish_stream_hub_event_soft(
-            env, binding, &hub_name, "list", None, event, payload, event_id,
+            env,
+            binding,
+            &hub_name,
+            &StreamHubEvent::new("list", event, payload, event_id).with_list(Some(&list.list_id)),
         )
         .await;
     }
@@ -551,11 +564,8 @@ async fn publish_direct_timeline_events_soft(
             env,
             binding,
             &hub_name,
-            "direct",
-            Some(&recipient_id),
-            event,
-            payload,
-            event_id,
+            &StreamHubEvent::new("direct", event, payload, event_id)
+                .with_account_id(Some(&recipient_id)),
         )
         .await;
     }
@@ -629,11 +639,8 @@ async fn publish_direct_conversation_stream_events_soft(
             env,
             binding,
             &hub_name,
-            "direct",
-            Some(&recipient_id),
-            "update",
-            &payload,
-            Some(&conversation.id),
+            &StreamHubEvent::new("direct", "update", &payload, Some(&conversation.id))
+                .with_account_id(Some(&recipient_id)),
         )
         .await;
     }
