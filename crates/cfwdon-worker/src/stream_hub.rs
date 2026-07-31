@@ -25,9 +25,18 @@ struct StreamHubPublishRequest {
     list: Option<String>,
     event: String,
     payload: String,
+    /// When set, this hub relays the event to `{shard_base}#0..shard_count-1`.
+    /// Keeping the shard fan-out inside the Durable Object costs the Worker one
+    /// subrequest instead of one per shard.
+    #[serde(default)]
+    shard_base: Option<String>,
+    #[serde(default)]
+    shard_count: Option<u32>,
 }
 
 impl StreamHubPublishRequest {
+    /// Body for relays. Shard instructions are dropped so a relayed event is
+    /// never fanned out again.
     fn to_body(&self) -> serde_json::Value {
         let mut body = serde_json::json!({
             "stream": self.stream,
@@ -271,6 +280,7 @@ impl StreamHub {
         }
 
         delivered += self.forward_publish(&publish).await?;
+        delivered += self.fanout_publish_to_shards(&publish).await;
 
         Response::from_json(&serde_json::json!({ "delivered": delivered }))
     }
@@ -342,6 +352,32 @@ impl StreamHub {
         }
 
         Ok(delivered)
+    }
+
+    /// Relays a public event to every shard of the same channel.
+    async fn fanout_publish_to_shards(&self, publish: &StreamHubPublishRequest) -> usize {
+        let (Some(shard_base), Some(shard_count)) =
+            (publish.shard_base.as_deref(), publish.shard_count)
+        else {
+            return 0;
+        };
+        if shard_count <= 1 {
+            return 0;
+        }
+
+        let binding = stream_hub_binding_name(&self.env);
+        let body = publish.to_body();
+        let mut delivered = 0usize;
+        for index in 0..shard_count {
+            let hub_name = format!("{shard_base}#{index}");
+            match publish_stream_hub_event_counted(&self.env, &binding, &hub_name, &body).await {
+                Ok(count) => delivered += count,
+                Err(error) => {
+                    console_error!("failed to relay stream hub event to shard {hub_name}: {error}")
+                }
+            }
+        }
+        delivered
     }
 
     /// Asks the open channel's hub to forward its events to this session hub.
@@ -534,6 +570,8 @@ pub(crate) struct StreamHubEvent<'a> {
     pub(crate) event: &'a str,
     pub(crate) payload: &'a str,
     pub(crate) event_id: Option<&'a str>,
+    shard_base: Option<&'a str>,
+    shard_count: Option<u32>,
 }
 
 impl<'a> StreamHubEvent<'a> {
@@ -551,7 +589,18 @@ impl<'a> StreamHubEvent<'a> {
             event,
             payload,
             event_id,
+            shard_base: None,
+            shard_count: None,
         }
+    }
+
+    /// Lets the receiving hub relay this event to its shards.
+    pub(crate) fn with_shard_fanout(mut self, shard_base: &'a str, shard_count: u32) -> Self {
+        if shard_count > 1 {
+            self.shard_base = Some(shard_base);
+            self.shard_count = Some(shard_count);
+        }
+        self
     }
 
     pub(crate) fn with_tag(mut self, tag: Option<&'a str>) -> Self {
@@ -586,6 +635,10 @@ impl<'a> StreamHubEvent<'a> {
         }
         if let Some(event_id) = self.event_id {
             body["event_id"] = serde_json::json!(event_id);
+        }
+        if let (Some(shard_base), Some(shard_count)) = (self.shard_base, self.shard_count) {
+            body["shard_base"] = serde_json::json!(shard_base);
+            body["shard_count"] = serde_json::json!(shard_count);
         }
         body
     }
@@ -1030,6 +1083,35 @@ mod tests {
         assert_eq!(publish.payload, r#"{"id":"1"}"#);
         assert!(publish.tag.is_none());
         assert!(publish.list.is_none());
+    }
+
+    #[test]
+    fn shard_fanout_is_requested_only_when_sharded() {
+        let unsharded = StreamHubEvent::new("public", "update", "{}", None)
+            .with_shard_fanout("public", 1)
+            .to_body();
+        assert!(unsharded.get("shard_base").is_none());
+        assert!(unsharded.get("shard_count").is_none());
+
+        let sharded = StreamHubEvent::new("public", "update", "{}", None)
+            .with_shard_fanout("public", 4)
+            .to_body();
+        assert_eq!(sharded["shard_base"], "public");
+        assert_eq!(sharded["shard_count"], 4);
+    }
+
+    #[test]
+    fn relayed_body_drops_shard_instructions() {
+        let body = StreamHubEvent::new("public", "update", "{}", None)
+            .with_shard_fanout("public", 4)
+            .to_body();
+        let publish = serde_json::from_value::<StreamHubPublishRequest>(body).unwrap();
+        assert_eq!(publish.shard_count, Some(4));
+
+        // What the shard receives must not fan out again.
+        let relayed = publish.to_body();
+        assert!(relayed.get("shard_base").is_none());
+        assert!(relayed.get("shard_count").is_none());
     }
 
     #[test]

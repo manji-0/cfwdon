@@ -94,7 +94,7 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `STREAM_HUB_PUBLIC_SHARD_COUNT` | Optional | `1` | When greater than `1`, each public timeline event fans out to the unsharded hub plus every sharded hub (`public#0` … `public#N-1`). Only anonymous WS/SSE clients sticky-route to a shard (`CF-Connecting-IP`, else `anon`); authenticated clients connect to their own session hub and receive forwarded public events. Clamped to `1`–`64`. |
+| `STREAM_HUB_PUBLIC_SHARD_COUNT` | Optional | `1` | When greater than `1`, the Worker publishes each public timeline event to the unsharded hub, which relays it to every shard (`public#0` … `public#N-1`). Only anonymous WS/SSE clients sticky-route to a shard (`CF-Connecting-IP`, else `anon`); authenticated clients connect to their own session hub and receive forwarded public events. Clamped to `1`–`64`. |
 | `STREAM_HUB_BINDING` | Optional | `STREAM_HUB` | Binding name the `StreamHub` Durable Object uses for hub-to-hub forwarding. Set it only when the binding in `wrangler.toml` is renamed. |
 
 ## Push Notification Vars

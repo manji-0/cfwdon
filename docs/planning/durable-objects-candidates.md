@@ -246,6 +246,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
 2. Proxy WebSocket upgrades for all live channels (`user`, `user:notification`, `list`, `direct`, public variants, hashtag) through the DO; fall back to Worker poll on failure.
 3. Soft-publish live events (never fail API writes):
+   - Follower fan-out is capped at `STREAM_HUB_FOLLOWER_FANOUT_LIMIT` (200) and runs 8 publishes at a time. Accounts past the cap get no live event for that status and must catch up via REST; raise the cap or move fan-out to a queue before running instances with larger follower counts.
    - Session hub `user:{account_id}` carries every authenticated channel: `user` status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss, local follower home fan-out (cap 200), remote status create/update/delete fan-out to local followers, `user:notification` events, `direct` events plus conversation `update` documents, and `list` events routed to the list owner
    - `user:notification` events: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request; remote Create mention/quote/status(notify)/reply; remote Update update/quoted_update
    - Open channels keep their own hubs: `public` / `public:remote` (+ media) and `hashtag:{tag}` (stream `hashtag` only) for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`
@@ -258,7 +259,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Public and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only); `list` and `direct` are served by the account session hub.
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths. Local edits publish `status.update` to the same channels as create.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
-4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, each public event fans out to the unsharded hub plus **all** shards. Only anonymous clients sticky-route to a shard via `CF-Connecting-IP` / `anon`.
+4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, the Worker publishes once to the unsharded hub, which relays to **all** shards. Only anonymous clients sticky-route to a shard via `CF-Connecting-IP` / `anon`.
 5. Open-channel forwarding: authenticated clients always connect to their session hub. When such a socket subscribes to `public*` / `hashtag*`, the session hub registers itself on the open channel's unsharded hub (`POST /forward/register`), which relays matching events to it. Registrations are dropped lazily when a relay reports zero subscribers or fails, so disconnects need no explicit unregister.
 
 ### Phase C — Inbox host admission + schedule (optional)

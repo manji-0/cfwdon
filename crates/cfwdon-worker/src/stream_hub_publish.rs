@@ -68,17 +68,9 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
     )
 }
 
-fn stream_hub_public_publish_hub_names(base_hub: &str, shard_count: u32) -> Vec<String> {
-    // The unsharded hub always receives the event: it holds the forwarding
-    // registry for authenticated session hubs. Sharded hubs only ever hold
-    // anonymous sockets.
-    let mut names = vec![base_hub.to_owned()];
-    if shard_count > 1 {
-        names.extend((0..shard_count).map(|index| format!("{base_hub}#{index}")));
-    }
-    names
-}
-
+/// Publishes to the unsharded hub only. That hub holds the forwarding registry
+/// for authenticated session hubs and relays the event to its shards, so the
+/// Worker spends one subrequest regardless of shard count.
 async fn publish_public_stream_hub_event_dual_soft(
     env: &Env,
     binding: &str,
@@ -89,15 +81,14 @@ async fn publish_public_stream_hub_event_dual_soft(
     event_id: Option<&str>,
     shard_count: u32,
 ) {
-    for hub_name in stream_hub_public_publish_hub_names(base_hub_name, shard_count) {
-        publish_stream_hub_event_soft(
-            env,
-            binding,
-            &hub_name,
-            &StreamHubEvent::new(stream, event, payload, event_id),
-        )
-        .await;
-    }
+    publish_stream_hub_event_soft(
+        env,
+        binding,
+        base_hub_name,
+        &StreamHubEvent::new(stream, event, payload, event_id)
+            .with_shard_fanout(base_hub_name, shard_count),
+    )
+    .await;
 }
 
 async fn publish_to_hub_streams_soft(
@@ -155,12 +146,33 @@ async fn publish_follower_home_timeline_events_soft(
         );
     }
 
-    for follower_id in fanout.account_ids {
-        if follower_id == author_account_id {
-            continue;
-        }
-        publish_user_stream_hub_event_soft(env, binding, &follower_id, event, payload, event_id)
-            .await;
+    let recipients = fanout
+        .account_ids
+        .into_iter()
+        .filter(|follower_id| follower_id != author_account_id)
+        .collect::<Vec<_>>();
+    publish_user_stream_events_concurrently(env, binding, &recipients, event, payload, event_id)
+        .await;
+}
+
+/// Publishes to many session hubs a chunk at a time. Fan-out is one subrequest
+/// per recipient either way, but overlapping them keeps a large follower list
+/// from serialising the whole request.
+const STREAM_HUB_FANOUT_CONCURRENCY: usize = 8;
+
+async fn publish_user_stream_events_concurrently(
+    env: &Env,
+    binding: &str,
+    account_ids: &[String],
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    for chunk in account_ids.chunks(STREAM_HUB_FANOUT_CONCURRENCY) {
+        let publishes = chunk.iter().map(|account_id| {
+            publish_user_stream_hub_event_soft(env, binding, account_id, event, payload, event_id)
+        });
+        futures_util::future::join_all(publishes).await;
     }
 }
 
@@ -173,20 +185,25 @@ async fn publish_public_timeline_events_soft(
     event_id: Option<&str>,
     shard_count: u32,
 ) {
-    for stream in public_timeline_streams(has_media) {
-        let hub_name = stream_hub_channel_id_name(stream, None);
-        publish_public_stream_hub_event_dual_soft(
-            env,
-            binding,
-            &hub_name,
-            stream,
-            event,
-            payload,
-            event_id,
-            shard_count,
-        )
-        .await;
-    }
+    let publishes = public_timeline_streams(has_media)
+        .into_iter()
+        .map(|stream| {
+            let hub_name = stream_hub_channel_id_name(stream, None);
+            async move {
+                publish_public_stream_hub_event_dual_soft(
+                    env,
+                    binding,
+                    &hub_name,
+                    stream,
+                    event,
+                    payload,
+                    event_id,
+                    shard_count,
+                )
+                .await;
+            }
+        });
+    futures_util::future::join_all(publishes).await;
 }
 
 async fn publish_remote_public_timeline_events_soft(
@@ -198,20 +215,25 @@ async fn publish_remote_public_timeline_events_soft(
     event_id: Option<&str>,
     shard_count: u32,
 ) {
-    for stream in remote_public_timeline_streams(has_media) {
-        let hub_name = stream_hub_channel_id_name(stream, None);
-        publish_public_stream_hub_event_dual_soft(
-            env,
-            binding,
-            &hub_name,
-            stream,
-            event,
-            payload,
-            event_id,
-            shard_count,
-        )
-        .await;
-    }
+    let publishes = remote_public_timeline_streams(has_media)
+        .into_iter()
+        .map(|stream| {
+            let hub_name = stream_hub_channel_id_name(stream, None);
+            async move {
+                publish_public_stream_hub_event_dual_soft(
+                    env,
+                    binding,
+                    &hub_name,
+                    stream,
+                    event,
+                    payload,
+                    event_id,
+                    shard_count,
+                )
+                .await;
+            }
+        });
+    futures_util::future::join_all(publishes).await;
 }
 
 async fn publish_hashtag_timeline_events_soft(
@@ -487,10 +509,15 @@ async fn publish_remote_follower_home_delete_events_soft(
         );
     }
 
-    for follower_id in fanout.account_ids {
-        publish_user_stream_hub_event_soft(env, binding, &follower_id, "delete", payload, event_id)
-            .await;
-    }
+    publish_user_stream_events_concurrently(
+        env,
+        binding,
+        &fanout.account_ids,
+        "delete",
+        payload,
+        event_id,
+    )
+    .await;
 }
 
 async fn build_remote_status_public_stream_payload_soft(
@@ -1216,26 +1243,6 @@ pub(crate) async fn publish_local_status_update_stream_fanout_soft(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stream_hub_public_publish_hub_names_returns_base_only_when_unsharded() {
-        assert_eq!(
-            stream_hub_public_publish_hub_names("public", 1),
-            vec!["public"]
-        );
-        assert_eq!(
-            stream_hub_public_publish_hub_names("public:local", 0),
-            vec!["public:local"]
-        );
-    }
-
-    #[test]
-    fn stream_hub_public_publish_hub_names_fans_out_to_all_shards() {
-        assert_eq!(
-            stream_hub_public_publish_hub_names("public", 4),
-            vec!["public", "public#0", "public#1", "public#2", "public#3"]
-        );
-    }
 
     #[test]
     fn public_timeline_streams_include_media_variants_when_needed() {
