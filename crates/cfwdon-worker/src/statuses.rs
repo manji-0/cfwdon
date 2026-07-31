@@ -76,7 +76,7 @@ pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_followe
         .unwrap_or(false)
 }
 
-async fn validate_local_quote_creation(
+pub(crate) async fn validate_local_quote_creation(
     db: &worker::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &LocalAccount,
@@ -288,6 +288,7 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let response = create_published_status_and_response(
         &db,
         &config,
+        Some(&ctx.env),
         CreatePublishedStatusInput {
             account: &access.account,
             application_id: access.application_id,
@@ -316,7 +317,8 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let Some(deleted) = delete_owned_local_status(&db, &config, &requester, &status_id).await?
+    let Some(deleted) =
+        delete_owned_local_status(&db, &config, Some(&ctx.env), &requester, &status_id).await?
     else {
         return Response::error("status not found", 404);
     };
@@ -435,6 +437,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let updated = match apply_local_status_update(
         &db,
         &config,
+        Some(&ctx.env),
         UpdateLocalStatusInput {
             account: &account,
             status: &status,

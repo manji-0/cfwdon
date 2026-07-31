@@ -380,7 +380,7 @@ pub(crate) async fn replace_remote_status_hashtags(
     Ok(())
 }
 
-async fn load_remote_status_hashtag_names(
+pub(crate) async fn load_remote_status_hashtag_names(
     db: &D1Database,
     status_id: &str,
 ) -> Result<HashSet<String>> {

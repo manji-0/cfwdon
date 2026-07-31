@@ -1,8 +1,28 @@
 use super::{
     D1Database, LocalAccount, MediaAttachmentRow, Result, StatusRow, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id, find_status_by_id,
-    load_in_reply_to_account_id,
+    find_account_by_id, find_media_attachments_by_status_id,
+    find_remote_statuses_with_actors_by_ids, find_status_by_id, load_in_reply_to_account_id,
+    remote_account_rest_id,
 };
+
+/// Resolves the author of a single replied-to status. A reply can point at a
+/// remote status, so fall back to the remote table like the batch variant
+/// `load_in_reply_to_account_ids` does.
+pub(crate) async fn resolve_in_reply_to_account_id(
+    db: &D1Database,
+    reply_id: &str,
+) -> Result<Option<String>> {
+    if let Some(reply) = find_status_by_id(db, reply_id).await? {
+        return Ok(Some(reply.account_id));
+    }
+    Ok(
+        find_remote_statuses_with_actors_by_ids(db, &[reply_id.to_owned()])
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, actor)| remote_account_rest_id(&actor.actor_uri)),
+    )
+}
 
 pub(crate) struct LocalStatusResponsePreload {
     pub(crate) media: Vec<MediaAttachmentRow>,

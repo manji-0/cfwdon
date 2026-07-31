@@ -1,3 +1,4 @@
+use crate::StreamHubUpgradeParams;
 use crate::auth::find_account_by_email;
 use crate::crypto_keys::generate_account_key_material;
 use crate::timelines::{
@@ -12,20 +13,20 @@ use crate::{
     build_app_verify_credentials_document_from_row, build_local_status_response,
     build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
     build_remote_status_response, cache_public_response, can_view_local_status,
-    collect_visible_notifications, delete_follow_by_target, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, escape_html, extract_hashtags_from_html,
-    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
-    find_account_by_username, find_authenticated_local_account, find_conversation_for_account,
-    find_conversation_id_by_status_id, find_follower_follow_activity_id,
-    find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, find_status_by_id,
-    generate_entity_id, instance_base_url, is_local_status_thread_muted_by, is_muted_actor,
-    is_public_activitypub_visibility, issue_oauth_access_token, list_announcement_read_ids,
-    list_followed_tag_names, list_local_direct_timeline_statuses,
-    list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
-    list_local_public_timeline_statuses, list_membership_refs,
+    collect_visible_notifications, connect_stream_hub_websocket, delete_follow_by_target,
+    delete_follower_by_actor, delete_remote_follow_request_by_actor, escape_html,
+    extract_hashtags_from_html, extract_hashtags_from_text, filter_notification_entries_by_query,
+    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    find_conversation_for_account, find_conversation_id_by_status_id,
+    find_follower_follow_activity_id, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
+    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_remote_status_by_id, find_status_by_id, generate_entity_id, instance_base_url,
+    is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
+    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
+    list_local_direct_timeline_statuses, list_local_home_timeline_statuses,
+    list_local_public_statuses_by_tag, list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
@@ -36,7 +37,8 @@ use crate::{
     parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity_required,
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
-    store_account_private_key, streaming_batch_from_entries,
+    store_account_private_key, stream_hub_channel_id_name, stream_hub_session_id_name,
+    streaming_batch_from_entries, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -50,6 +52,7 @@ use worker::{
 };
 
 const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
+const STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS: u64 = 30;
 const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
 const STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION: u32 = 200;
 
@@ -1509,6 +1512,115 @@ fn sse_event_bytes(event: &StreamingEvent) -> Vec<u8> {
     format!("event: {}\ndata: {}\n\n", event.event, event.data).into_bytes()
 }
 
+fn sse_named_event_bytes(event: &str, data: &str) -> Vec<u8> {
+    format!("event: {event}\ndata: {data}\n\n").into_bytes()
+}
+
+fn streaming_event_identity_from_payload(event_name: &str, data: &str) -> (String, String) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+        let id = value
+            .get("id")
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .or_else(|| value.as_i64().map(|id| id.to_string()))
+            })
+            .unwrap_or_else(|| format!("{event_name}:{data}"));
+        let created_at = value
+            .get("created_at")
+            .and_then(|value| value.as_str())
+            .unwrap_or("1970-01-01T00:00:00Z")
+            .to_owned();
+        return (id, created_at);
+    }
+
+    (
+        format!("{event_name}:{}", data.chars().take(64).collect::<String>()),
+        "1970-01-01T00:00:00Z".to_owned(),
+    )
+}
+
+fn stream_hub_websocket_text_to_sse_bytes(
+    text: &str,
+    state: &mut StreamingLoopState,
+) -> Option<Vec<u8>> {
+    let value = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    if value.get("error").is_some() {
+        return None;
+    }
+    let event_name = value
+        .get("event")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if event_name.is_empty() {
+        return None;
+    }
+    // `filters_changed` carries no payload to dedupe on, and the D1 catch-up
+    // cursor only advances every backup poll, so keying it on that cursor would
+    // drop every change after the first. Pass it through unconditionally.
+    if event_name == "filters_changed" {
+        return Some(sse_named_event_bytes(event_name, "undefined"));
+    }
+
+    let data = value
+        .get("payload")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let (id, _created_at) = streaming_event_identity_from_payload(event_name, &data);
+    let dedupe_key = format!("{event_name}:{id}");
+    if !state.emitted_event_ids.insert(dedupe_key) {
+        return None;
+    }
+    Some(sse_named_event_bytes(event_name, &data))
+}
+
+async fn yield_streaming_poll_round(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    stream_name: &str,
+    tag: Option<&str>,
+    list: Option<&str>,
+    viewer: Option<&crate::LocalAccount>,
+    state: &mut StreamingLoopState,
+    poll_rounds: &mut u32,
+) -> StreamingPollYield {
+    *poll_rounds = poll_rounds.saturating_add(1);
+    let events =
+        match poll_streaming_events(db, config, stream_name, tag, list, viewer, state).await {
+            Ok(events) => events,
+            Err(error) => {
+                console_error!(
+                    "streaming poll failed stream={} tag={} list={} error={}",
+                    stream_name,
+                    tag.unwrap_or_default(),
+                    list.unwrap_or_default(),
+                    error
+                );
+                if streaming_error_is_subrequest_limit(&error)
+                    || streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds)
+                {
+                    return StreamingPollYield::Recycle;
+                }
+                return StreamingPollYield::PollFailed;
+            }
+        };
+    if streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds) {
+        return StreamingPollYield::Recycle;
+    }
+    StreamingPollYield::Events(events)
+}
+
+enum StreamingPollYield {
+    Events(Vec<StreamingEvent>),
+    PollFailed,
+    Recycle,
+}
+
 fn streaming_websocket_subscription_key(
     stream_name: &str,
     tag: Option<&str>,
@@ -2895,12 +3007,14 @@ fn retain_new_streaming_events(state: &mut StreamingLoopState, events: &mut Vec<
 }
 
 fn build_streaming_event_stream(
+    env: Option<Env>,
     db: D1Database,
     config: cfwdon_core::AppConfig,
     stream_name: String,
     tag: Option<String>,
     list: Option<String>,
     viewer: Option<crate::LocalAccount>,
+    hub_target: Option<(String, Option<String>)>,
 ) -> impl futures_util::TryStream<
     Ok = Vec<u8>,
     Error = worker::Error,
@@ -2910,48 +3024,161 @@ fn build_streaming_event_stream(
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut state = StreamingLoopState::new();
         let mut poll_rounds = 0_u32;
-        loop {
-            poll_rounds = poll_rounds.saturating_add(1);
-            let events = match poll_streaming_events(
-                    &db,
-                    &config,
-                    &stream_name,
-                    tag.as_deref(),
-                    list.as_deref(),
-                    viewer.as_ref(),
-                    &mut state,
-                )
-                .await {
-                    Ok(events) => events,
-                    Err(error) => {
-                        console_error!(
-                            "streaming poll failed stream={} tag={} list={} error={}",
+        let hub_websocket = if let (Some(env), Some((hub_name, account_id))) =
+            (env.as_ref(), hub_target.as_ref())
+        {
+            yield sse_comment_bytes("source=stream-hub");
+            match connect_stream_hub_websocket(
+                env,
+                &config.stream_hub_binding,
+                hub_name,
+                &stream_name,
+                tag.as_deref(),
+                list.as_deref(),
+                account_id.as_deref(),
+            )
+            .await
+            {
+                Ok(websocket) => {
+                    if let Err(error) = poll_streaming_events(
+                        &db,
+                        &config,
+                        &stream_name,
+                        tag.as_deref(),
+                        list.as_deref(),
+                        viewer.as_ref(),
+                        &mut state,
+                    )
+                    .await
+                    {
+                        console_log!(
+                            "stream hub sse initial sync failed stream={} error={}",
                             stream_name,
-                            tag.as_deref().unwrap_or(""),
-                            list.as_deref().unwrap_or(""),
                             error
                         );
-                        yield sse_comment_bytes("error=streaming_poll_failed");
-                        if streaming_error_is_subrequest_limit(&error)
-                            || streaming_poll_budget_exhausted(poll_rounds, poll_rounds)
-                        {
-                            yield sse_comment_bytes("stream=recycle");
-                            break;
-                        }
-                        worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
-                        continue;
                     }
-                };
-            if events.is_empty() {
-                yield sse_comment_bytes("thump");
-            } else {
-                for event in events {
-                    yield sse_event_bytes(&event);
+                    Some(websocket)
+                }
+                Err(error) => {
+                    console_log!(
+                        "stream hub sse connect failed for hub {}: {:?}; falling back to d1 poll",
+                        hub_name,
+                        error
+                    );
+                    None
                 }
             }
-            if streaming_poll_budget_exhausted(poll_rounds, poll_rounds) {
-                yield sse_comment_bytes("stream=recycle");
-                break;
+        } else {
+            None
+        };
+
+        let mut hub_events = hub_websocket
+            .as_ref()
+            .and_then(|websocket| websocket.events().ok());
+        while hub_events.is_some() {
+            let backup_tick =
+                worker::Delay::from(Duration::from_secs(STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS))
+                    .fuse();
+            pin_mut!(backup_tick);
+            select! {
+                event = hub_events.as_mut().unwrap().next().fuse() => {
+                    match event {
+                        Some(Ok(WebsocketEvent::Message(message))) => {
+                            if let Some(bytes) = message
+                                .text()
+                                .and_then(|text| {
+                                    stream_hub_websocket_text_to_sse_bytes(&text, &mut state)
+                                })
+                            {
+                                yield bytes;
+                            }
+                        }
+                        Some(Ok(WebsocketEvent::Close(_))) | None => {
+                            if let Some((hub_name, _)) = hub_target.as_ref() {
+                                console_log!(
+                                    "stream hub sse websocket closed for hub {}; falling back to d1 poll",
+                                    hub_name
+                                );
+                            }
+                            hub_events = None;
+                        }
+                        Some(Err(error)) => {
+                            if let Some((hub_name, _)) = hub_target.as_ref() {
+                                console_error!(
+                                    "stream hub sse websocket error for hub {}: {}",
+                                    hub_name,
+                                    error
+                                );
+                            }
+                            hub_events = None;
+                        }
+                    }
+                }
+                _ = backup_tick => {
+                    match yield_streaming_poll_round(
+                        &db,
+                        &config,
+                        &stream_name,
+                        tag.as_deref(),
+                        list.as_deref(),
+                        viewer.as_ref(),
+                        &mut state,
+                        &mut poll_rounds,
+                    )
+                    .await
+                    {
+                        StreamingPollYield::Events(events) => {
+                            if events.is_empty() {
+                                yield sse_comment_bytes("thump");
+                            } else {
+                                for event in events {
+                                    yield sse_event_bytes(&event);
+                                }
+                            }
+                        }
+                        StreamingPollYield::PollFailed => {
+                            yield sse_comment_bytes("error=streaming_poll_failed");
+                        }
+                        StreamingPollYield::Recycle => {
+                            yield sse_comment_bytes("stream=recycle");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        loop {
+            match yield_streaming_poll_round(
+                &db,
+                &config,
+                &stream_name,
+                tag.as_deref(),
+                list.as_deref(),
+                viewer.as_ref(),
+                &mut state,
+                &mut poll_rounds,
+            )
+            .await
+            {
+                StreamingPollYield::Events(events) => {
+                    if events.is_empty() {
+                        yield sse_comment_bytes("thump");
+                    } else {
+                        for event in events {
+                            yield sse_event_bytes(&event);
+                        }
+                    }
+                }
+                StreamingPollYield::PollFailed => {
+                    yield sse_comment_bytes("error=streaming_poll_failed");
+                    worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
+                    continue;
+                }
+                StreamingPollYield::Recycle => {
+                    yield sse_comment_bytes("stream=recycle");
+                    break;
+                }
             }
             worker::Delay::from(Duration::from_secs(STREAMING_POLL_INTERVAL_SECS)).await;
         }
@@ -3264,7 +3491,65 @@ async fn resolve_streaming_auth(
     }
 }
 
-fn streaming_websocket_upgrade_response(
+fn stream_hub_proxy_target(
+    stream: &str,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    tag: Option<&str>,
+    list: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let tag = tag.map(str::trim).filter(|value| !value.is_empty());
+    let list = list.map(str::trim).filter(|value| !value.is_empty());
+
+    match stream {
+        // Authenticated channels all live on the viewer's own session hub, so a
+        // list id from another account can never reach that account's events.
+        "user" | "user:notification" | "direct" => viewer.map(|viewer| {
+            (
+                stream_hub_session_id_name(viewer.id()),
+                Some(viewer.id().to_owned()),
+            )
+        }),
+        "list" => match (viewer, list) {
+            (Some(viewer), Some(_)) => Some((
+                stream_hub_session_id_name(viewer.id()),
+                Some(viewer.id().to_owned()),
+            )),
+            _ => None,
+        },
+        // Authenticated clients always land on their session hub; the open
+        // channel hub forwards matching events there, so one socket can mix
+        // session and open channels.
+        "public"
+        | "public:media"
+        | "public:local"
+        | "public:local:media"
+        | "public:remote"
+        | "public:remote:media" => {
+            if let Some(viewer) = viewer {
+                return Some((
+                    stream_hub_session_id_name(viewer.id()),
+                    Some(viewer.id().to_owned()),
+                ));
+            }
+            Some((stream_hub_channel_id_name(stream, None), None))
+        }
+        "hashtag" | "hashtag:local" => {
+            let tag_value = tag?;
+            if let Some(viewer) = viewer {
+                return Some((
+                    stream_hub_session_id_name(viewer.id()),
+                    Some(viewer.id().to_owned()),
+                ));
+            }
+            Some((stream_hub_channel_id_name(stream, Some(tag_value)), None))
+        }
+        _ => None,
+    }
+}
+
+async fn streaming_websocket_upgrade_response(
+    env: &Env,
+    req: Request,
     db: worker::D1Database,
     config: cfwdon_core::AppConfig,
     initial_stream: Option<String>,
@@ -3273,6 +3558,35 @@ fn streaming_websocket_upgrade_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
+    if let Some(stream) = initial_stream.as_deref()
+        && let Some((hub_name, account_id)) =
+            stream_hub_proxy_target(stream, viewer.as_ref(), tag.as_deref(), list.as_deref())
+    {
+        // The hub reads the subscription from these params, not from anything the
+        // client sent, so a forged X-Account-Id or X-Stream cannot take effect.
+        let params = StreamHubUpgradeParams {
+            stream,
+            tag: tag.as_deref(),
+            list: list.as_deref(),
+            account_id: account_id.as_deref(),
+        };
+
+        match upgrade_stream_hub_websocket(env, &config.stream_hub_binding, &hub_name, req, &params)
+            .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                console_log!(
+                    "stream hub websocket upgrade failed for hub {}: {:?}; falling back to worker poll",
+                    hub_name,
+                    error
+                );
+            }
+        }
+    } else {
+        drop(req);
+    }
+
     let pair = WebSocketPair::new()?;
     pair.server.accept()?;
     let websocket = pair.server.clone();
@@ -3289,6 +3603,7 @@ fn streaming_websocket_upgrade_response(
 }
 
 fn streaming_sse_response(
+    env: &Env,
     db: worker::D1Database,
     config: cfwdon_core::AppConfig,
     stream: String,
@@ -3297,7 +3612,23 @@ fn streaming_sse_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
 ) -> Result<Response> {
     if streaming_channel_supports_live_events(&stream) {
-        let stream_body = build_streaming_event_stream(db, config, stream, tag, list, viewer);
+        let hub_target =
+            stream_hub_proxy_target(&stream, viewer.as_ref(), tag.as_deref(), list.as_deref());
+        let env_for_hub = if hub_target.is_some() {
+            Some(env.clone())
+        } else {
+            None
+        };
+        let stream_body = build_streaming_event_stream(
+            env_for_hub,
+            db,
+            config,
+            stream,
+            tag,
+            list,
+            viewer,
+            hub_target,
+        );
         let mut response = Response::from_stream(stream_body)?;
         response
             .headers_mut()
@@ -3388,6 +3719,8 @@ pub(crate) async fn streaming_placeholder_response(
 
     if wants_websocket {
         return streaming_websocket_upgrade_response(
+            &ctx.env,
+            req,
             db,
             config,
             initial_stream,
@@ -3395,7 +3728,8 @@ pub(crate) async fn streaming_placeholder_response(
             query.list.clone(),
             authenticated,
             websocket_protocol_token.as_deref(),
-        );
+        )
+        .await;
     }
 
     let Some(stream) = initial_stream else {
@@ -3404,7 +3738,15 @@ pub(crate) async fn streaming_placeholder_response(
         );
     };
 
-    streaming_sse_response(db, config, stream, query.tag, query.list, authenticated)
+    streaming_sse_response(
+        &ctx.env,
+        db,
+        config,
+        stream,
+        query.tag,
+        query.list,
+        authenticated,
+    )
 }
 
 pub(crate) async fn statuses_index_placeholder_response(
@@ -3767,6 +4109,55 @@ mod tests {
     }
 
     #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_matches_event_stream_format() {
+        let mut state = StreamingLoopState::new();
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "update",
+            "payload": "{\"id\":\"status-1\"}",
+        });
+
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: update\ndata: {\"id\":\"status-1\"}\n\n".to_vec())
+        );
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_dedupes_repeated_events() {
+        let mut state = StreamingLoopState::new();
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "update",
+            "payload": "{\"id\":\"status-1\"}",
+        })
+        .to_string();
+
+        assert!(stream_hub_websocket_text_to_sse_bytes(&message, &mut state).is_some());
+        assert!(stream_hub_websocket_text_to_sse_bytes(&message, &mut state).is_none());
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_handles_filters_changed() {
+        let mut state = StreamingLoopState::new();
+        state.last_filter_updated_at = Some("2025-01-02T00:00:00Z".to_owned());
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "filters_changed",
+        });
+
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
+        );
+        // Repeated filter edits must keep arriving.
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
+        );
+    }
+
+    #[test]
     fn streaming_websocket_event_message_matches_mastodon_shape() {
         let subscription =
             StreamingWebSocketSubscription::new("user:notification".to_owned(), None, None);
@@ -3813,6 +4204,60 @@ mod tests {
             streaming_websocket_stream_labels("list", None, Some("list-1")),
             vec!["list".to_owned(), "list-1".to_owned()]
         );
+    }
+
+    fn stream_hub_proxy_test_account() -> cfwdon_domain::LocalAccount {
+        cfwdon_domain::LocalAccount::from_record(cfwdon_domain::LocalAccountRecord::test_fixture(
+            "acct-1", "alice",
+        ))
+    }
+
+    #[test]
+    fn stream_hub_proxy_target_maps_authenticated_channels() {
+        let viewer = stream_hub_proxy_test_account();
+        assert_eq!(
+            stream_hub_proxy_target("user", Some(&viewer), None, None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("user:notification", Some(&viewer), None, None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("direct", Some(&viewer), None, None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        // A list id from another account still resolves to the viewer's own hub.
+        assert_eq!(
+            stream_hub_proxy_target("list", Some(&viewer), None, Some("list-of-someone-else")),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert!(stream_hub_proxy_target("user", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("list", Some(&viewer), None, None).is_none());
+        assert!(stream_hub_proxy_target("list", None, None, Some("list-1")).is_none());
+    }
+
+    #[test]
+    fn stream_hub_proxy_target_maps_public_and_hashtag_channels() {
+        let viewer = stream_hub_proxy_test_account();
+        assert_eq!(
+            stream_hub_proxy_target("public:local", None, None, None),
+            Some(("public:local".to_owned(), None))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("public", Some(&viewer), None, None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("hashtag", None, Some("rust"), None),
+            Some(("hashtag:rust".to_owned(), None))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("hashtag:local", Some(&viewer), Some("rust"), None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert!(stream_hub_proxy_target("hashtag", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("unknown", None, None, None).is_none());
     }
 
     #[test]

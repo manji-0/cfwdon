@@ -56,6 +56,8 @@ mod search;
 mod secret_storage;
 mod share;
 mod statuses;
+mod stream_hub;
+mod stream_hub_publish;
 mod streaming_types;
 mod suggestions;
 mod tag_actions;
@@ -110,6 +112,9 @@ pub(crate) use search::*;
 pub(crate) use share::*;
 #[allow(unused_imports)]
 pub(crate) use statuses::*;
+#[allow(unused_imports)]
+pub(crate) use stream_hub::*;
+pub(crate) use stream_hub_publish::*;
 pub(crate) use streaming_types::*;
 pub(crate) use tag_actions::*;
 pub(crate) use tags::*;
@@ -171,6 +176,14 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
         {
             console_error!("remote collection approval revalidation failed: {error}");
+        }
+        if let Err(error) = process_expired_polls_for_config(&db, &config, Some(&env)).await {
+            console_error!("expired poll processing failed: {error}");
+        }
+        if let Err(error) =
+            process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
+        {
+            console_error!("due scheduled status processing failed: {error}");
         }
         Ok::<(), Error>(())
     }

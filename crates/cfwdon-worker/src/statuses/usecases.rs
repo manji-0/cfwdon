@@ -1,18 +1,75 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
+    AppConfig, D1Database, Env, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
     MediaAttachmentRow, Result, StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest,
     apply_media_update, attach_media_and_enqueue_outbox, build_local_status_response,
+    build_local_status_response_for_recipient_soft,
     build_local_status_response_with_quote_count_preloads, delete_local_status_with_outbox,
     enqueue_status_update_activity, ensure_direct_conversation_for_status,
-    extract_mentions_from_text, find_account_by_username, find_media_attachments_by_status_id,
-    find_owned_local_status, insert_status, insert_status_edit_snapshot,
-    load_account_filter_matcher, load_local_status_response_preload, load_mastodon_poll_response,
+    extract_mentions_from_text, find_account_by_username, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_owned_local_status, insert_status,
+    insert_status_edit_snapshot, load_account_filter_matcher, load_local_status_response_preload,
+    load_mastodon_poll_response, local_status_interaction_notification_id,
     normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
-    replace_status_media, replace_status_poll, send_push_notification,
-    send_status_quote_notification, send_status_update_notifications, update_local_status,
+    publish_local_actor_notification_soft, publish_local_status_create_stream_fanout_soft,
+    publish_local_status_delete_stream_fanout_soft, publish_local_status_update_stream_fanout_soft,
+    publish_user_stream_hub_event_soft, replace_status_media, replace_status_poll,
+    send_push_notification, send_status_quote_notification, send_status_update_notifications,
+    update_local_status,
 };
-use cfwdon_domain::{PollDraft, StatusDraft};
+use cfwdon_domain::{PollDraft, QuoteState, StatusDraft};
+use worker::console_error;
+
+/// Builds the stream payload used for fan-out to accounts other than the
+/// author. Viewer-dependent fields are left unset so no per-account state
+/// (filters, favourites, bookmarks) leaks to other subscribers.
+#[allow(clippy::too_many_arguments)]
+async fn viewer_agnostic_local_status_stream_payload(
+    db: &D1Database,
+    config: &AppConfig,
+    status: &StatusRow,
+    author: &LocalAccount,
+    response_preload: &LocalStatusResponsePreload,
+    counts_preload: &crate::StatusCountsPreload,
+    quote_counts_preload: &crate::StatusQuoteCountsPreload,
+) -> Option<String> {
+    let response = match build_local_status_response_with_quote_count_preloads(
+        db,
+        config,
+        None,
+        status,
+        author,
+        response_preload.in_reply_to_account_id.clone(),
+        response_preload.media.clone(),
+        None,
+        Some(counts_preload),
+        Some(quote_counts_preload),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            console_error!(
+                "failed to build viewer-agnostic stream payload for status {}: {error}",
+                status.id
+            );
+            return None;
+        }
+    };
+    match serde_json::to_string(&response) {
+        Ok(payload) => Some(payload),
+        Err(error) => {
+            console_error!(
+                "failed to serialize viewer-agnostic stream payload for status {}: {error}",
+                status.id
+            );
+            None
+        }
+    }
+}
 
 pub(crate) struct DeleteLocalStatusResult {
     pub(crate) response: MastodonStatusResponse,
@@ -51,6 +108,7 @@ pub(crate) struct CreatePublishedStatusInput<'a> {
 pub(crate) async fn delete_owned_local_status(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     requester: &LocalAccount,
     status_id: &str,
 ) -> Result<Option<DeleteLocalStatusResult>> {
@@ -73,6 +131,28 @@ pub(crate) async fn delete_owned_local_status(
 
     delete_local_status_with_outbox(db, config, requester, &status).await?;
 
+    if let Some(env) = env {
+        publish_user_stream_hub_event_soft(
+            env,
+            &config.stream_hub_binding,
+            requester.id(),
+            "delete",
+            &status.id,
+            Some(&status.id),
+        )
+        .await;
+
+        publish_local_status_delete_stream_fanout_soft(
+            env,
+            db,
+            config,
+            requester,
+            &status,
+            !media.is_empty(),
+        )
+        .await;
+    }
+
     Ok(Some(DeleteLocalStatusResult {
         response,
         media,
@@ -83,6 +163,7 @@ pub(crate) async fn delete_owned_local_status(
 pub(crate) async fn apply_local_status_update(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     input: UpdateLocalStatusInput<'_>,
 ) -> Result<UpdateLocalStatusResult> {
     let previous_response = build_local_status_response(
@@ -151,7 +232,7 @@ pub(crate) async fn apply_local_status_update(
         }
     }
     enqueue_status_update_activity(db, config, input.account, &status).await?;
-    let _ = send_status_update_notifications(db, config, &status).await;
+    let _ = send_status_update_notifications(db, config, env, &status).await;
 
     let response = super::build_loaded_local_status_response(
         db,
@@ -162,6 +243,63 @@ pub(crate) async fn apply_local_status_update(
     )
     .await?;
 
+    if let Some(env) = env {
+        let payload = match serde_json::to_string(&response) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize status update stream payload for status {}: {error}",
+                    status.id
+                );
+                return Ok(UpdateLocalStatusResult {
+                    response,
+                    status_id: status.id,
+                });
+            }
+        };
+        publish_user_stream_hub_event_soft(
+            env,
+            &config.stream_hub_binding,
+            input.account.id(),
+            "status.update",
+            &payload,
+            Some(&status.id),
+        )
+        .await;
+
+        // Timeline subscribers need the edit too, with a viewer-agnostic payload.
+        let response_preload = load_local_status_response_preload(db, &status).await?;
+        let has_media = !response_preload.media.is_empty();
+        let status_ids = vec![status.id.clone()];
+        let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
+        let (counts_preload, quote_counts_preload) = futures_util::try_join!(
+            preload_status_counts(db, &status_ids, &[]),
+            preload_status_quote_counts(db, &quote_count_uris),
+        )?;
+        if let Some(fanout_payload) = viewer_agnostic_local_status_stream_payload(
+            db,
+            config,
+            &status,
+            input.account,
+            &response_preload,
+            &counts_preload,
+            &quote_counts_preload,
+        )
+        .await
+        {
+            publish_local_status_update_stream_fanout_soft(
+                env,
+                db,
+                config,
+                input.account,
+                &status,
+                &fanout_payload,
+                has_media,
+            )
+            .await;
+        }
+    }
+
     Ok(UpdateLocalStatusResult {
         response,
         status_id: status.id,
@@ -171,6 +309,7 @@ pub(crate) async fn apply_local_status_update(
 pub(crate) async fn create_published_status_and_response(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     input: CreatePublishedStatusInput<'_>,
 ) -> Result<MastodonStatusResponse> {
     let defer_outbox = !input.pending_media.is_empty();
@@ -224,6 +363,7 @@ pub(crate) async fn create_published_status_and_response(
         }
     }
     let response_preload = load_local_status_response_preload(db, &status).await?;
+    let has_media = !response_preload.media.is_empty();
     let status_ids = vec![status.id.clone()];
     let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
     let status_refs = vec![&status];
@@ -235,14 +375,14 @@ pub(crate) async fn create_published_status_and_response(
             preload_local_status_viewer_state(db, input.account.id(), &status_refs, None),
             load_account_filter_matcher(db, input.account.id()),
         )?;
-    build_local_status_response_with_quote_count_preloads(
+    let response = build_local_status_response_with_quote_count_preloads(
         db,
         config,
         Some(input.account),
         &status,
         input.account,
-        response_preload.in_reply_to_account_id,
-        response_preload.media,
+        response_preload.in_reply_to_account_id.clone(),
+        response_preload.media.clone(),
         Some(&filter_matcher),
         Some(&counts_preload),
         Some(&quote_counts_preload),
@@ -250,5 +390,149 @@ pub(crate) async fn create_published_status_and_response(
         Some(&viewer_state_preload),
         None,
     )
-    .await
+    .await?;
+
+    if let Some(env) = env {
+        let payload = match serde_json::to_string(&response) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize status create stream payload for status {}: {error}",
+                    status.id
+                );
+                return Ok(response);
+            }
+        };
+        publish_user_stream_hub_event_soft(
+            env,
+            &config.stream_hub_binding,
+            input.account.id(),
+            "update",
+            &payload,
+            Some(&status.id),
+        )
+        .await;
+
+        // Fan-out reaches accounts other than the author, so the payload must
+        // not carry the author's viewer state (`filtered` would leak their
+        // filter keywords, and `favourited` and friends would be wrong).
+        let fanout_payload = match viewer_agnostic_local_status_stream_payload(
+            db,
+            config,
+            &status,
+            input.account,
+            &response_preload,
+            &counts_preload,
+            &quote_counts_preload,
+        )
+        .await
+        {
+            Some(payload) => payload,
+            None => return Ok(response),
+        };
+
+        publish_local_status_create_stream_fanout_soft(
+            env,
+            db,
+            config,
+            input.account,
+            &status,
+            &fanout_payload,
+            has_media,
+        )
+        .await;
+
+        if let Some(recipient_account_id) = input.in_reply_to_account_id.as_deref()
+            && recipient_account_id != input.account.id()
+        {
+            let id =
+                local_status_interaction_notification_id("status", input.account.id(), &status.id);
+            let status_response = build_local_status_response_for_recipient_soft(
+                db,
+                config,
+                recipient_account_id,
+                &status,
+                input.account,
+            )
+            .await;
+            publish_local_actor_notification_soft(
+                Some(env),
+                db,
+                config,
+                recipient_account_id,
+                input.account,
+                "status",
+                id.clone(),
+                id,
+                status.created_at.clone(),
+                status_response,
+            )
+            .await;
+        }
+
+        for handle in extract_mentions_from_text(&status.text, config) {
+            if let Some(account) = find_account_by_username(db, &handle.username).await?
+                && account.id() != input.account.id()
+            {
+                let id = local_status_interaction_notification_id(
+                    "mention",
+                    input.account.id(),
+                    &status.id,
+                );
+                let status_response = build_local_status_response_for_recipient_soft(
+                    db,
+                    config,
+                    account.id(),
+                    &status,
+                    input.account,
+                )
+                .await;
+                publish_local_actor_notification_soft(
+                    Some(env),
+                    db,
+                    config,
+                    account.id(),
+                    input.account,
+                    "mention",
+                    id.clone(),
+                    id,
+                    status.created_at.clone(),
+                    status_response,
+                )
+                .await;
+            }
+        }
+
+        if let Some(quote_of_uri) = status.quote_of_uri.as_deref()
+            && status.quote_state == QuoteState::Accepted
+            && let Some(target) = find_local_status_by_object_uri(db, config, quote_of_uri).await?
+            && target.account_id != input.account.id()
+        {
+            let id =
+                local_status_interaction_notification_id("quote", input.account.id(), &status.id);
+            let status_response = build_local_status_response_for_recipient_soft(
+                db,
+                config,
+                &target.account_id,
+                &status,
+                input.account,
+            )
+            .await;
+            publish_local_actor_notification_soft(
+                Some(env),
+                db,
+                config,
+                &target.account_id,
+                input.account,
+                "quote",
+                id.clone(),
+                id,
+                status.created_at.clone(),
+                status_response,
+            )
+            .await;
+        }
+    }
+
+    Ok(response)
 }

@@ -6,7 +6,7 @@ use crate::{
     AccountReference, AppConfig, D1Database, FollowAccountRequest, LocalAccount,
     resolve_account_reference,
 };
-use worker::Error;
+use worker::{Env, Error};
 
 pub(crate) enum FollowActionError {
     NotFound,
@@ -23,6 +23,7 @@ impl From<Error> for FollowActionError {
 pub(crate) async fn follow_account_usecase(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     follower: &LocalAccount,
     target_account_id: &str,
     request: &FollowAccountRequest,
@@ -32,7 +33,7 @@ pub(crate) async fn follow_account_usecase(
             if follower.id() == target.id() {
                 return Err(FollowActionError::CannotFollowSelf);
             }
-            follow_local_account(db, config, follower, &target, request)
+            follow_local_account(db, config, env, follower, &target, request)
                 .await
                 .map_err(FollowActionError::from)
         }

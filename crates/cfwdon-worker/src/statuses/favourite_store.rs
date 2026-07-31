@@ -1,10 +1,11 @@
 use super::{
     AppConfig, D1Database, RemoteStatusRow, StatusRow, local_status_target_uri,
-    send_push_notification,
+    publish_local_status_interaction_notification_soft, send_push_notification,
 };
+use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
-use worker::Result;
 use worker::d1::D1Type;
+use worker::{Env, Result};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct FavouriteEntryRow {
@@ -31,9 +32,11 @@ struct InteractionActorUriRow {
 pub(crate) async fn upsert_favourite_local_status(
     db: &D1Database,
     config: &AppConfig,
-    account_id: &str,
+    env: Option<&Env>,
+    actor: &LocalAccount,
     status: &StatusRow,
 ) -> Result<()> {
+    let account_id = actor.id();
     let target_uri = local_status_target_uri(status);
     let bindings = [
         D1Type::Text(account_id),
@@ -78,6 +81,17 @@ pub(crate) async fn upsert_favourite_local_status(
             "account_id": account_id,
             "status_id": status.id,
         }),
+    )
+    .await;
+
+    let _ = publish_local_status_interaction_notification_soft(
+        env,
+        db,
+        config,
+        &status.account_id,
+        actor,
+        "favourite",
+        status,
     )
     .await;
 

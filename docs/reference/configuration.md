@@ -11,6 +11,7 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | `DB` | D1 database | Yes | Database binding expected by the Worker runtime and by the defaults in `crates/cfwdon-core/src/config.rs`. |
 | `MEDIA` | R2 bucket | Yes | Bucket binding used for uploaded media bodies and profile media objects. |
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
+| `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
 
 If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync.
 
@@ -87,6 +88,12 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | `TIMELINES_ACCESS_HASHTAG_FEEDS_REMOTE` | Remote hashtag feed access. |
 | `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL` | Local link timeline access. |
 | `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE` | Remote link timeline access. |
+
+## StreamHub Vars
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `STREAM_HUB_BINDING` | Optional | `STREAM_HUB` | Binding name the `StreamHub` Durable Object uses for hub-to-hub forwarding. Set it only when the binding in `wrangler.toml` is renamed. |
 
 ## Push Notification Vars
 

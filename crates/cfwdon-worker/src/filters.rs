@@ -1,6 +1,6 @@
 use crate::{
     Error, Request, Response, Result, RouteContext, generate_entity_id, load_config,
-    parse_optional_bool, require_authenticated_local_account,
+    parse_optional_bool, publish_user_stream_hub_event_soft, require_authenticated_local_account,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -982,6 +982,23 @@ async fn parse_keyword_request(req: &mut Request) -> std::result::Result<Keyword
     Ok(request)
 }
 
+async fn publish_filters_changed_soft(
+    env: &worker::Env,
+    binding: &str,
+    account_id: &str,
+    event_id: &str,
+) {
+    publish_user_stream_hub_event_soft(
+        env,
+        binding,
+        account_id,
+        "filters_changed",
+        "",
+        Some(event_id),
+    )
+    .await;
+}
+
 async fn parse_status_filter_request(
     req: &mut Request,
 ) -> std::result::Result<StatusFilterRequest, Error> {
@@ -1075,6 +1092,13 @@ pub(crate) async fn create_filter_v1_response(
     )
     .await?;
     replace_filter_keywords(&db, &filter_id, &[(phrase.clone(), whole_word)]).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
     let Some(row) = list_v1_filters(&db, viewer.id())
         .await?
         .into_iter()
@@ -1155,6 +1179,13 @@ pub(crate) async fn update_filter_v1_response(
     )
     .await?;
     update_filter_keyword_row(&db, &existing_keyword.id, &phrase, whole_word).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &existing_filter.id,
+    )
+    .await;
 
     let Some(row) = find_v1_filter(&db, viewer.id(), &existing_keyword.id).await? else {
         return Response::error("filter not found", 404);
@@ -1182,6 +1213,13 @@ pub(crate) async fn delete_filter_v1_response(
         return Response::error("filter not found", 404);
     };
     delete_filter_keyword_row(&db, &keyword.id).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &keyword.filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({}))
 }
 
@@ -1291,6 +1329,13 @@ pub(crate) async fn create_filter_v2_response(
     )
     .await?;
     replace_filter_keywords(&db, &filter_id, &keywords).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
     let Some(row) = find_filter(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
@@ -1362,6 +1407,14 @@ pub(crate) async fn update_filter_v2_response(
         replace_filter_keywords(&db, &filter_id, &keywords).await?;
     }
 
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
+
     let Some(row) = find_filter(&db, viewer.id(), &filter_id).await? else {
         return Response::error("filter not found", 404);
     };
@@ -1386,6 +1439,13 @@ pub(crate) async fn delete_filter_v2_response(
     if !delete_filter_row(&db, viewer.id(), &filter_id).await? {
         return Response::error("filter not found", 404);
     }
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({}))
 }
 
@@ -1437,6 +1497,13 @@ pub(crate) async fn create_filter_keyword_response(
     let keyword = normalize_keyword(request.keyword.as_deref())?;
     let whole_word = request.whole_word.unwrap_or(false);
     let keyword_id = create_filter_keyword_row(&db, &filter_id, &keyword, whole_word).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({
         "id": keyword_id,
         "keyword": keyword,
@@ -1490,6 +1557,13 @@ pub(crate) async fn update_filter_keyword_response(
     };
     let whole_word = request.whole_word.unwrap_or(existing.whole_word != 0);
     update_filter_keyword_row(&db, &keyword_id, &keyword, whole_word).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &existing.filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({
         "id": keyword_id,
         "keyword": keyword,
@@ -1516,6 +1590,13 @@ pub(crate) async fn delete_filter_keyword_response(
         return Response::error("filter keyword not found", 404);
     };
     delete_filter_keyword_row(&db, &keyword.id).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &keyword.filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({}))
 }
 
@@ -1566,6 +1647,13 @@ pub(crate) async fn create_filter_status_response(
     let request = parse_status_filter_request(req).await?;
     let status_id = normalize_keyword(request.status_id.as_deref())?;
     let status_filter_id = create_filter_status_row(&db, &filter_id, &status_id).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({
         "id": status_filter_id,
         "status_id": status_id,
@@ -1615,6 +1703,13 @@ pub(crate) async fn delete_filter_status_response(
         return Response::error("filter status not found", 404);
     }
     delete_filter_status_row(&db, &status_filter_id).await?;
+    publish_filters_changed_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        viewer.id(),
+        &status_filter_id,
+    )
+    .await;
     Response::from_json(&serde_json::json!({}))
 }
 

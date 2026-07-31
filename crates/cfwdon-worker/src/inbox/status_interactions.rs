@@ -1,12 +1,13 @@
 use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
-    delete_remote_favourite, delete_remote_reblog, delete_remote_status_by_object_uri,
-    extract_remote_note_object, find_conversation_id_by_status_id, find_local_status_by_object_uri,
-    is_blocking_actor, is_remote_actor_following_local_account, list_conversation_participants,
-    object_attributed_to_remote_actor, upsert_remote_actor, upsert_remote_reblog,
+    delete_remote_favourite, delete_remote_reblog, extract_remote_note_object,
+    fanout_and_delete_remote_status_by_object_uri_soft, find_conversation_id_by_status_id,
+    find_local_status_by_object_uri, is_blocking_actor, is_remote_actor_following_local_account,
+    list_conversation_participants, object_attributed_to_remote_actor,
+    publish_remote_status_interaction_notification_soft, upsert_remote_actor, upsert_remote_reblog,
     upsert_remote_reblog_status, upsert_remote_status,
 };
-use worker::Result;
+use worker::{Env, Result};
 
 pub(crate) async fn remote_actor_may_interact_with_local_status(
     db: &D1Database,
@@ -43,6 +44,7 @@ pub(crate) async fn handle_inbox_like(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
         return Ok(());
@@ -64,7 +66,20 @@ pub(crate) async fn handle_inbox_like(
         object_uri,
         activity_uri,
     )
-    .await
+    .await?;
+
+    let _ = publish_remote_status_interaction_notification_soft(
+        env,
+        db,
+        config,
+        &status.account_id,
+        remote_actor,
+        "favourite",
+        &status,
+    )
+    .await;
+
+    Ok(())
 }
 
 pub(crate) async fn handle_inbox_announce(
@@ -73,6 +88,7 @@ pub(crate) async fn handle_inbox_announce(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let mut actor_upserted = false;
     if let Some(object) = extract_remote_note_object(activity).filter(|object| {
@@ -80,7 +96,7 @@ pub(crate) async fn handle_inbox_announce(
     }) {
         upsert_remote_actor(db, remote_actor).await?;
         actor_upserted = true;
-        upsert_remote_status(db, config, remote_actor, object).await?;
+        upsert_remote_status(db, config, remote_actor, object, None).await?;
     }
 
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
@@ -109,6 +125,17 @@ pub(crate) async fn handle_inbox_announce(
             activity_uri,
         )
         .await?;
+
+        let _ = publish_remote_status_interaction_notification_soft(
+            env,
+            db,
+            config,
+            &status.account_id,
+            remote_actor,
+            "reblog",
+            &status,
+        )
+        .await;
     }
 
     Ok(())
@@ -118,6 +145,8 @@ pub(crate) async fn handle_inbox_interaction_undo(
     db: &D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
+    config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object") else {
         return Ok(());
@@ -137,7 +166,14 @@ pub(crate) async fn handle_inbox_interaction_undo(
             delete_remote_reblog(db, &remote_actor.actor_uri, target_uri, activity_uri).await?;
             if let Some(announce_activity_id) = object.get("id").and_then(serde_json::Value::as_str)
             {
-                delete_remote_status_by_object_uri(db, announce_activity_id).await?;
+                fanout_and_delete_remote_status_by_object_uri_soft(
+                    env,
+                    db,
+                    config,
+                    remote_actor,
+                    announce_activity_id,
+                )
+                .await?;
             }
         }
         _ => {}

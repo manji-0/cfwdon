@@ -46,7 +46,8 @@ pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Res
             upsert_favourite_local_status(
                 &action.auth.db,
                 &action.auth.config,
-                viewer.id(),
+                Some(&ctx.env),
+                viewer,
                 &subject.status,
             )
             .await?;

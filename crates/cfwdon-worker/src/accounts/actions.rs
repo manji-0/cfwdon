@@ -26,7 +26,16 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    match follow_account_usecase(&db, &config, &follower, &target_account_id, &request).await {
+    match follow_account_usecase(
+        &db,
+        &config,
+        Some(&ctx.env),
+        &follower,
+        &target_account_id,
+        &request,
+    )
+    .await
+    {
         Ok(relationship) => Response::from_json(&relationship),
         Err(FollowActionError::NotFound) => Response::error("account not found", 404),
         Err(FollowActionError::CannotFollowSelf) => {

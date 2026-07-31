@@ -44,6 +44,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
   Long-running tracker of completed work, next work, and remaining compatibility gaps.
 - [Initial Roadmap](planning/initial-roadmap.md)
   Bootstrap-era implementation plan and compatibility slice notes.
+- [Durable Objects Candidates](planning/durable-objects-candidates.md)
+  Where Durable Objects help (timeline streaming hubs, keyed rate limits, per-entity alarms) versus Queues/D1, and when the Agents SDK is a better adjacent fit.
 
 ## Generated Documents
 <!-- derived-from mastodon-api-compat/README.md -->

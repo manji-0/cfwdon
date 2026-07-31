@@ -2,10 +2,12 @@ use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
     delete_remote_status_by_id, find_remote_status_by_object_uri, handle_inbox_actor_update,
     handle_inbox_collection_feature_authorization_delete, handle_inbox_collection_update,
-    handle_inbox_poll_vote, note_targets_account_or_followers, object_attributed_to_remote_actor,
-    object_has_activitypub_actor_type, object_has_supported_remote_status_type,
-    upsert_remote_actor, upsert_remote_status,
+    handle_inbox_poll_vote, load_remote_status_hashtag_names, note_targets_account_or_followers,
+    object_attributed_to_remote_actor, object_has_activitypub_actor_type,
+    object_has_supported_remote_status_type, publish_remote_status_delete_stream_fanout_soft,
+    remote_status_has_media, upsert_remote_actor, upsert_remote_status,
 };
+use worker::Env;
 
 pub(crate) async fn handle_inbox_create(
     db: &D1Database,
@@ -13,6 +15,7 @@ pub(crate) async fn handle_inbox_create(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
@@ -43,7 +46,7 @@ pub(crate) async fn handle_inbox_create(
     }
 
     upsert_remote_actor(db, remote_actor).await?;
-    upsert_remote_status(db, config, remote_actor, object).await
+    upsert_remote_status(db, config, remote_actor, object, env).await
 }
 
 pub(crate) async fn handle_inbox_update(
@@ -52,6 +55,7 @@ pub(crate) async fn handle_inbox_update(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
         return Ok(());
@@ -76,7 +80,43 @@ pub(crate) async fn handle_inbox_update(
     }
 
     upsert_remote_actor(db, remote_actor).await?;
-    upsert_remote_status(db, config, remote_actor, object).await
+    upsert_remote_status(db, config, remote_actor, object, env).await
+}
+
+pub(crate) async fn fanout_and_delete_remote_status_by_object_uri_soft(
+    env: Option<&Env>,
+    db: &D1Database,
+    config: &AppConfig,
+    remote_actor: &RemoteActorProfile,
+    object_uri: &str,
+) -> Result<()> {
+    let Some(status) = find_remote_status_by_object_uri(db, object_uri).await? else {
+        return Ok(());
+    };
+    if status.actor_uri != remote_actor.actor_uri {
+        return Ok(());
+    }
+
+    let hashtag_names: Vec<String> = load_remote_status_hashtag_names(db, &status.id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let has_media = remote_status_has_media(db, &status.id)
+        .await
+        .unwrap_or(false);
+    publish_remote_status_delete_stream_fanout_soft(
+        env,
+        db,
+        config,
+        remote_actor,
+        &status,
+        &hashtag_names,
+        has_media,
+    )
+    .await;
+
+    delete_remote_status_by_id(db, &status.id).await
 }
 
 pub(crate) async fn handle_inbox_delete(
@@ -84,6 +124,7 @@ pub(crate) async fn handle_inbox_delete(
     config: &AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
+    env: Option<&Env>,
 ) -> Result<()> {
     if handle_inbox_collection_feature_authorization_delete(db, config, activity, remote_actor)
         .await?
@@ -93,12 +134,6 @@ pub(crate) async fn handle_inbox_delete(
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
         return Ok(());
     };
-    let Some(status) = find_remote_status_by_object_uri(db, object_uri).await? else {
-        return Ok(());
-    };
-    if status.actor_uri != remote_actor.actor_uri {
-        return Ok(());
-    }
-
-    delete_remote_status_by_id(db, &status.id).await
+    fanout_and_delete_remote_status_by_object_uri_soft(env, db, config, remote_actor, object_uri)
+        .await
 }

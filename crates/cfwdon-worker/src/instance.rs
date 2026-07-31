@@ -19,6 +19,7 @@ use crate::statuses::{
 use std::collections::{HashMap, HashSet};
 use time::{Duration, OffsetDateTime, Time, format_description::well_known::Rfc3339};
 use worker::Env;
+use worker::console_error;
 use worker::d1::D1Type;
 
 #[derive(Debug, serde::Deserialize)]
@@ -170,19 +171,107 @@ fn announcement_reaction_viewer_state(
         })
 }
 
-fn configured_announcement_exists(config: &cfwdon_core::AppConfig, announcement_id: &str) -> bool {
-    let Some(raw) = config.announcements_json.as_deref() else {
-        return false;
-    };
+fn find_configured_announcement_item(
+    config: &cfwdon_core::AppConfig,
+    announcement_id: &str,
+) -> Option<serde_json::Value> {
+    let raw = config.announcements_json.as_deref()?;
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return false;
+        return None;
     };
-    items.iter().any(|item| {
+    items.into_iter().find(|item| {
         item.get("id")
             .and_then(serde_json::Value::as_str)
             .map(|id| id == announcement_id)
             .unwrap_or(false)
     })
+}
+
+fn configured_announcement_exists(config: &cfwdon_core::AppConfig, announcement_id: &str) -> bool {
+    find_configured_announcement_item(config, announcement_id).is_some()
+}
+
+async fn build_viewer_announcement_stream_payload(
+    config: &cfwdon_core::AppConfig,
+    db: &worker::D1Database,
+    account_id: &str,
+    announcement_id: &str,
+) -> Result<Option<String>> {
+    let read_ids = list_announcement_read_ids(db, account_id).await?;
+    let reaction_state = load_announcement_reaction_state(db, account_id).await?;
+    let announcements = build_announcements_document(config, &read_ids, &reaction_state);
+    for announcement in announcements {
+        if announcement.get("id").and_then(serde_json::Value::as_str) == Some(announcement_id) {
+            return Ok(Some(serde_json::to_string(&announcement)?));
+        }
+    }
+    Ok(None)
+}
+
+async fn publish_announcement_reaction_stream_soft(
+    env: &Env,
+    config: &cfwdon_core::AppConfig,
+    db: &worker::D1Database,
+    account_id: &str,
+    announcement_id: &str,
+    reaction_name: &str,
+) {
+    let reaction_state = match load_announcement_reaction_state(db, account_id).await {
+        Ok(state) => state,
+        Err(error) => {
+            console_error!(
+                "failed to load announcement reaction state for stream hub publish (account {account_id}): {error}"
+            );
+            return;
+        }
+    };
+    let (count, _) = reaction_state
+        .get(&(announcement_id.to_owned(), reaction_name.to_owned()))
+        .copied()
+        .unwrap_or((0, false));
+    publish_announcement_reaction_user_stream_soft(
+        env,
+        &config.stream_hub_binding,
+        account_id,
+        announcement_id,
+        reaction_name,
+        count,
+    )
+    .await;
+}
+
+async fn publish_announcement_stream_soft(
+    env: &Env,
+    config: &cfwdon_core::AppConfig,
+    db: &worker::D1Database,
+    account_id: &str,
+    announcement_id: &str,
+) {
+    let payload = match build_viewer_announcement_stream_payload(
+        config,
+        db,
+        account_id,
+        announcement_id,
+    )
+    .await
+    {
+        Ok(Some(payload)) => payload,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to build announcement stream payload (account {account_id}, announcement {announcement_id}): {error}"
+            );
+            return;
+        }
+    };
+    publish_announcement_user_stream_soft(
+        env,
+        &config.stream_hub_binding,
+        account_id,
+        announcement_id,
+        &payload,
+    )
+    .await;
 }
 
 pub(crate) async fn list_announcement_read_ids(
@@ -582,6 +671,16 @@ pub(crate) async fn announcement_reaction_mutation_response(
         _ => save_announcement_reaction(&db, account.id(), announcement_id, reaction_name).await?,
     }
 
+    publish_announcement_reaction_stream_soft(
+        &ctx.env,
+        &config,
+        &db,
+        account.id(),
+        announcement_id,
+        reaction_name,
+    )
+    .await;
+
     Ok(Response::empty()?.with_status(200))
 }
 
@@ -602,6 +701,7 @@ pub(crate) async fn dismiss_announcement_mutation_response(
         return Response::error("announcement not found", 404);
     }
     save_announcement_dismissal(&db, account.id(), announcement_id).await?;
+    publish_announcement_stream_soft(&ctx.env, &config, &db, account.id(), announcement_id).await;
     Ok(Response::empty()?.with_status(200))
 }
 

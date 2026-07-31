@@ -18,7 +18,7 @@ pub(crate) use status_handlers::*;
 pub(crate) use status_interactions::*;
 pub(crate) use target_resolution::*;
 
-use worker::Error;
+use worker::{Env, Error};
 
 const ACTIVITYPUB_UNAUTHORIZED_PREFIX: &str = "activitypub unauthorized:";
 
@@ -79,18 +79,19 @@ async fn dispatch_inbox_activity(
     account: Option<&LocalAccount>,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
+    env: Option<&Env>,
 ) -> Result<()> {
     match inbox_activity_type(activity) {
         "Follow" => {
             if let Some(account) = account {
-                handle_inbox_follow(db, config, account, activity, remote_actor).await
+                handle_inbox_follow(db, config, account, activity, remote_actor, env).await
             } else {
                 Ok(())
             }
         }
         "Undo" => {
             if let Some(account) = account {
-                handle_inbox_undo(db, account, activity, remote_actor, config).await
+                handle_inbox_undo(db, account, activity, remote_actor, config, env).await
             } else {
                 Ok(())
             }
@@ -99,21 +100,21 @@ async fn dispatch_inbox_activity(
         "Reject" => handle_inbox_reject(db, activity, remote_actor).await,
         "Like" => {
             if let Some(account) = account {
-                handle_inbox_like(db, activity, remote_actor, account, config).await
+                handle_inbox_like(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }
         }
         "Create" => {
             if let Some(account) = account {
-                handle_inbox_create(db, activity, remote_actor, account, config).await
+                handle_inbox_create(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }
         }
         "Announce" => {
             if let Some(account) = account {
-                handle_inbox_announce(db, activity, remote_actor, account, config).await
+                handle_inbox_announce(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }
@@ -134,12 +135,12 @@ async fn dispatch_inbox_activity(
         }
         "Update" => {
             if let Some(account) = account {
-                handle_inbox_update(db, activity, remote_actor, account, config).await
+                handle_inbox_update(db, activity, remote_actor, account, config, env).await
             } else {
                 Ok(())
             }
         }
-        "Delete" => handle_inbox_delete(db, config, activity, remote_actor).await,
+        "Delete" => handle_inbox_delete(db, config, activity, remote_actor, env).await,
         _ => Ok(()),
     }
 }
@@ -165,7 +166,8 @@ pub(crate) async fn shared_inbox_response(
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
 
     if activitypub_has_type(&activity, "Delete") {
-        return handle_inbox_request(&req, &db, &config, None, &body, &activity).await;
+        return handle_inbox_request(&req, &db, &config, None, &body, &activity, Some(&ctx.env))
+            .await;
     }
 
     let remote_actor = match verify_incoming_activitypub_request(&req, &db, &body, &activity).await
@@ -211,8 +213,16 @@ pub(crate) async fn shared_inbox_response(
             Ok(Response::empty()?.with_status(202))
         }
         SharedInboxPreprocessOutcome::Process => {
-            process_verified_inbox_activity(&db, &config, &accounts, &body, &activity, remote_actor)
-                .await
+            process_verified_inbox_activity(
+                &db,
+                &config,
+                &accounts,
+                &body,
+                &activity,
+                remote_actor,
+                Some(&ctx.env),
+            )
+            .await
         }
     }
 }
@@ -235,7 +245,16 @@ pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> R
     let Some(account) = accounts.into_iter().next() else {
         return Response::error("actor not found", 404);
     };
-    handle_inbox_request(&req, &db, &config, Some(&account), &body, &activity).await
+    handle_inbox_request(
+        &req,
+        &db,
+        &config,
+        Some(&account),
+        &body,
+        &activity,
+        Some(&ctx.env),
+    )
+    .await
 }
 
 pub(crate) async fn handle_inbox_request(
@@ -245,11 +264,12 @@ pub(crate) async fn handle_inbox_request(
     account: Option<&LocalAccount>,
     body: &[u8],
     activity: &serde_json::Value,
+    env: Option<&Env>,
 ) -> Result<Response> {
     let accounts = account
         .map(|account| vec![account.clone()])
         .unwrap_or_default();
-    handle_inbox_request_for_accounts(req, db, config, &accounts, body, activity).await
+    handle_inbox_request_for_accounts(req, db, config, &accounts, body, activity, env).await
 }
 
 pub(crate) async fn handle_inbox_request_for_accounts(
@@ -259,6 +279,7 @@ pub(crate) async fn handle_inbox_request_for_accounts(
     accounts: &[LocalAccount],
     body: &[u8],
     activity: &serde_json::Value,
+    env: Option<&Env>,
 ) -> Result<Response> {
     let remote_actor = match verify_incoming_activitypub_request(req, db, body, activity).await {
         Ok(remote_actor) => remote_actor,
@@ -279,7 +300,7 @@ pub(crate) async fn handle_inbox_request_for_accounts(
             return Response::error("invalid activitypub signature", 401);
         }
     };
-    process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor).await
+    process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor, env).await
 }
 
 async fn process_verified_inbox_activity(
@@ -289,10 +310,14 @@ async fn process_verified_inbox_activity(
     body: &[u8],
     activity: &serde_json::Value,
     remote_actor: RemoteActorProfile,
+    env: Option<&Env>,
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
+    let remote_actor = &remote_actor;
+    let activity_id = activity_id.as_str();
+    let activity_type = activity_type.as_str();
+    if !begin_inbox_activity_if_needed(db, remote_actor, activity_id, activity_type).await? {
         log_federation_event(
             "inbox_replay_skipped",
             "replay",
@@ -311,11 +336,12 @@ async fn process_verified_inbox_activity(
     }
 
     let result = if accounts.is_empty() {
-        dispatch_inbox_activity(db, config, None, activity, &remote_actor).await
+        dispatch_inbox_activity(db, config, None, activity, remote_actor, env).await
     } else {
         let mut outcome = Ok(());
         for account in accounts {
-            match dispatch_inbox_activity(db, config, Some(account), activity, &remote_actor).await
+            match dispatch_inbox_activity(db, config, Some(account), activity, remote_actor, env)
+                .await
             {
                 Ok(()) => {}
                 Err(error) => {
@@ -326,7 +352,7 @@ async fn process_verified_inbox_activity(
         }
         outcome
     };
-    finish_inbox_activity_if_needed(db, &remote_actor, &activity_id, &result).await?;
+    finish_inbox_activity_if_needed(db, remote_actor, activity_id, &result).await?;
     match &result {
         Ok(()) => log_federation_event(
             "inbox_processed",

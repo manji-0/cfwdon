@@ -70,6 +70,7 @@ const ROOT_ENDPOINTS: &[&str] = &[
     "/api/v2/media",
     "/api/v2/media/:id",
     "/internal/polls/process-expired",
+    "/internal/scheduled_statuses/process",
     "/api/v1/accounts/verify_credentials",
     "/api/v1/accounts/update_credentials",
     "/api/v1/profile/header",

@@ -1,6 +1,8 @@
 use crate::{
-    AppConfig, Error, Result, StatusRow, find_local_status_by_object_uri, load_push_subscription,
-    local_status_target_uri, push_subscription_alert_enabled,
+    AppConfig, Error, Result, StatusRow, build_local_status_response_for_recipient_soft,
+    find_account_by_id, find_local_status_by_object_uri, find_status_by_id, find_status_poll_by_id,
+    load_push_subscription, local_status_target_uri, notification_timestamp_sort_token,
+    publish_local_actor_notification_soft, push_subscription_alert_enabled,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use js_sys::Uint8Array;
@@ -10,7 +12,7 @@ use wasm_bindgen::JsValue;
 use web_push_native::{
     Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey,
 };
-use worker::{D1Database, Fetch, Headers, Method, Request, RequestInit};
+use worker::{D1Database, Env, Fetch, Headers, Method, Request, RequestInit};
 
 #[derive(Debug, Deserialize)]
 struct AccountIdRow {
@@ -28,6 +30,144 @@ async fn load_account_ids(
         .into_iter()
         .map(|row| row.account_id)
         .collect())
+}
+
+async fn publish_poll_end_stream_notifications_soft(
+    env: Option<&Env>,
+    db: &D1Database,
+    config: &AppConfig,
+    poll_id: &str,
+    status_id: &str,
+    account_id: &str,
+    recipient_account_ids: &[String],
+) {
+    if env.is_none() {
+        return;
+    }
+
+    let Ok(Some(actor)) = find_account_by_id(db, account_id).await else {
+        return;
+    };
+    let Ok(Some(status)) = find_status_by_id(db, status_id).await else {
+        return;
+    };
+    let expires_at = find_status_poll_by_id(db, poll_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|poll| poll.expires_at)
+        .unwrap_or_else(|| status.created_at.clone());
+    let id = format!("poll-local-{}", poll_id);
+    let mut sent = std::collections::HashSet::new();
+
+    for recipient_account_id in recipient_account_ids {
+        if !sent.insert(recipient_account_id.clone()) {
+            continue;
+        }
+        let status_response = build_local_status_response_for_recipient_soft(
+            db,
+            config,
+            recipient_account_id,
+            &status,
+            &actor,
+        )
+        .await;
+        publish_local_actor_notification_soft(
+            env,
+            db,
+            config,
+            recipient_account_id,
+            &actor,
+            "poll",
+            id.clone(),
+            id.clone(),
+            expires_at.clone(),
+            status_response,
+        )
+        .await;
+    }
+}
+
+async fn publish_local_status_update_stream_notifications_soft(
+    env: Option<&Env>,
+    db: &D1Database,
+    config: &AppConfig,
+    status: &StatusRow,
+    reblog_recipient_ids: &[String],
+    quote_recipient_ids: &[String],
+) {
+    if env.is_none() {
+        return;
+    }
+
+    let Ok(Some(actor)) = find_account_by_id(db, &status.account_id).await else {
+        return;
+    };
+    let updated_at = status.updated_at.as_deref().unwrap_or(&status.created_at);
+    let update_token = notification_timestamp_sort_token(updated_at)
+        .unwrap_or_else(|| updated_at.replace([':', ' '], "-"));
+    let update_id = format!("update-local-{}-{}-{}", actor.id(), status.id, update_token);
+    let quoted_update_id = format!(
+        "quoted-update-local-{}-{}-{}",
+        actor.id(),
+        status.id,
+        update_token
+    );
+    let mut sent = std::collections::HashSet::new();
+
+    for recipient_account_id in reblog_recipient_ids {
+        if !sent.insert(format!("update:{recipient_account_id}")) {
+            continue;
+        }
+        let status_response = build_local_status_response_for_recipient_soft(
+            db,
+            config,
+            recipient_account_id,
+            status,
+            &actor,
+        )
+        .await;
+        publish_local_actor_notification_soft(
+            env,
+            db,
+            config,
+            recipient_account_id,
+            &actor,
+            "update",
+            update_id.clone(),
+            update_id.clone(),
+            updated_at.to_owned(),
+            status_response,
+        )
+        .await;
+    }
+
+    for recipient_account_id in quote_recipient_ids {
+        if !sent.insert(format!("quoted_update:{recipient_account_id}")) {
+            continue;
+        }
+        let status_response = build_local_status_response_for_recipient_soft(
+            db,
+            config,
+            recipient_account_id,
+            status,
+            &actor,
+        )
+        .await;
+        publish_local_actor_notification_soft(
+            env,
+            db,
+            config,
+            recipient_account_id,
+            &actor,
+            "quoted_update",
+            quoted_update_id.clone(),
+            quoted_update_id.clone(),
+            updated_at.to_owned(),
+            status_response,
+        )
+        .await;
+    }
 }
 
 async fn send_push_notifications_to_accounts(
@@ -237,6 +377,7 @@ pub(crate) async fn send_remote_status_quote_notification(
 pub(crate) async fn send_status_update_notifications(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     status: &StatusRow,
 ) -> Result<()> {
     let bindings = [worker::d1::D1Type::Text(status.id.as_str())];
@@ -251,7 +392,7 @@ pub(crate) async fn send_status_update_notifications(
     let _ = send_push_notifications_to_accounts(
         db,
         config,
-        reblog_accounts,
+        reblog_accounts.clone(),
         "update",
         json!({
             "account_id": status.account_id,
@@ -278,13 +419,23 @@ pub(crate) async fn send_status_update_notifications(
     let _ = send_push_notifications_to_accounts(
         db,
         config,
-        quote_recipients,
+        quote_recipients.clone(),
         "quoted_update",
         json!({
             "account_id": status.account_id,
             "status_id": status.id,
             "quoted_status_id": status.id,
         }),
+    )
+    .await;
+
+    publish_local_status_update_stream_notifications_soft(
+        env,
+        db,
+        config,
+        status,
+        &reblog_accounts,
+        &quote_recipients,
     )
     .await;
 
@@ -352,6 +503,7 @@ pub(crate) async fn send_remote_status_update_notifications(
 pub(crate) async fn send_poll_end_notifications(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     poll_id: &str,
     status_id: &str,
     account_id: &str,
@@ -368,7 +520,7 @@ pub(crate) async fn send_poll_end_notifications(
     send_push_notifications_to_accounts(
         db,
         config,
-        account_ids,
+        account_ids.clone(),
         "poll",
         json!({
             "account_id": account_id,
@@ -376,5 +528,16 @@ pub(crate) async fn send_poll_end_notifications(
             "poll_id": poll_id,
         }),
     )
-    .await
+    .await?;
+    publish_poll_end_stream_notifications_soft(
+        env,
+        db,
+        config,
+        poll_id,
+        status_id,
+        account_id,
+        &account_ids,
+    )
+    .await;
+    Ok(())
 }
