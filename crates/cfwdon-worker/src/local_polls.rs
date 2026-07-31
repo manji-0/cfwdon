@@ -7,6 +7,7 @@ pub(crate) use votes::*;
 use super::CreateStatusPollRequest;
 use super::time_html::is_iso_timestamp_in_past;
 use super::timestamp_to_mastodon_iso8601;
+use crate::{json_string_array, sql_in_json_each};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
@@ -178,24 +179,15 @@ async fn load_status_polls_for_status_ids(
     db: &D1Database,
     ids: &[&String],
 ) -> Result<Vec<StatusPollRow>> {
-    let status_placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ids_json = json_string_array(ids);
     let poll_sql = format!(
         "SELECT id, status_id, multiple, hide_totals, expires_at
          FROM status_polls
-         WHERE status_id IN ({status_placeholders})"
+         WHERE status_id {}",
+        sql_in_json_each(1)
     );
-    let status_bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let poll_result = db
-        .prepare(&poll_sql)
-        .bind_refs(status_bindings.iter())?
-        .all()
-        .await?;
+    let binding = D1Type::Text(ids_json.as_str());
+    let poll_result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
     poll_result.results::<StatusPollRow>()
 }
 
@@ -209,23 +201,18 @@ fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
 async fn preload_poll_options_by_poll_id(
     db: &D1Database,
     poll_ids: &[String],
-    poll_bindings: &[D1Type<'_>],
+    _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, Vec<StatusPollOptionRow>>> {
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let poll_ids_json = json_string_array(poll_ids);
     let options_sql = format!(
         "SELECT poll_id, title, votes_count
          FROM status_poll_options
-         WHERE poll_id IN ({poll_placeholders})
-         ORDER BY poll_id ASC, position ASC"
+         WHERE poll_id {}
+         ORDER BY poll_id ASC, position ASC",
+        sql_in_json_each(1)
     );
-    let options_result = db
-        .prepare(&options_sql)
-        .bind_refs(poll_bindings.iter())?
-        .all()
-        .await?;
+    let binding = D1Type::Text(poll_ids_json.as_str());
+    let options_result = db.prepare(&options_sql).bind_refs(&binding)?.all().await?;
     let mut options_by_poll_id: HashMap<String, Vec<StatusPollOptionRow>> = HashMap::new();
     for row in options_result.results::<PreloadedStatusPollOptionRow>()? {
         options_by_poll_id
@@ -246,20 +233,19 @@ async fn preload_own_votes_by_poll_id(
 ) -> Result<HashMap<String, Vec<u32>>> {
     let mut own_votes_by_poll_id: HashMap<String, Vec<u32>> = HashMap::new();
     if let Some(viewer) = viewer {
-        let vote_placeholders = (2..=(poll_ids.len() + 1))
-            .map(|index| format!("?{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let poll_ids_json = json_string_array(poll_ids);
         let vote_sql = format!(
             "SELECT poll_id, option_position
              FROM status_poll_votes
              WHERE account_id = ?1
-               AND poll_id IN ({vote_placeholders})
-             ORDER BY poll_id ASC, option_position ASC"
+               AND poll_id {}
+             ORDER BY poll_id ASC, option_position ASC",
+            sql_in_json_each(2)
         );
-        let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-        vote_bindings.push(D1Type::Text(viewer.id()));
-        vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
+        let vote_bindings = [
+            D1Type::Text(viewer.id()),
+            D1Type::Text(poll_ids_json.as_str()),
+        ];
         let vote_result = db
             .prepare(&vote_sql)
             .bind_refs(vote_bindings.iter())?
@@ -280,23 +266,18 @@ async fn preload_own_votes_by_poll_id(
 async fn preload_voters_count_by_poll_id(
     db: &D1Database,
     poll_ids: &[String],
-    poll_bindings: &[D1Type<'_>],
+    _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, u64>> {
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let poll_ids_json = json_string_array(poll_ids);
     let voters_sql = format!(
         "SELECT poll_id, COUNT(DISTINCT account_id) AS count
          FROM status_poll_votes
-         WHERE poll_id IN ({poll_placeholders})
-         GROUP BY poll_id"
+         WHERE poll_id {}
+         GROUP BY poll_id",
+        sql_in_json_each(1)
     );
-    let voters_result = db
-        .prepare(&voters_sql)
-        .bind_refs(poll_bindings.iter())?
-        .all()
-        .await?;
+    let binding = D1Type::Text(poll_ids_json.as_str());
+    let voters_result = db.prepare(&voters_sql).bind_refs(&binding)?.all().await?;
     Ok(voters_result
         .results::<PreloadedPollVotersCountRow>()?
         .into_iter()

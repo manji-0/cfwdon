@@ -1,7 +1,7 @@
 use super::{
     Error, Request, Response, Result, RouteContext, build_local_status_response,
-    find_visible_local_status_response_subject, load_config, require_authenticated_local_account,
-    sql_placeholders, unique_ordered_refs,
+    find_visible_local_status_response_subject, json_string_array, load_config,
+    require_authenticated_local_account, sql_in_json_each, unique_ordered_refs,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -104,17 +104,15 @@ async fn load_status_reply_links(
         return Ok(HashMap::new());
     }
 
-    let placeholders = sql_placeholders(1, ids.len());
+    let ids_json = json_string_array(&ids);
     let sql = format!(
         "SELECT id, in_reply_to_id
          FROM statuses
-         WHERE id IN ({placeholders})"
+         WHERE id {}",
+        sql_in_json_each(1)
     );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     Ok(result
         .results::<StatusReplyLinkRow>()?
@@ -133,16 +131,15 @@ async fn load_muted_thread_root_status_ids(
         return Ok(HashSet::new());
     }
 
-    let placeholders = sql_placeholders(2, roots.len());
+    let roots_json = json_string_array(&roots);
     let sql = format!(
         "SELECT thread_root_status_id
          FROM thread_mutes
          WHERE account_id = ?1
-           AND thread_root_status_id IN ({placeholders})"
+           AND thread_root_status_id {}",
+        sql_in_json_each(2)
     );
-    let mut bindings = Vec::with_capacity(roots.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(roots.iter().map(|id| D1Type::Text(id.as_str())));
+    let bindings = [D1Type::Text(account_id), D1Type::Text(roots_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     Ok(result

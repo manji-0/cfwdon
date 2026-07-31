@@ -1,7 +1,7 @@
 use super::{
     AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
-    local_status_identity_from_uri, sql_placeholders, status_from_record, statuses_from_records,
-    unique_ordered_refs,
+    json_string_array, local_status_identity_from_uri, sql_in_json_each, status_from_record,
+    statuses_from_records, unique_ordered_refs,
 };
 use std::collections::HashMap;
 use worker::d1::D1Type;
@@ -57,17 +57,15 @@ pub(crate) async fn find_statuses_by_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders = sql_placeholders(1, ids.len());
+    let ids_json = json_string_array(&ids);
     let sql = format!(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
          FROM statuses
-         WHERE id IN ({placeholders})"
+         WHERE id {}",
+        sql_in_json_each(1)
     );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     result
         .results::<StatusRecord>()
@@ -100,17 +98,15 @@ pub(crate) async fn find_statuses_by_ap_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders = sql_placeholders(1, ap_ids.len());
+    let ap_ids_json = json_string_array(&ap_ids);
     let sql = format!(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
          FROM statuses
-         WHERE ap_id IN ({placeholders})"
+         WHERE ap_id {}",
+        sql_in_json_each(1)
     );
-    let bindings = ap_ids
-        .iter()
-        .map(|ap_id| D1Type::Text(ap_id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(ap_ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     result
         .results::<StatusRecord>()
@@ -148,17 +144,15 @@ pub(crate) async fn load_in_reply_to_account_ids(
         account_id: String,
     }
 
-    let placeholders = sql_placeholders(1, reply_ids.len());
+    let reply_ids_json = json_string_array(&reply_ids);
     let sql = format!(
         "SELECT id, account_id
          FROM statuses
-         WHERE id IN ({placeholders})"
+         WHERE id {}",
+        sql_in_json_each(1)
     );
-    let bindings = reply_ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(reply_ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let reply_accounts_by_status_id = result
         .results::<ReplyAccountIdRow>()?
         .into_iter()

@@ -1,7 +1,7 @@
 use super::{
     AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
-    ResolvedTimelineCursor, Result, normalize_hashtag, remote_status_from_record,
-    remote_statuses_from_records, sql_placeholders, unique_ordered_refs,
+    ResolvedTimelineCursor, Result, json_string_array, normalize_hashtag,
+    remote_status_from_record, remote_statuses_from_records, sql_in_json_each, unique_ordered_refs,
 };
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -174,18 +174,13 @@ pub(crate) async fn find_remote_statuses_with_actors_by_ids(
         return Ok(Vec::new());
     }
 
-    let sql = remote_statuses_with_actors_by_ids_sql(ids.len());
-    let bindings = remote_statuses_with_actors_by_ids_bindings(&ids);
-
-    query_remote_statuses_with_actor(db, &sql, &bindings).await
+    let ids_json = json_string_array(&ids);
+    let sql = remote_statuses_with_actors_by_ids_sql();
+    let binding = D1Type::Text(ids_json.as_str());
+    query_remote_statuses_with_actor(db, &sql, &[binding]).await
 }
 
-fn remote_statuses_with_actors_by_ids_bindings<'a>(ids: &[&'a String]) -> Vec<D1Type<'a>> {
-    ids.iter().map(|id| D1Type::Text(id.as_str())).collect()
-}
-
-fn remote_statuses_with_actors_by_ids_sql(id_count: usize) -> String {
-    let placeholders = sql_placeholders(1, id_count);
+fn remote_statuses_with_actors_by_ids_sql() -> String {
     format!(
         "SELECT
             rs.id,
@@ -215,7 +210,8 @@ fn remote_statuses_with_actors_by_ids_sql(id_count: usize) -> String {
             ra.indexable
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
-         WHERE rs.id IN ({placeholders})"
+         WHERE rs.id {}",
+        sql_in_json_each(1)
     )
 }
 
@@ -1228,11 +1224,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_statuses_with_actors_by_ids_sql_uses_id_placeholders() {
-        let sql = remote_statuses_with_actors_by_ids_sql(3);
+    fn remote_statuses_with_actors_by_ids_sql_uses_json_each() {
+        let sql = remote_statuses_with_actors_by_ids_sql();
 
         assert!(sql.contains("JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri"));
-        assert!(sql.contains("WHERE rs.id IN (?1, ?2, ?3)"));
+        assert!(sql.contains("WHERE rs.id IN (SELECT value FROM json_each(?1))"));
     }
 
     #[test]

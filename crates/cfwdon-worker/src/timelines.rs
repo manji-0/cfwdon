@@ -329,20 +329,15 @@ async fn preload_timeline_candidate_reply_account_ids(
         return Ok(HashMap::new());
     }
 
-    let placeholders = (1..=reply_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let reply_ids_json = crate::json_string_array(&reply_ids);
     let sql = format!(
         "SELECT id, account_id
          FROM statuses
-         WHERE id IN ({placeholders})"
+         WHERE id {}",
+        crate::sql_in_json_each(1)
     );
-    let bindings = reply_ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(reply_ids_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let reply_accounts_by_status_id = result
         .results::<ReplyAccountIdRow>()?
         .into_iter()

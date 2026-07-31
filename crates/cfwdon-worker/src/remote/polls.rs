@@ -9,9 +9,9 @@ use super::{
     extract_remote_poll_draft, fetch_remote_activitypub_document, fetch_remote_actor_profile,
     find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
     has_remote_poll_votes_created_after, is_local_account_following_remote_actor,
-    list_remote_poll_votes_for_account, list_remote_status_poll_options, note_targets_account,
-    note_targets_followers, remap_remote_poll_vote_positions, upsert_remote_actor,
-    upsert_remote_status, validate_poll_vote_submission,
+    json_string_array, list_remote_poll_votes_for_account, list_remote_status_poll_options,
+    note_targets_account, note_targets_followers, remap_remote_poll_vote_positions,
+    sql_in_json_each, upsert_remote_actor, upsert_remote_status, validate_poll_vote_submission,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, StoredRemotePollVoteIntent};
@@ -139,24 +139,15 @@ async fn load_remote_status_polls_for_status_ids(
     db: &D1Database,
     ids: &[&String],
 ) -> Result<Vec<RemoteStatusPollRow>> {
-    let status_placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ids_json = json_string_array(ids);
     let poll_sql = format!(
         "SELECT id, status_id, multiple, expires_at, voters_count, votes_count, expired, updated_at
          FROM remote_status_polls
-         WHERE status_id IN ({status_placeholders})"
+         WHERE status_id {}",
+        sql_in_json_each(1)
     );
-    let status_bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db
-        .prepare(&poll_sql)
-        .bind_refs(status_bindings.iter())?
-        .all()
-        .await?;
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
     result.results::<RemoteStatusPollRow>()
 }
 
@@ -170,21 +161,20 @@ fn remote_poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
 async fn preload_remote_poll_options_by_poll_id(
     db: &D1Database,
     poll_ids: &[String],
-    poll_bindings: &[D1Type<'_>],
+    _poll_bindings: &[D1Type<'_>],
 ) -> Result<HashMap<String, Vec<RemoteStatusPollOptionRow>>> {
-    let poll_placeholders = (1..=poll_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let poll_ids_json = json_string_array(poll_ids);
     let options_sql = format!(
         "SELECT poll_id, title, votes_count
          FROM remote_status_poll_options
-         WHERE poll_id IN ({poll_placeholders})
-         ORDER BY poll_id ASC, position ASC"
+         WHERE poll_id {}
+         ORDER BY poll_id ASC, position ASC",
+        sql_in_json_each(1)
     );
+    let binding = D1Type::Text(poll_ids_json.as_str());
     let option_rows = db
         .prepare(&options_sql)
-        .bind_refs(poll_bindings.iter())?
+        .bind_refs(&binding)?
         .all()
         .await?
         .results::<RemoteStatusPollOptionPreloadRow>()?;
@@ -209,20 +199,19 @@ async fn preload_remote_poll_votes_by_poll_id(
     let Some(viewer) = viewer else {
         return Ok(HashMap::new());
     };
+    let poll_ids_json = json_string_array(poll_ids);
     let vote_sql = format!(
         "SELECT poll_id, option_position, option_title
              FROM remote_status_poll_votes
              WHERE account_id = ?1
-               AND poll_id IN ({})
+               AND poll_id {}
              ORDER BY poll_id ASC, option_position ASC",
-        (2..=(poll_ids.len() + 1))
-            .map(|index| format!("?{index}"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        sql_in_json_each(2)
     );
-    let mut vote_bindings = Vec::with_capacity(poll_ids.len() + 1);
-    vote_bindings.push(D1Type::Text(viewer.id()));
-    vote_bindings.extend(poll_ids.iter().map(|id| D1Type::Text(id.as_str())));
+    let vote_bindings = [
+        D1Type::Text(viewer.id()),
+        D1Type::Text(poll_ids_json.as_str()),
+    ];
     let vote_rows = db
         .prepare(&vote_sql)
         .bind_refs(vote_bindings.iter())?
