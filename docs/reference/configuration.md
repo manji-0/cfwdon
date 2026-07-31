@@ -12,7 +12,6 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | `MEDIA` | R2 bucket | Yes | Bucket binding used for uploaded media bodies and profile media objects. |
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
 | `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
-| `INBOX_HOST` | Durable Object | Yes | `InboxHost` binding for per-remote-host inbox admission rate limiting (Phase C spike). |
 
 If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync.
 

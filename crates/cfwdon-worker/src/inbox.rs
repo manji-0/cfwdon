@@ -155,63 +155,6 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
     }
 }
 
-fn inbox_backpressure_response(retry_after_secs: u64) -> Result<Response> {
-    inbox_backpressure_response_with_secs(inbox_backpressure_retry_after_secs(retry_after_secs))
-}
-
-fn inbox_backpressure_retry_after_secs(retry_after_secs: u64) -> u64 {
-    retry_after_secs.max(1)
-}
-
-fn inbox_backpressure_response_with_secs(secs: u64) -> Result<Response> {
-    let mut response = Response::empty()?.with_status(503);
-    response
-        .headers_mut()
-        .set("Retry-After", &secs.to_string())?;
-    Ok(response)
-}
-
-async fn try_inbox_host_admission(
-    config: &AppConfig,
-    env: Option<&Env>,
-    activity_id: &str,
-    activity_type: &str,
-    remote_actor: &RemoteActorProfile,
-    lease: bool,
-) -> InboxHostAdmitResult {
-    let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
-        Some(host_key) => host_key,
-        None => {
-            return inbox_host_admit_allowed_open();
-        }
-    };
-    admit_inbox_host_soft(
-        env,
-        &config.inbox_host_binding,
-        &host_key,
-        activity_id,
-        &remote_actor.actor_uri,
-        activity_type,
-        lease,
-    )
-    .await
-}
-
-async fn release_inbox_host_lease_soft(
-    config: &AppConfig,
-    env: Option<&Env>,
-    remote_actor: &RemoteActorProfile,
-    leased: bool,
-) {
-    if !leased {
-        return;
-    }
-    let Some(host_key) = peer_authority_from_uri(config, &remote_actor.actor_uri) else {
-        return;
-    };
-    release_inbox_host_soft(env, &config.inbox_host_binding, &host_key).await;
-}
-
 pub(crate) async fn shared_inbox_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -253,37 +196,6 @@ pub(crate) async fn shared_inbox_response(
             Response::error("invalid activitypub signature", 401)
         }
         SharedInboxPreprocessOutcome::AcceptedNoTargets => {
-            let activity_type = inbox_activity_type(&activity).to_owned();
-            let activity_id =
-                inbox_activity_dedupe_id(&activity, &remote_actor.actor_uri, &body).await?;
-            let admission = try_inbox_host_admission(
-                &config,
-                Some(&ctx.env),
-                &activity_id,
-                &activity_type,
-                &remote_actor,
-                false,
-            )
-            .await;
-            if !admission.allowed {
-                log_federation_event(
-                    "inbox_host_admission_rejected",
-                    "rate_limited",
-                    format!(
-                        "shared inbox host admission rejected: activity_type={activity_type} actor={} activity_id={activity_id}",
-                        remote_actor.actor_uri
-                    ),
-                    serde_json::json!({
-                        "inbox": "shared",
-                        "activity_type": activity_type,
-                        "activity_id": activity_id,
-                        "actor_uri": remote_actor.actor_uri,
-                        "reason": "rate_limited",
-                        "retry_after_secs": admission.retry_after_secs,
-                    }),
-                );
-                return inbox_backpressure_response(admission.retry_after_secs);
-            }
             log_federation_event(
                 "inbox_accepted_no_targets",
                 "skipped",
@@ -402,62 +314,9 @@ async fn process_verified_inbox_activity(
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    let admission = try_inbox_host_admission(
-        config,
-        env,
-        &activity_id,
-        &activity_type,
-        &remote_actor,
-        true,
-    )
-    .await;
-    if !admission.allowed {
-        log_federation_event(
-            "inbox_host_admission_rejected",
-            "rate_limited",
-            format!(
-                "inbox host admission rejected: activity_type={activity_type} actor={} activity_id={activity_id}",
-                remote_actor.actor_uri
-            ),
-            serde_json::json!({
-                "activity_type": activity_type,
-                "activity_id": activity_id,
-                "actor_uri": remote_actor.actor_uri,
-                "target_count": accounts.len(),
-                "retry_after_secs": admission.retry_after_secs,
-                "in_flight": admission.in_flight,
-            }),
-        );
-        return inbox_backpressure_response(admission.retry_after_secs);
-    }
-    let response = process_admitted_inbox_activity(
-        db,
-        config,
-        accounts,
-        activity,
-        &remote_actor,
-        env,
-        &activity_id,
-        &activity_type,
-    )
-    .await;
-    // Runs on every exit of the admitted path, including errors, so a lease is
-    // never stranded while the request is still counted as in-flight.
-    release_inbox_host_lease_soft(config, env, &remote_actor, admission.leased).await;
-    response
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn process_admitted_inbox_activity(
-    db: &D1Database,
-    config: &AppConfig,
-    accounts: &[LocalAccount],
-    activity: &serde_json::Value,
-    remote_actor: &RemoteActorProfile,
-    env: Option<&Env>,
-    activity_id: &str,
-    activity_type: &str,
-) -> Result<Response> {
+    let remote_actor = &remote_actor;
+    let activity_id = activity_id.as_str();
+    let activity_type = activity_type.as_str();
     if !begin_inbox_activity_if_needed(db, remote_actor, activity_id, activity_type).await? {
         log_federation_event(
             "inbox_replay_skipped",
@@ -572,12 +431,6 @@ mod tests {
                     | "Delete"
             ));
         }
-    }
-
-    #[test]
-    fn inbox_backpressure_response_clamps_retry_after_to_at_least_one() {
-        assert_eq!(inbox_backpressure_retry_after_secs(0), 1);
-        assert_eq!(inbox_backpressure_retry_after_secs(30), 30);
     }
 
     #[test]

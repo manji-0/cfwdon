@@ -49,7 +49,6 @@ pub struct AppConfig {
     pub stream_hub_binding: String,
     /// When > 1, public timeline publishes dual-publish to sharded StreamHub DOs.
     pub stream_hub_public_shard_count: u32,
-    pub inbox_host_binding: String,
     pub media_public_base_url: Option<String>,
     pub timeline_live_feeds_local: TimelineAccessLevel,
     pub timeline_live_feeds_remote: TimelineAccessLevel,
@@ -97,7 +96,6 @@ impl AppConfig {
             remote_dns_cache_binding: "REMOTE_DNS_CACHE".to_owned(),
             stream_hub_binding: "STREAM_HUB".to_owned(),
             stream_hub_public_shard_count: 1,
-            inbox_host_binding: "INBOX_HOST".to_owned(),
             media_public_base_url: None,
             timeline_live_feeds_local: TimelineAccessLevel::Public,
             timeline_live_feeds_remote: TimelineAccessLevel::Public,
