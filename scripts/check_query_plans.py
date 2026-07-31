@@ -27,6 +27,15 @@ def assert_uses_index(plan: str, label: str) -> None:
         raise RuntimeError(f"{label}: expected an index scan, got:\n{plan}")
 
 
+def assert_seeks_alias(plan: str, label: str, alias: str) -> None:
+    """A full index SCAN still reads every row. Queries that run per status
+    (stream fan-out) must seek their driving table, not walk it."""
+    if f"SCAN {alias} " in plan:
+        raise RuntimeError(f"{label}: expected a seek on `{alias}`, got:\n{plan}")
+    if f"SEARCH {alias} " not in plan:
+        raise RuntimeError(f"{label}: expected a seek on `{alias}`, got:\n{plan}")
+
+
 def assert_no_null_cursor_disjunction(_plan: str, sql: str, label: str) -> None:
     import re
 
@@ -77,11 +86,40 @@ def seed(conn: sqlite3.Connection) -> None:
          ) VALUES (?, ?, ?, ?, ?)""",
         ("follow-1", "acct-1", "acct-1", "https://remote.example/users/bob", "accepted"),
     )
+    for index in range(2, 102):
+        conn.execute(
+            "INSERT INTO accounts (id, username, access_email, display_name) VALUES (?, ?, ?, ?)",
+            (f"acct-{index}", f"user{index}", f"user{index}@example.com", f"User {index}"),
+        )
+        conn.execute(
+            """INSERT INTO follows (
+                id, follower_account_id, target_account_id, target_actor_uri, state
+             ) VALUES (?, ?, ?, ?, ?)""",
+            (
+                f"follow-{index}",
+                f"acct-{index}",
+                "acct-1",
+                "https://remote.example/users/bob",
+                "accepted",
+            ),
+        )
+        conn.execute(
+            """INSERT INTO scheduled_statuses (
+                id, account_id, text_content, visibility, scheduled_at
+             ) VALUES (?, ?, ?, ?, ?)""",
+            (
+                f"sched-{index}",
+                "acct-1",
+                "later",
+                "public",
+                f"2026-02-{(index % 28) + 1:02d}T12:00:00Z",
+            ),
+        )
     conn.execute("ANALYZE")
 
 
 def main() -> int:
-    checks: list[tuple[str, str, tuple[object, ...]]] = [
+    checks: list[tuple[str, str, tuple[object, ...], str | None]] = [
         (
             "public timeline seekable",
             """SELECT id FROM statuses
@@ -91,6 +129,7 @@ def main() -> int:
                ORDER BY created_at DESC, id DESC
                LIMIT ?""",
             ("2026-01-15T12:00:00Z", "2026-01-15T12:00:00Z", "status-50", 20),
+            None,
         ),
         (
             "home followed seekable",
@@ -101,6 +140,7 @@ def main() -> int:
                  AND s.created_at <= ? AND (s.created_at < ? OR s.id < ?)
                ORDER BY s.created_at DESC, s.id DESC LIMIT ?""",
             ("acct-1", "2026-01-15T12:00:00Z", "2026-01-15T12:00:00Z", "status-50", 20),
+            None,
         ),
         (
             "status quotes seekable",
@@ -112,6 +152,7 @@ def main() -> int:
                ORDER BY created_at DESC, id DESC
                LIMIT ?""",
             ("https://example.com/statuses/1", "2026-01-15T12:00:00Z", "2026-01-15T12:00:00Z", "status-50", 20),
+            None,
         ),
         (
             "status search seekable",
@@ -122,6 +163,66 @@ def main() -> int:
                ORDER BY created_at DESC, id DESC
                LIMIT ?""",
             ("%rust%", "2026-01-15T12:00:00Z", "2026-01-15T12:00:00Z", "status-50", 20),
+            None,
+        ),
+        (
+            "stream fan-out followers by account",
+            """SELECT f.follower_account_id
+               FROM follows f
+               WHERE f.target_account_id = ?
+                 AND f.state = 'accepted'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE b.blocker_account_id = f.follower_account_id
+                       AND b.target_actor_uri = ?
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes m
+                     WHERE m.account_id = f.follower_account_id
+                       AND m.target_actor_uri = ?
+                       AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
+                 )
+               ORDER BY f.created_at DESC, f.rowid DESC
+               LIMIT ?""",
+            ("acct-1", "https://example.com/users/alice", "https://example.com/users/alice", 201),
+            "f",
+        ),
+        (
+            "stream fan-out followers by actor uri",
+            """SELECT f.follower_account_id
+               FROM follows f
+               WHERE f.target_actor_uri = ?
+                 AND f.state = 'accepted'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE b.blocker_account_id = f.follower_account_id
+                       AND b.target_actor_uri = ?
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes m
+                     WHERE m.account_id = f.follower_account_id
+                       AND m.target_actor_uri = ?
+                       AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
+                 )
+               ORDER BY f.created_at DESC, f.rowid DESC
+               LIMIT ?""",
+            (
+                "https://remote.example/users/bob",
+                "https://remote.example/users/bob",
+                "https://remote.example/users/bob",
+                201,
+            ),
+            "f",
+        ),
+        (
+            "scheduled statuses due sweep",
+            """SELECT id FROM scheduled_statuses
+               WHERE scheduled_at <= ?
+                 AND (claimed_at IS NULL OR claimed_at <= ?)
+               ORDER BY scheduled_at ASC, id ASC
+               LIMIT ?""",
+            ("2026-02-15T12:00:00Z", "2026-02-15T11:55:00Z", 32),
+            None,
         ),
         (
             "outbox generic claim",
@@ -130,6 +231,7 @@ def main() -> int:
                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                ORDER BY created_at ASC LIMIT ?""",
             (16,),
+            None,
         ),
     ]
 
@@ -137,9 +239,11 @@ def main() -> int:
         with sqlite3.connect(":memory:") as conn:
             apply_migrations(conn)
             seed(conn)
-            for label, sql, params in checks:
+            for label, sql, params, seek_alias in checks:
                 plan = plan_text(conn, sql, params)
                 assert_uses_index(plan, label)
+                if seek_alias is not None:
+                    assert_seeks_alias(plan, label, seek_alias)
                 assert_no_null_cursor_disjunction(plan, sql, label)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
