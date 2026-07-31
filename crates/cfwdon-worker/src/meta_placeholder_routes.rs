@@ -1558,29 +1558,19 @@ fn stream_hub_websocket_text_to_sse_bytes(
     if event_name.is_empty() {
         return None;
     }
-    let data = if event_name == "filters_changed" {
-        "undefined".to_owned()
-    } else {
-        value
-            .get("payload")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let (id, _created_at) = if event_name == "filters_changed" {
-        (
-            state
-                .last_filter_updated_at
-                .clone()
-                .unwrap_or_else(|| "filters_changed".to_owned()),
-            state
-                .last_filter_updated_at
-                .clone()
-                .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
-        )
-    } else {
-        streaming_event_identity_from_payload(event_name, &data)
-    };
+    // `filters_changed` carries no payload to dedupe on, and the D1 catch-up
+    // cursor only advances every backup poll, so keying it on that cursor would
+    // drop every change after the first. Pass it through unconditionally.
+    if event_name == "filters_changed" {
+        return Some(sse_named_event_bytes(event_name, "undefined"));
+    }
+
+    let data = value
+        .get("payload")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let (id, _created_at) = streaming_event_identity_from_payload(event_name, &data);
     let dedupe_key = format!("{event_name}:{id}");
     if !state.emitted_event_ids.insert(dedupe_key) {
         return None;
@@ -4208,6 +4198,11 @@ mod tests {
             "event": "filters_changed",
         });
 
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
+        );
+        // Repeated filter edits must keep arriving.
         assert_eq!(
             stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
             Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
