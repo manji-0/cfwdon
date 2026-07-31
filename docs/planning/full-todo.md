@@ -84,3 +84,13 @@ The generated compatibility inventory currently maps all tracked upstream routes
 - Structured logging with request, actor, delivery target, and retry metadata.
 - Compatibility fixtures and e2e API tests.
 - Federation interop tests.
+
+## Durable Objects Follow-Up
+<!-- derived-from durable-objects-candidates.md -->
+
+Streaming already validates channels and serves SSE/WebSocket clients by polling D1 every few seconds, then recycling before Worker subrequest limits. Durable Objects are the main candidate to replace that poll loop with hibernatable WebSocket hubs and write-time fan-out. See [Durable Objects Candidates](durable-objects-candidates.md) for ranking, sharding atoms, and a phased spike plan.
+
+- Spike a `StreamHub` DO for one authenticated channel (`user` or `user:notification`) with hibernation.
+- Publish prebuilt Mastodon streaming payloads after D1 commits; keep D1 as source of truth.
+- Evaluate keyed DO rate limiters for shared inbox / remote fetch abuse separately from streaming.
+- Keep outbound ActivityPub delivery on Queues; do not move fan-out HTTP delivery into DOs.
