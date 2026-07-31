@@ -97,7 +97,8 @@ mod tests {
     #[test]
     fn json_string_array_encodes_values_as_json_text() {
         assert_eq!(json_string_array(&["a", "b"]), r#"["a","b"]"#);
-        assert_eq!(json_string_array::<&str>(&[]), "[]");
+        let empty: [&str; 0] = [];
+        assert_eq!(json_string_array(&empty), "[]");
         assert_eq!(json_string_array(&["quote\"here"]), r#"["quote\"here"]"#);
     }
 
