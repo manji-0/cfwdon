@@ -103,6 +103,14 @@ max_concurrency = 1
 name = "STREAM_HUB"
 class_name = "StreamHub"
 
+[[durable_objects.bindings]]
+name = "INBOX_HOST"
+class_name = "InboxHost"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["StreamHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["InboxHost"]

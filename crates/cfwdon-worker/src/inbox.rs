@@ -155,6 +155,28 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
     }
 }
 
+async fn try_inbox_host_admission(
+    config: &AppConfig,
+    env: Option<&Env>,
+    activity_id: &str,
+    activity_type: &str,
+    remote_actor: &RemoteActorProfile,
+) -> bool {
+    let host_key = match peer_authority_from_uri(config, &remote_actor.actor_uri) {
+        Some(host_key) => host_key,
+        None => return true,
+    };
+    admit_inbox_host_soft(
+        env,
+        &config.inbox_host_binding,
+        &host_key,
+        activity_id,
+        &remote_actor.actor_uri,
+        activity_type,
+    )
+    .await
+}
+
 pub(crate) async fn shared_inbox_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -196,20 +218,49 @@ pub(crate) async fn shared_inbox_response(
             Response::error("invalid activitypub signature", 401)
         }
         SharedInboxPreprocessOutcome::AcceptedNoTargets => {
-            log_federation_event(
-                "inbox_accepted_no_targets",
-                "skipped",
-                format!(
-                    "shared inbox accepted with no local targets: activity_type={} actor={}",
-                    inbox_activity_type(&activity),
-                    remote_actor.actor_uri
-                ),
-                serde_json::json!({
-                    "inbox": "shared",
-                    "activity_type": inbox_activity_type(&activity),
-                    "actor_uri": remote_actor.actor_uri,
-                }),
-            );
+            let activity_type = inbox_activity_type(&activity).to_owned();
+            let activity_id =
+                inbox_activity_dedupe_id(&activity, &remote_actor.actor_uri, &body).await?;
+            if !try_inbox_host_admission(
+                &config,
+                Some(&ctx.env),
+                &activity_id,
+                &activity_type,
+                &remote_actor,
+            )
+            .await
+            {
+                log_federation_event(
+                    "inbox_host_admission_rejected",
+                    "rate_limited",
+                    format!(
+                        "shared inbox host admission rejected: activity_type={activity_type} actor={} activity_id={activity_id}",
+                        remote_actor.actor_uri
+                    ),
+                    serde_json::json!({
+                        "inbox": "shared",
+                        "activity_type": activity_type,
+                        "activity_id": activity_id,
+                        "actor_uri": remote_actor.actor_uri,
+                        "reason": "no_local_targets",
+                    }),
+                );
+            } else {
+                log_federation_event(
+                    "inbox_accepted_no_targets",
+                    "skipped",
+                    format!(
+                        "shared inbox accepted with no local targets: activity_type={} actor={}",
+                        inbox_activity_type(&activity),
+                        remote_actor.actor_uri
+                    ),
+                    serde_json::json!({
+                        "inbox": "shared",
+                        "activity_type": inbox_activity_type(&activity),
+                        "actor_uri": remote_actor.actor_uri,
+                    }),
+                );
+            }
             Ok(Response::empty()?.with_status(202))
         }
         SharedInboxPreprocessOutcome::Process => {
@@ -314,6 +365,31 @@ async fn process_verified_inbox_activity(
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
+    if !try_inbox_host_admission(
+        config,
+        env,
+        &activity_id,
+        &activity_type,
+        &remote_actor,
+    )
+    .await
+    {
+        log_federation_event(
+            "inbox_host_admission_rejected",
+            "rate_limited",
+            format!(
+                "inbox host admission rejected: activity_type={activity_type} actor={} activity_id={activity_id}",
+                remote_actor.actor_uri
+            ),
+            serde_json::json!({
+                "activity_type": activity_type,
+                "activity_id": activity_id,
+                "actor_uri": remote_actor.actor_uri,
+                "target_count": accounts.len(),
+            }),
+        );
+        return Ok(Response::empty()?.with_status(202));
+    }
     if !begin_inbox_activity_if_needed(db, &remote_actor, &activity_id, &activity_type).await? {
         log_federation_event(
             "inbox_replay_skipped",
