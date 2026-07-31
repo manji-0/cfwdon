@@ -391,6 +391,53 @@ pub(crate) async fn list_local_follower_account_ids_for_stream_fanout(
     })
 }
 
+pub(crate) async fn list_local_follower_account_ids_for_remote_actor_stream_fanout(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<LocalFollowerFanoutIds> {
+    let probe_limit = STREAM_HUB_FOLLOWER_FANOUT_LIMIT + 1;
+    let bindings = [
+        D1Type::Text(actor_uri),
+        D1Type::Integer(probe_limit as i32),
+    ];
+    let result = db
+        .prepare(
+            "SELECT follower_account_id
+             FROM follows
+             WHERE target_actor_uri = ?1
+               AND state = 'accepted'
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?2",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    let ids = result
+        .results::<serde_json::Value>()?
+        .into_iter()
+        .filter_map(|row| {
+            row.get("follower_account_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+
+    let truncated = ids.len() > STREAM_HUB_FOLLOWER_FANOUT_LIMIT as usize;
+    let account_ids = if truncated {
+        ids.into_iter()
+            .take(STREAM_HUB_FOLLOWER_FANOUT_LIMIT as usize)
+            .collect()
+    } else {
+        ids
+    };
+
+    Ok(LocalFollowerFanoutIds {
+        account_ids,
+        truncated,
+    })
+}
+
 pub(crate) async fn list_local_followers_for_account(
     db: &D1Database,
     account_id: &str,

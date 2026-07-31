@@ -8,7 +8,8 @@ use crate::{
         activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
     },
     publish_remote_status_create_stream_notifications_soft,
-    publish_remote_status_update_stream_notifications_soft, replace_remote_status_attachments,
+    publish_remote_status_update_stream_notifications_soft,
+    publish_remote_status_update_user_stream_fanout_soft, replace_remote_status_attachments,
     replace_remote_status_hashtags, send_remote_status_quote_notification,
     send_remote_status_update_notifications, upsert_remote_status_poll,
 };
@@ -466,6 +467,16 @@ async fn send_remote_status_change_notifications(
             status,
         )
         .await;
+        if let Some(env) = env {
+            publish_remote_status_update_user_stream_fanout_soft(
+                env,
+                db,
+                config,
+                actor,
+                status,
+            )
+            .await;
+        }
     }
 }
 
