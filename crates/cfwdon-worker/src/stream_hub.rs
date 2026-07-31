@@ -318,6 +318,30 @@ pub(crate) async fn publish_user_stream_hub_event_soft(
     }
 }
 
+pub(crate) async fn publish_notification_stream_hub_event_soft(
+    env: &Env,
+    binding: &str,
+    account_id: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let hub_name = stream_hub_id_name("user:notification", Some(account_id), None, None);
+    let mut body = serde_json::json!({
+        "stream": "user:notification",
+        "account_id": account_id,
+        "event": "notification",
+        "payload": payload,
+    });
+    if let Some(event_id) = event_id {
+        body["event_id"] = serde_json::json!(event_id);
+    }
+    if let Err(error) = publish_stream_hub_event(env, binding, &hub_name, &body).await {
+        console_error!(
+            "failed to publish notification stream hub event for account {account_id}: {error}"
+        );
+    }
+}
+
 pub(crate) async fn publish_stream_hub_event(
     env: &Env,
     binding: &str,
