@@ -8,7 +8,8 @@ use crate::{
     find_media_attachment_by_id, find_oauth_app_id_by_bearer_token, generate_entity_id,
     load_config, normalize_scheduled_at, now_iso_string, oauth_access_token_has_any_scope,
     parse_internal_pagination_id, require_authenticated_local_account, resolve_attachable_media,
-    validate_local_quote_creation, validate_scheduled_at_minimum_offset,
+    subtract_seconds_from_iso_string, validate_local_quote_creation,
+    validate_scheduled_at_minimum_offset,
 };
 use cfwdon_domain::{QuoteApprovalPolicy, Visibility};
 use serde::{Deserialize, Serialize};
@@ -212,12 +213,15 @@ fn scheduled_status_poll(value: &serde_json::Value) -> Option<cfwdon_domain::Pol
         .and_then(|value| serde_json::from_str(value).ok())
 }
 
+/// A claim older than this is treated as abandoned, so a run that dies midway
+/// is retried on a later sweep instead of stranding the scheduled status.
+pub(crate) const SCHEDULED_STATUS_CLAIM_TTL_SECS: i64 = 300;
+
 #[derive(Clone, Debug)]
 pub(crate) struct DueScheduledStatus {
     pub(crate) id: String,
     pub(crate) account_id: String,
     pub(crate) draft: StatusDraft,
-    pub(crate) idempotency_key: Option<String>,
     pub(crate) application_id: Option<i64>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) scheduled_at: String,
@@ -230,7 +234,6 @@ fn due_scheduled_status_from_value(
         id: json_string(value, "id").unwrap_or_default(),
         account_id: json_string(value, "account_id").unwrap_or_default(),
         draft: scheduled_status_draft_from_value(value)?,
-        idempotency_key: json_string(value, "idempotency_key"),
         application_id: json_i64(value, "application_id"),
         quote_of_uri: json_string(value, "quote_of_uri"),
         scheduled_at: json_string(value, "scheduled_at")
@@ -256,9 +259,14 @@ fn compare_due_scheduled_status_order(
 pub(crate) async fn list_due_scheduled_statuses(
     db: &D1Database,
     now_iso: &str,
+    stale_claim_before_iso: &str,
     limit: u32,
 ) -> Result<Vec<DueScheduledStatus>> {
-    let bindings = [D1Type::Text(now_iso), D1Type::Integer(limit as i32)];
+    let bindings = [
+        D1Type::Text(now_iso),
+        D1Type::Integer(limit as i32),
+        D1Type::Text(stale_claim_before_iso),
+    ];
     let rows = db
         .prepare(
             "SELECT
@@ -279,6 +287,7 @@ pub(crate) async fn list_due_scheduled_statuses(
                 scheduled_at
              FROM scheduled_statuses
              WHERE scheduled_at <= ?1
+               AND (claimed_at IS NULL OR claimed_at <= ?3)
              ORDER BY scheduled_at ASC, id ASC
              LIMIT ?2",
         )
@@ -290,6 +299,41 @@ pub(crate) async fn list_due_scheduled_statuses(
         .iter()
         .filter_map(|row| due_scheduled_status_from_value(row).ok())
         .collect())
+}
+
+/// Claims older than this timestamp are considered abandoned.
+fn scheduled_status_stale_claim_threshold(now_iso: &str) -> Result<String> {
+    subtract_seconds_from_iso_string(now_iso, SCHEDULED_STATUS_CLAIM_TTL_SECS)
+}
+
+/// Marks the row as being published. Returns false when another sweep already
+/// claimed it, or when the schedule changed after it was listed, so a status is
+/// never published twice by concurrent runs.
+async fn claim_scheduled_status(
+    db: &D1Database,
+    id: &str,
+    scheduled_at: &str,
+    now_iso: &str,
+    stale_claim_before_iso: &str,
+) -> Result<bool> {
+    let bindings = [
+        D1Type::Text(id),
+        D1Type::Text(scheduled_at),
+        D1Type::Text(now_iso),
+        D1Type::Text(stale_claim_before_iso),
+    ];
+    let result = db
+        .prepare(
+            "UPDATE scheduled_statuses
+             SET claimed_at = ?3
+             WHERE id = ?1
+               AND scheduled_at = ?2
+               AND (claimed_at IS NULL OR claimed_at <= ?4)",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    scheduled_status_did_change(&result)
 }
 
 async fn delete_scheduled_status_by_id(db: &D1Database, id: &str) -> Result<bool> {
@@ -314,7 +358,29 @@ pub(crate) async fn publish_due_scheduled_status(
     config: &AppConfig,
     env: Option<&Env>,
     due: &DueScheduledStatus,
+    now_iso: &str,
+    stale_claim_before_iso: &str,
 ) -> PublishDueScheduledStatusOutcome {
+    match claim_scheduled_status(
+        db,
+        &due.id,
+        &due.scheduled_at,
+        now_iso,
+        stale_claim_before_iso,
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => return PublishDueScheduledStatusOutcome::Skipped,
+        Err(error) => {
+            console_error!(
+                "scheduled status publish failed: could not claim scheduled status {}: {error}",
+                due.id
+            );
+            return PublishDueScheduledStatusOutcome::Failed;
+        }
+    }
+
     let account = match find_account_by_id(db, &due.account_id).await {
         Ok(Some(account)) => account,
         Ok(None) => {
@@ -437,9 +503,12 @@ pub(crate) async fn process_due_scheduled_statuses_for_config(
     limit: u32,
 ) -> Result<DueScheduledStatusProcessSummary> {
     let now_iso = now_iso_string()?;
+    let stale_claim_before_iso = scheduled_status_stale_claim_threshold(&now_iso)?;
     let mut summary = DueScheduledStatusProcessSummary::default();
-    for due in list_due_scheduled_statuses(db, &now_iso, limit).await? {
-        match publish_due_scheduled_status(db, config, env, &due).await {
+    for due in list_due_scheduled_statuses(db, &now_iso, &stale_claim_before_iso, limit).await? {
+        match publish_due_scheduled_status(db, config, env, &due, &now_iso, &stale_claim_before_iso)
+            .await
+        {
             PublishDueScheduledStatusOutcome::Published => summary.published += 1,
             PublishDueScheduledStatusOutcome::Skipped => summary.skipped += 1,
             PublishDueScheduledStatusOutcome::Failed => summary.failed += 1,
@@ -510,13 +579,27 @@ mod tests {
         assert_eq!(due.id, "sched-due-1");
         assert_eq!(due.account_id, "acct-1");
         assert_eq!(due.draft.text(), "due later");
-        assert_eq!(due.idempotency_key.as_deref(), Some("idem-due"));
         assert_eq!(due.application_id, Some(3));
         assert_eq!(
             due.quote_of_uri.as_deref(),
             Some("https://social.example/users/alice/statuses/42")
         );
         assert_eq!(due.scheduled_at, "2026-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn scheduled_status_stale_claim_threshold_is_one_ttl_back() {
+        assert_eq!(
+            scheduled_status_stale_claim_threshold("2026-01-01T00:10:00Z").expect("threshold"),
+            "2026-01-01T00:05:00Z"
+        );
+    }
+
+    #[test]
+    fn scheduled_status_stale_claim_threshold_precedes_now() {
+        let now = "2026-01-01T00:10:00Z";
+        let threshold = scheduled_status_stale_claim_threshold(now).expect("threshold");
+        assert!(threshold < now.to_owned());
     }
 
     #[test]
@@ -552,7 +635,6 @@ mod tests {
                 None,
             )
             .expect("draft"),
-            idempotency_key: None,
             application_id: None,
             quote_of_uri: None,
             scheduled_at: "2026-01-01T00:00:00.000Z".to_owned(),
@@ -561,7 +643,6 @@ mod tests {
             id: "c".to_owned(),
             account_id: "acct".to_owned(),
             draft: earlier.draft.clone(),
-            idempotency_key: None,
             application_id: None,
             quote_of_uri: None,
             scheduled_at: "2026-01-01T00:00:00.000Z".to_owned(),
@@ -570,7 +651,6 @@ mod tests {
             id: "a".to_owned(),
             account_id: "acct".to_owned(),
             draft: earlier.draft.clone(),
-            idempotency_key: None,
             application_id: None,
             quote_of_uri: None,
             scheduled_at: "2026-01-02T00:00:00.000Z".to_owned(),

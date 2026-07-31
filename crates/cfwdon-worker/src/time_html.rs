@@ -28,6 +28,14 @@ pub(crate) fn now_unix_timestamp() -> i64 {
     }
 }
 
+pub(crate) fn subtract_seconds_from_iso_string(value: &str, seconds: i64) -> Result<String> {
+    let timestamp = OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|error| Error::RustError(format!("invalid ISO timestamp {value}: {error}")))?;
+    (timestamp - Duration::seconds(seconds))
+        .format(&Rfc3339)
+        .map_err(|error| Error::RustError(format!("failed to format ISO timestamp: {error}")))
+}
+
 pub(crate) fn add_seconds_to_iso_string(value: &str, seconds: u64) -> Result<String> {
     let timestamp = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|error| Error::RustError(format!("invalid ISO timestamp {value}: {error}")))?;
