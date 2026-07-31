@@ -3,10 +3,10 @@ use super::{
     delete_remote_favourite, delete_remote_reblog, delete_remote_status_by_object_uri,
     extract_remote_note_object, find_conversation_id_by_status_id, find_local_status_by_object_uri,
     is_blocking_actor, is_remote_actor_following_local_account, list_conversation_participants,
-    object_attributed_to_remote_actor, upsert_remote_actor, upsert_remote_reblog,
-    upsert_remote_reblog_status, upsert_remote_status,
+    object_attributed_to_remote_actor, publish_remote_status_interaction_notification_soft,
+    upsert_remote_actor, upsert_remote_reblog, upsert_remote_reblog_status, upsert_remote_status,
 };
-use worker::Result;
+use worker::{Env, Result};
 
 pub(crate) async fn remote_actor_may_interact_with_local_status(
     db: &D1Database,
@@ -43,6 +43,7 @@ pub(crate) async fn handle_inbox_like(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
         return Ok(());
@@ -64,7 +65,20 @@ pub(crate) async fn handle_inbox_like(
         object_uri,
         activity_uri,
     )
-    .await
+    .await?;
+
+    let _ = publish_remote_status_interaction_notification_soft(
+        env,
+        db,
+        config,
+        &status.account_id,
+        remote_actor,
+        "favourite",
+        &status,
+    )
+    .await;
+
+    Ok(())
 }
 
 pub(crate) async fn handle_inbox_announce(
@@ -73,6 +87,7 @@ pub(crate) async fn handle_inbox_announce(
     remote_actor: &RemoteActorProfile,
     account: &LocalAccount,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let mut actor_upserted = false;
     if let Some(object) = extract_remote_note_object(activity).filter(|object| {
@@ -109,6 +124,17 @@ pub(crate) async fn handle_inbox_announce(
             activity_uri,
         )
         .await?;
+
+        let _ = publish_remote_status_interaction_notification_soft(
+            env,
+            db,
+            config,
+            &status.account_id,
+            remote_actor,
+            "reblog",
+            &status,
+        )
+        .await;
     }
 
     Ok(())

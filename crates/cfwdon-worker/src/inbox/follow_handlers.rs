@@ -2,10 +2,11 @@ use super::{
     AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, actor_url,
     build_accept_activity, delete_remote_follow_request_by_actor, follow_targets_local_actor,
     handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject,
-    queue_remote_actor_activity_required, update_follow_state_from_response, upsert_follower,
-    upsert_remote_follow_request,
+    now_iso_string, publish_remote_actor_notification_soft, queue_remote_actor_activity_required,
+    update_follow_state_from_response, upsert_follower, upsert_remote_follow_request,
 };
 use cfwdon_domain::FollowInboxResponse;
+use worker::Env;
 
 pub(crate) async fn handle_inbox_follow(
     db: &D1Database,
@@ -13,6 +14,7 @@ pub(crate) async fn handle_inbox_follow(
     account: &LocalAccount,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
+    env: Option<&Env>,
 ) -> Result<()> {
     if !follow_targets_local_actor(
         activity.get("object"),
@@ -26,6 +28,17 @@ pub(crate) async fn handle_inbox_follow(
 
     if locked {
         upsert_remote_follow_request(db, account.id(), remote_actor, follow_activity_id).await?;
+        if let Ok(created_at) = now_iso_string() {
+            publish_remote_actor_notification_soft(
+                env,
+                config,
+                account.id(),
+                remote_actor,
+                "follow_request",
+                created_at,
+            )
+            .await;
+        }
         return Ok(());
     }
 
@@ -37,6 +50,18 @@ pub(crate) async fn handle_inbox_follow(
     )
     .await?;
     upsert_follower(db, account.id(), remote_actor, follow_activity_id).await?;
+
+    if let Ok(created_at) = now_iso_string() {
+        publish_remote_actor_notification_soft(
+            env,
+            config,
+            account.id(),
+            remote_actor,
+            "follow",
+            created_at,
+        )
+        .await;
+    }
 
     let accept_activity =
         build_accept_activity(config, account, activity, &remote_actor.actor_uri)?;
