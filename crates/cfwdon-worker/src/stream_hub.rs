@@ -6,7 +6,13 @@ use worker::{
 
 const STREAM_HUB_WEBSOCKET_PATH: &str = "/websocket";
 const STREAM_HUB_PUBLISH_PATH: &str = "/publish";
+const STREAM_HUB_FORWARD_REGISTER_PATH: &str = "/forward/register";
 const STREAM_HUB_INTERNAL_ORIGIN: &str = "https://stream-hub";
+const STORAGE_FORWARD_TARGETS_KEY: &str = "forward_targets";
+/// Optional override for the Durable Object binding used for hub-to-hub
+/// forwarding. Keep in sync with `AppConfig::stream_hub_binding`.
+const STREAM_HUB_BINDING_VAR: &str = "STREAM_HUB_BINDING";
+const STREAM_HUB_DEFAULT_BINDING: &str = "STREAM_HUB";
 
 /// Publish body accepted by the hub. Extra fields (`account_id`, `event_id`) are
 /// carried by the Worker for logging and ignored here.
@@ -19,6 +25,23 @@ struct StreamHubPublishRequest {
     list: Option<String>,
     event: String,
     payload: String,
+}
+
+impl StreamHubPublishRequest {
+    fn to_body(&self) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "stream": self.stream,
+            "event": self.event,
+            "payload": self.payload,
+        });
+        if let Some(tag) = self.tag.as_deref() {
+            body["tag"] = serde_json::json!(tag);
+        }
+        if let Some(list) = self.list.as_deref() {
+            body["list"] = serde_json::json!(list);
+        }
+        body
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +97,11 @@ fn normalized_subscription_value(value: Option<String>) -> Option<String> {
 struct SocketSubscriptionState {
     #[serde(default)]
     subscriptions: Vec<StreamSubscription>,
+    /// Session hub of the account behind this socket, when authenticated. Open
+    /// channels forward their events here so one socket can mix `user` and
+    /// `public` subscriptions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_hub: Option<String>,
 }
 
 impl SocketSubscriptionState {
@@ -84,10 +112,26 @@ impl SocketSubscriptionState {
     }
 }
 
+/// A session hub that asked to receive this open channel's events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ForwardTarget {
+    hub: String,
+    subscription: StreamSubscription,
+}
+
+#[derive(Debug, Deserialize)]
+struct ForwardRegisterRequest {
+    hub: String,
+    stream: String,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    list: Option<String>,
+}
+
 #[durable_object]
 pub struct StreamHub {
     state: State,
-    #[allow(dead_code)]
     env: Env,
 }
 
@@ -100,6 +144,10 @@ impl DurableObject for StreamHub {
         let path = req.path();
         if req.method() == Method::Post && path.ends_with(STREAM_HUB_PUBLISH_PATH) {
             return self.handle_publish(req).await;
+        }
+
+        if req.method() == Method::Post && path.ends_with(STREAM_HUB_FORWARD_REGISTER_PATH) {
+            return self.handle_forward_register(req).await;
         }
 
         if path.ends_with(STREAM_HUB_WEBSOCKET_PATH) && websocket_upgrade_requested(&req)? {
@@ -166,7 +214,11 @@ impl DurableObject for StreamHub {
 
         if client_message.message_type == "subscribe" {
             if !state.subscriptions.contains(&subscription) {
-                state.subscriptions.push(subscription);
+                state.subscriptions.push(subscription.clone());
+            }
+            if let Some(session_hub) = state.session_hub.clone() {
+                self.register_open_channel_forwarding(&subscription, &session_hub)
+                    .await;
             }
         } else {
             state
@@ -218,7 +270,109 @@ impl StreamHub {
             }
         }
 
+        delivered += self.forward_publish(&publish).await?;
+
         Response::from_json(&serde_json::json!({ "delivered": delivered }))
+    }
+
+    /// Registers a session hub for this open channel so authenticated clients
+    /// can mix session and open channels on one socket.
+    async fn handle_forward_register(&self, mut req: Request) -> Result<Response> {
+        let register = req.json::<ForwardRegisterRequest>().await?;
+        let target = ForwardTarget {
+            hub: register.hub,
+            subscription: StreamSubscription::new(register.stream, register.tag, register.list),
+        };
+
+        let storage = self.state.storage();
+        let mut targets = storage
+            .get::<Vec<ForwardTarget>>(STORAGE_FORWARD_TARGETS_KEY)
+            .await?
+            .unwrap_or_default();
+        if !targets.contains(&target) {
+            targets.push(target);
+            storage.put(STORAGE_FORWARD_TARGETS_KEY, &targets).await?;
+        }
+
+        Response::from_json(&serde_json::json!({ "targets": targets.len() }))
+    }
+
+    /// Relays an event to every session hub registered for it. Targets that no
+    /// longer have a matching subscriber are dropped, so disconnects need no
+    /// explicit unregister step.
+    async fn forward_publish(&self, publish: &StreamHubPublishRequest) -> Result<usize> {
+        let storage = self.state.storage();
+        let mut targets = storage
+            .get::<Vec<ForwardTarget>>(STORAGE_FORWARD_TARGETS_KEY)
+            .await?
+            .unwrap_or_default();
+        if targets.is_empty() {
+            return Ok(0);
+        }
+
+        let binding = stream_hub_binding_name(&self.env);
+        let body = publish.to_body();
+        let mut delivered = 0usize;
+        let mut stale = Vec::new();
+
+        for target in &targets {
+            if !target.subscription.matches(
+                &publish.stream,
+                publish.tag.as_deref(),
+                publish.list.as_deref(),
+            ) {
+                continue;
+            }
+            match publish_stream_hub_event_counted(&self.env, &binding, &target.hub, &body).await {
+                Ok(0) => stale.push(target.clone()),
+                Ok(count) => delivered += count,
+                Err(error) => {
+                    console_error!(
+                        "failed to forward stream hub event to session hub {}: {error}",
+                        target.hub
+                    );
+                    stale.push(target.clone());
+                }
+            }
+        }
+
+        if !stale.is_empty() {
+            targets.retain(|target| !stale.contains(target));
+            storage.put(STORAGE_FORWARD_TARGETS_KEY, &targets).await?;
+        }
+
+        Ok(delivered)
+    }
+
+    /// Asks the open channel's hub to forward its events to this session hub.
+    async fn register_open_channel_forwarding(
+        &self,
+        subscription: &StreamSubscription,
+        session_hub: &str,
+    ) {
+        if stream_is_session_channel(&subscription.stream) {
+            return;
+        }
+        let channel_hub =
+            stream_hub_channel_id_name(&subscription.stream, subscription.tag.as_deref());
+        if channel_hub == session_hub {
+            return;
+        }
+        let binding = stream_hub_binding_name(&self.env);
+        if let Err(error) = register_stream_hub_forwarding(
+            &self.env,
+            &binding,
+            &channel_hub,
+            session_hub,
+            subscription,
+        )
+        .await
+        {
+            console_error!(
+                "failed to register forwarding of {} to session hub {session_hub}: {error}",
+                subscription.stream
+            );
+        }
     }
 
     async fn handle_websocket_upgrade(&self, req: Request) -> Result<Response> {
@@ -248,12 +402,24 @@ impl StreamHub {
         }
 
         let mut state = SocketSubscriptionState::default();
+        state.session_hub = params
+            .account_id
+            .as_deref()
+            .map(stream_hub_session_id_name)
+            .filter(|session_hub| !session_hub.ends_with(':'));
         if let Some(stream) = params.stream {
             state
                 .subscriptions
                 .push(StreamSubscription::new(stream, params.tag, params.list));
         }
         pair.server.serialize_attachment(&state)?;
+
+        if let Some(session_hub) = state.session_hub.clone() {
+            for subscription in &state.subscriptions {
+                self.register_open_channel_forwarding(subscription, &session_hub)
+                    .await;
+            }
+        }
 
         let mut response = Response::from_websocket(pair.client)?;
         if let Some(protocol) = req
@@ -341,6 +507,11 @@ fn stream_hub_shard_hash(shard_key: &str) -> u64 {
 /// hold several subscriptions and keeps clients off other accounts' hubs.
 pub(crate) fn stream_hub_session_id_name(account_id: &str) -> String {
     format!("user:{account_id}")
+}
+
+/// True when the channel is served by a per-account session hub.
+pub(crate) fn stream_is_session_channel(stream: &str) -> bool {
+    matches!(stream, "user" | "user:notification" | "direct" | "list")
 }
 
 /// Shared hub for a channel with an open audience.
@@ -512,16 +683,34 @@ pub(crate) async fn publish_notification_stream_hub_event_soft(
     .await;
 }
 
-pub(crate) async fn publish_stream_hub_event(
+#[derive(Debug, Default, Deserialize)]
+struct StreamHubPublishResponse {
+    #[serde(default)]
+    delivered: usize,
+}
+
+/// Binding used for hub-to-hub forwarding. Falls back to the default name when
+/// the optional `STREAM_HUB_BINDING` var is unset.
+fn stream_hub_binding_name(env: &Env) -> String {
+    env.var(STREAM_HUB_BINDING_VAR)
+        .ok()
+        .map(|value| value.to_string())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| STREAM_HUB_DEFAULT_BINDING.to_owned())
+}
+
+async fn post_json_to_stream_hub(
     env: &Env,
     binding: &str,
     hub_name: &str,
+    path: &str,
     body: &serde_json::Value,
-) -> Result<()> {
+) -> Result<Response> {
     let namespace = env.durable_object(binding)?;
     let stub = namespace.get_by_name(hub_name)?;
     let body_json = serde_json::to_string(body).map_err(|error| {
-        worker::Error::RustError(format!("failed to encode stream hub publish body: {error}"))
+        worker::Error::RustError(format!("failed to encode stream hub request body: {error}"))
     })?;
 
     let headers = worker::Headers::new();
@@ -532,12 +721,68 @@ pub(crate) async fn publish_stream_hub_event(
         .with_headers(headers)
         .with_body(Some(wasm_bindgen::JsValue::from_str(&body_json)));
 
-    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_PUBLISH_PATH}");
+    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{path}");
     let request = Request::new_with_init(&url, &init)?;
-    let response = stub.fetch_with_request(request).await?;
+    stub.fetch_with_request(request).await
+}
+
+/// Publishes to one hub and reports how many subscribers received the event.
+pub(crate) async fn publish_stream_hub_event_counted(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    body: &serde_json::Value,
+) -> Result<usize> {
+    let mut response =
+        post_json_to_stream_hub(env, binding, hub_name, STREAM_HUB_PUBLISH_PATH, body).await?;
     if response.status_code() >= 400 {
         return Err(worker::Error::RustError(format!(
             "stream hub publish failed with HTTP {}",
+            response.status_code()
+        )));
+    }
+    Ok(response
+        .json::<StreamHubPublishResponse>()
+        .await
+        .unwrap_or_default()
+        .delivered)
+}
+
+pub(crate) async fn publish_stream_hub_event(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    body: &serde_json::Value,
+) -> Result<()> {
+    publish_stream_hub_event_counted(env, binding, hub_name, body)
+        .await
+        .map(|_| ())
+}
+
+async fn register_stream_hub_forwarding(
+    env: &Env,
+    binding: &str,
+    channel_hub: &str,
+    session_hub: &str,
+    subscription: &StreamSubscription,
+) -> Result<()> {
+    let body = serde_json::json!({
+        "hub": session_hub,
+        "stream": subscription.stream,
+        "tag": subscription.tag,
+        "list": subscription.list,
+    });
+    let response = post_json_to_stream_hub(
+        env,
+        binding,
+        channel_hub,
+        STREAM_HUB_FORWARD_REGISTER_PATH,
+        &body,
+    )
+    .await?;
+    if response.status_code() >= 400 {
+        return Err(worker::Error::RustError(format!(
+            "stream hub forward registration failed with HTTP {}",
             response.status_code()
         )));
     }
@@ -837,13 +1082,41 @@ mod tests {
                 StreamSubscription::new("user".to_owned(), None, None),
                 StreamSubscription::new("user:notification".to_owned(), None, None),
                 StreamSubscription::new("list".to_owned(), None, Some("list-1".to_owned())),
+                StreamSubscription::new("public:local".to_owned(), None, None),
             ],
+            session_hub: Some(stream_hub_session_id_name("acct-1")),
         };
 
         assert!(state.matches("user", None, None));
         assert!(state.matches("user:notification", None, None));
         assert!(state.matches("list", None, Some("list-1")));
+        assert!(state.matches("public:local", None, None));
         assert!(!state.matches("list", None, Some("list-9")));
         assert!(!state.matches("direct", None, None));
+        assert!(!state.matches("public", None, None));
+    }
+
+    #[test]
+    fn forward_target_matches_only_its_own_subscription_key() {
+        let target = ForwardTarget {
+            hub: stream_hub_session_id_name("acct-1"),
+            subscription: StreamSubscription::new(
+                "hashtag:local".to_owned(),
+                Some("rust".to_owned()),
+                None,
+            ),
+        };
+
+        assert!(
+            target
+                .subscription
+                .matches("hashtag:local", Some("rust"), None)
+        );
+        assert!(!target.subscription.matches("hashtag", Some("rust"), None));
+        assert!(
+            !target
+                .subscription
+                .matches("hashtag:local", Some("wasm"), None)
+        );
     }
 }

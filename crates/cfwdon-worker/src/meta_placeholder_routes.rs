@@ -3526,31 +3526,43 @@ fn stream_hub_proxy_target(
             )),
             _ => None,
         },
+        // Authenticated clients always land on their session hub; the open
+        // channel hub forwards matching events there, so one socket can mix
+        // session and open channels.
         "public"
         | "public:media"
         | "public:local"
         | "public:local:media"
         | "public:remote"
         | "public:remote:media" => {
+            if let Some(viewer) = viewer {
+                return Some((
+                    stream_hub_session_id_name(viewer.id()),
+                    Some(viewer.id().to_owned()),
+                ));
+            }
             let base = stream_hub_channel_id_name(stream, None);
             let hub_name = if public_shard_count > 1 {
                 let key = sticky_key
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .or_else(|| viewer.map(|viewer| viewer.id()))
                     .unwrap_or("anon");
                 stream_hub_sharded_id_name(&base, key, public_shard_count)
             } else {
                 base
             };
-            Some((hub_name, viewer.map(|viewer| viewer.id().to_owned())))
+            Some((hub_name, None))
         }
-        "hashtag" | "hashtag:local" => tag.map(|tag_value| {
-            (
-                stream_hub_channel_id_name(stream, Some(tag_value)),
-                viewer.map(|viewer| viewer.id().to_owned()),
-            )
-        }),
+        "hashtag" | "hashtag:local" => {
+            let tag_value = tag?;
+            if let Some(viewer) = viewer {
+                return Some((
+                    stream_hub_session_id_name(viewer.id()),
+                    Some(viewer.id().to_owned()),
+                ));
+            }
+            Some((stream_hub_channel_id_name(stream, Some(tag_value)), None))
+        }
         _ => None,
     }
 }
@@ -4266,18 +4278,23 @@ mod tests {
         );
         assert_eq!(
             stream_hub_proxy_target("user:notification", Some(&viewer), None, None, 1, None),
-            Some((
-                "user-notification:acct-1".to_owned(),
-                Some("acct-1".to_owned())
-            ))
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert_eq!(
             stream_hub_proxy_target("direct", Some(&viewer), None, None, 1, None),
-            Some(("direct:acct-1".to_owned(), Some("acct-1".to_owned())))
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
+        // A list id from another account still resolves to the viewer's own hub.
         assert_eq!(
-            stream_hub_proxy_target("list", Some(&viewer), None, Some("list-1"), 1, None),
-            Some(("list:list-1".to_owned(), Some("acct-1".to_owned())))
+            stream_hub_proxy_target(
+                "list",
+                Some(&viewer),
+                None,
+                Some("list-of-someone-else"),
+                1,
+                None
+            ),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert!(stream_hub_proxy_target("user", None, None, None, 1, None).is_none());
         assert!(stream_hub_proxy_target("list", Some(&viewer), None, None, 1, None).is_none());
@@ -4293,7 +4310,7 @@ mod tests {
         );
         assert_eq!(
             stream_hub_proxy_target("public", Some(&viewer), None, None, 1, None),
-            Some(("public".to_owned(), Some("acct-1".to_owned())))
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert_eq!(
             stream_hub_proxy_target("hashtag", None, Some("rust"), None, 1, None),
@@ -4301,7 +4318,7 @@ mod tests {
         );
         assert_eq!(
             stream_hub_proxy_target("hashtag:local", Some(&viewer), Some("rust"), None, 1, None),
-            Some(("hashtag:rust".to_owned(), Some("acct-1".to_owned())))
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
         );
         assert!(stream_hub_proxy_target("hashtag", None, None, None, 1, None).is_none());
         assert!(stream_hub_proxy_target("unknown", None, None, None, 1, None).is_none());
@@ -4310,6 +4327,8 @@ mod tests {
     #[test]
     fn stream_hub_proxy_target_uses_sticky_public_shards_when_enabled() {
         let viewer = stream_hub_proxy_test_account();
+        // Authenticated clients bypass sharding entirely: their session hub
+        // receives forwarded public events.
         let hub = stream_hub_proxy_target(
             "public",
             Some(&viewer),
@@ -4319,11 +4338,7 @@ mod tests {
             Some("account:acct-1"),
         )
         .expect("public hub");
-        assert_eq!(
-            hub.0,
-            stream_hub_sharded_id_name("public", "account:acct-1", 4)
-        );
-        assert_eq!(hub.1, Some("acct-1".to_owned()));
+        assert_eq!(hub.0, "user:acct-1");
 
         let anon =
             stream_hub_proxy_target("public:remote", None, None, None, 4, Some("ip:1.2.3.4"))

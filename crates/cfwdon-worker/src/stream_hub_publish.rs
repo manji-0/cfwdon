@@ -69,13 +69,14 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
 }
 
 fn stream_hub_public_publish_hub_names(base_hub: &str, shard_count: u32) -> Vec<String> {
-    if shard_count <= 1 {
-        return vec![base_hub.to_owned()];
+    // The unsharded hub always receives the event: it holds the forwarding
+    // registry for authenticated session hubs. Sharded hubs only ever hold
+    // anonymous sockets.
+    let mut names = vec![base_hub.to_owned()];
+    if shard_count > 1 {
+        names.extend((0..shard_count).map(|index| format!("{base_hub}#{index}")));
     }
-    // Every public event must reach every sticky subscriber shard.
-    (0..shard_count)
-        .map(|index| format!("{base_hub}#{index}"))
-        .collect()
+    names
 }
 
 async fn publish_public_stream_hub_event_dual_soft(
@@ -1159,7 +1160,7 @@ mod tests {
     fn stream_hub_public_publish_hub_names_fans_out_to_all_shards() {
         assert_eq!(
             stream_hub_public_publish_hub_names("public", 4),
-            vec!["public#0", "public#1", "public#2", "public#3"]
+            vec!["public", "public#0", "public#1", "public#2", "public#3"]
         );
     }
 
