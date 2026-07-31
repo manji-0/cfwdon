@@ -36,7 +36,8 @@ use crate::{
     parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity_required,
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
-    store_account_private_key, streaming_batch_from_entries,
+    store_account_private_key, stream_hub_id_name, streaming_batch_from_entries,
+    upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -3264,7 +3265,9 @@ async fn resolve_streaming_auth(
     }
 }
 
-fn streaming_websocket_upgrade_response(
+async fn streaming_websocket_upgrade_response(
+    env: &Env,
+    mut req: Request,
     db: worker::D1Database,
     config: cfwdon_core::AppConfig,
     initial_stream: Option<String>,
@@ -3273,6 +3276,61 @@ fn streaming_websocket_upgrade_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
+    let try_stream_hub = initial_stream
+        .as_deref()
+        .is_some_and(|stream| matches!(stream, "user" | "user:notification"))
+        && viewer.is_some();
+
+    if try_stream_hub {
+        let stream = initial_stream.as_deref().expect("stream checked above");
+        let viewer = viewer.as_ref().expect("viewer checked above");
+        let hub_name = stream_hub_id_name(
+            stream,
+            Some(viewer.id()),
+            tag.as_deref(),
+            list.as_deref(),
+        );
+
+        if let Ok(headers) = req.headers_mut() {
+            headers.set("X-Account-Id", viewer.id())?;
+            headers.set("X-Stream", stream)?;
+            if let Some(tag_value) = tag
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                headers.set("X-Stream-Tag", tag_value)?;
+            }
+            if let Some(list_value) = list
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                headers.set("X-Stream-List", list_value)?;
+            }
+        }
+
+        match upgrade_stream_hub_websocket(
+            env,
+            &config.stream_hub_binding,
+            &hub_name,
+            req,
+        )
+        .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                console_log!(
+                    "stream hub websocket upgrade failed for hub {}: {:?}; falling back to worker poll",
+                    hub_name,
+                    error
+                );
+            }
+        }
+    } else {
+        drop(req);
+    }
+
     let pair = WebSocketPair::new()?;
     pair.server.accept()?;
     let websocket = pair.server.clone();
@@ -3388,6 +3446,8 @@ pub(crate) async fn streaming_placeholder_response(
 
     if wants_websocket {
         return streaming_websocket_upgrade_response(
+            &ctx.env,
+            req,
             db,
             config,
             initial_stream,
@@ -3395,7 +3455,8 @@ pub(crate) async fn streaming_placeholder_response(
             query.list.clone(),
             authenticated,
             websocket_protocol_token.as_deref(),
-        );
+        )
+        .await;
     }
 
     let Some(stream) = initial_stream else {
