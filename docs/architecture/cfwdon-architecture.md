@@ -148,6 +148,7 @@ The project is now past the bootstrap phases. The planning focus is behavioral c
 
 - Which placeholder/meta routes should become real implementations first, and which should remain conservative empty responses?
 - Which delivery work should move from `waitUntil` or internal routes to Cloudflare Queues?
+- Which live-update surfaces should move from Worker D1 polling to Durable Object streaming hubs? See [Durable Objects Candidates](../planning/durable-objects-candidates.md).
 - How should remote media caching and attachment persistence work long term?
 - How much Mastodon OAuth compatibility should be provided without weakening the Auth0 model?
 - What operator-facing tooling is needed for retry dead-letter state, migrations, and moderation workflows?
