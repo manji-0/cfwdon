@@ -98,3 +98,11 @@ max_batch_size = 10
 max_batch_timeout = 0
 max_retries = 3
 max_concurrency = 1
+
+[[durable_objects.bindings]]
+name = "STREAM_HUB"
+class_name = "StreamHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["StreamHub"]
