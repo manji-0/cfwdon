@@ -138,6 +138,24 @@ struct PublicTimelineCandidateEntry {
     candidate: PublicTimelineCandidate,
 }
 
+/// A candidate with its per-status preload slices already claimed.
+///
+/// Splitting this out of [`PublicTimelineCandidate`] lets the render step hold
+/// only shared borrows, which is what allows the candidates to be rendered
+/// concurrently rather than one await at a time.
+enum PreparedTimelineCandidate<'a> {
+    Local {
+        status: crate::StatusRow,
+        media: Vec<crate::MediaAttachmentRow>,
+        account: &'a crate::LocalAccount,
+    },
+    Remote {
+        status: crate::RemoteStatusRow,
+        actor: crate::RemoteActorRow,
+        attachments: Vec<crate::RemoteStatusAttachmentRow>,
+    },
+}
+
 type LocalTimelinePreload = (
     HashMap<String, crate::LocalAccount>,
     HashMap<String, Vec<crate::MediaAttachmentRow>>,
@@ -500,15 +518,54 @@ async fn timeline_entries_from_candidates(
         crate::preload_mention_accounts_from_texts(db, config, &mention_texts),
         crate::config_with_resolved_custom_emojis(db, config),
     )?;
-    let mut entries = Vec::with_capacity(candidates.len());
-
+    // Take everything each candidate owns up front so the renders below only
+    // hold shared borrows and can therefore run concurrently.
+    let mut prepared = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         match candidate.candidate {
             PublicTimelineCandidate::Local { status, media } => {
                 let Some(account) = local_accounts_by_id.get(&status.account_id) else {
                     continue;
                 };
-                let mut value = serde_json::to_value(
+                prepared.push((
+                    candidate.timestamp,
+                    candidate.id,
+                    PreparedTimelineCandidate::Local {
+                        status,
+                        media,
+                        account,
+                    },
+                ));
+            }
+            PublicTimelineCandidate::Remote { status, actor } => {
+                let attachments = remote_attachments_by_status_id
+                    .remove(&status.id)
+                    .unwrap_or_default();
+                prepared.push((
+                    candidate.timestamp,
+                    candidate.id,
+                    PreparedTimelineCandidate::Remote {
+                        status,
+                        actor,
+                        attachments,
+                    },
+                ));
+            }
+        }
+    }
+
+    // Rendering a single status still costs several round trips -- boosts pull
+    // in their target, quotes their quoted status -- and those chains are
+    // independent per candidate. Awaiting them one candidate at a time made a
+    // page cost the sum of every chain instead of the longest one.
+    futures_util::future::try_join_all(prepared.into_iter().map(
+        |(timestamp, id, prepared)| async {
+            let mut value = match prepared {
+                PreparedTimelineCandidate::Local {
+                    status,
+                    media,
+                    account,
+                } => serde_json::to_value(
                     build_local_status_response_with_timeline_preloads(
                         db,
                         config,
@@ -528,17 +585,12 @@ async fn timeline_entries_from_candidates(
                     )
                     .await?,
                 )
-                .unwrap_or(serde_json::Value::Null);
-                if enrich_cards && let Some(card) = value.get_mut("card") {
-                    let _ = enrich_card_with_remote_preview(card).await;
-                }
-                entries.push((candidate.timestamp, candidate.id, value));
-            }
-            PublicTimelineCandidate::Remote { status, actor } => {
-                let remote_attachments = remote_attachments_by_status_id
-                    .remove(&status.id)
-                    .unwrap_or_default();
-                let mut value = serde_json::to_value(
+                .unwrap_or(serde_json::Value::Null),
+                PreparedTimelineCandidate::Remote {
+                    status,
+                    actor,
+                    attachments,
+                } => serde_json::to_value(
                     build_remote_status_response_with_timeline_preloads(
                         db,
                         config,
@@ -552,21 +604,20 @@ async fn timeline_entries_from_candidates(
                         Some(&remote_poll_preload),
                         Some(&remote_edit_updated_at_preload),
                         Some(&remote_federated_emojis_preload),
-                        remote_attachments,
+                        attachments,
                         Some(&mention_preload),
                     )
                     .await?,
                 )
-                .unwrap_or(serde_json::Value::Null);
-                if enrich_cards && let Some(card) = value.get_mut("card") {
-                    let _ = enrich_card_with_remote_preview(card).await;
-                }
-                entries.push((candidate.timestamp, candidate.id, value));
+                .unwrap_or(serde_json::Value::Null),
+            };
+            if enrich_cards && let Some(card) = value.get_mut("card") {
+                let _ = enrich_card_with_remote_preview(card).await;
             }
-        }
-    }
-
-    Ok(entries)
+            Ok::<TimelineEntry, Error>((timestamp, id, value))
+        },
+    ))
+    .await
 }
 
 async fn preload_public_timeline_status_applications(
