@@ -4,16 +4,17 @@ use super::{
     apply_media_update, attach_media_and_enqueue_outbox, build_local_status_response,
     build_local_status_response_with_quote_count_preloads, delete_local_status_with_outbox,
     enqueue_status_update_activity, ensure_direct_conversation_for_status,
-    extract_mentions_from_text, find_account_by_username, find_media_attachments_by_status_id,
-    find_owned_local_status, insert_status, insert_status_edit_snapshot,
-    load_account_filter_matcher, load_local_status_response_preload, load_mastodon_poll_response,
+    extract_mentions_from_text, find_account_by_username, find_local_status_by_object_uri,
+    find_media_attachments_by_status_id, find_owned_local_status, insert_status,
+    insert_status_edit_snapshot, load_account_filter_matcher, load_local_status_response_preload,
+    load_mastodon_poll_response, local_status_interaction_notification_id,
     normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
-    publish_user_stream_hub_event_soft, replace_status_media, replace_status_poll,
-    send_push_notification, send_status_quote_notification, send_status_update_notifications,
-    update_local_status,
+    publish_local_actor_notification_soft, publish_user_stream_hub_event_soft,
+    replace_status_media, replace_status_poll, send_push_notification,
+    send_status_quote_notification, send_status_update_notifications, update_local_status,
 };
-use cfwdon_domain::{PollDraft, StatusDraft};
+use cfwdon_domain::{PollDraft, QuoteState, StatusDraft};
 use worker::console_error;
 
 pub(crate) struct DeleteLocalStatusResult {
@@ -98,6 +99,7 @@ pub(crate) async fn delete_owned_local_status(
 pub(crate) async fn apply_local_status_update(
     db: &D1Database,
     config: &AppConfig,
+    env: Option<&Env>,
     input: UpdateLocalStatusInput<'_>,
 ) -> Result<UpdateLocalStatusResult> {
     let previous_response = build_local_status_response(
@@ -176,6 +178,31 @@ pub(crate) async fn apply_local_status_update(
         input.account,
     )
     .await?;
+
+    if let Some(env) = env {
+        let payload = match serde_json::to_string(&response) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize status update stream payload for status {}: {error}",
+                    status.id
+                );
+                return Ok(UpdateLocalStatusResult {
+                    response,
+                    status_id: status.id,
+                });
+            }
+        };
+        publish_user_stream_hub_event_soft(
+            env,
+            &config.stream_hub_binding,
+            input.account.id(),
+            "status.update",
+            &payload,
+            Some(&status.id),
+        )
+        .await;
+    }
 
     Ok(UpdateLocalStatusResult {
         response,
@@ -288,6 +315,70 @@ pub(crate) async fn create_published_status_and_response(
             Some(&status.id),
         )
         .await;
+
+        if let Some(recipient_account_id) = input.in_reply_to_account_id.as_deref()
+            && recipient_account_id != input.account.id()
+        {
+            let id =
+                local_status_interaction_notification_id("status", input.account.id(), &status.id);
+            publish_local_actor_notification_soft(
+                Some(env),
+                db,
+                config,
+                recipient_account_id,
+                input.account,
+                "status",
+                id.clone(),
+                id,
+                status.created_at.clone(),
+                Some(response.clone()),
+            )
+            .await;
+        }
+
+        for handle in extract_mentions_from_text(&status.text, config) {
+            if let Some(account) = find_account_by_username(db, &handle.username).await?
+                && account.id() != input.account.id()
+            {
+                let id =
+                    local_status_interaction_notification_id("mention", input.account.id(), &status.id);
+                publish_local_actor_notification_soft(
+                    Some(env),
+                    db,
+                    config,
+                    account.id(),
+                    input.account,
+                    "mention",
+                    id.clone(),
+                    id,
+                    status.created_at.clone(),
+                    Some(response.clone()),
+                )
+                .await;
+            }
+        }
+
+        if let Some(quote_of_uri) = status.quote_of_uri.as_deref()
+            && status.quote_state == QuoteState::Accepted
+            && let Some(target) = find_local_status_by_object_uri(db, config, quote_of_uri).await?
+            && target.account_id != input.account.id()
+        {
+            let id =
+                local_status_interaction_notification_id("quote", input.account.id(), &status.id);
+            publish_local_actor_notification_soft(
+                Some(env),
+                db,
+                config,
+                &target.account_id,
+                input.account,
+                "quote",
+                id.clone(),
+                id,
+                status.created_at.clone(),
+                Some(response.clone()),
+            )
+            .await;
+        }
     }
 
     Ok(response)

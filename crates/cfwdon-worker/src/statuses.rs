@@ -435,6 +435,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let updated = match apply_local_status_update(
         &db,
         &config,
+        Some(&ctx.env),
         UpdateLocalStatusInput {
             account: &account,
             status: &status,
