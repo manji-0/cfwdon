@@ -335,22 +335,20 @@ fn stream_hub_shard_hash(shard_key: &str) -> u64 {
     hash
 }
 
-pub(crate) fn stream_hub_id_name(
-    stream: &str,
-    account_id: Option<&str>,
-    tag: Option<&str>,
-    list: Option<&str>,
-) -> String {
-    match stream {
-        "user" => format!("user:{}", account_id.unwrap_or_default()),
-        "user:notification" => format!("user-notification:{}", account_id.unwrap_or_default()),
-        "direct" => format!("direct:{}", account_id.unwrap_or_default()),
-        "list" => format!("list:{}", list.unwrap_or_default()),
-        stream if stream.starts_with("hashtag") => {
-            format!("hashtag:{}", tag.unwrap_or_default())
-        }
-        other => other.to_string(),
+/// Every authenticated channel (`user`, `user:notification`, `direct`, `list`)
+/// is served by one hub per account. Subscribers of those channels always
+/// resolve to a single account, so a per-account session hub lets one socket
+/// hold several subscriptions and keeps clients off other accounts' hubs.
+pub(crate) fn stream_hub_session_id_name(account_id: &str) -> String {
+    format!("user:{account_id}")
+}
+
+/// Shared hub for a channel with an open audience.
+pub(crate) fn stream_hub_channel_id_name(stream: &str, tag: Option<&str>) -> String {
+    if stream.starts_with("hashtag") {
+        return format!("hashtag:{}", tag.unwrap_or_default());
     }
+    stream.to_owned()
 }
 
 /// One streaming event addressed to a single hub. `tag` / `list` carry the
@@ -445,12 +443,53 @@ pub(crate) async fn publish_user_stream_hub_event_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
-    let hub_name = stream_hub_id_name("user", Some(account_id), None, None);
+    let hub_name = stream_hub_session_id_name(account_id);
     publish_stream_hub_event_soft(
         env,
         binding,
         &hub_name,
         &StreamHubEvent::new("user", event, payload, event_id).with_account_id(Some(account_id)),
+    )
+    .await;
+}
+
+/// Publish a `direct` channel event to the recipient's session hub.
+pub(crate) async fn publish_direct_stream_hub_event_soft(
+    env: &Env,
+    binding: &str,
+    account_id: &str,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let hub_name = stream_hub_session_id_name(account_id);
+    publish_stream_hub_event_soft(
+        env,
+        binding,
+        &hub_name,
+        &StreamHubEvent::new("direct", event, payload, event_id).with_account_id(Some(account_id)),
+    )
+    .await;
+}
+
+/// Publish a `list` channel event to the list owner's session hub.
+pub(crate) async fn publish_list_stream_hub_event_soft(
+    env: &Env,
+    binding: &str,
+    owner_account_id: &str,
+    list_id: &str,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let hub_name = stream_hub_session_id_name(owner_account_id);
+    publish_stream_hub_event_soft(
+        env,
+        binding,
+        &hub_name,
+        &StreamHubEvent::new("list", event, payload, event_id)
+            .with_list(Some(list_id))
+            .with_account_id(Some(owner_account_id)),
     )
     .await;
 }
@@ -462,7 +501,7 @@ pub(crate) async fn publish_notification_stream_hub_event_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
-    let hub_name = stream_hub_id_name("user:notification", Some(account_id), None, None);
+    let hub_name = stream_hub_session_id_name(account_id);
     publish_stream_hub_event_soft(
         env,
         binding,
@@ -674,33 +713,26 @@ mod tests {
     }
 
     #[test]
-    fn stream_hub_id_name_maps_phase_a_user_channels() {
-        assert_eq!(
-            stream_hub_id_name("user", Some("acct-1"), None, None),
-            "user:acct-1"
-        );
-        assert_eq!(
-            stream_hub_id_name("user:notification", Some("acct-1"), None, None),
-            "user-notification:acct-1"
+    fn session_channels_share_one_hub_per_account() {
+        assert_eq!(stream_hub_session_id_name("acct-1"), "user:acct-1");
+        assert_ne!(
+            stream_hub_session_id_name("acct-1"),
+            stream_hub_session_id_name("acct-2")
         );
     }
 
     #[test]
-    fn stream_hub_id_name_maps_other_channels() {
+    fn stream_hub_channel_id_name_maps_open_channels() {
         assert_eq!(
-            stream_hub_id_name("direct", Some("acct-1"), None, None),
-            "direct:acct-1"
-        );
-        assert_eq!(
-            stream_hub_id_name("list", None, None, Some("list-1")),
-            "list:list-1"
-        );
-        assert_eq!(
-            stream_hub_id_name("hashtag", None, Some("rust"), None),
+            stream_hub_channel_id_name("hashtag", Some("rust")),
             "hashtag:rust"
         );
         assert_eq!(
-            stream_hub_id_name("public:local", None, None, None),
+            stream_hub_channel_id_name("hashtag:local", Some("rust")),
+            "hashtag:rust"
+        );
+        assert_eq!(
+            stream_hub_channel_id_name("public:local", None),
             "public:local"
         );
     }

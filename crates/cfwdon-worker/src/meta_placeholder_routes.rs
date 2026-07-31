@@ -36,8 +36,8 @@ use crate::{
     parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity_required,
     remote_account_rest_id, remote_status_has_media, resolve_account_reference,
     resolve_status_reference, send_push_notification, store_account_password,
-    store_account_private_key, stream_hub_id_name, stream_hub_sharded_id_name,
-    streaming_batch_from_entries, upgrade_stream_hub_websocket,
+    store_account_private_key, stream_hub_channel_id_name, stream_hub_session_id_name,
+    stream_hub_sharded_id_name, streaming_batch_from_entries, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -3511,29 +3511,28 @@ fn stream_hub_proxy_target(
     let list = list.map(str::trim).filter(|value| !value.is_empty());
 
     match stream {
+        // Authenticated channels all live on the viewer's own session hub, so a
+        // list id from another account can never reach that account's events.
         "user" | "user:notification" | "direct" => viewer.map(|viewer| {
             (
-                stream_hub_id_name(stream, Some(viewer.id()), None, None),
+                stream_hub_session_id_name(viewer.id()),
                 Some(viewer.id().to_owned()),
             )
         }),
-        "list" => {
-            if let (Some(viewer), Some(list_id)) = (viewer, list) {
-                Some((
-                    stream_hub_id_name(stream, None, None, Some(list_id)),
-                    Some(viewer.id().to_owned()),
-                ))
-            } else {
-                None
-            }
-        }
+        "list" => match (viewer, list) {
+            (Some(viewer), Some(_)) => Some((
+                stream_hub_session_id_name(viewer.id()),
+                Some(viewer.id().to_owned()),
+            )),
+            _ => None,
+        },
         "public"
         | "public:media"
         | "public:local"
         | "public:local:media"
         | "public:remote"
         | "public:remote:media" => {
-            let base = stream_hub_id_name(stream, None, None, None);
+            let base = stream_hub_channel_id_name(stream, None);
             let hub_name = if public_shard_count > 1 {
                 let key = sticky_key
                     .map(str::trim)
@@ -3548,7 +3547,7 @@ fn stream_hub_proxy_target(
         }
         "hashtag" | "hashtag:local" => tag.map(|tag_value| {
             (
-                stream_hub_id_name(stream, None, Some(tag_value), None),
+                stream_hub_channel_id_name(stream, Some(tag_value)),
                 viewer.map(|viewer| viewer.id().to_owned()),
             )
         }),

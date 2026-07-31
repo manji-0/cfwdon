@@ -285,6 +285,8 @@ pub(crate) const STREAM_HUB_LIST_FANOUT_LIMIT: u32 = 50;
 #[derive(Debug, Deserialize)]
 pub(crate) struct ListStreamFanoutRow {
     pub(crate) list_id: String,
+    /// List owner, i.e. the only account that can subscribe to this list channel.
+    pub(crate) owner_account_id: String,
     pub(crate) replies_policy: String,
 }
 
@@ -314,7 +316,7 @@ pub(crate) async fn list_local_account_list_stream_fanout(
     ];
     let result = db
         .prepare(
-            "SELECT m.list_id, l.replies_policy
+            "SELECT m.list_id, l.account_id AS owner_account_id, l.replies_policy
              FROM account_list_memberships m
              INNER JOIN account_lists l ON l.id = m.list_id
              WHERE m.target_account_ref IN (?1, ?2)

@@ -58,10 +58,7 @@ That design is workable for small instances, but it scales poorly:
 
 | Atom | `idFromName` example | Subscribers |
 | --- | --- | --- |
-| User home + filter/announcement side effects | `user:{account_id}` | That account's clients |
-| User notifications | `user-notification:{account_id}` | That account's clients |
-| Direct / conversations | `direct:{account_id}` | That account's clients |
-| List | `list:{list_id}` | List owner clients |
+| Session hub: `user`, `user:notification`, `direct`, `list` plus filter/announcement side effects | `user:{account_id}` | That account's clients |
 | Public channel | `public`, `public:local`, … | Many anonymous clients |
 | Hashtag | `hashtag:{normalized_tag}` | Tag watchers |
 
@@ -93,7 +90,7 @@ Read path (client connect)
 - Publish **pre-serialized Mastodon event payloads** from the Worker so the DO does not re-query D1 on every fan-out.
 - Prefer WebSocket Hibernation for live clients. SSE can remain a Worker stream that either polls lightly or connects to the same hub via an internal protocol; hibernation is WebSocket-oriented.
 - Hot public channels may need **hash sharding** (`public#0` … `public#N`) plus a thin publisher that fans to shards, once a single DO approaches ~500–1000 msgs/sec.
-- After hibernation, restore per-socket subscription state with `serializeAttachment` / tags (`stream=user`, `tag=rust`, `list=123`).
+- After hibernation, restore per-socket subscription state with `serializeAttachment` / tags (`stream=user`, `tag=rust`, `list=123`). A socket keeps a set of `(stream, tag, list)` keys so one hub can serve several channels and honour later `subscribe` messages.
 - Clients that miss events while disconnected still catch up via REST timelines + `since_id`; optional short ring buffers in DO storage can reduce reconnect gaps but are not required for v1.
 
 **Implementation note.** `workers-rs` already exposes `#[durable_object]`, `accept_web_socket`, and hibernation handlers. No Durable Object bindings exist in `wrangler.toml` yet.
@@ -249,16 +246,16 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
 2. Proxy WebSocket upgrades for all live channels (`user`, `user:notification`, `list`, `direct`, public variants, hashtag) through the DO; fall back to Worker poll on failure.
 3. Soft-publish live events (never fail API writes):
-   - `user` hub: status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss; local follower home fan-out (cap 200); remote status create/update/delete fan-out to local followers
-   - `user:notification` hub: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request; remote Create mention/quote/status(notify)/reply; remote Update update/quoted_update
-   - `public` / `public:remote` (+ media), `hashtag:{tag}` (stream `hashtag` only), `list:{id}`, `direct:{id}` for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`; direct also publishes conversation `update` documents
+   - Session hub `user:{account_id}` carries every authenticated channel: `user` status `update` / `delete` / `status.update`, `filters_changed`, announcement reaction/dismiss, local follower home fan-out (cap 200), remote status create/update/delete fan-out to local followers, `user:notification` events, `direct` events plus conversation `update` documents, and `list` events routed to the list owner
+   - `user:notification` events: local favourite/reblog/follow/mention/reply/quote/poll/update; remote inbound favourite/reblog/follow/follow_request; remote Create mention/quote/status(notify)/reply; remote Update update/quoted_update
+   - Open channels keep their own hubs: `public` / `public:remote` (+ media) and `hashtag:{tag}` (stream `hashtag` only) for local and remote status create/delete when visibility matches; local also uses `public:local` / `hashtag:local`
 4. SSE for StreamHub-backed channels uses an internal hub WebSocket bridge with 30s D1 catch-up; falls back to 3s D1 poll if the hub is unavailable. Plain Worker WebSocket upgrade path unchanged.
 5. Announcements: reaction/dismiss publish to `user:{account_id}`; config-only announcement body changes remain poll-only.
 6. Remaining polish: escalate InboxHost to Queue handoff after D1 staging; alarm-based schedules vs cron.
 
 ### Phase B — Channel coverage — implemented
 
-1. `list`, `direct`, public, and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only).
+1. Public and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only); `list` and `direct` are served by the account session hub.
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
 4. Public-channel sharding: `stream_hub_sharded_id_name` in `stream_hub.rs` (`public#0` … `public#N`); when `STREAM_HUB_PUBLIC_SHARD_COUNT` > 1, each public event fans out to **all** shards, and WS/SSE clients sticky-route to one shard via account id / `CF-Connecting-IP` / `anon`.
