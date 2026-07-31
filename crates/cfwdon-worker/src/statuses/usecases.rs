@@ -12,9 +12,10 @@ use super::{
     normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_status_counts, preload_status_quote_counts,
     publish_local_actor_notification_soft, publish_local_status_create_stream_fanout_soft,
-    publish_local_status_delete_stream_fanout_soft, publish_user_stream_hub_event_soft,
-    replace_status_media, replace_status_poll, send_push_notification,
-    send_status_quote_notification, send_status_update_notifications, update_local_status,
+    publish_local_status_delete_stream_fanout_soft, publish_local_status_update_stream_fanout_soft,
+    publish_user_stream_hub_event_soft, replace_status_media, replace_status_poll,
+    send_push_notification, send_status_quote_notification, send_status_update_notifications,
+    update_local_status,
 };
 use cfwdon_domain::{PollDraft, QuoteState, StatusDraft};
 use worker::console_error;
@@ -265,6 +266,38 @@ pub(crate) async fn apply_local_status_update(
             Some(&status.id),
         )
         .await;
+
+        // Timeline subscribers need the edit too, with a viewer-agnostic payload.
+        let response_preload = load_local_status_response_preload(db, &status).await?;
+        let has_media = !response_preload.media.is_empty();
+        let status_ids = vec![status.id.clone()];
+        let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
+        let (counts_preload, quote_counts_preload) = futures_util::try_join!(
+            preload_status_counts(db, &status_ids, &[]),
+            preload_status_quote_counts(db, &quote_count_uris),
+        )?;
+        if let Some(fanout_payload) = viewer_agnostic_local_status_stream_payload(
+            db,
+            config,
+            &status,
+            input.account,
+            &response_preload,
+            &counts_preload,
+            &quote_counts_preload,
+        )
+        .await
+        {
+            publish_local_status_update_stream_fanout_soft(
+                env,
+                db,
+                config,
+                input.account,
+                &status,
+                &fanout_payload,
+                has_media,
+            )
+            .await;
+        }
     }
 
     Ok(UpdateLocalStatusResult {

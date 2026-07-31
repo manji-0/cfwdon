@@ -1129,6 +1129,90 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
     }
 }
 
+/// Fan-out for an edited local status. Mirrors the create fan-out with
+/// `status.update`, so timeline subscribers see edits and not just the author.
+pub(crate) async fn publish_local_status_update_stream_fanout_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &StatusRow,
+    payload: &str,
+    has_media: bool,
+) {
+    let tags = status_hashtag_tags(status);
+    let event_id = Some(status.id.as_str());
+    let author_account_id = author.id();
+    let author_actor_uri = actor_url(config, author.username());
+
+    if visibility_reaches_follower_home_timelines(status.visibility) {
+        publish_follower_home_timeline_events_soft(
+            env,
+            db,
+            &config.stream_hub_binding,
+            author_account_id,
+            &author_actor_uri,
+            "status.update",
+            payload,
+            event_id,
+        )
+        .await;
+    }
+
+    if status.visibility == Visibility::Public {
+        publish_public_timeline_events_soft(
+            env,
+            &config.stream_hub_binding,
+            has_media,
+            "status.update",
+            payload,
+            event_id,
+            config.stream_hub_public_shard_count,
+        )
+        .await;
+
+        if !tags.is_empty() {
+            publish_hashtag_timeline_events_soft(
+                env,
+                &config.stream_hub_binding,
+                &tags,
+                "status.update",
+                payload,
+                event_id,
+            )
+            .await;
+        }
+
+        publish_list_timeline_events_soft(
+            env,
+            db,
+            config,
+            &config.stream_hub_binding,
+            author,
+            status,
+            "status.update",
+            payload,
+            event_id,
+        )
+        .await;
+    }
+
+    if status.visibility == Visibility::Direct {
+        publish_direct_timeline_events_soft(
+            env,
+            db,
+            config,
+            &config.stream_hub_binding,
+            author_account_id,
+            status,
+            "status.update",
+            payload,
+            event_id,
+        )
+        .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
