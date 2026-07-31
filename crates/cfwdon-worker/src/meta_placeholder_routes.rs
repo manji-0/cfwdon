@@ -3284,12 +3284,8 @@ async fn streaming_websocket_upgrade_response(
     if try_stream_hub {
         let stream = initial_stream.as_deref().expect("stream checked above");
         let viewer = viewer.as_ref().expect("viewer checked above");
-        let hub_name = stream_hub_id_name(
-            stream,
-            Some(viewer.id()),
-            tag.as_deref(),
-            list.as_deref(),
-        );
+        let hub_name =
+            stream_hub_id_name(stream, Some(viewer.id()), tag.as_deref(), list.as_deref());
 
         if let Ok(headers) = req.headers_mut() {
             headers.set("X-Account-Id", viewer.id())?;
@@ -3310,14 +3306,7 @@ async fn streaming_websocket_upgrade_response(
             }
         }
 
-        match upgrade_stream_hub_websocket(
-            env,
-            &config.stream_hub_binding,
-            &hub_name,
-            req,
-        )
-        .await
-        {
+        match upgrade_stream_hub_websocket(env, &config.stream_hub_binding, &hub_name, req).await {
             Ok(response) => return Ok(response),
             Err(error) => {
                 console_log!(

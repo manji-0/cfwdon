@@ -244,13 +244,13 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 
 ## Proposed Phased Approach
 
-### Phase A — Streaming hub spike (highest value)
+### Phase A — Streaming hub spike (highest value) — implemented
 
-1. Add a `StreamHub` Durable Object class and wrangler binding/migration.
-2. Proxy WebSocket upgrades for one authenticated channel (`user` or `user:notification`) through the DO with hibernation.
-3. On local status create / notification insert, publish a prebuilt event to the hub.
-4. Keep REST timelines and D1 writes unchanged; DO is additive.
-5. Measure reconnect behavior, hibernation, and publish latency before expanding channels.
+1. Added `StreamHub` Durable Object class and `STREAM_HUB` wrangler binding/migration.
+2. Proxy WebSocket upgrades for authenticated `user` / `user:notification` through the DO (hibernation accept); fall back to Worker poll on failure.
+3. On local status create/delete, soft-publish prebuilt events to `user:{account_id}` hubs.
+4. REST timelines and D1 writes unchanged; SSE remains on the D1 poll path.
+5. Next: measure reconnect/hibernation/publish latency; expand notification publish and public/hashtag hubs.
 
 ### Phase B — Channel coverage
 

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use worker::{
-    console_error, durable_object, DurableObject, Env, Method, Request, RequestInit, Response,
-    Result, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
+    DurableObject, Env, Method, Request, RequestInit, Response, Result, State, WebSocket,
+    WebSocketIncomingMessage, WebSocketPair, console_error, durable_object,
 };
 
 const STREAM_HUB_WEBSOCKET_PATH: &str = "/websocket";
@@ -192,7 +192,8 @@ impl StreamHub {
         if tag_refs.is_empty() {
             self.state.accept_web_socket(&pair.server);
         } else {
-            self.state.accept_websocket_with_tags(&pair.server, &tag_refs);
+            self.state
+                .accept_websocket_with_tags(&pair.server, &tag_refs);
         }
 
         let mut subscription = SocketSubscriptionState::default();
@@ -238,13 +239,11 @@ struct StreamHubConnectParams {
 }
 
 fn stream_hub_connect_params(req: &Request) -> Result<StreamHubConnectParams> {
-    let mut params = req
-        .query::<StreamHubConnectParams>()
-        .unwrap_or_default();
+    let mut params = req.query::<StreamHubConnectParams>().unwrap_or_default();
 
     if params.account_id.is_none() {
-        params.account_id = header_value(req, "X-Account-Id")
-            .or_else(|| header_value(req, "Cf-Account-Id"));
+        params.account_id =
+            header_value(req, "X-Account-Id").or_else(|| header_value(req, "Cf-Account-Id"));
     }
     if params.stream.is_none() {
         params.stream = header_value(req, "X-Stream");
@@ -364,9 +363,7 @@ pub(crate) async fn upgrade_stream_hub_websocket(
         .query()
         .map(|query| format!("?{query}"))
         .unwrap_or_default();
-    let url = format!(
-        "{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}{query}"
-    );
+    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}{query}");
 
     let headers = worker::Headers::new();
     for (name, value) in req.headers().entries() {
@@ -487,14 +484,9 @@ mod tests {
 
     #[test]
     fn stream_hub_fanout_message_matches_mastodon_shape() {
-        let message = stream_hub_fanout_message(
-            "user:notification",
-            None,
-            None,
-            "update",
-            r#"{"id":"1"}"#,
-        )
-        .unwrap();
+        let message =
+            stream_hub_fanout_message("user:notification", None, None, "update", r#"{"id":"1"}"#)
+                .unwrap();
         let parsed = serde_json::from_str::<serde_json::Value>(&message).unwrap();
         assert_eq!(parsed["stream"], serde_json::json!(["user:notification"]));
         assert_eq!(parsed["event"], "update");
@@ -514,10 +506,12 @@ mod tests {
     #[test]
     fn stream_hub_fanout_message_includes_hashtag_and_list_labels() {
         let hashtag_message =
-            stream_hub_fanout_message("hashtag:local", Some("rust"), None, "update", "{}")
-                .unwrap();
+            stream_hub_fanout_message("hashtag:local", Some("rust"), None, "update", "{}").unwrap();
         let hashtag = serde_json::from_str::<serde_json::Value>(&hashtag_message).unwrap();
-        assert_eq!(hashtag["stream"], serde_json::json!(["hashtag:local", "rust"]));
+        assert_eq!(
+            hashtag["stream"],
+            serde_json::json!(["hashtag:local", "rust"])
+        );
 
         let list_message =
             stream_hub_fanout_message("list", None, Some("list-1"), "update", "{}").unwrap();
