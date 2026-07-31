@@ -60,6 +60,9 @@ AUTH0_CLIENT_ID = "replace-with-auth0-application-client-id"
 AUTH0_AUDIENCE = "https://example.com/api"
 AUTH0_EMAIL_CLAIM = "email"
 
+# Optional public StreamHub shard count for dual-publish (1 = unsharded, max 64).
+# STREAM_HUB_PUBLIC_SHARD_COUNT = "4"
+
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.
 [[d1_databases]]

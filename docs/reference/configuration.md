@@ -90,6 +90,12 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_LOCAL` | Local link timeline access. |
 | `TIMELINES_ACCESS_TRENDING_LINK_FEEDS_REMOTE` | Remote link timeline access. |
 
+## StreamHub Vars
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `STREAM_HUB_PUBLIC_SHARD_COUNT` | Optional | `1` | When greater than `1`, public timeline publishes dual-publish to the base hub and a sharded hub (`public#0` … `public#N-1`) keyed by status id. Clamped to `1`–`64`. WS/SSE clients still connect to unsharded base hubs. |
+
 ## Push Notification Vars
 
 | Var | Required | Notes |
