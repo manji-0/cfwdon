@@ -5,8 +5,8 @@ use crate::{
     local_status_target_uri, notification_timestamp_sort_token,
     publish_local_actor_notification_soft, push_subscription_alert_enabled,
 };
-use cfwdon_domain::LocalAccount;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use cfwdon_domain::LocalAccount;
 use js_sys::Uint8Array;
 use serde::Deserialize;
 use serde_json::json;
@@ -136,10 +136,13 @@ async fn publish_local_status_update_stream_notifications_soft(
     let updated_at = status.updated_at.as_deref().unwrap_or(&status.created_at);
     let update_token = notification_timestamp_sort_token(updated_at)
         .unwrap_or_else(|| updated_at.replace([':', ' '], "-"));
-    let update_id =
-        format!("update-local-{}-{}-{}", actor.id(), status.id, update_token);
-    let quoted_update_id =
-        format!("quoted-update-local-{}-{}-{}", actor.id(), status.id, update_token);
+    let update_id = format!("update-local-{}-{}-{}", actor.id(), status.id, update_token);
+    let quoted_update_id = format!(
+        "quoted-update-local-{}-{}-{}",
+        actor.id(),
+        status.id,
+        update_token
+    );
     let mut sent = std::collections::HashSet::new();
 
     for recipient_account_id in reblog_recipient_ids {
