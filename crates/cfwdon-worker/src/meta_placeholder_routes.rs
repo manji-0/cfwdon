@@ -3265,6 +3265,43 @@ async fn resolve_streaming_auth(
     }
 }
 
+fn stream_hub_proxy_target(
+    stream: &str,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    tag: Option<&str>,
+    list: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let tag = tag.map(str::trim).filter(|value| !value.is_empty());
+    let list = list.map(str::trim).filter(|value| !value.is_empty());
+
+    match stream {
+        "user" | "user:notification" | "direct" => viewer.map(|viewer| (
+            stream_hub_id_name(stream, Some(viewer.id()), None, None),
+            Some(viewer.id().to_owned()),
+        )),
+        "list" => {
+            if let (Some(viewer), Some(list_id)) = (viewer, list) {
+                Some((
+                    stream_hub_id_name(stream, None, None, Some(list_id)),
+                    Some(viewer.id().to_owned()),
+                ))
+            } else {
+                None
+            }
+        }
+        "public" | "public:media" | "public:local" | "public:local:media"
+        | "public:remote" | "public:remote:media" => Some((
+            stream_hub_id_name(stream, None, None, None),
+            viewer.map(|viewer| viewer.id().to_owned()),
+        )),
+        "hashtag" | "hashtag:local" => tag.map(|tag_value| (
+            stream_hub_id_name(stream, None, Some(tag_value), None),
+            viewer.map(|viewer| viewer.id().to_owned()),
+        )),
+        _ => None,
+    }
+}
+
 async fn streaming_websocket_upgrade_response(
     env: &Env,
     mut req: Request,
@@ -3276,19 +3313,15 @@ async fn streaming_websocket_upgrade_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
-    let try_stream_hub = initial_stream
-        .as_deref()
-        .is_some_and(|stream| matches!(stream, "user" | "user:notification"))
-        && viewer.is_some();
-
-    if try_stream_hub {
-        let stream = initial_stream.as_deref().expect("stream checked above");
-        let viewer = viewer.as_ref().expect("viewer checked above");
-        let hub_name =
-            stream_hub_id_name(stream, Some(viewer.id()), tag.as_deref(), list.as_deref());
-
+    if let Some(stream) = initial_stream.as_deref()
+        && let Some((hub_name, account_id)) = stream_hub_proxy_target(
+            stream,
+            viewer.as_ref(),
+            tag.as_deref(),
+            list.as_deref(),
+        )
+    {
         if let Ok(headers) = req.headers_mut() {
-            headers.set("X-Account-Id", viewer.id())?;
             headers.set("X-Stream", stream)?;
             if let Some(tag_value) = tag
                 .as_deref()
@@ -3303,6 +3336,9 @@ async fn streaming_websocket_upgrade_response(
                 .filter(|value| !value.is_empty())
             {
                 headers.set("X-Stream-List", list_value)?;
+            }
+            if let Some(account_id) = account_id {
+                headers.set("X-Account-Id", &account_id)?;
             }
         }
 
@@ -3863,6 +3899,62 @@ mod tests {
             streaming_websocket_stream_labels("list", None, Some("list-1")),
             vec!["list".to_owned(), "list-1".to_owned()]
         );
+    }
+
+    fn stream_hub_proxy_test_account() -> cfwdon_domain::LocalAccount {
+        cfwdon_domain::LocalAccount::from_record(
+            cfwdon_domain::LocalAccountRecord::test_fixture("acct-1", "alice"),
+        )
+    }
+
+    #[test]
+    fn stream_hub_proxy_target_maps_authenticated_channels() {
+        let viewer = stream_hub_proxy_test_account();
+        assert_eq!(
+            stream_hub_proxy_target("user", Some(&viewer), None, None),
+            Some(("user:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("user:notification", Some(&viewer), None, None),
+            Some((
+                "user-notification:acct-1".to_owned(),
+                Some("acct-1".to_owned())
+            ))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("direct", Some(&viewer), None, None),
+            Some(("direct:acct-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("list", Some(&viewer), None, Some("list-1")),
+            Some(("list:list-1".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert!(stream_hub_proxy_target("user", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("list", Some(&viewer), None, None).is_none());
+        assert!(stream_hub_proxy_target("list", None, None, Some("list-1")).is_none());
+    }
+
+    #[test]
+    fn stream_hub_proxy_target_maps_public_and_hashtag_channels() {
+        let viewer = stream_hub_proxy_test_account();
+        assert_eq!(
+            stream_hub_proxy_target("public:local", None, None, None),
+            Some(("public:local".to_owned(), None))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("public", Some(&viewer), None, None),
+            Some(("public".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("hashtag", None, Some("rust"), None),
+            Some(("hashtag:rust".to_owned(), None))
+        );
+        assert_eq!(
+            stream_hub_proxy_target("hashtag:local", Some(&viewer), Some("rust"), None),
+            Some(("hashtag:rust".to_owned(), Some("acct-1".to_owned())))
+        );
+        assert!(stream_hub_proxy_target("hashtag", None, None, None).is_none());
+        assert!(stream_hub_proxy_target("unknown", None, None, None).is_none());
     }
 
     #[test]
