@@ -365,15 +365,7 @@ async fn process_verified_inbox_activity(
 ) -> Result<Response> {
     let activity_type = inbox_activity_type(activity).to_owned();
     let activity_id = inbox_activity_dedupe_id(activity, &remote_actor.actor_uri, body).await?;
-    if !try_inbox_host_admission(
-        config,
-        env,
-        &activity_id,
-        &activity_type,
-        &remote_actor,
-    )
-    .await
-    {
+    if !try_inbox_host_admission(config, env, &activity_id, &activity_type, &remote_actor).await {
         log_federation_event(
             "inbox_host_admission_rejected",
             "rate_limited",
