@@ -4,7 +4,7 @@ use super::{
     find_pending_remote_follow_request_by_actor, follow_targets_local_actor,
     handle_inbox_interaction_undo, handle_inbox_poll_vote_undo, is_follow_undo,
 };
-use worker::Result;
+use worker::{Env, Result};
 
 async fn string_undo_matches_known_follow(
     db: &D1Database,
@@ -71,6 +71,7 @@ pub(crate) async fn handle_inbox_undo(
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
     config: &AppConfig,
+    env: Option<&Env>,
 ) -> Result<()> {
     let Some(actor_uri) = activity.get("actor").and_then(serde_json::Value::as_str) else {
         return Ok(());
@@ -79,7 +80,7 @@ pub(crate) async fn handle_inbox_undo(
         if handle_inbox_poll_vote_undo(db, activity, remote_actor, account, config).await? {
             return Ok(());
         }
-        return handle_inbox_interaction_undo(db, activity, remote_actor).await;
+        return handle_inbox_interaction_undo(db, activity, remote_actor, config, env).await;
     }
 
     delete_follower_by_actor(db, account.id(), actor_uri, &remote_actor.actor_uri).await?;
