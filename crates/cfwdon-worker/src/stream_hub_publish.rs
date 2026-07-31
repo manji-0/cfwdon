@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, D1Database, Env, RemoteActorProfile, RemoteStatusRow,
+    AppConfig, D1Database, Env, RemoteActorProfile, RemoteActorRow, RemoteStatusRow,
     STREAM_HUB_FOLLOWER_FANOUT_LIMIT, STREAM_HUB_LIST_FANOUT_LIMIT, StatusRow,
     build_remote_status_response, conversation_document, extract_hashtags_from_html,
     extract_hashtags_from_text, extract_mentions_from_text, find_account_by_id,
@@ -7,14 +7,17 @@ use crate::{
     find_remote_actor_by_actor_uri, is_muted_actor, list_local_account_list_stream_fanout,
     list_local_follower_account_ids_for_remote_actor_stream_fanout,
     list_local_follower_account_ids_for_stream_fanout, list_membership_variants_for_local_account,
+    list_membership_variants_for_remote_actor, load_remote_status_hashtag_names,
     load_remote_status_updated_at, local_status_visible_on_list_timeline,
-    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_id_name,
+    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, remote_status_has_media,
+    stream_hub_id_name,
 };
 use cfwdon_domain::Visibility;
 use std::collections::HashSet;
 use worker::console_error;
 
 const HASHTAG_STREAMS: [&str; 2] = ["hashtag", "hashtag:local"];
+const REMOTE_HASHTAG_STREAMS: [&str; 1] = ["hashtag"];
 
 fn status_hashtag_tags(status: &StatusRow) -> Vec<String> {
     let mut tags = extract_hashtags_from_text(&status.text);
@@ -26,11 +29,32 @@ fn status_hashtag_tags(status: &StatusRow) -> Vec<String> {
     tags
 }
 
+async fn remote_status_hashtag_tags(db: &D1Database, status: &RemoteStatusRow) -> Vec<String> {
+    let mut tags = extract_hashtags_from_html(&status.content_html);
+    if let Ok(stored) = load_remote_status_hashtag_names(db, &status.id).await {
+        for tag in stored {
+            if !tags.iter().any(|existing| existing == &tag) {
+                tags.push(tag);
+            }
+        }
+    }
+    tags
+}
+
 fn public_timeline_streams(has_media: bool) -> Vec<&'static str> {
     let mut streams = vec!["public", "public:local"];
     if has_media {
         streams.push("public:media");
         streams.push("public:local:media");
+    }
+    streams
+}
+
+fn remote_public_timeline_streams(has_media: bool) -> Vec<&'static str> {
+    let mut streams = vec!["public", "public:remote"];
+    if has_media {
+        streams.push("public:media");
+        streams.push("public:remote:media");
     }
     streams
 }
@@ -115,6 +139,23 @@ async fn publish_public_timeline_events_soft(
     }
 }
 
+async fn publish_remote_public_timeline_events_soft(
+    env: &Env,
+    binding: &str,
+    has_media: bool,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    for stream in remote_public_timeline_streams(has_media) {
+        let hub_name = stream_hub_id_name(stream, None, None, None);
+        publish_stream_hub_event_soft(
+            env, binding, &hub_name, stream, None, event, payload, event_id,
+        )
+        .await;
+    }
+}
+
 async fn publish_hashtag_timeline_events_soft(
     env: &Env,
     binding: &str,
@@ -130,6 +171,30 @@ async fn publish_hashtag_timeline_events_soft(
             binding,
             &hub_name,
             &HASHTAG_STREAMS,
+            None,
+            event,
+            payload,
+            event_id,
+        )
+        .await;
+    }
+}
+
+async fn publish_remote_hashtag_timeline_events_soft(
+    env: &Env,
+    binding: &str,
+    tags: &[String],
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    for tag in tags {
+        let hub_name = stream_hub_id_name("hashtag", None, Some(tag), None);
+        publish_to_hub_streams_soft(
+            env,
+            binding,
+            &hub_name,
+            &REMOTE_HASHTAG_STREAMS,
             None,
             event,
             payload,
@@ -197,6 +262,205 @@ async fn publish_list_timeline_events_soft(
             env, binding, &hub_name, "list", None, event, payload, event_id,
         )
         .await;
+    }
+}
+
+async fn publish_remote_list_timeline_events_soft(
+    env: &Env,
+    db: &D1Database,
+    binding: &str,
+    actor_row: &RemoteActorRow,
+    remote_status: &RemoteStatusRow,
+    event: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    if remote_status.visibility != Visibility::Public {
+        return;
+    }
+
+    let membership_refs = list_membership_variants_for_remote_actor(actor_row);
+    let fanout = match list_local_account_list_stream_fanout(db, &membership_refs).await {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            console_error!(
+                "failed to list memberships for remote list stream fan-out ({}): {error}",
+                actor_row.actor_uri
+            );
+            return;
+        }
+    };
+
+    if fanout.truncated {
+        console_error!(
+            "stream hub list fan-out truncated to {} for remote actor {}",
+            STREAM_HUB_LIST_FANOUT_LIMIT,
+            actor_row.actor_uri
+        );
+    }
+
+    for list in fanout.lists {
+        if !local_status_visible_on_list_timeline(
+            remote_status.visibility,
+            &list.replies_policy,
+            remote_status.in_reply_to_uri.as_deref(),
+        ) {
+            continue;
+        }
+        let hub_name = stream_hub_id_name("list", None, None, Some(&list.list_id));
+        publish_stream_hub_event_soft(
+            env, binding, &hub_name, "list", None, event, payload, event_id,
+        )
+        .await;
+    }
+}
+
+async fn publish_remote_follower_home_create_events_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    binding: &str,
+    remote_actor: &RemoteActorProfile,
+    remote_status: &RemoteStatusRow,
+    actor_row: &RemoteActorRow,
+) {
+    let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
+        db,
+        &remote_actor.actor_uri,
+    )
+    .await
+    {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            console_error!(
+                "failed to list local followers for remote status stream fan-out ({}): {error}",
+                remote_actor.actor_uri
+            );
+            return;
+        }
+    };
+
+    if fanout.truncated {
+        console_error!(
+            "stream hub follower fan-out truncated to {} for remote actor {}",
+            STREAM_HUB_FOLLOWER_FANOUT_LIMIT,
+            remote_actor.actor_uri
+        );
+    }
+
+    let event_id = Some(remote_status.id.as_str());
+    for follower_id in fanout.account_ids {
+        if is_muted_actor(db, &follower_id, &remote_actor.actor_uri)
+            .await
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let recipient = match find_account_by_id(db, &follower_id).await {
+            Ok(Some(recipient)) => recipient,
+            Ok(None) => continue,
+            Err(error) => {
+                console_error!(
+                    "failed to load follower {follower_id} for remote status stream fan-out: {error}"
+                );
+                continue;
+            }
+        };
+        let response = match build_remote_status_response(
+            db,
+            config,
+            Some(&recipient),
+            remote_status,
+            actor_row,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                console_error!(
+                    "failed to build remote status stream payload for follower {follower_id}: {error}"
+                );
+                continue;
+            }
+        };
+        let payload = match serde_json::to_string(&response) {
+            Ok(payload) => payload,
+            Err(error) => {
+                console_error!(
+                    "failed to serialize remote status stream payload for follower {follower_id}: {error}"
+                );
+                continue;
+            }
+        };
+        publish_user_stream_hub_event_soft(env, binding, &follower_id, "update", &payload, event_id)
+            .await;
+    }
+}
+
+async fn publish_remote_follower_home_delete_events_soft(
+    env: &Env,
+    db: &D1Database,
+    binding: &str,
+    remote_actor_uri: &str,
+    payload: &str,
+    event_id: Option<&str>,
+) {
+    let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
+        db,
+        remote_actor_uri,
+    )
+    .await
+    {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            console_error!(
+                "failed to list local followers for remote status delete stream fan-out ({remote_actor_uri}): {error}"
+            );
+            return;
+        }
+    };
+
+    if fanout.truncated {
+        console_error!(
+            "stream hub follower fan-out truncated to {} for remote actor {}",
+            STREAM_HUB_FOLLOWER_FANOUT_LIMIT,
+            remote_actor_uri
+        );
+    }
+
+    for follower_id in fanout.account_ids {
+        publish_user_stream_hub_event_soft(env, binding, &follower_id, "delete", payload, event_id)
+            .await;
+    }
+}
+
+async fn build_remote_status_public_stream_payload_soft(
+    db: &D1Database,
+    config: &AppConfig,
+    remote_status: &RemoteStatusRow,
+    actor_row: &RemoteActorRow,
+) -> Option<String> {
+    let response = match build_remote_status_response(db, config, None, remote_status, actor_row)
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            console_error!(
+                "failed to build remote status public stream payload (status {}): {error}",
+                remote_status.id
+            );
+            return None;
+        }
+    };
+    match serde_json::to_string(&response) {
+        Ok(payload) => Some(payload),
+        Err(error) => {
+            console_error!(
+                "failed to serialize remote status public stream payload (status {}): {error}",
+                remote_status.id
+            );
+            None
+        }
     }
 }
 
@@ -529,6 +793,180 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
     }
 }
 
+pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
+    env: Option<&Env>,
+    db: &D1Database,
+    config: &AppConfig,
+    remote_actor: &RemoteActorProfile,
+    remote_status: &RemoteStatusRow,
+) {
+    let Some(env) = env else {
+        return;
+    };
+
+    let actor_row = match find_remote_actor_by_actor_uri(db, &remote_actor.actor_uri).await {
+        Ok(Some(actor_row)) => actor_row,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to load remote actor for stream fan-out ({}): {error}",
+                remote_actor.actor_uri
+            );
+            return;
+        }
+    };
+
+    let has_media = remote_status_has_media(db, &remote_status.id)
+        .await
+        .unwrap_or(false);
+    let tags = remote_status_hashtag_tags(db, remote_status).await;
+    let event_id = Some(remote_status.id.as_str());
+    let binding = &config.stream_hub_binding;
+
+    if visibility_reaches_follower_home_timelines(remote_status.visibility) {
+        publish_remote_follower_home_create_events_soft(
+            env,
+            db,
+            config,
+            binding,
+            remote_actor,
+            remote_status,
+            &actor_row,
+        )
+        .await;
+    }
+
+    if remote_status.visibility != Visibility::Public {
+        return;
+    }
+
+    let payload = match build_remote_status_public_stream_payload_soft(
+        db,
+        config,
+        remote_status,
+        &actor_row,
+    )
+    .await
+    {
+        Some(payload) => payload,
+        None => return,
+    };
+
+    publish_remote_public_timeline_events_soft(
+        env,
+        binding,
+        has_media,
+        "update",
+        &payload,
+        event_id,
+    )
+    .await;
+
+    if !tags.is_empty() {
+        publish_remote_hashtag_timeline_events_soft(
+            env,
+            binding,
+            &tags,
+            "update",
+            &payload,
+            event_id,
+        )
+        .await;
+    }
+
+    publish_remote_list_timeline_events_soft(
+        env,
+        db,
+        binding,
+        &actor_row,
+        remote_status,
+        "update",
+        &payload,
+        event_id,
+    )
+    .await;
+}
+
+pub(crate) async fn publish_remote_status_delete_stream_fanout_soft(
+    env: Option<&Env>,
+    db: &D1Database,
+    config: &AppConfig,
+    remote_actor: &RemoteActorProfile,
+    remote_status: &RemoteStatusRow,
+    hashtag_names: &[String],
+    has_media: bool,
+) {
+    let Some(env) = env else {
+        return;
+    };
+
+    let payload = remote_status.id.as_str();
+    let event_id = Some(remote_status.id.as_str());
+    let binding = &config.stream_hub_binding;
+
+    if visibility_reaches_follower_home_timelines(remote_status.visibility) {
+        publish_remote_follower_home_delete_events_soft(
+            env,
+            db,
+            binding,
+            &remote_actor.actor_uri,
+            payload,
+            event_id,
+        )
+        .await;
+    }
+
+    if remote_status.visibility != Visibility::Public {
+        return;
+    }
+
+    publish_remote_public_timeline_events_soft(
+        env,
+        binding,
+        has_media,
+        "delete",
+        payload,
+        event_id,
+    )
+    .await;
+
+    if !hashtag_names.is_empty() {
+        publish_remote_hashtag_timeline_events_soft(
+            env,
+            binding,
+            hashtag_names,
+            "delete",
+            payload,
+            event_id,
+        )
+        .await;
+    }
+
+    let actor_row = match find_remote_actor_by_actor_uri(db, &remote_actor.actor_uri).await {
+        Ok(Some(actor_row)) => actor_row,
+        Ok(None) => return,
+        Err(error) => {
+            console_error!(
+                "failed to load remote actor for delete stream fan-out ({}): {error}",
+                remote_actor.actor_uri
+            );
+            return;
+        }
+    };
+
+    publish_remote_list_timeline_events_soft(
+        env,
+        db,
+        binding,
+        &actor_row,
+        remote_status,
+        "delete",
+        payload,
+        event_id,
+    )
+    .await;
+}
+
 pub(crate) async fn publish_announcement_reaction_user_stream_soft(
     env: &Env,
     binding: &str,
@@ -669,6 +1107,18 @@ mod tests {
                 "public:media",
                 "public:local:media"
             ]
+        );
+    }
+
+    #[test]
+    fn remote_public_timeline_streams_exclude_local_only_hubs() {
+        assert_eq!(
+            remote_public_timeline_streams(false),
+            vec!["public", "public:remote"]
+        );
+        assert_eq!(
+            remote_public_timeline_streams(true),
+            vec!["public", "public:remote", "public:media", "public:remote:media"]
         );
     }
 
