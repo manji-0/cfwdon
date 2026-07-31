@@ -17,7 +17,7 @@ enabled = true
 head_sampling_rate = 1
 
 [build]
-command = "WASM_BINDGEN_BIN=\"$HOME/.cargo/bin/wasm-bindgen\" worker-build --release crates/cfwdon-worker"
+command = "worker-build --release crates/cfwdon-worker"
 
 [triggers]
 crons = ["17 * * * *"]
