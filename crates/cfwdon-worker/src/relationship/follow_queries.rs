@@ -396,10 +396,7 @@ pub(crate) async fn list_local_follower_account_ids_for_remote_actor_stream_fano
     actor_uri: &str,
 ) -> Result<LocalFollowerFanoutIds> {
     let probe_limit = STREAM_HUB_FOLLOWER_FANOUT_LIMIT + 1;
-    let bindings = [
-        D1Type::Text(actor_uri),
-        D1Type::Integer(probe_limit as i32),
-    ];
+    let bindings = [D1Type::Text(actor_uri), D1Type::Integer(probe_limit as i32)];
     let result = db
         .prepare(
             "SELECT follower_account_id

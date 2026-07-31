@@ -4,10 +4,10 @@ use super::{
     RemoteStatusRow, StatusRecord, StatusRow, build_local_status_response,
     build_remote_status_response, extract_mentions_from_text, find_account_by_id,
     find_account_by_username, find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_remote_actor_by_actor_uri, is_public_activitypub_visibility,
-    load_in_reply_to_account_id, load_remote_status_updated_at, notification_timestamp_sort_token,
-    now_iso_string, publish_notification_stream_hub_event_soft, remote_account_rest_id,
-    statuses_from_records, strip_html_tags,
+    find_remote_actor_by_actor_uri, is_public_activitypub_visibility, load_in_reply_to_account_id,
+    load_remote_status_updated_at, notification_timestamp_sort_token, now_iso_string,
+    publish_notification_stream_hub_event_soft, remote_account_rest_id, statuses_from_records,
+    strip_html_tags,
 };
 use crate::timestamp_to_mastodon_iso8601;
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
@@ -98,10 +98,7 @@ async fn list_notify_follower_account_ids_for_remote_actor(
     actor_uri: &str,
     published_at: &str,
 ) -> Result<Vec<String>> {
-    let bindings = [
-        D1Type::Text(actor_uri),
-        D1Type::Text(published_at),
-    ];
+    let bindings = [D1Type::Text(actor_uri), D1Type::Text(published_at)];
     load_account_ids(
         db,
         "SELECT f.follower_account_id AS account_id
@@ -145,7 +142,9 @@ async fn list_local_quote_statuses_for_remote_object_uri(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<StatusRecord>().and_then(statuses_from_records)
+    result
+        .results::<StatusRecord>()
+        .and_then(statuses_from_records)
 }
 
 async fn build_remote_status_response_for_recipient_soft(
@@ -163,15 +162,9 @@ async fn build_remote_status_response_for_recipient_soft(
         .await
         .ok()
         .flatten()?;
-    build_remote_status_response(
-        db,
-        config,
-        Some(&recipient),
-        remote_status,
-        &actor_row,
-    )
-    .await
-    .ok()
+    build_remote_status_response(db, config, Some(&recipient), remote_status, &actor_row)
+        .await
+        .ok()
 }
 
 async fn build_local_status_response_for_recipient_soft(
@@ -238,16 +231,20 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
     let remote_id = remote_account_rest_id(&remote_actor.actor_uri);
     let created_at = remote_status.published_at.clone();
     let visibility = remote_status.visibility.as_str();
-    let mention_visibility_allowed =
-        is_public_activitypub_visibility(visibility) || visibility == "direct" || visibility == "private";
+    let mention_visibility_allowed = is_public_activitypub_visibility(visibility)
+        || visibility == "direct"
+        || visibility == "private";
 
     if mention_visibility_allowed {
         let text_content = strip_html_tags(&remote_status.content_html);
         for handle in extract_mentions_from_text(&text_content, config) {
             if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await {
                 let recipient_account_id = account.id();
-                let id =
-                    remote_status_interaction_notification_id("mention", &remote_id, &remote_status.id);
+                let id = remote_status_interaction_notification_id(
+                    "mention",
+                    &remote_id,
+                    &remote_status.id,
+                );
                 let status_response = build_remote_status_response_for_recipient_soft(
                     db,
                     config,
@@ -277,8 +274,7 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
         && let Ok(Some(target)) = find_local_status_by_object_uri(db, config, quote_of_uri).await
     {
         let recipient_account_id = &target.account_id;
-        let id =
-            remote_status_interaction_notification_id("quote", &remote_id, &remote_status.id);
+        let id = remote_status_interaction_notification_id("quote", &remote_id, &remote_status.id);
         let status_response = build_remote_status_response_for_recipient_soft(
             db,
             config,
@@ -302,13 +298,19 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
     }
 
     if remote_status.visibility != Visibility::Direct {
-        if let Ok(follower_ids) =
-            list_notify_follower_account_ids_for_remote_actor(db, &remote_actor.actor_uri, &created_at)
-                .await
+        if let Ok(follower_ids) = list_notify_follower_account_ids_for_remote_actor(
+            db,
+            &remote_actor.actor_uri,
+            &created_at,
+        )
+        .await
         {
             for recipient_account_id in follower_ids {
-                let id =
-                    remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
+                let id = remote_status_interaction_notification_id(
+                    "status",
+                    &remote_id,
+                    &remote_status.id,
+                );
                 let status_response = build_remote_status_response_for_recipient_soft(
                     db,
                     config,
@@ -337,8 +339,7 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
         && let Ok(Some(parent)) = find_local_status_by_object_uri(db, config, in_reply_to_uri).await
     {
         let recipient_account_id = &parent.account_id;
-        let id =
-            remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
+        let id = remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
         let status_response = build_remote_status_response_for_recipient_soft(
             db,
             config,
