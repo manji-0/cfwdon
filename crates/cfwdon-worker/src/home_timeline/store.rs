@@ -1,6 +1,6 @@
 use super::{
-    D1Database, ResolvedTimelineCursor, Result, home_timeline_candidate_bindings,
-    home_timeline_local_candidate_sql, home_timeline_remote_candidate_sql,
+    D1Database, HomeTimelineCandidateSource, ResolvedTimelineCursor, Result,
+    home_timeline_candidate_query,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -24,19 +24,21 @@ pub(crate) async fn list_home_timeline_candidate_ids(
     include_followed_tags: bool,
 ) -> Result<Vec<HomeTimelineCandidateRow>> {
     let (local_rows, remote_rows) = futures_util::try_join!(
-        list_home_timeline_candidate_ids_for_sql(
+        list_home_timeline_candidate_ids_for_source(
             db,
-            home_timeline_local_candidate_sql(include_followed_tags),
             viewer_account_id,
             cursor,
             limit,
+            HomeTimelineCandidateSource::Local,
+            include_followed_tags,
         ),
-        list_home_timeline_candidate_ids_for_sql(
+        list_home_timeline_candidate_ids_for_source(
             db,
-            home_timeline_remote_candidate_sql(include_followed_tags),
             viewer_account_id,
             cursor,
             limit,
+            HomeTimelineCandidateSource::Remote,
+            include_followed_tags,
         ),
     )?;
 
@@ -64,19 +66,30 @@ pub(crate) async fn account_has_followed_tags(db: &D1Database, account_id: &str)
         .is_some())
 }
 
-async fn list_home_timeline_candidate_ids_for_sql(
+async fn list_home_timeline_candidate_ids_for_source(
     db: &D1Database,
-    sql: &str,
     viewer_account_id: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
+    source: HomeTimelineCandidateSource,
+    include_followed_tags: bool,
 ) -> Result<Vec<HomeTimelineCandidateRow>> {
-    let bindings = home_timeline_candidate_bindings(viewer_account_id, cursor, limit);
-    let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
+    let query = home_timeline_candidate_query(
+        viewer_account_id,
+        cursor,
+        limit,
+        source,
+        include_followed_tags,
+    );
+    let result = db
+        .prepare(&query.sql)
+        .bind_refs(query.bindings.iter())?
+        .all()
+        .await?;
     result.results::<HomeTimelineCandidateRow>()
 }
 
-fn merge_home_timeline_candidate_rows(
+pub(super) fn merge_home_timeline_candidate_rows(
     local_rows: Vec<HomeTimelineCandidateRow>,
     remote_rows: Vec<HomeTimelineCandidateRow>,
     limit: u32,

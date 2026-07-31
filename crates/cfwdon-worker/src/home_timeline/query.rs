@@ -1,257 +1,214 @@
+//! Candidate-id queries backing the home timeline.
+//!
+//! The queries are assembled per request rather than kept as constants so the
+//! pagination cursor can appear as a plain range constraint. Expressing it as
+//! `?n IS NULL OR ts < ?n` reads well but costs a full scan: SQLite cannot use a
+//! disjunction as an index range constraint, so every page started at the newest
+//! row and discarded everything above the cursor, making deep pages progressively
+//! slower. Emitting the bound only when it exists lets the index seek straight to
+//! it.
+
 use crate::ResolvedTimelineCursor;
 use worker::d1::D1Type;
 
-pub(crate) const HOME_TIMELINE_LOCAL_CANDIDATE_SQL: &str = "SELECT source, status_id, timestamp
-             FROM (
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
-                    FROM statuses s
-                    WHERE s.account_id = ?1
-                      AND (
-                           ?2 IS NULL
-                           OR s.created_at < ?2
-                           OR (s.created_at = ?2 AND (?3 IS NULL OR s.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR s.created_at > ?4
-                           OR (s.created_at = ?4 AND (?5 IS NULL OR s.id > ?5))
-                      )
-                    ORDER BY s.created_at DESC, s.id DESC
-                    LIMIT ?6
-                )
+/// One `UNION` arm of a candidate query.
+struct CandidateBranch {
+    source: &'static str,
+    /// `FROM` and the branch's own `WHERE` conditions, cursor bounds excluded.
+    from_and_where: &'static str,
+    timestamp_column: &'static str,
+    id_column: &'static str,
+}
 
-                UNION
+const LOCAL_OWN_STATUSES: CandidateBranch = CandidateBranch {
+    source: "local",
+    from_and_where: "FROM statuses s
+                    WHERE s.account_id = ?1",
+    timestamp_column: "s.created_at",
+    id_column: "s.id",
+};
 
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
-                    FROM follows f
+const LOCAL_FOLLOWED_ACCOUNTS: CandidateBranch = CandidateBranch {
+    source: "local",
+    from_and_where: "FROM follows f
                     JOIN statuses s
                       ON s.account_id = f.target_account_id
                     WHERE f.follower_account_id = ?1
                       AND f.state = 'accepted'
-                      AND s.visibility IN ('public', 'unlisted', 'private')
-                      AND (
-                           ?2 IS NULL
-                           OR s.created_at < ?2
-                           OR (s.created_at = ?2 AND (?3 IS NULL OR s.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR s.created_at > ?4
-                           OR (s.created_at = ?4 AND (?5 IS NULL OR s.id > ?5))
-                      )
-                    ORDER BY s.created_at DESC, s.id DESC
-                    LIMIT ?6
-                )
-             )
-             ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?6";
+                      AND s.visibility IN ('public', 'unlisted', 'private')",
+    timestamp_column: "s.created_at",
+    id_column: "s.id",
+};
 
-pub(crate) const HOME_TIMELINE_LOCAL_CANDIDATE_SQL_WITH_TAGS: &str =
-    "SELECT source, status_id, timestamp
-             FROM (
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
-                    FROM statuses s
-                    WHERE s.account_id = ?1
-                      AND (
-                           ?2 IS NULL
-                           OR s.created_at < ?2
-                           OR (s.created_at = ?2 AND (?3 IS NULL OR s.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR s.created_at > ?4
-                           OR (s.created_at = ?4 AND (?5 IS NULL OR s.id > ?5))
-                      )
-                    ORDER BY s.created_at DESC, s.id DESC
-                    LIMIT ?6
-                )
-
-                UNION
-
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
-                    FROM follows f
-                    JOIN statuses s
-                      ON s.account_id = f.target_account_id
-                    WHERE f.follower_account_id = ?1
-                      AND f.state = 'accepted'
-                      AND s.visibility IN ('public', 'unlisted', 'private')
-                      AND (
-                           ?2 IS NULL
-                           OR s.created_at < ?2
-                           OR (s.created_at = ?2 AND (?3 IS NULL OR s.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR s.created_at > ?4
-                           OR (s.created_at = ?4 AND (?5 IS NULL OR s.id > ?5))
-                      )
-                    ORDER BY s.created_at DESC, s.id DESC
-                    LIMIT ?6
-                )
-
-                UNION
-
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
-                    FROM followed_tags ft
+const LOCAL_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
+    source: "local",
+    from_and_where: "FROM followed_tags ft
                     JOIN status_hashtags h
                       ON h.tag = ft.tag_name
                     JOIN statuses s
                       ON s.id = h.status_id
                     WHERE ft.account_id = ?1
-                      AND s.visibility = 'public'
-                      AND (
-                           ?2 IS NULL
-                           OR s.created_at < ?2
-                           OR (s.created_at = ?2 AND (?3 IS NULL OR s.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR s.created_at > ?4
-                           OR (s.created_at = ?4 AND (?5 IS NULL OR s.id > ?5))
-                      )
-                    ORDER BY s.created_at DESC, s.id DESC
-                    LIMIT ?6
-                )
-             )
-             ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?6";
+                      AND s.visibility = 'public'",
+    timestamp_column: "s.created_at",
+    id_column: "s.id",
+};
 
-pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL: &str = "SELECT source, status_id, timestamp
-             FROM (
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
-                    FROM follows f
+const REMOTE_FOLLOWED_ACCOUNTS: CandidateBranch = CandidateBranch {
+    source: "remote",
+    from_and_where: "FROM follows f
                     JOIN remote_statuses rs
                       ON rs.actor_uri = f.target_actor_uri
                     WHERE f.follower_account_id = ?1
                       AND f.state = 'accepted'
-                      AND rs.visibility IN ('public', 'unlisted', 'private')
-                      AND (
-                           ?2 IS NULL
-                           OR rs.published_at < ?2
-                           OR (rs.published_at = ?2 AND (?3 IS NULL OR rs.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR rs.published_at > ?4
-                           OR (rs.published_at = ?4 AND (?5 IS NULL OR rs.id > ?5))
-                      )
-                    ORDER BY rs.published_at DESC, rs.id DESC
-                    LIMIT ?6
-                )
-             )
-             ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?6";
+                      AND rs.visibility IN ('public', 'unlisted', 'private')",
+    timestamp_column: "rs.published_at",
+    id_column: "rs.id",
+};
 
-pub(crate) const HOME_TIMELINE_REMOTE_CANDIDATE_SQL_WITH_TAGS: &str =
-    "SELECT source, status_id, timestamp
-             FROM (
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
-                    FROM follows f
-                    JOIN remote_statuses rs
-                      ON rs.actor_uri = f.target_actor_uri
-                    WHERE f.follower_account_id = ?1
-                      AND f.state = 'accepted'
-                      AND rs.visibility IN ('public', 'unlisted', 'private')
-                      AND (
-                           ?2 IS NULL
-                           OR rs.published_at < ?2
-                           OR (rs.published_at = ?2 AND (?3 IS NULL OR rs.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR rs.published_at > ?4
-                           OR (rs.published_at = ?4 AND (?5 IS NULL OR rs.id > ?5))
-                      )
-                    ORDER BY rs.published_at DESC, rs.id DESC
-                    LIMIT ?6
-                )
-
-                UNION
-
-                SELECT source, status_id, timestamp
-                FROM (
-                    SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
-                    FROM followed_tags ft
+const REMOTE_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
+    source: "remote",
+    from_and_where: "FROM followed_tags ft
                     JOIN remote_status_hashtags h
                       ON h.tag = ft.tag_name
                     JOIN remote_statuses rs
                       ON rs.id = h.status_id
                     WHERE ft.account_id = ?1
-                      AND rs.visibility = 'public'
-                      AND (
-                           ?2 IS NULL
-                           OR rs.published_at < ?2
-                           OR (rs.published_at = ?2 AND (?3 IS NULL OR rs.id < ?3))
-                      )
-                      AND (
-                           ?4 IS NULL
-                           OR rs.published_at > ?4
-                           OR (rs.published_at = ?4 AND (?5 IS NULL OR rs.id > ?5))
-                      )
-                    ORDER BY rs.published_at DESC, rs.id DESC
-                    LIMIT ?6
-                )
-             )
-             ORDER BY timestamp DESC, status_id DESC
-             LIMIT ?6";
+                      AND rs.visibility = 'public'",
+    timestamp_column: "rs.published_at",
+    id_column: "rs.id",
+};
 
-pub(crate) fn home_timeline_local_candidate_sql(include_followed_tags: bool) -> &'static str {
-    if include_followed_tags {
-        HOME_TIMELINE_LOCAL_CANDIDATE_SQL_WITH_TAGS
-    } else {
-        HOME_TIMELINE_LOCAL_CANDIDATE_SQL
+/// Which statuses a candidate query draws from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HomeTimelineCandidateSource {
+    Local,
+    Remote,
+}
+
+impl HomeTimelineCandidateSource {
+    fn branches(self, include_followed_tags: bool) -> &'static [CandidateBranch] {
+        match (self, include_followed_tags) {
+            (Self::Local, false) => &[LOCAL_OWN_STATUSES, LOCAL_FOLLOWED_ACCOUNTS],
+            (Self::Local, true) => &[
+                LOCAL_OWN_STATUSES,
+                LOCAL_FOLLOWED_ACCOUNTS,
+                LOCAL_FOLLOWED_TAGS,
+            ],
+            (Self::Remote, false) => &[REMOTE_FOLLOWED_ACCOUNTS],
+            (Self::Remote, true) => &[REMOTE_FOLLOWED_ACCOUNTS, REMOTE_FOLLOWED_TAGS],
+        }
     }
 }
 
-pub(crate) fn home_timeline_remote_candidate_sql(include_followed_tags: bool) -> &'static str {
-    if include_followed_tags {
-        HOME_TIMELINE_REMOTE_CANDIDATE_SQL_WITH_TAGS
-    } else {
-        HOME_TIMELINE_REMOTE_CANDIDATE_SQL
-    }
+/// A candidate query with its bindings, which vary with the cursor.
+pub(crate) struct HomeTimelineCandidateQuery<'a> {
+    pub(crate) sql: String,
+    pub(crate) bindings: Vec<D1Type<'a>>,
 }
 
-/// Binds the shared candidate query slots.
+/// Bind slots assigned to whichever cursor bounds are present.
+#[derive(Default)]
+struct CursorSlots {
+    /// `(timestamp slot, id slot)` for the upper bound.
+    max: Option<(usize, usize)>,
+    /// `(timestamp slot, id slot)` for the lower bound.
+    min: Option<(usize, usize)>,
+}
+
+/// Builds the candidate query for one source.
 ///
-/// `?6` caps both each `UNION` branch and the merged result. One cap is enough
-/// for both: a row in the global top `limit` is also in its own branch's top
-/// `limit`, so the union of the per-branch caps always contains the rows the
-/// outer `ORDER BY` would pick. `limit` already carries the oversampling
-/// headroom for mute attrition (see `timeline_fetch_limit`), so multiplying it
-/// again per branch only widened the rows fetched, never the rows kept.
-pub(crate) fn home_timeline_candidate_bindings<'a>(
+/// `limit` caps each branch and the merged result; see
+/// [`super::merge_home_timeline_candidate_rows`] for why one cap covers both.
+pub(crate) fn home_timeline_candidate_query<'a>(
     viewer_account_id: &'a str,
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
-) -> [D1Type<'a>; 6] {
-    [
-        D1Type::Text(viewer_account_id),
-        cursor
-            .max_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.max_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        cursor
-            .min_timestamp
-            .as_deref()
-            .map_or(D1Type::Null, D1Type::Text),
-        cursor.min_id.as_deref().map_or(D1Type::Null, D1Type::Text),
-        D1Type::Integer(limit as i32),
-    ]
+    source: HomeTimelineCandidateSource,
+    include_followed_tags: bool,
+) -> HomeTimelineCandidateQuery<'a> {
+    // `?1` is always the viewer; cursor bounds and then the limit follow.
+    let mut bindings = vec![D1Type::Text(viewer_account_id)];
+    let mut slots = CursorSlots::default();
+
+    // A resolved cursor always carries both a timestamp and an id: the timestamp
+    // is looked up from the id, and a request whose id did not resolve is
+    // answered with an empty page before reaching this point.
+    if let (Some(timestamp), Some(id)) = (cursor.max_timestamp.as_deref(), cursor.max_id.as_deref())
+    {
+        bindings.push(D1Type::Text(timestamp));
+        bindings.push(D1Type::Text(id));
+        slots.max = Some((bindings.len() - 1, bindings.len()));
+    }
+    if let (Some(timestamp), Some(id)) = (cursor.min_timestamp.as_deref(), cursor.min_id.as_deref())
+    {
+        bindings.push(D1Type::Text(timestamp));
+        bindings.push(D1Type::Text(id));
+        slots.min = Some((bindings.len() - 1, bindings.len()));
+    }
+    bindings.push(D1Type::Integer(limit as i32));
+    let limit_slot = bindings.len();
+
+    let branches = source
+        .branches(include_followed_tags)
+        .iter()
+        .map(|branch| branch_sql(branch, &slots, limit_slot))
+        .collect::<Vec<_>>()
+        .join("\n\n                UNION\n\n                ");
+
+    let sql = format!(
+        "SELECT source, status_id, timestamp
+             FROM (
+                {branches}
+             )
+             ORDER BY timestamp DESC, status_id DESC
+             LIMIT ?{limit_slot}"
+    );
+
+    HomeTimelineCandidateQuery { sql, bindings }
+}
+
+fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) -> String {
+    let CandidateBranch {
+        source,
+        from_and_where,
+        timestamp_column,
+        id_column,
+    } = branch;
+    let cursor_predicates = cursor_predicates(timestamp_column, id_column, slots);
+
+    format!(
+        "SELECT source, status_id, timestamp
+                FROM (
+                    SELECT '{source}' AS source, {id_column} AS status_id, {timestamp_column} AS timestamp
+                    {from_and_where}{cursor_predicates}
+                    ORDER BY {timestamp_column} DESC, {id_column} DESC
+                    LIMIT ?{limit_slot}
+                )"
+    )
+}
+
+/// Renders the cursor bounds as seekable range constraints.
+///
+/// Each bound leads with a bare comparison on the timestamp so the index can
+/// seek to it, then breaks ties on the id. Writing the pair as a single
+/// disjunction instead would leave nothing for the planner to seek on.
+fn cursor_predicates(timestamp_column: &str, id_column: &str, slots: &CursorSlots) -> String {
+    let mut predicates = String::new();
+    if let Some((timestamp_slot, id_slot)) = slots.max {
+        predicates.push_str(&format!(
+            "
+                      AND {timestamp_column} <= ?{timestamp_slot}
+                      AND ({timestamp_column} < ?{timestamp_slot} OR {id_column} < ?{id_slot})"
+        ));
+    }
+    if let Some((timestamp_slot, id_slot)) = slots.min {
+        predicates.push_str(&format!(
+            "
+                      AND {timestamp_column} >= ?{timestamp_slot}
+                      AND ({timestamp_column} > ?{timestamp_slot} OR {id_column} > ?{id_slot})"
+        ));
+    }
+    predicates
 }
 
 #[cfg(test)]
@@ -267,59 +224,151 @@ mod tests {
         }
     }
 
-    #[test]
-    fn home_timeline_candidate_sql_caps_branches_and_merge_with_one_slot() {
-        for sql in [
-            home_timeline_local_candidate_sql(false),
-            home_timeline_local_candidate_sql(true),
-            home_timeline_remote_candidate_sql(false),
-            home_timeline_remote_candidate_sql(true),
-        ] {
-            assert!(
-                !sql.contains("?7"),
-                "candidate SQL should bind at most six slots"
-            );
-            // One cap per branch plus the outer merge cap.
-            let branches =
-                sql.matches("SELECT 'local'").count() + sql.matches("SELECT 'remote'").count();
-            assert_eq!(sql.matches("LIMIT ?6").count(), branches + 1);
+    fn max_cursor() -> ResolvedTimelineCursor {
+        ResolvedTimelineCursor {
+            max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
+            max_id: Some("status-max".to_owned()),
+            min_timestamp: None,
+            min_id: None,
         }
     }
 
     #[test]
-    fn home_timeline_sql_variants_omit_followed_tags_when_disabled() {
-        assert!(!home_timeline_local_candidate_sql(false).contains("followed_tags"));
-        assert!(!home_timeline_remote_candidate_sql(false).contains("followed_tags"));
-        assert!(home_timeline_local_candidate_sql(true).contains("followed_tags"));
-        assert!(home_timeline_remote_candidate_sql(true).contains("followed_tags"));
-    }
-
-    #[test]
-    fn home_timeline_candidate_bindings_keep_cursor_slots_stable() {
-        let mut cursor = empty_cursor();
-        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
-        cursor.max_id = Some("status-max".to_owned());
-        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
-        cursor.min_id = Some("status-min".to_owned());
-
-        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 12);
-
-        assert!(matches!(bindings[0], D1Type::Text("viewer")));
-        assert!(matches!(bindings[1], D1Type::Text("2026-01-02T00:00:00Z")));
-        assert!(matches!(bindings[2], D1Type::Text("status-max")));
-        assert!(matches!(bindings[3], D1Type::Text("2026-01-01T00:00:00Z")));
-        assert!(matches!(bindings[4], D1Type::Text("status-min")));
-        assert!(matches!(bindings[5], D1Type::Integer(12)));
-    }
-
-    #[test]
-    fn home_timeline_candidate_bindings_use_null_for_open_cursor_bounds() {
+    fn open_cursor_query_binds_only_viewer_and_limit() {
         let cursor = empty_cursor();
-        let bindings = home_timeline_candidate_bindings("viewer", &cursor, 8);
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            false,
+        );
 
-        assert!(matches!(bindings[1], D1Type::Null));
-        assert!(matches!(bindings[2], D1Type::Null));
-        assert!(matches!(bindings[3], D1Type::Null));
-        assert!(matches!(bindings[4], D1Type::Null));
+        assert_eq!(query.bindings.len(), 2);
+        assert!(matches!(query.bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(query.bindings[1], D1Type::Integer(20)));
+        // No bound to seek to, so no cursor predicate should be emitted.
+        assert!(!query.sql.contains("<= ?"));
+        assert!(!query.sql.contains(">= ?"));
+        assert!(query.sql.contains("LIMIT ?2"));
+    }
+
+    #[test]
+    fn max_cursor_query_emits_a_seekable_upper_bound() {
+        let cursor = max_cursor();
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            false,
+        );
+
+        assert_eq!(query.bindings.len(), 4);
+        assert!(matches!(query.bindings[0], D1Type::Text("viewer")));
+        assert!(matches!(
+            query.bindings[1],
+            D1Type::Text("2026-01-02T00:00:00Z")
+        ));
+        assert!(matches!(query.bindings[2], D1Type::Text("status-max")));
+        assert!(matches!(query.bindings[3], D1Type::Integer(20)));
+        // The bare comparison is what the index can seek on.
+        assert!(query.sql.contains("s.created_at <= ?2"));
+        assert!(query.sql.contains("(s.created_at < ?2 OR s.id < ?3)"));
+        // The old form defeated the seek and must not come back.
+        assert!(!query.sql.contains("IS NULL"));
+        assert!(query.sql.contains("LIMIT ?4"));
+    }
+
+    #[test]
+    fn both_cursor_bounds_get_distinct_slots() {
+        let cursor = ResolvedTimelineCursor {
+            max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
+            max_id: Some("status-max".to_owned()),
+            min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
+            min_id: Some("status-min".to_owned()),
+        };
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Remote,
+            false,
+        );
+
+        assert_eq!(query.bindings.len(), 6);
+        assert!(query.sql.contains("rs.published_at <= ?2"));
+        assert!(query.sql.contains("rs.published_at >= ?4"));
+        assert!(query.sql.contains("(rs.published_at > ?4 OR rs.id > ?5)"));
+        assert!(query.sql.contains("LIMIT ?6"));
+    }
+
+    #[test]
+    fn every_bind_slot_is_referenced_by_the_sql() {
+        for include_followed_tags in [false, true] {
+            for source in [
+                HomeTimelineCandidateSource::Local,
+                HomeTimelineCandidateSource::Remote,
+            ] {
+                for cursor in [empty_cursor(), max_cursor()] {
+                    let query = home_timeline_candidate_query(
+                        "viewer",
+                        &cursor,
+                        20,
+                        source,
+                        include_followed_tags,
+                    );
+                    for slot in 1..=query.bindings.len() {
+                        assert!(
+                            query.sql.contains(&format!("?{slot}")),
+                            "slot ?{slot} is bound but never referenced: {}",
+                            query.sql
+                        );
+                    }
+                    // A slot past the end would mean a binding is missing.
+                    let past_end = query.bindings.len() + 1;
+                    assert!(!query.sql.contains(&format!("?{past_end}")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn followed_tag_branches_are_only_added_when_requested() {
+        let cursor = empty_cursor();
+        let without = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            false,
+        );
+        let with = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            true,
+        );
+
+        assert!(!without.sql.contains("followed_tags"));
+        assert!(with.sql.contains("followed_tags"));
+        assert_eq!(without.sql.matches("UNION").count(), 1);
+        assert_eq!(with.sql.matches("UNION").count(), 2);
+    }
+
+    #[test]
+    fn each_branch_and_the_merge_share_the_limit_slot() {
+        let cursor = empty_cursor();
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            true,
+        );
+
+        // Three branches plus the outer merge.
+        assert_eq!(query.sql.matches("LIMIT ?2").count(), 4);
     }
 }
