@@ -202,6 +202,7 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
             let _ = send_poll_end_notifications(
                 &db,
                 &config,
+                Some(&ctx.env),
                 &row.poll_id,
                 &row.status_id,
                 &row.account_id,
