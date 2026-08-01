@@ -25,6 +25,9 @@ pub(crate) struct ReportRow {
     pub(crate) comment: String,
     pub(crate) category: String,
     pub(crate) forward: i32,
+    pub(crate) action_taken: i32,
+    pub(crate) action_taken_at: Option<String>,
+    pub(crate) action_taken_by_account_id: Option<String>,
     pub(crate) created_at: String,
 }
 

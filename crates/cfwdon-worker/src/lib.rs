@@ -8,6 +8,8 @@ use worker::*;
 
 mod accounts;
 mod activitypub;
+mod admin_api;
+mod admin_ui;
 mod async_refreshes;
 mod auth;
 mod authorize_interaction;
@@ -66,6 +68,8 @@ mod time_html;
 mod timelines;
 pub(crate) use accounts::*;
 pub(crate) use activitypub::*;
+pub(crate) use admin_api::*;
+pub(crate) use admin_ui::*;
 pub(crate) use async_refreshes::*;
 pub(crate) use auth::*;
 pub(crate) use authorize_interaction::*;

@@ -25,8 +25,11 @@ pub(crate) async fn build_report_response(
 
     Ok(MastodonReportResponse {
         id: report.id.clone(),
-        action_taken: false,
-        action_taken_at: None,
+        action_taken: report.action_taken != 0,
+        action_taken_at: report
+            .action_taken_at
+            .as_deref()
+            .map(timestamp_to_mastodon_iso8601),
         category: report.category.clone(),
         comment: report.comment.clone(),
         forwarded: report.forward != 0,

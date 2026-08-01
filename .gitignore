@@ -3,6 +3,8 @@
 /node_modules
 /crates/cfwdon-worker/build
 /dist
+/admin-ui/node_modules
+/admin-ui/dist
 /.devbox
 /.direnv
 /.dev.vars

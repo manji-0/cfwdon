@@ -3,7 +3,7 @@ use super::{
     selection::fast_router_kind,
 };
 use crate::root_document;
-use crate::{CACHE_TTL_HEALTH, cache_public_response};
+use crate::{CACHE_TTL_HEALTH, cache_public_response, dispatch_admin_route, is_admin_ui_path};
 use worker::{Env, Request, Response, Result};
 
 pub(crate) async fn dispatch_route(
@@ -12,6 +12,10 @@ pub(crate) async fn dispatch_route(
     method: &str,
     path: &str,
 ) -> Result<Response> {
+    if path.starts_with("/api/cfwdon/admin/") || is_admin_ui_path(path) {
+        return dispatch_admin_route(req, env, method, path).await;
+    }
+
     if method == "GET" && path == "/" {
         return cache_public_response(Response::from_json(&root_document())?, CACHE_TTL_HEALTH);
     }

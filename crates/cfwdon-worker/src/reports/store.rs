@@ -109,36 +109,74 @@ pub(crate) async fn insert_report(
         .ok_or_else(|| Error::RustError("failed to load created report".to_owned()))
 }
 
+const REPORT_SELECT_COLUMNS: &str = "id, account_id, target_account_id, target_remote_actor_uri, comment, category, forward, action_taken, action_taken_at, action_taken_by_account_id, created_at";
+
 pub(crate) async fn find_report_by_id(
     db: &D1Database,
     report_id: &str,
 ) -> Result<Option<ReportRow>> {
     let report_id = D1Type::Text(report_id);
-    db.prepare(
-        "SELECT id, account_id, target_account_id, target_remote_actor_uri, comment, category, forward, created_at
+    db.prepare(&format!(
+        "SELECT {REPORT_SELECT_COLUMNS}
          FROM reports
          WHERE id = ?1
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(&report_id)?
     .first::<ReportRow>(None)
     .await
 }
 
 pub(crate) async fn list_reports(db: &D1Database, limit: u32) -> Result<Vec<ReportRow>> {
+    list_reports_filtered(db, limit, false).await
+}
+
+pub(crate) async fn list_reports_filtered(
+    db: &D1Database,
+    limit: u32,
+    pending_only: bool,
+) -> Result<Vec<ReportRow>> {
     let bindings = [D1Type::Integer(limit as i32)];
+    let where_clause = if pending_only {
+        "WHERE action_taken = 0"
+    } else {
+        ""
+    };
     let result = db
-        .prepare(
-            "SELECT id, account_id, target_account_id, target_remote_actor_uri, comment, category, forward, created_at
+        .prepare(&format!(
+            "SELECT {REPORT_SELECT_COLUMNS}
              FROM reports
+             {where_clause}
              ORDER BY created_at DESC
-             LIMIT ?1",
-        )
+             LIMIT ?1"
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
 
     result.results::<ReportRow>()
+}
+
+pub(crate) async fn resolve_report(
+    db: &D1Database,
+    report_id: &str,
+    admin_account_id: &str,
+) -> Result<bool> {
+    let bindings = [D1Type::Text(report_id), D1Type::Text(admin_account_id)];
+    let result = db
+        .prepare(
+            "UPDATE reports
+             SET action_taken = 1,
+                 action_taken_at = CURRENT_TIMESTAMP,
+                 action_taken_by_account_id = ?2
+             WHERE id = ?1
+               AND action_taken = 0",
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
 pub(crate) async fn list_report_status_ids(
