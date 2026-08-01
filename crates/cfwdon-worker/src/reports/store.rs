@@ -116,7 +116,7 @@ pub(crate) async fn find_report_by_id(
     report_id: &str,
 ) -> Result<Option<ReportRow>> {
     let report_id = D1Type::Text(report_id);
-    db.prepare(&format!(
+    db.prepare(format!(
         "SELECT {REPORT_SELECT_COLUMNS}
          FROM reports
          WHERE id = ?1
@@ -143,7 +143,7 @@ pub(crate) async fn list_reports_filtered(
         ""
     };
     let result = db
-        .prepare(&format!(
+        .prepare(format!(
             "SELECT {REPORT_SELECT_COLUMNS}
              FROM reports
              {where_clause}
