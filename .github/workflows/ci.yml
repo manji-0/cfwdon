@@ -35,12 +35,25 @@ jobs:
       # When NIXBUILD_TOKEN is set, install Nix once and offload devbox's Nix
       # builds (for example wrangler) to nixbuild.net instead of compiling on
       # the GitHub runner. See docs/operations/nixbuild-net.md.
+      # GitHub Actions does not allow secrets in `if:` expressions, so detect the
+      # token in a prior step and branch on that output instead.
+      - name: Detect nixbuild token
+        id: nixbuild
+        env:
+          NIXBUILD_TOKEN: ${{ secrets.NIXBUILD_TOKEN }}
+        run: |
+          if [ -n "${NIXBUILD_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Nix
-        if: ${{ secrets.NIXBUILD_TOKEN != '' }}
+        if: steps.nixbuild.outputs.enabled == 'true'
         uses: nixbuild/nix-quick-install-action@v35
 
       - name: Configure nixbuild.net
-        if: ${{ secrets.NIXBUILD_TOKEN != '' }}
+        if: steps.nixbuild.outputs.enabled == 'true'
         uses: nixbuild/nixbuild-action@v25
         with:
           nixbuild_token: ${{ secrets.NIXBUILD_TOKEN }}
@@ -53,7 +66,7 @@ jobs:
           enable-cache: true
           devbox-version: "0.17.5"
           refresh-cli: false
-          skip-nix-installation: ${{ secrets.NIXBUILD_TOKEN != '' && 'true' || 'false' }}
+          skip-nix-installation: ${{ steps.nixbuild.outputs.enabled }}
 
       - name: Cache cargo build
         uses: swatinem/rust-cache@v2
