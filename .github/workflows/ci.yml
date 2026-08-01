@@ -25,12 +25,10 @@ jobs:
       - name: Cache Rust toolchain
         uses: actions/cache@v4
         with:
-          path: |
-            .devbox/.rustup
-            .devbox/.cargo
-          key: rust-${{ runner.os }}-${{ hashFiles('devbox.json', 'devbox.lock', 'rust-toolchain.toml', 'Cargo.lock') }}
+          path: .devbox/.rustup
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
           restore-keys: |
-            rust-${{ runner.os }}-
+            rustup-${{ runner.os }}-
 
       # When NIXBUILD_TOKEN is set, install Nix once and offload devbox's Nix
       # builds (for example wrangler) to nixbuild.net instead of compiling on
@@ -63,7 +61,7 @@ jobs:
         uses: jetify-com/devbox-install-action@v0.15.0
         with:
           project-path: .
-          enable-cache: true
+          enable-cache: false
           devbox-version: "0.17.5"
           refresh-cli: false
           skip-nix-installation: ${{ steps.nixbuild.outputs.enabled }}
