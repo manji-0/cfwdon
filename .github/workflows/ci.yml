@@ -26,7 +26,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .devbox/.rustup
-          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+          # Include devbox.lock so rustup package changes bust a stale/partial
+          # toolchain cache that rustup still lists as installed.
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v2
           restore-keys: |
             rustup-${{ runner.os }}-
 
@@ -65,6 +67,11 @@ jobs:
           devbox-version: "0.17.5"
           refresh-cli: false
           skip-nix-installation: ${{ steps.nixbuild.outputs.enabled }}
+
+      # Install/repair the rustup toolchain inside devbox before rust-cache
+      # probes rustc on the runner PATH (which shares RUSTUP_HOME).
+      - name: Ensure Rust toolchain
+        run: devbox run -- rustup show
 
       - name: Cache cargo build
         uses: swatinem/rust-cache@v2
