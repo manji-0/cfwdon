@@ -22,10 +22,11 @@
       "export PATH=\"${CARGO_HOME}/bin:${PATH}\"",
       "export OPENSSL_NO_VENDOR=1",
       "export RUSTUP_TOOLCHAIN=\"${RUSTUP_TOOLCHAIN:-stable}\"",
-      "if ! cargo_bin=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" cargo 2>/dev/null)\" || [ ! -x \"${cargo_bin}\" ]; then rustup toolchain install \"${RUSTUP_TOOLCHAIN}\" --profile minimal --force; fi",
+      "if ! rustc_bin=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" rustc 2>/dev/null)\" || [ ! -x \"${rustc_bin}\" ]; then rustup toolchain uninstall \"${RUSTUP_TOOLCHAIN}\" || true; rustup toolchain install \"${RUSTUP_TOOLCHAIN}\" --profile minimal; fi",
       "rustup target list --installed --toolchain \"${RUSTUP_TOOLCHAIN}\" | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown --toolchain \"${RUSTUP_TOOLCHAIN}\"",
       "rustup component list --toolchain \"${RUSTUP_TOOLCHAIN}\" --installed | grep -Eq '^rustfmt' || rustup component add rustfmt --toolchain \"${RUSTUP_TOOLCHAIN}\"",
       "rustup component list --toolchain \"${RUSTUP_TOOLCHAIN}\" --installed | grep -Eq '^clippy' || rustup component add clippy --toolchain \"${RUSTUP_TOOLCHAIN}\"",
+      "export PATH=\"$(dirname \"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" cargo)\"):$(dirname \"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" rustc)\"):${CARGO_HOME}/bin:${PATH}\"",
       "export WASM_BINDGEN_BIN=\"$(command -v wasm-bindgen)\"",
       "export WASM_OPT_BIN=\"$(command -v wasm-opt)\""
     ],

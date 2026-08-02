@@ -28,9 +28,9 @@ jobs:
           path: .devbox/.rustup
           # Include devbox.lock so rustup package changes bust a stale/partial
           # toolchain cache that rustup still lists as installed.
-          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v2
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v3
           restore-keys: |
-            rustup-${{ runner.os }}-
+            rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v3
 
       # When NIXBUILD_TOKEN is set, install Nix once and offload devbox's Nix
       # builds (for example wrangler) to nixbuild.net instead of compiling on
@@ -71,7 +71,13 @@ jobs:
       # Install/repair the rustup toolchain inside devbox before rust-cache
       # probes rustc on the runner PATH (which shares RUSTUP_HOME).
       - name: Ensure Rust toolchain
-        run: devbox run -- rustup show
+        run: devbox run -- sh -c 'cargo --version && rustc --version'
+
+      - name: Expose Rust on PATH
+        run: |
+          echo "${GITHUB_WORKSPACE}/.devbox/nix/profile/default/bin" >> "$GITHUB_PATH"
+          export PATH="${GITHUB_WORKSPACE}/.devbox/nix/profile/default/bin:${PATH}"
+          rustc -vV
 
       - name: Cache cargo build
         uses: swatinem/rust-cache@v2
