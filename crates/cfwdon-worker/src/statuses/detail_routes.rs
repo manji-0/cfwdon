@@ -48,6 +48,7 @@ enum LoadedStatusApiSubject {
 
 struct StatusDetailBaseContext {
     config: cfwdon_core::AppConfig,
+    session: crate::D1RequestSession,
     db: worker::D1Database,
     status_id: String,
 }
@@ -512,6 +513,7 @@ pub(crate) async fn resolve_status_reference(
 }
 
 fn resolve_status_detail_base_context(
+    req: &Request,
     ctx: &RouteContext<()>,
 ) -> Result<Option<StatusDetailBaseContext>> {
     let status_id = match status_id_from_context(ctx) {
@@ -519,9 +521,10 @@ fn resolve_status_detail_base_context(
         Err(_) => return Ok(None),
     };
     let config = load_config(ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = crate::open_bound_request_session(ctx, &config, req)?;
     Ok(Some(StatusDetailBaseContext {
         config,
+        session,
         db,
         status_id,
     }))
@@ -531,7 +534,7 @@ async fn resolve_status_detail_request_context(
     req: &Request,
     ctx: &RouteContext<()>,
 ) -> Result<Option<StatusDetailRequestContext>> {
-    let Some(base) = resolve_status_detail_base_context(ctx)? else {
+    let Some(base) = resolve_status_detail_base_context(req, ctx)? else {
         return Ok(None);
     };
     let viewer = find_authenticated_local_account(req, &base.db, &base.config).await?;
@@ -649,7 +652,7 @@ async fn status_interaction_accounts_response(
     ctx: RouteContext<()>,
     kind: StatusInteractionKind,
 ) -> Result<Response> {
-    let Some(detail) = resolve_status_detail_base_context(&ctx)? else {
+    let Some(detail) = resolve_status_detail_base_context(&req, &ctx)? else {
         return Response::error("missing status id route parameter", 400);
     };
     let Some(status) =
@@ -722,7 +725,7 @@ async fn status_interaction_accounts_response(
         }
     };
     responses.truncate(limit as usize);
-    Response::from_json(&responses)
+    crate::with_d1_bookmark(Response::from_json(&responses)?, &detail.session)
 }
 
 pub(crate) async fn status_reblogged_by_response(
@@ -937,8 +940,7 @@ fn status_oembed_discovery_link(config: &crate::AppConfig, status_url: &str) -> 
 }
 
 pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let _ = req;
-    let Some(detail) = resolve_status_detail_base_context(&ctx)? else {
+    let Some(detail) = resolve_status_detail_base_context(&req, &ctx)? else {
         return Response::error("missing status id route parameter", 400);
     };
 
@@ -967,7 +969,7 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
     .unwrap_or(serde_json::Value::Null);
     let _ = enrich_card_with_remote_preview(&mut card).await;
 
-    Response::from_json(&card)
+    crate::with_d1_bookmark(Response::from_json(&card)?, &detail.session)
 }
 
 pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -1005,14 +1007,15 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
     .await?;
     if detail.viewer.is_none() {
         cache_status_api_response(&ctx, &detail.base.status_id, &response).await?;
-        return cache_public_json_response(
+        let cached = cache_public_json_response(
             &response,
             "application/json; charset=utf-8",
             CACHE_TTL_STATUS_API,
             &[("Cache-Tag", &format!("status-{}", detail.base.status_id))],
-        );
+        )?;
+        return crate::with_d1_bookmark(cached, &detail.base.session);
     }
-    Response::from_json(&response)
+    crate::with_d1_bookmark(Response::from_json(&response)?, &detail.base.session)
 }
 
 async fn load_status_api_subject(
@@ -1144,11 +1147,14 @@ pub(crate) async fn status_source_response(
     };
     let super::LoadedLocalStatusResponseSubject { status, .. } = subject;
 
-    Response::from_json(&StatusSourceResponse {
-        id: status.id,
-        text: status.text,
-        spoiler_text: status.spoiler_text,
-    })
+    crate::with_d1_bookmark(
+        Response::from_json(&StatusSourceResponse {
+            id: status.id,
+            text: status.text,
+            spoiler_text: status.spoiler_text,
+        })?,
+        &detail.base.session,
+    )
 }
 
 pub(crate) async fn status_context_response(
@@ -1165,7 +1171,7 @@ pub(crate) async fn status_context_response(
         return Response::error("status not found", 404);
     };
 
-    match status {
+    let response = match status {
         ResolvedStatus::Local(status) => {
             let Some(subject) = load_visible_local_status_response_subject(
                 &detail.base.db,
@@ -1196,7 +1202,7 @@ pub(crate) async fn status_context_response(
                 detail.viewer.is_some(),
                 &context,
             )
-            .await
+            .await?
         }
         ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(status.visibility.as_str()) {
@@ -1221,9 +1227,10 @@ pub(crate) async fn status_context_response(
                 detail.viewer.is_some(),
                 &context,
             )
-            .await
+            .await?
         }
-    }
+    };
+    crate::with_d1_bookmark(response, &detail.base.session)
 }
 
 pub(crate) async fn status_history_response(
@@ -1259,10 +1266,13 @@ pub(crate) async fn status_history_response(
         let created_at = crate::load_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.created_at.clone());
-        return status_history_response_from_parts(
-            response,
-            created_at,
-            crate::list_status_edit_snapshots(&detail.base.db, &status.id).await?,
+        return crate::with_d1_bookmark(
+            status_history_response_from_parts(
+                response,
+                created_at,
+                crate::list_status_edit_snapshots(&detail.base.db, &status.id).await?,
+            )?,
+            &detail.base.session,
         );
     }
 
@@ -1287,10 +1297,13 @@ pub(crate) async fn status_history_response(
         let created_at = load_remote_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.published_at.clone());
-        return status_history_response_from_parts(
-            response,
-            created_at,
-            list_remote_status_edit_snapshots(&detail.base.db, &status.id).await?,
+        return crate::with_d1_bookmark(
+            status_history_response_from_parts(
+                response,
+                created_at,
+                list_remote_status_edit_snapshots(&detail.base.db, &status.id).await?,
+            )?,
+            &detail.base.session,
         );
     }
 

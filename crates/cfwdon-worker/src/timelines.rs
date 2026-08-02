@@ -786,7 +786,7 @@ pub(crate) async fn home_timeline_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     let query: HomeTimelineQuery = req.query().unwrap_or_default();
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
@@ -808,7 +808,7 @@ pub(crate) async fn home_timeline_response(
         | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
     };
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
-        return empty_timeline_response();
+        return with_d1_bookmark(empty_timeline_response()?, &session);
     }
     let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = futures_util::try_join!(
         load_account_filter_matcher(&db, viewer.id()),
@@ -925,7 +925,10 @@ pub(crate) async fn home_timeline_response(
     )
     .await?;
 
-    timeline_response_from_entries(&req, limit, entries)
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
 }
 
 pub(crate) async fn public_timeline_response(
@@ -939,7 +942,7 @@ pub(crate) async fn public_timeline_response(
     let query_limit = timeline_fetch_limit(limit);
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     let access = resolve_timeline_request_access(&req, &db, &config).await?;
     if timeline_request_requires_authorization(
         include_local,
@@ -953,7 +956,7 @@ pub(crate) async fn public_timeline_response(
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
-        return empty_timeline_response();
+        return with_d1_bookmark(empty_timeline_response()?, &session);
     }
     let filter_matcher = match viewer {
         Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
@@ -1046,7 +1049,10 @@ pub(crate) async fn public_timeline_response(
     )
     .await?;
 
-    timeline_response_from_entries(&req, limit, entries)
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
 }
 
 pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -1062,7 +1068,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let query_limit = timeline_fetch_limit(limit);
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     let access = resolve_timeline_request_access(&req, &db, &config).await?;
     if timeline_request_requires_authorization(
         include_local,
@@ -1076,7 +1082,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
-        return empty_timeline_response();
+        return with_d1_bookmark(empty_timeline_response()?, &session);
     }
     let filter_matcher = match viewer {
         Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
@@ -1178,7 +1184,10 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     )
     .await?;
 
-    timeline_response_from_entries(&req, limit, entries)
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
 }
 
 pub(crate) async fn link_timeline_response(
@@ -1197,7 +1206,7 @@ pub(crate) async fn link_timeline_response(
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     let access = resolve_timeline_request_access(&req, &db, &config).await?;
     if timeline_request_requires_authorization(
         true,
@@ -1218,7 +1227,7 @@ pub(crate) async fn link_timeline_response(
     let viewer = access.viewer();
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
-        return empty_timeline_response();
+        return with_d1_bookmark(empty_timeline_response()?, &session);
     }
     let filter_matcher = match viewer {
         Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
@@ -1297,7 +1306,10 @@ pub(crate) async fn link_timeline_response(
     )
     .await?;
 
-    timeline_response_from_entries(&req, limit, entries)
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
 }
 
 pub(crate) async fn direct_timeline_response(
@@ -1308,7 +1320,7 @@ pub(crate) async fn direct_timeline_response(
     let query: TimelinePaginationQuery = req.query().unwrap_or_default();
     let limit = timeline_limit(&query);
     let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1399,7 +1411,10 @@ pub(crate) async fn direct_timeline_response(
     )
     .await?;
 
-    timeline_response_from_entries(&req, limit, entries)
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
 }
 
 #[cfg(test)]
