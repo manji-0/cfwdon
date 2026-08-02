@@ -2011,8 +2011,21 @@ pub(crate) async fn auth0_callback_response(
         Ok(response) => Ok(response),
         Err(error) => {
             worker::console_error!("Auth0 callback failed: {error}");
-            oauth_authorize_error_response(&auth0_callback_failure_message(&error), 500)
+            let (message, status) = auth0_callback_failure(&error);
+            oauth_authorize_error_response(&message, status)
         }
+    }
+}
+
+fn auth0_callback_failure(error: &worker::Error) -> (String, u16) {
+    let detail = error.to_string();
+    if detail.contains("Auth0 JWT email is not verified") {
+        (
+            "Please verify your email address in Auth0 before signing in".to_owned(),
+            403,
+        )
+    } else {
+        (auth0_callback_failure_message(error), 500)
     }
 }
 
@@ -3144,6 +3157,26 @@ mod tests {
         let message = auth0_callback_failure_message(&worker::Error::RustError(
             "Auth0 JWT audience mismatch".to_owned(),
         ));
+        assert!(message.starts_with("Auth0 login failed: "));
+        assert!(message.contains("Auth0 JWT audience mismatch"));
+    }
+
+    #[test]
+    fn auth0_callback_unverified_email_maps_to_http_403() {
+        let (message, status) = auth0_callback_failure(&worker::Error::RustError(
+            "Auth0 JWT email is not verified".to_owned(),
+        ));
+        assert_eq!(status, 403);
+        assert!(message.contains("verify your email"));
+        assert!(!message.contains("Auth0 JWT email is not verified"));
+    }
+
+    #[test]
+    fn auth0_callback_other_errors_still_map_to_http_500() {
+        let (message, status) = auth0_callback_failure(&worker::Error::RustError(
+            "Auth0 JWT audience mismatch".to_owned(),
+        ));
+        assert_eq!(status, 500);
         assert!(message.starts_with("Auth0 login failed: "));
         assert!(message.contains("Auth0 JWT audience mismatch"));
     }
