@@ -279,6 +279,15 @@ struct RemoteMediaStatusIdRow {
     status_id: String,
 }
 
+fn remote_status_ids_with_media_sql() -> String {
+    format!(
+        "SELECT DISTINCT status_id
+         FROM remote_status_attachments
+         WHERE status_id {}",
+        sql_in_json_each(1)
+    )
+}
+
 pub(crate) async fn find_remote_status_ids_with_media(
     db: &D1Database,
     status_ids: &[String],
@@ -292,20 +301,13 @@ pub(crate) async fn find_remote_status_ids_with_media(
         return Ok(HashSet::new());
     }
 
-    let placeholders = (1..=ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT DISTINCT status_id
-         FROM remote_status_attachments
-         WHERE status_id IN ({placeholders})"
-    );
-    let bindings = ids
-        .iter()
-        .map(|id| D1Type::Text(id.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let ids_json = json_string_array(&ids);
+    let binding = D1Type::Text(ids_json.as_str());
+    let result = db
+        .prepare(remote_status_ids_with_media_sql())
+        .bind_refs(&binding)?
+        .all()
+        .await?;
 
     Ok(result
         .results::<RemoteMediaStatusIdRow>()?
@@ -543,4 +545,17 @@ fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {
                 .or_else(|| meta.rows_written.map(|rows_written| rows_written > 0))
         })
         .unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_status_ids_with_media_sql;
+
+    #[test]
+    fn remote_status_ids_with_media_sql_uses_json_each() {
+        let sql = remote_status_ids_with_media_sql();
+
+        assert!(sql.contains("WHERE status_id IN (SELECT value FROM json_each(?1))"));
+        assert!(!sql.contains("?2"));
+    }
 }

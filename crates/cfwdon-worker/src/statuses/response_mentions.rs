@@ -1,5 +1,6 @@
 use super::{
     AccountRow, AppConfig, LocalAccount, REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow, actor_url,
+    json_string_array, sql_in_json_each,
 };
 use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
@@ -154,6 +155,15 @@ fn remote_mention_document(actor: &RemoteActorRow) -> serde_json::Value {
     })
 }
 
+fn mention_local_accounts_sql() -> String {
+    format!(
+        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
+         FROM accounts
+         WHERE lower(username) {}",
+        sql_in_json_each(1)
+    )
+}
+
 async fn load_mention_local_accounts(
     db: &D1Database,
     usernames: &[String],
@@ -163,17 +173,13 @@ async fn load_mention_local_accounts(
         return Ok(HashMap::new());
     }
 
-    let placeholders = crate::sql_placeholders(1, usernames.len());
-    let sql = format!(
-        "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
-         FROM accounts
-         WHERE lower(username) IN ({placeholders})"
-    );
-    let bindings = usernames
-        .iter()
-        .map(|username| D1Type::Text(username.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let usernames_json = json_string_array(&usernames);
+    let binding = D1Type::Text(usernames_json.as_str());
+    let result = db
+        .prepare(mention_local_accounts_sql())
+        .bind_refs(&binding)?
+        .all()
+        .await?;
 
     Ok(result
         .results::<AccountRow>()?
@@ -185,6 +191,19 @@ async fn load_mention_local_accounts(
             )
         })
         .collect())
+}
+
+fn mention_remote_acct_key(username: &str, domain: &str) -> String {
+    format!("{username}@{domain}")
+}
+
+fn mention_remote_actors_sql() -> String {
+    format!(
+        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
+         FROM remote_actors
+         WHERE (lower(username) || '@' || lower(domain)) {}",
+        sql_in_json_each(1)
+    )
 }
 
 async fn load_mention_remote_actors(
@@ -200,27 +219,17 @@ async fn load_mention_remote_actors(
         return Ok(HashMap::new());
     }
 
-    let clauses = pairs
+    let acct_keys = pairs
         .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            let username = index * 2 + 1;
-            let domain = username + 1;
-            format!("(lower(username) = ?{username} AND lower(domain) = ?{domain})")
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let sql = format!(
-        "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
-         FROM remote_actors
-         WHERE {clauses}"
-    );
-    let mut bindings = Vec::with_capacity(pairs.len() * 2);
-    for (username, domain) in pairs {
-        bindings.push(D1Type::Text(username.as_str()));
-        bindings.push(D1Type::Text(domain.as_str()));
-    }
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+        .map(|(username, domain)| mention_remote_acct_key(username, domain))
+        .collect::<Vec<_>>();
+    let keys_json = json_string_array(&acct_keys);
+    let binding = D1Type::Text(keys_json.as_str());
+    let result = db
+        .prepare(mention_remote_actors_sql())
+        .bind_refs(&binding)?
+        .all()
+        .await?;
 
     Ok(result
         .results::<RemoteActorRow>()?
@@ -239,7 +248,10 @@ async fn load_mention_remote_actors(
 
 #[cfg(test)]
 mod tests {
-    use super::{MentionLookupKeys, mention_lookup_keys, mention_remote_pair};
+    use super::{
+        MentionLookupKeys, mention_local_accounts_sql, mention_lookup_keys,
+        mention_remote_acct_key, mention_remote_actors_sql, mention_remote_pair,
+    };
     use cfwdon_domain::AccountHandle;
 
     #[test]
@@ -279,5 +291,27 @@ mod tests {
             Some(("bob".to_owned(), "remote.example".to_owned()))
         );
         assert_eq!(mention_remote_pair(&AccountHandle::local("alice")), None);
+    }
+
+    #[test]
+    fn mention_local_accounts_sql_uses_json_each() {
+        let sql = mention_local_accounts_sql();
+
+        assert!(sql.contains("WHERE lower(username) IN (SELECT value FROM json_each(?1))"));
+        assert!(!sql.contains("?2"));
+    }
+
+    #[test]
+    fn mention_remote_actors_sql_uses_json_each_composite_acct() {
+        let sql = mention_remote_actors_sql();
+
+        assert!(sql.contains(
+            "WHERE (lower(username) || '@' || lower(domain)) IN (SELECT value FROM json_each(?1))"
+        ));
+        assert!(!sql.contains("lower(username) = ?"));
+        assert_eq!(
+            mention_remote_acct_key("bob", "remote.example"),
+            "bob@remote.example"
+        );
     }
 }
