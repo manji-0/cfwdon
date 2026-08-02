@@ -16,7 +16,7 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
         max_id,
         since_id,
     } = AccountCollectionPage::from_query(&query, 20, 40)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -45,7 +45,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
         max_id,
         since_id,
     } = AccountCollectionPage::from_query(&query, 20, 40)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -67,7 +67,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
 }
 
 async fn build_moderation_account_collection<T, FAccount, FActor, FCursor>(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     limit: u32,
     entries: &[T],
@@ -103,7 +103,7 @@ where
 }
 
 async fn resolve_moderation_target_account_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     target_account_id: Option<&str>,
     target_actor_uri: &str,

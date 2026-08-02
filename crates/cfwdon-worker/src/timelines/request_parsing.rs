@@ -2,8 +2,9 @@ use super::normalize_hashtag;
 use serde::Deserialize;
 use std::collections::HashSet;
 use url::Url;
-use worker::{D1Database, Request, Result};
+use worker::{Request, Result};
 
+use crate::D1Database;
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub(crate) struct TimelinePaginationQuery {
     pub(crate) limit: Option<u32>,

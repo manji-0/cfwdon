@@ -1,10 +1,10 @@
 use super::{
-    AccountStatusVisibilityScope, D1Database, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
+    AccountStatusVisibilityScope, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
     ResolvedTimelineCursor, Result, json_string_array, normalize_hashtag,
     remote_status_from_record, remote_statuses_from_records, sql_in_json_each, unique_ordered_refs,
 };
 use crate::{
-    append_remote_status_id_cursor_parts, append_resolved_timeline_cursor_bindings,
+    D1Database, append_remote_status_id_cursor_parts, append_resolved_timeline_cursor_bindings,
     format_with_clauses, seekable_resolved_timeline_cursor_predicates,
 };
 use std::collections::HashSet;

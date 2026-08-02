@@ -21,8 +21,9 @@ use cfwdon_domain::{
 use serde::Deserialize;
 use url::Url;
 use worker::d1::D1Type;
-use worker::{D1Database, Request, Response, Result, RouteContext};
+use worker::{Request, Response, Result, RouteContext};
 
+use crate::D1Database;
 #[derive(Debug, Default, Deserialize)]
 struct FollowRequestsQuery {
     limit: Option<u32>,
@@ -37,7 +38,7 @@ async fn authenticated_follow_request_viewer(
     ctx: &RouteContext<()>,
     config: &AppConfig,
 ) -> Result<Option<(D1Database, cfwdon_domain::LocalAccount)>> {
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, config)?;
     let Some(viewer) = require_authenticated_local_account(req, &db, config).await? else {
         return Ok(None);
     };

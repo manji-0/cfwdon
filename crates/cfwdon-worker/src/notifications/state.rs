@@ -1,9 +1,10 @@
 use super::now_iso_string;
 use serde::Deserialize;
 use std::collections::HashSet;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct NotificationDismissalRow {
     pub(crate) notification_id: String,

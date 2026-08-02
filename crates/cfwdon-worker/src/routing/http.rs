@@ -1,5 +1,6 @@
 use crate::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
+    snapshot_d1_request_metrics,
 };
 use worker::{Env, Request, Response, Result};
 
@@ -91,6 +92,7 @@ fn log_api_request(
     if !enabled || !is_logged_api_path(path) {
         return;
     }
+    let d1_metrics = snapshot_d1_request_metrics();
     let payload = add_log_message(
         serde_json::json!({
             "event": "api_request",
@@ -98,9 +100,14 @@ fn log_api_request(
             "path": path,
             "status": status,
             "duration_ms": duration_ms,
+            "d1_query_count": d1_metrics.query_count,
+            "d1_sql_ms_sum": d1_metrics.sql_ms_sum,
             "user_agent": sanitize_log_value(user_agent),
         }),
-        format!("API request {method} {path} completed with HTTP {status} in {duration_ms}ms"),
+        format!(
+            "API request {method} {path} completed with HTTP {status} in {duration_ms}ms (d1_queries={}, d1_sql_ms={})",
+            d1_metrics.query_count, d1_metrics.sql_ms_sum
+        ),
     );
 
     log_json_event(payload);

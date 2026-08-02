@@ -3,10 +3,10 @@ use super::store::{
     find_status_poll_vote_for_remote_actor_by_activity_uri, find_status_poll_vote_id_by_position,
     list_poll_vote_positions_for_account, list_status_poll_options,
 };
-use crate::{generate_entity_id, validate_poll_vote_submission};
+use crate::{D1Database, generate_entity_id, validate_poll_vote_submission};
 use cfwdon_domain::StoredLocalPollVoteIntent;
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
 fn validate_local_poll_vote_choices(
     option_count: usize,

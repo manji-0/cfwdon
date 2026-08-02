@@ -33,26 +33,27 @@ use crate::oauth_apps::{
 };
 use crate::runtime_config::load_config;
 use crate::{
-    HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
-    account_has_followed_tags, account_has_thread_mutes,
-    build_local_status_response_with_timeline_preloads,
+    D1Database, HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
+    account_has_thread_mutes, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, build_status_card_value,
-    enrich_card_with_remote_preview, find_remote_status_attachments_by_status_ids,
-    find_remote_statuses_with_actors_by_ids, find_statuses_by_ids, list_active_muted_actor_uris,
-    list_home_timeline_candidate_ids, list_local_direct_timeline_statuses,
-    list_local_public_statuses_by_link, list_local_public_statuses_by_tag,
-    list_local_public_timeline_statuses, list_remote_direct_statuses_mentioning_viewer,
-    list_remote_public_statuses_by_link, list_remote_public_statuses_by_tag,
-    list_remote_public_timeline_statuses, load_account_filter_matcher, normalize_hashtag,
+    enrich_card_with_remote_preview, find_accounts_by_ids, find_remote_actors_by_actor_uris,
+    find_remote_status_attachments_by_status_ids, find_remote_statuses_by_url_or_object_uris,
+    find_remote_statuses_with_actors_by_ids, find_statuses_by_ap_ids, find_statuses_by_ids,
+    list_active_muted_actor_uris, list_home_timeline_candidate_ids,
+    list_local_direct_timeline_statuses, list_local_public_statuses_by_link,
+    list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
+    list_remote_direct_statuses_mentioning_viewer, list_remote_public_statuses_by_link,
+    list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses,
+    load_account_filter_matcher, local_status_identity_from_uri, normalize_hashtag,
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
-    preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
-    preload_status_quote_counts, require_authenticated_local_account, strip_html_tags,
+    preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    require_authenticated_local_account, strip_html_tags,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use worker::D1Database;
 use worker::d1::D1Type;
 use worker::{Error, Request, Response, Result, RouteContext};
 
@@ -382,6 +383,160 @@ async fn preload_timeline_candidate_reply_account_ids(
         .collect())
 }
 
+/// Batch-resolves remote candidates' `in_reply_to_uri` to status IDs.
+///
+/// Without this, each remote status paid 1–2 round trips in
+/// [`crate::resolve_remote_in_reply_to_status_id`]. Keys are remote status IDs;
+/// `None` means the URI was looked up and matched nothing.
+async fn preload_remote_in_reply_to_status_ids(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    candidates: &[PublicTimelineCandidateEntry],
+    extra_statuses: &[&crate::RemoteStatusRow],
+) -> Result<HashMap<String, Option<String>>> {
+    let mut uri_by_status_id = HashMap::new();
+    let mut uris = Vec::new();
+    let mut seen_uris = HashSet::new();
+
+    let mut push_status = |status: &crate::RemoteStatusRow| {
+        uri_by_status_id
+            .entry(status.id.clone())
+            .or_insert_with(|| status.in_reply_to_uri.clone());
+        if let Some(uri) = status
+            .in_reply_to_uri
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            && seen_uris.insert(uri.to_owned())
+        {
+            uris.push(uri.to_owned());
+        }
+    };
+
+    for entry in candidates {
+        if let PublicTimelineCandidate::Remote { status, .. } = &entry.candidate {
+            push_status(status);
+        }
+    }
+    for status in extra_statuses {
+        push_status(status);
+    }
+
+    if uri_by_status_id.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut uri_to_id = HashMap::new();
+    if !uris.is_empty() {
+        for status in find_remote_statuses_by_url_or_object_uris(db, &uris).await? {
+            for key in [Some(status.object_uri.as_str()), status.url.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if seen_uris.contains(key) {
+                    uri_to_id
+                        .entry(key.to_owned())
+                        .or_insert_with(|| status.id.clone());
+                }
+            }
+        }
+
+        let remaining = uris
+            .iter()
+            .filter(|uri| !uri_to_id.contains_key(*uri))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !remaining.is_empty() {
+            for status in find_statuses_by_ap_ids(db, &remaining).await? {
+                if let Some(ap_id) = status.ap_id.as_ref()
+                    && seen_uris.contains(ap_id)
+                {
+                    uri_to_id.insert(ap_id.clone(), status.id.clone());
+                }
+            }
+
+            let pending_identities = remaining
+                .iter()
+                .filter(|uri| !uri_to_id.contains_key(*uri))
+                .filter_map(|uri| {
+                    local_status_identity_from_uri(config, uri)
+                        .map(|(username, status_id)| (uri.clone(), username, status_id))
+                })
+                .collect::<Vec<_>>();
+            if !pending_identities.is_empty() {
+                let identity_ids = pending_identities
+                    .iter()
+                    .map(|(_, _, status_id)| status_id.clone())
+                    .collect::<Vec<_>>();
+                let by_id = find_statuses_by_ids(db, &identity_ids)
+                    .await?
+                    .into_iter()
+                    .map(|status| (status.id.clone(), status))
+                    .collect::<HashMap<_, _>>();
+                let account_ids = by_id
+                    .values()
+                    .map(|status| status.account_id.clone())
+                    .collect::<Vec<_>>();
+                let accounts = find_accounts_by_ids(db, &account_ids).await?;
+                for (uri, username, status_id) in pending_identities {
+                    if let Some(status) = by_id.get(&status_id)
+                        && accounts
+                            .get(&status.account_id)
+                            .is_some_and(|owner| owner.username().eq_ignore_ascii_case(&username))
+                    {
+                        uri_to_id.insert(uri, status.id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(uri_by_status_id
+        .into_iter()
+        .map(|(status_id, maybe_uri)| {
+            let resolved = maybe_uri
+                .as_ref()
+                .and_then(|uri| uri_to_id.get(uri).cloned());
+            (status_id, resolved)
+        })
+        .collect())
+}
+
+struct BoostTargetPreloadIds {
+    local_ids: Vec<String>,
+    remote_ids: Vec<String>,
+    remote_actor_uris: Vec<String>,
+    remote_quote_uris: Vec<String>,
+    remote_statuses: Vec<crate::RemoteStatusRow>,
+}
+
+fn collect_boost_target_preload_ids(
+    boost_targets: &crate::BoostTargetPreload,
+) -> BoostTargetPreloadIds {
+    let mut local_ids = Vec::new();
+    let mut remote_ids = Vec::new();
+    let mut remote_actor_uris = Vec::new();
+    let mut remote_quote_uris = Vec::new();
+    let mut remote_statuses = Vec::new();
+    for target in boost_targets.resolved_targets() {
+        match target {
+            crate::BoostTarget::Local(status) => local_ids.push(status.id.clone()),
+            crate::BoostTarget::Remote(status) => {
+                remote_ids.push(status.id.clone());
+                remote_actor_uris.push(status.actor_uri.clone());
+                remote_quote_uris.push(status.object_uri.clone());
+                remote_statuses.push(status.clone());
+            }
+        }
+    }
+    BoostTargetPreloadIds {
+        local_ids,
+        remote_ids,
+        remote_actor_uris,
+        remote_quote_uris,
+        remote_statuses,
+    }
+}
+
 fn local_status_quote_count_uri(
     config: &cfwdon_core::AppConfig,
     status: &crate::StatusRow,
@@ -465,18 +620,26 @@ async fn preload_muted_timeline_actor_uris(
     list_active_muted_actor_uris(db, viewer.id(), &actor_uris).await
 }
 
-/// Boost target URIs referenced by a page, for [`crate::preload_boost_targets`].
-fn boost_of_uris(candidates: &[PublicTimelineCandidateEntry]) -> Vec<String> {
+/// Boost and quote target URIs referenced by a page, for [`crate::preload_boost_targets`].
+fn embedded_status_uris(candidates: &[PublicTimelineCandidateEntry]) -> Vec<String> {
     let mut seen = HashSet::new();
-    candidates
-        .iter()
-        .filter_map(|entry| match &entry.candidate {
-            PublicTimelineCandidate::Local { status, .. } => status.boost_of_uri.as_ref(),
-            PublicTimelineCandidate::Remote { status, .. } => status.boost_of_uri.as_ref(),
-        })
-        .filter(|uri| seen.insert(uri.as_str()))
-        .cloned()
-        .collect()
+    let mut uris = Vec::new();
+    for entry in candidates {
+        let (boost_of_uri, quote_of_uri) = match &entry.candidate {
+            PublicTimelineCandidate::Local { status, .. } => {
+                (status.boost_of_uri.as_ref(), status.quote_of_uri.as_ref())
+            }
+            PublicTimelineCandidate::Remote { status, .. } => {
+                (status.boost_of_uri.as_ref(), status.quote_of_uri.as_ref())
+            }
+        };
+        for uri in [boost_of_uri, quote_of_uri].into_iter().flatten() {
+            if seen.insert(uri.as_str()) {
+                uris.push(uri.clone());
+            }
+        }
+    }
+    uris
 }
 
 async fn timeline_entries_from_candidates(
@@ -504,17 +667,17 @@ async fn timeline_entries_from_candidates(
     for text in &remote_text_owned {
         mention_texts.push(text.as_str());
     }
-    let boost_of_uris = boost_of_uris(&candidates);
+    let boost_of_uris = embedded_status_uris(&candidates);
 
     let (
-        counts_preload,
-        quote_counts_preload,
+        mut counts_preload,
+        mut quote_counts_preload,
         local_poll_preload,
         local_viewer_state_preload,
         remote_viewer_state_preload,
-        remote_poll_preload,
-        remote_edit_updated_at_preload,
-        remote_federated_emojis_preload,
+        mut remote_poll_preload,
+        mut remote_edit_updated_at_preload,
+        mut remote_federated_emojis_preload,
         in_reply_to_account_ids,
         application_preload,
         mut remote_attachments_by_status_id,
@@ -542,6 +705,43 @@ async fn timeline_entries_from_candidates(
         crate::config_with_resolved_custom_emojis(db, config),
         crate::preload_boost_targets(db, config, &boost_of_uris),
     )?;
+
+    // Boost targets are resolved in the first wave; enrich their embedded
+    // status rendering with a second fixed-cost wave so each boost does not
+    // re-query actors/attachments/counts/emojis/polls/replies.
+    let boost_ids = collect_boost_target_preload_ids(&boost_target_preload);
+    let boost_remote_status_refs = boost_ids.remote_statuses.iter().collect::<Vec<_>>();
+    let (
+        boost_counts,
+        boost_quote_counts,
+        boost_remote_polls,
+        boost_remote_edits,
+        boost_remote_emojis,
+        boost_remote_attachments,
+        boost_remote_actors,
+        remote_in_reply_to_preload,
+    ) = futures_util::try_join!(
+        preload_status_counts(db, &boost_ids.local_ids, &boost_ids.remote_ids),
+        preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
+        preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
+        preload_remote_status_edit_updated_at(db, &boost_ids.remote_ids),
+        preload_remote_status_federated_emojis(db, &boost_ids.remote_ids),
+        find_remote_status_attachments_by_status_ids(db, &boost_ids.remote_ids),
+        find_remote_actors_by_actor_uris(db, &boost_ids.remote_actor_uris),
+        preload_remote_in_reply_to_status_ids(db, config, &candidates, &boost_remote_status_refs),
+    )?;
+    counts_preload.extend(boost_counts);
+    quote_counts_preload.extend(boost_quote_counts);
+    remote_poll_preload.extend(boost_remote_polls);
+    remote_edit_updated_at_preload.extend(boost_remote_edits);
+    remote_federated_emojis_preload.extend(boost_remote_emojis);
+    for (status_id, attachments) in boost_remote_attachments {
+        remote_attachments_by_status_id
+            .entry(status_id)
+            .or_insert(attachments);
+    }
+    let remote_actors_preload = boost_remote_actors;
+
     // Take everything each candidate owns up front so the renders below only
     // hold shared borrows and can therefore run concurrently.
     let mut prepared = Vec::with_capacity(candidates.len());
@@ -632,6 +832,9 @@ async fn timeline_entries_from_candidates(
                         attachments,
                         Some(&mention_preload),
                         Some(&boost_target_preload),
+                        Some(&remote_in_reply_to_preload),
+                        Some(&remote_actors_preload),
+                        Some(&remote_attachments_by_status_id),
                     )
                     .await?,
                 )
@@ -810,12 +1013,25 @@ pub(crate) async fn home_timeline_response(
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return with_d1_bookmark(empty_timeline_response()?, &session);
     }
-    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = futures_util::try_join!(
-        load_account_filter_matcher(&db, viewer.id()),
-        account_has_thread_mutes(&db, viewer.id()),
-        account_has_followed_tags(&db, viewer.id()),
-        list_active_muted_actor_uris_for_account(&db, viewer.id()),
-    )?;
+    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = {
+        let caps = crate::load_account_capabilities(&db, viewer.id()).await?;
+        let (filter_matcher, muted_actor_uris) = futures_util::try_join!(
+            async {
+                if caps.has_filters {
+                    load_account_filter_matcher(&db, viewer.id()).await
+                } else {
+                    Ok(crate::AccountFilterMatcher::default())
+                }
+            },
+            list_active_muted_actor_uris_for_account(&db, viewer.id()),
+        )?;
+        (
+            filter_matcher,
+            caps.has_thread_mutes,
+            caps.has_followed_tags,
+            muted_actor_uris,
+        )
+    };
     let candidate_rows = list_home_timeline_candidate_ids(
         &db,
         viewer.id(),
@@ -1053,6 +1269,72 @@ pub(crate) async fn public_timeline_response(
         timeline_response_from_entries(&req, limit, entries)?,
         &session,
     )
+}
+
+pub(crate) async fn trending_status_documents(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    fetch_limit: u32,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<serde_json::Value>> {
+    let cursor = ResolvedTimelineCursor::default();
+    let (local_statuses, remote_statuses) = futures_util::try_join!(
+        list_local_public_timeline_statuses(db, &cursor, fetch_limit),
+        list_remote_public_timeline_statuses(db, &cursor, fetch_limit),
+    )?;
+    let (accounts_by_id, mut media_by_status_id) =
+        preload_local_timeline_rows(db, &local_statuses).await?;
+    let mut candidates =
+        Vec::with_capacity(local_statuses.len().saturating_add(remote_statuses.len()));
+
+    for status in local_statuses {
+        if !accounts_by_id.contains_key(&status.account_id) {
+            continue;
+        }
+        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.created_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Local { status, media },
+        });
+    }
+
+    for (status, actor) in remote_statuses {
+        candidates.push(PublicTimelineCandidateEntry {
+            timestamp: status.published_at.clone(),
+            id: status.id.clone(),
+            candidate: PublicTimelineCandidate::Remote { status, actor },
+        });
+    }
+
+    candidates.sort_by(|left, right| {
+        right
+            .timestamp
+            .cmp(&left.timestamp)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    let page_candidates = candidates
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let entries = timeline_entries_from_candidates(
+        db,
+        config,
+        None,
+        None,
+        &accounts_by_id,
+        page_candidates,
+        false,
+        None,
+    )
+    .await?;
+
+    Ok(entries
+        .into_iter()
+        .map(|(_, _, value)| value)
+        .collect::<Vec<_>>())
 }
 
 pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {

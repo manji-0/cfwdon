@@ -1,16 +1,17 @@
 use crate::{
-    AccountStats, AppConfig, FetchedRemoteActorProfile, LocalAccount, MastodonAccountResponse,
-    MastodonAccountRole, MastodonAccountSource, ProfileField, RemoteActorProfile, RemoteActorRow,
-    actor_url, custom_emojis_used_in_texts, escape_html, fetch_remote_activitypub_document,
-    fetch_signed_activitypub_document, load_remote_actor_status_summary, log_json_event,
-    media_object_url, parse_remote_actor_profile_document, remote_account_rest_id,
+    AccountStats, AppConfig, D1Database, FetchedRemoteActorProfile, LocalAccount,
+    MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource, ProfileField,
+    RemoteActorProfile, RemoteActorRow, actor_url, custom_emojis_used_in_texts, escape_html,
+    fetch_remote_activitypub_document, fetch_signed_activitypub_document,
+    load_remote_actor_status_summary, log_json_event, media_object_url,
+    parse_remote_actor_profile_document, remote_account_rest_id,
     resolve_account_emojis_from_document, update_remote_actor_social_counts,
     validate_remote_actor_profile_urls,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
 use url::Url;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
 const REMOTE_ACTOR_COLLECTION_COUNT_CACHE_TTL_MS: f64 = 60.0 * 1000.0;
 /// Persist remote F/F/outbox totals for this long before re-fetching collections.

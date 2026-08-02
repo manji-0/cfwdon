@@ -77,7 +77,7 @@ pub(crate) async fn status_quotes_response(
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
 
@@ -112,7 +112,7 @@ pub(crate) async fn status_quotes_response(
 }
 
 async fn resolve_visible_status_quotes_target(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     status_id: &str,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -141,7 +141,7 @@ async fn resolve_visible_status_quotes_target(
 }
 
 async fn load_accepted_status_quotes(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     target_uri: &str,
     cursor: &crate::ResolvedTimelineCursor,
     query_limit: u32,
@@ -153,7 +153,7 @@ async fn load_accepted_status_quotes(
 }
 
 async fn preload_status_quotes(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
     local_quotes: &[crate::StatusRow],
@@ -251,7 +251,7 @@ async fn preload_status_quotes(
 }
 
 async fn build_status_quote_values(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
     local_quotes: Vec<crate::StatusRow>,
@@ -328,6 +328,9 @@ async fn build_status_quote_values(
                         .unwrap_or_default(),
                     None,
                     None,
+                    None,
+                    None,
+                    None,
                 )
                 .await?,
             )?,
@@ -364,7 +367,7 @@ fn paginated_status_quotes_response(
 }
 
 async fn list_local_status_quotes_by_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status_uri: &str,
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
@@ -387,7 +390,7 @@ async fn list_local_status_quotes_by_uri(
 }
 
 async fn list_remote_status_quotes_by_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status_uri: &str,
     cursor: &crate::ResolvedTimelineCursor,
     limit: u32,
@@ -492,7 +495,7 @@ fn sort_status_quote_entries<T>(quotes: &mut [(String, String, T)]) {
 }
 
 async fn enqueue_quote_revocation_federation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -536,7 +539,7 @@ async fn enqueue_quote_revocation_federation(
 }
 
 async fn enqueue_quote_approval_federation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -596,7 +599,7 @@ async fn enqueue_quote_approval_federation(
 }
 
 async fn enqueue_quote_rejection_federation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_uri: &str,
@@ -628,7 +631,7 @@ async fn enqueue_quote_rejection_federation(
 }
 
 async fn enqueue_quote_owner_decision_federation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
@@ -698,7 +701,7 @@ pub(crate) async fn reject_quote_response(req: Request, ctx: RouteContext<()>) -
 }
 
 async fn resolve_owned_local_quote_target(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -723,7 +726,7 @@ async fn resolve_owned_local_quote_target(
 }
 
 async fn apply_owner_action_to_local_quote(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
@@ -785,7 +788,7 @@ async fn apply_owner_action_to_local_quote(
 }
 
 async fn apply_owner_action_to_remote_quote(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
@@ -840,7 +843,7 @@ async fn quote_owner_action_response(
     action: OwnerQuoteAction,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -898,7 +901,7 @@ async fn quote_owner_action_response(
 
 pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

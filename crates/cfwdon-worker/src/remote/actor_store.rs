@@ -1,9 +1,9 @@
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
-use crate::{RemoteActorSocialCounts, sql_placeholders, unique_ordered_refs};
+use crate::{D1Database, RemoteActorSocialCounts, sql_placeholders, unique_ordered_refs};
 
 pub(crate) const REMOTE_ACTOR_ROW_COLUMNS: &str = "actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url, followers_count, following_count, statuses_count, social_counts_updated_at";
 

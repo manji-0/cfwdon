@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, D1Database, RemoteStatusRow, StatusRow, local_status_target_uri,
+    AppConfig, RemoteStatusRow, StatusRow, local_status_target_uri,
     publish_local_status_interaction_notification_soft, send_push_notification,
 };
 use cfwdon_domain::LocalAccount;
@@ -7,6 +7,7 @@ use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Env, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogActivityRow {
     pub(crate) ap_activity_id: Option<String>,

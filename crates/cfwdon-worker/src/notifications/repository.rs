@@ -3,8 +3,9 @@ use super::{
     collect_visible_notifications, dismiss_notification_for_account,
 };
 use cfwdon_domain::LocalAccount;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 pub(crate) async fn load_visible_notifications_for_account(
     db: &D1Database,
     config: &AppConfig,

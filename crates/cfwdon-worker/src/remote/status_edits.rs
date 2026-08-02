@@ -20,6 +20,11 @@ impl RemoteStatusEditUpdatedAtPreload {
             .get(status_id)
             .map(String::as_str)
     }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.updated_at_by_status_id
+            .extend(other.updated_at_by_status_id);
+    }
 }
 
 pub(crate) async fn insert_remote_status_edit_snapshot(

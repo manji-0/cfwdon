@@ -260,8 +260,8 @@ fn instance_router() -> Router<'static, ()> {
         .get_async("/api/v1/instance/peers", |_req, ctx| async move {
             instance_peers_response(ctx).await
         })
-        .get_async("/api/v1/instance/activity", |_req, ctx| async move {
-            instance_activity_response(ctx).await
+        .get_async("/api/v1/instance/activity", |req, ctx| async move {
+            instance_activity_response(req, ctx).await
         })
         .get_async("/api/v1/instance/rules", |_req, ctx| async move {
             instance_rules_response(ctx).await

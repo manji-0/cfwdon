@@ -39,7 +39,7 @@ struct DirectoryRemoteActorRow {
 }
 
 async fn list_discoverable_remote_actor_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     limit: u32,
     offset: u32,
     order: DirectoryOrder,
@@ -86,7 +86,7 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
         return Response::from_json(&Vec::<MastodonAccountResponse>::new());
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -139,7 +139,7 @@ pub(crate) async fn account_directory(req: Request, ctx: RouteContext<()>) -> Re
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let offset = query.offset.unwrap_or(0);
     let order = directory_order(query.order.as_deref());
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let include_local = query.local.unwrap_or(true);
     let include_remote = !query.local.unwrap_or(false);
     let fetch_limit = limit.saturating_add(offset).clamp(limit, 1000);

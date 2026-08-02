@@ -1,7 +1,8 @@
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct FollowerTargetRow {
     pub(crate) target_inbox: String,

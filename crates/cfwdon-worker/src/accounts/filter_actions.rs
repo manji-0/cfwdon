@@ -13,7 +13,7 @@ pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -36,7 +36,7 @@ pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Resu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -62,7 +62,7 @@ pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Re
         .await
         .map_err(Error::RustError)?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let muter = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -100,7 +100,7 @@ pub(crate) async fn unmute_account(req: Request, ctx: RouteContext<()>) -> Resul
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let muter = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

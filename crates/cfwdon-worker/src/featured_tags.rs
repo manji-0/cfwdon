@@ -38,7 +38,7 @@ fn featured_tag_profile_url(config: &cfwdon_core::AppConfig, username: &str, tag
     )
 }
 
-async fn count_featured_tags(db: &worker::D1Database, account_id: &str) -> Result<u64> {
+async fn count_featured_tags(db: &crate::D1Database, account_id: &str) -> Result<u64> {
     let account_id = D1Type::Text(account_id);
     let row = db
         .prepare(
@@ -57,7 +57,7 @@ async fn count_featured_tags(db: &worker::D1Database, account_id: &str) -> Resul
 }
 
 async fn is_featured_tag_present(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     tag: &str,
 ) -> Result<bool> {
@@ -77,7 +77,7 @@ async fn is_featured_tag_present(
 }
 
 async fn list_featured_tags_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<Vec<FeaturedTagRow>> {
     let account_id = D1Type::Text(account_id);
@@ -95,7 +95,7 @@ async fn list_featured_tags_for_account(
 }
 
 async fn featured_tag_metrics(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     tag: &str,
 ) -> Result<FeaturedTagStatusMetricsRow> {
@@ -114,7 +114,7 @@ async fn featured_tag_metrics(
 }
 
 async fn featured_tag_metrics_by_tag(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     tags: &[String],
 ) -> Result<HashMap<String, FeaturedTagStatusMetricsRow>> {
@@ -226,7 +226,7 @@ pub(crate) fn build_featured_collection_document(
     })
 }
 
-async fn insert_featured_tag(db: &worker::D1Database, account_id: &str, tag: &str) -> Result<()> {
+async fn insert_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str) -> Result<()> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
     db.prepare(
         "INSERT INTO featured_tags (account_id, tag_name)
@@ -239,7 +239,7 @@ async fn insert_featured_tag(db: &worker::D1Database, account_id: &str, tag: &st
     Ok(())
 }
 
-async fn delete_featured_tag(db: &worker::D1Database, account_id: &str, tag: &str) -> Result<bool> {
+async fn delete_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str) -> Result<bool> {
     if !is_featured_tag_present(db, account_id, tag).await? {
         return Ok(false);
     }
@@ -256,7 +256,7 @@ async fn delete_featured_tag(db: &worker::D1Database, account_id: &str, tag: &st
 }
 
 async fn suggested_featured_tag_names(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<Vec<String>> {
     let featured = list_featured_tags_for_account(db, account_id)
@@ -337,7 +337,7 @@ pub(crate) async fn featured_tags_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -380,7 +380,7 @@ pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Res
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
 
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
@@ -420,7 +420,7 @@ pub(crate) async fn featured_tag_suggestions_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -442,7 +442,7 @@ pub(crate) async fn feature_tag_response(
     let tag = parse_feature_tag_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -475,7 +475,7 @@ pub(crate) async fn unfeature_tag_response(
         .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -495,7 +495,7 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
@@ -522,7 +522,7 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;

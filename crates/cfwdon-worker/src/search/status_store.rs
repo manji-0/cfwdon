@@ -4,9 +4,9 @@ use crate::{
     seekable_resolved_timeline_cursor_predicates, statuses_from_records,
 };
 use std::collections::HashSet;
-use worker::D1Database;
 use worker::d1::D1Type;
 
+use crate::D1Database;
 const LOCAL_STATUS_SEARCH_SELECT: &str = "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses";
 

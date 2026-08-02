@@ -31,7 +31,7 @@ fn push_unique_familiar_account(
 }
 
 async fn append_familiar_local_accounts(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     accounts: &mut Vec<MastodonAccountResponse>,
     seen_ids: &mut HashSet<String>,
@@ -72,7 +72,7 @@ pub(crate) async fn familiar_followers_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

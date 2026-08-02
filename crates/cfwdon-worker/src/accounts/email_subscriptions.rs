@@ -1,6 +1,7 @@
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 pub(crate) async fn set_account_email_subscription(
     db: &D1Database,
     account_id: &str,

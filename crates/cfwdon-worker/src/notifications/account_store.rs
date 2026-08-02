@@ -1,9 +1,10 @@
 use super::AccountRow;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct LocalFollowNotificationRow {
     pub(crate) follower_account_id: String,

@@ -154,7 +154,7 @@ async fn parse_list_accounts_request(
 }
 
 async fn list_rows_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<Vec<AccountListRow>> {
     let account_id = D1Type::Text(account_id);
@@ -172,7 +172,7 @@ async fn list_rows_for_account(
 }
 
 pub(crate) async fn list_row_by_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     list_id: &str,
 ) -> Result<Option<AccountListRow>> {
@@ -199,7 +199,7 @@ fn list_document(row: &AccountListRow) -> serde_json::Value {
 }
 
 async fn create_list_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     request: &ListRequest,
 ) -> Result<AccountListRow> {
@@ -228,7 +228,7 @@ async fn create_list_row(
 }
 
 async fn update_list_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     list_id: &str,
     request: &ListRequest,
@@ -263,7 +263,7 @@ async fn update_list_row(
     list_row_by_id(db, account_id, list_id).await
 }
 
-async fn delete_list_row(db: &worker::D1Database, account_id: &str, list_id: &str) -> Result<bool> {
+async fn delete_list_row(db: &crate::D1Database, account_id: &str, list_id: &str) -> Result<bool> {
     if list_row_by_id(db, account_id, list_id).await?.is_none() {
         return Ok(false);
     }
@@ -305,7 +305,7 @@ pub(crate) fn local_status_visible_on_list_timeline(
 }
 
 pub(crate) async fn list_local_account_list_stream_fanout(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     membership_refs: &[String; 2],
 ) -> Result<ListStreamFanout> {
     let probe_limit = STREAM_HUB_LIST_FANOUT_LIMIT + 1;
@@ -342,7 +342,7 @@ pub(crate) async fn list_local_account_list_stream_fanout(
 }
 
 pub(crate) async fn list_membership_refs(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     list_id: &str,
 ) -> Result<Vec<AccountListMembershipRow>> {
     let list_id = D1Type::Text(list_id);
@@ -360,7 +360,7 @@ pub(crate) async fn list_membership_refs(
 }
 
 async fn add_accounts_to_list(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     list_id: &str,
     account_refs: &[String],
 ) -> Result<()> {
@@ -383,7 +383,7 @@ async fn add_accounts_to_list(
 }
 
 async fn remove_accounts_from_list(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     list_id: &str,
     account_refs: &[String],
 ) -> Result<()> {
@@ -406,7 +406,7 @@ async fn remove_accounts_from_list(
 }
 
 async fn resolve_list_member_document(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<serde_json::Value>> {
@@ -465,7 +465,7 @@ pub(crate) fn list_membership_variants_for_remote_actor(
 }
 
 async fn requested_account_membership_variants(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<Vec<String>>> {
@@ -517,7 +517,7 @@ pub(crate) async fn account_lists_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -553,7 +553,7 @@ pub(crate) async fn list_timeline_response(
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let list_id = list_id_from_context(&ctx)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -652,7 +652,7 @@ pub(crate) async fn list_timeline_response(
 
 pub(crate) async fn lists_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -673,7 +673,7 @@ pub(crate) async fn create_list_response(
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -684,7 +684,7 @@ pub(crate) async fn create_list_response(
 
 pub(crate) async fn list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -705,7 +705,7 @@ pub(crate) async fn update_list_response(
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -719,7 +719,7 @@ pub(crate) async fn update_list_response(
 pub(crate) async fn delete_list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let list_id = list_id_from_context(&ctx)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -735,7 +735,7 @@ pub(crate) async fn list_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -779,7 +779,7 @@ pub(crate) async fn add_list_accounts_response(
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -801,7 +801,7 @@ pub(crate) async fn delete_list_accounts_response(
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

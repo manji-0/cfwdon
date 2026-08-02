@@ -10,8 +10,9 @@ use super::{
 };
 use cfwdon_domain::{QuoteState, Visibility};
 use std::collections::HashSet;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
     matches!(visibility, "public" | "unlisted")
 }

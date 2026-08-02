@@ -236,7 +236,7 @@ fn validation_failed_response(details: BTreeMap<&'static str, Vec<String>>) -> R
 
 async fn optional_collection_viewer(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<CollectionViewer, Response>> {
     if app_bearer_token_from_request(req)?.is_some() {
@@ -274,7 +274,7 @@ async fn optional_collection_viewer(
 
 async fn require_collection_reader(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
@@ -293,7 +293,7 @@ async fn require_collection_reader(
 
 async fn require_collection_writer(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
@@ -479,7 +479,7 @@ fn collection_update_requires_activity(
 }
 
 async fn collection_row_by_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
 ) -> Result<Option<CollectionRow>> {
     let collection_id = D1Type::Text(collection_id);
@@ -504,7 +504,7 @@ async fn collection_row_by_id(
 }
 
 async fn list_collection_rows_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     include_private: bool,
     offset: u32,
@@ -541,7 +541,7 @@ async fn list_collection_rows_for_account(
 }
 
 async fn count_collection_rows_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     include_private: bool,
 ) -> Result<u64> {
@@ -562,7 +562,7 @@ async fn count_collection_rows_for_account(
     Ok(row.map(|row| row.count).unwrap_or(0))
 }
 
-async fn count_in_collection_rows(db: &worker::D1Database, account_id: &str) -> Result<u64> {
+async fn count_in_collection_rows(db: &crate::D1Database, account_id: &str) -> Result<u64> {
     let bindings = [D1Type::Text(account_id)];
     let row = db
         .prepare(
@@ -580,7 +580,7 @@ async fn count_in_collection_rows(db: &worker::D1Database, account_id: &str) -> 
 }
 
 async fn remote_collection_row_by_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
 ) -> Result<Option<RemoteCollectionRow>> {
     let collection_id = D1Type::Text(collection_id);
@@ -609,7 +609,7 @@ async fn remote_collection_row_by_id(
 }
 
 async fn remote_collection_row_by_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_uri: &str,
 ) -> Result<Option<RemoteCollectionRow>> {
     let collection_uri = D1Type::Text(collection_uri);
@@ -638,7 +638,7 @@ async fn remote_collection_row_by_uri(
 }
 
 async fn list_remote_collection_rows_for_actor(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
     offset: u32,
     limit: u32,
@@ -677,7 +677,7 @@ async fn list_remote_collection_rows_for_actor(
 }
 
 async fn count_remote_collection_rows_for_actor(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
 ) -> Result<u64> {
     let actor_uri = D1Type::Text(actor_uri);
@@ -695,7 +695,7 @@ async fn count_remote_collection_rows_for_actor(
 }
 
 async fn count_remote_in_collection_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     target_actor_uri: &str,
 ) -> Result<u64> {
     let target_actor_uri = D1Type::Text(target_actor_uri);
@@ -715,7 +715,7 @@ async fn count_remote_in_collection_rows(
 }
 
 async fn list_collection_items(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     include_pending: bool,
 ) -> Result<Vec<CollectionItemRow>> {
@@ -743,7 +743,7 @@ async fn list_collection_items(
 }
 
 async fn list_remote_collection_items(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     include_pending: bool,
 ) -> Result<Vec<RemoteCollectionItemRow>> {
@@ -773,7 +773,7 @@ async fn list_remote_collection_items(
 }
 
 async fn remote_collection_item_by_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<Option<RemoteCollectionItemRow>> {
@@ -797,7 +797,7 @@ async fn remote_collection_item_by_id(
 }
 
 async fn list_remote_collection_items_due_for_approval_revalidation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
 ) -> Result<Vec<RemoteCollectionItemRow>> {
     let bindings = [
@@ -832,7 +832,7 @@ async fn list_remote_collection_items_due_for_approval_revalidation(
 }
 
 async fn list_stale_remote_collection_items_for_approval_revalidation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     limit: i32,
 ) -> Result<Vec<RemoteCollectionItemRevalidationRow>> {
     let result = db
@@ -860,7 +860,7 @@ async fn list_stale_remote_collection_items_for_approval_revalidation(
 }
 
 async fn list_remote_in_collection_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     target_actor_uri: &str,
     limit: u32,
 ) -> Result<Vec<RemoteCollectionRow>> {
@@ -899,7 +899,7 @@ async fn list_remote_in_collection_rows(
 }
 
 async fn list_local_in_collection_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     target_account_id: &str,
     limit: u32,
 ) -> Result<Vec<CollectionRow>> {
@@ -1061,7 +1061,7 @@ fn collection_response_document(collection: serde_json::Value) -> serde_json::Va
 }
 
 async fn account_actor_uri_for_reference(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<String>> {
@@ -1073,7 +1073,7 @@ async fn account_actor_uri_for_reference(
 }
 
 async fn collection_item_activitypub_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -1100,7 +1100,7 @@ async fn collection_item_activitypub_object(
 }
 
 async fn collection_activitypub_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -1145,7 +1145,7 @@ async fn collection_activitypub_object(
 }
 
 async fn enqueue_collection_followers_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     _config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     _collection_id: &str,
@@ -1162,7 +1162,7 @@ async fn enqueue_collection_followers_activity(
 }
 
 async fn enqueue_collection_add_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -1182,7 +1182,7 @@ async fn enqueue_collection_add_activity(
 }
 
 async fn enqueue_collection_update_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -1200,7 +1200,7 @@ async fn enqueue_collection_update_activity(
 }
 
 async fn enqueue_collection_remove_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -1220,7 +1220,7 @@ async fn enqueue_collection_remove_activity(
 }
 
 async fn enqueue_collection_item_add_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -1272,7 +1272,7 @@ fn collection_feature_request_uri(
 }
 
 async fn enqueue_collection_feature_request_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -1298,7 +1298,7 @@ async fn enqueue_collection_feature_request_activity(
 }
 
 async fn enqueue_collection_item_remove_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -1317,7 +1317,7 @@ async fn enqueue_collection_item_remove_activity(
 }
 
 async fn account_blocks_viewer(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account: &cfwdon_domain::LocalAccount,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -1332,7 +1332,7 @@ async fn account_blocks_viewer(
 }
 
 async fn owner_follows_actor(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     owner: &cfwdon_domain::LocalAccount,
     target_actor_uri: &str,
 ) -> Result<bool> {
@@ -1343,7 +1343,7 @@ async fn owner_follows_actor(
 }
 
 async fn account_reference_featureable_by_owner(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     target: &AccountReference,
@@ -1395,7 +1395,7 @@ fn collection_item_document(row: &CollectionItemRow) -> serde_json::Value {
 }
 
 async fn account_id_for_actor_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     actor_uri: &str,
 ) -> Result<String> {
@@ -1408,7 +1408,7 @@ async fn account_id_for_actor_uri(
 }
 
 async fn remote_collection_item_document(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     row: &RemoteCollectionItemRow,
 ) -> Result<serde_json::Value> {
@@ -1436,7 +1436,7 @@ fn collection_item_response_document(collection_item: serde_json::Value) -> serd
 }
 
 async fn account_response_for_reference(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
@@ -1455,7 +1455,7 @@ async fn account_response_for_reference(
 }
 
 async fn remote_account_response_for_actor_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
     Ok(find_remote_actor_by_actor_uri(db, actor_uri)
@@ -1464,7 +1464,7 @@ async fn remote_account_response_for_actor_uri(
 }
 
 async fn collection_item_visible_to_viewer(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     item: &CollectionItemRow,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -1481,7 +1481,7 @@ async fn collection_item_visible_to_viewer(
 }
 
 async fn collection_with_accounts_document(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -1527,7 +1527,7 @@ async fn collection_with_accounts_document(
 }
 
 async fn remote_collection_item_visible_to_viewer(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     item: &RemoteCollectionItemRow,
     viewer: Option<&cfwdon_domain::LocalAccount>,
 ) -> Result<bool> {
@@ -1538,7 +1538,7 @@ async fn remote_collection_item_visible_to_viewer(
 }
 
 async fn remote_collection_with_accounts_document(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &RemoteActorRow,
     row: &RemoteCollectionRow,
@@ -1708,7 +1708,7 @@ fn remote_collection_draft_from_object(
 }
 
 async fn upsert_remote_collection_draft(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     draft: &RemoteCollectionDraft,
 ) -> Result<()> {
     let bindings = [
@@ -1768,7 +1768,7 @@ async fn upsert_remote_collection_draft(
 }
 
 async fn upsert_remote_collection_from_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     remote_actor: &RemoteActorProfile,
     object: &serde_json::Value,
@@ -1787,7 +1787,7 @@ async fn upsert_remote_collection_from_object(
 }
 
 async fn replace_remote_collection_items_from_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     collection_id: &str,
     collection_uri: &str,
@@ -1853,7 +1853,7 @@ async fn verify_remote_collection_item_approval(
 }
 
 async fn update_remote_collection_item_approval_verification(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     target_actor_uri: &str,
     state: &str,
@@ -1880,7 +1880,7 @@ async fn update_remote_collection_item_approval_verification(
 }
 
 async fn revalidate_remote_collection_item_approvals(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     collection: &RemoteCollectionRow,
 ) -> Result<()> {
@@ -1916,7 +1916,7 @@ async fn revalidate_remote_collection_item_approvals(
 }
 
 pub(crate) async fn revalidate_stale_remote_collection_item_approvals(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     limit: i32,
 ) -> Result<u32> {
@@ -1950,7 +1950,7 @@ pub(crate) async fn revalidate_stale_remote_collection_item_approvals(
 }
 
 async fn upsert_remote_collection_item_from_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     collection_id: &str,
     collection_uri: &str,
@@ -2022,7 +2022,7 @@ async fn upsert_remote_collection_item_from_object(
 }
 
 async fn delete_remote_collection_by_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
     collection_uri: &str,
 ) -> Result<()> {
@@ -2039,7 +2039,7 @@ async fn delete_remote_collection_by_uri(
 }
 
 async fn delete_remote_collection_item_by_object(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     object: &serde_json::Value,
 ) -> Result<()> {
@@ -2067,7 +2067,7 @@ async fn delete_remote_collection_item_by_object(
 }
 
 async fn revoke_remote_collection_item(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {
@@ -2117,7 +2117,7 @@ fn build_delete_feature_authorization_activity(
 }
 
 async fn enqueue_delete_feature_authorization_activity(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     collection: &RemoteCollectionRow,
@@ -2146,7 +2146,7 @@ async fn enqueue_delete_feature_authorization_activity(
 }
 
 pub(crate) async fn handle_inbox_collection_add(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -2173,7 +2173,7 @@ pub(crate) async fn handle_inbox_collection_add(
 }
 
 pub(crate) async fn handle_inbox_collection_update(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -2190,7 +2190,7 @@ pub(crate) async fn handle_inbox_collection_update(
 }
 
 pub(crate) async fn handle_inbox_collection_remove(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
 ) -> Result<()> {
@@ -2229,7 +2229,7 @@ fn feature_response_result_uri(activity: &serde_json::Value) -> Option<&str> {
 }
 
 pub(crate) async fn handle_inbox_collection_feature_accept(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -2267,7 +2267,7 @@ pub(crate) async fn handle_inbox_collection_feature_accept(
 }
 
 pub(crate) async fn handle_inbox_collection_feature_reject(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
 ) -> Result<bool> {
@@ -2288,7 +2288,7 @@ pub(crate) async fn handle_inbox_collection_feature_reject(
 }
 
 pub(crate) async fn handle_inbox_collection_feature_authorization_delete(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -2363,7 +2363,7 @@ fn merge_collection_notification_policy_action(
 }
 
 async fn accepted_follow_exists(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     follower_account_id: &str,
     target_actor_uri: &str,
 ) -> Result<bool> {
@@ -2387,7 +2387,7 @@ async fn accepted_follow_exists(
 }
 
 async fn recent_accepted_follow_exists(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     follower_account_id: &str,
     target_actor_uri: &str,
     threshold: &str,
@@ -2414,7 +2414,7 @@ async fn recent_accepted_follow_exists(
 }
 
 async fn timestamp_is_after_current_timestamp_modifier(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     timestamp: &str,
     modifier: &str,
 ) -> Result<bool> {
@@ -2431,7 +2431,7 @@ async fn timestamp_is_after_current_timestamp_modifier(
 }
 
 async fn collection_notification_filtered(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     recipient: &cfwdon_domain::LocalAccount,
     sender: &cfwdon_domain::LocalAccount,
@@ -2483,7 +2483,7 @@ async fn collection_notification_filtered(
 }
 
 async fn insert_collection_notification(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     recipient: &cfwdon_domain::LocalAccount,
     sender: &cfwdon_domain::LocalAccount,
@@ -2544,7 +2544,7 @@ async fn insert_collection_notification(
 }
 
 async fn insert_added_to_collection_notification(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     target: &cfwdon_domain::LocalAccount,
@@ -2567,7 +2567,7 @@ async fn insert_added_to_collection_notification(
 }
 
 async fn insert_collection_update_notifications(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -2596,7 +2596,7 @@ async fn insert_collection_update_notifications(
 }
 
 async fn list_collection_notifications_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     limit: u32,
 ) -> Result<Vec<CollectionNotificationRow>> {
@@ -2623,7 +2623,7 @@ async fn list_collection_notifications_for_account(
 
 pub(crate) async fn collect_collection_notification_entries(
     entries: &mut Vec<NotificationEntry>,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
     query: &crate::NotificationsQuery,
@@ -2682,7 +2682,7 @@ pub(crate) async fn collect_collection_notification_entries(
 }
 
 async fn insert_collection(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     request: &CollectionRequest,
 ) -> Result<CollectionRow> {
@@ -2742,7 +2742,7 @@ async fn insert_collection(
 }
 
 async fn update_collection(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     request: &CollectionRequest,
 ) -> Result<Option<CollectionRow>> {
@@ -2807,7 +2807,7 @@ async fn update_collection(
     collection_row_by_id(db, collection_id).await
 }
 
-async fn delete_collection(db: &worker::D1Database, collection_id: &str) -> Result<bool> {
+async fn delete_collection(db: &crate::D1Database, collection_id: &str) -> Result<bool> {
     if collection_row_by_id(db, collection_id).await?.is_none() {
         return Ok(false);
     }
@@ -2820,7 +2820,7 @@ async fn delete_collection(db: &worker::D1Database, collection_id: &str) -> Resu
 }
 
 async fn insert_collection_item(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     target: &AccountReference,
 ) -> Result<CollectionItemRow> {
@@ -2871,7 +2871,7 @@ async fn insert_collection_item(
 }
 
 async fn collection_item_by_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<Option<CollectionItemRow>> {
@@ -2888,7 +2888,7 @@ async fn collection_item_by_id(
 }
 
 async fn collection_item_by_feature_request_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     activity_uri: &str,
 ) -> Result<Option<(CollectionRow, CollectionItemRow)>> {
     let activity_uri_binding = D1Type::Text(activity_uri);
@@ -2924,7 +2924,7 @@ async fn collection_item_by_feature_request_uri(
 }
 
 async fn update_collection_item_feature_request_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
     activity_uri: &str,
@@ -2947,7 +2947,7 @@ async fn update_collection_item_feature_request_uri(
 }
 
 async fn update_collection_item_feature_state(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
     state: &str,
@@ -2974,7 +2974,7 @@ async fn update_collection_item_feature_state(
 }
 
 async fn delete_collection_item(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {
@@ -2996,7 +2996,7 @@ async fn delete_collection_item(
 }
 
 async fn revoke_collection_item(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {
@@ -3107,7 +3107,7 @@ pub(crate) async fn alpha_account_collections_response(
         .clamp(1, MAX_COLLECTIONS_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let account_id = route_param(&ctx, "account_id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match optional_collection_viewer(&req, &db, &config).await? {
         Ok(viewer) => viewer,
         Err(response) => return Ok(response),
@@ -3204,7 +3204,7 @@ pub(crate) async fn alpha_account_in_collections_response(
         .clamp(1, MAX_COLLECTIONS_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let account_id = route_param(&ctx, "account_id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_collection_reader(&req, &db, &config).await? {
         Ok(viewer) => viewer,
         Err(response) => return Ok(response),
@@ -3286,7 +3286,7 @@ pub(crate) async fn alpha_collection_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match optional_collection_viewer(&req, &db, &config).await? {
         Ok(viewer) => viewer,
         Err(response) => return Ok(response),
@@ -3337,7 +3337,7 @@ pub(crate) async fn create_alpha_collection_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let owner = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),
@@ -3407,7 +3407,7 @@ pub(crate) async fn update_alpha_collection_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let owner = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),
@@ -3453,7 +3453,7 @@ pub(crate) async fn delete_alpha_collection_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let owner = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),
@@ -3475,7 +3475,7 @@ pub(crate) async fn create_alpha_collection_item_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "collection_id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let owner = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),
@@ -3547,7 +3547,7 @@ pub(crate) async fn delete_alpha_collection_item_response(
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "collection_id")?;
     let item_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let owner = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),
@@ -3575,7 +3575,7 @@ pub(crate) async fn revoke_alpha_collection_item_response(
     let config = load_config(&ctx);
     let collection_id = route_param(&ctx, "collection_id")?;
     let item_id = route_param(&ctx, "id")?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let requester = match require_collection_writer(&req, &db, &config).await? {
         Ok(account) => account,
         Err(response) => return Ok(response),

@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -60,7 +61,7 @@ pub(crate) async fn process_outbox_deliveries(
         None => return Response::error("Auth0 authentication required", 401),
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     if !pending_outbox_work_exists(&db).await? {
         return Response::from_json(&OutboxProcessKickResponse {
             status: "idle",
@@ -116,7 +117,7 @@ pub(crate) async fn kick_outbox_process_queue_after_request(
         return;
     }
     let db = match env.d1(&config.database_binding) {
-        Ok(db) => db,
+        Ok(db) => crate::D1Database::new(db),
         Err(error) => {
             log_federation_event(
                 "outbox_queue_kick_skipped",
@@ -681,6 +682,83 @@ mod tests {
             payload_json: "{}".to_owned(),
             attempt_count: 0,
         }
+    }
+
+    #[test]
+    fn outbox_batch_made_progress_is_false_when_nothing_progressed() {
+        assert!(!outbox_batch_made_progress(
+            &OutboxProcessResponse::default()
+        ));
+    }
+
+    #[test]
+    fn outbox_batch_made_progress_is_true_when_any_metric_progressed() {
+        assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+            expanded: 1,
+            ..OutboxProcessResponse::default()
+        }));
+        assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+            delivered: 1,
+            ..OutboxProcessResponse::default()
+        }));
+        assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+            failed: 1,
+            ..OutboxProcessResponse::default()
+        }));
+        assert!(outbox_batch_made_progress(&OutboxProcessResponse {
+            completed_without_targets: 1,
+            ..OutboxProcessResponse::default()
+        }));
+    }
+
+    #[test]
+    fn request_may_enqueue_outbox_work_accepts_state_changing_success_requests() {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            for status_code in [200, 201, 204, 299, 302, 399] {
+                assert!(
+                    request_may_enqueue_outbox_work(method, "/api/v1/statuses", status_code),
+                    "{method} {status_code} should enqueue outbox work"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn request_may_enqueue_outbox_work_rejects_reads_and_failures() {
+        assert!(!request_may_enqueue_outbox_work(
+            "GET",
+            "/api/v1/statuses",
+            200
+        ));
+        assert!(!request_may_enqueue_outbox_work(
+            "POST",
+            "/api/v1/statuses",
+            199
+        ));
+        assert!(!request_may_enqueue_outbox_work(
+            "POST",
+            "/api/v1/statuses",
+            400
+        ));
+        assert!(!request_may_enqueue_outbox_work(
+            "POST",
+            "/api/v1/statuses",
+            500
+        ));
+    }
+
+    #[test]
+    fn request_may_enqueue_outbox_work_exempts_internal_outbox_prefix() {
+        assert!(!request_may_enqueue_outbox_work(
+            "POST",
+            "/internal/outbox/process",
+            200
+        ));
+        assert!(request_may_enqueue_outbox_work(
+            "POST",
+            "/internal/outbox",
+            200
+        ));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -23,8 +24,8 @@ use super::{
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use std::collections::HashMap;
+use worker::Bucket;
 use worker::d1::D1Type;
-use worker::{Bucket, D1Database};
 
 #[derive(Debug)]
 pub(crate) struct ProfileMediaUpload {
@@ -92,7 +93,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cacheable_account_id = account_api_cache_candidate(&account_id);
     if cacheable_account_id
@@ -194,7 +195,7 @@ fn account_api_cache_candidate(account_id: &str) -> bool {
 
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     // Mastodon allows unauthenticated lookup; auth is optional and only used for
     // signed remote fetches / richer relationship context when present.
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
@@ -215,7 +216,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
 
 pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -240,7 +241,7 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
 
 pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -258,7 +259,7 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
 
 pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let subject = match find_authenticated_preferences_subject(&req, &db, &config).await? {
         Some(subject) => subject,
         None => return Response::error("Auth0 authentication required", 401),
@@ -387,7 +388,7 @@ pub(crate) async fn update_credentials(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -411,7 +412,7 @@ pub(crate) async fn update_profile_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -457,7 +458,7 @@ async fn update_profile_internal(
     let mut update = parse_update_credentials_request(req)
         .await
         .map_err(Error::RustError)?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, config)?;
     let config = config_with_resolved_custom_emojis(&db, config).await?;
     sanitize_update_credentials_request(&mut update, &config);
     let bucket = ctx.bucket(&config.media_binding)?;
@@ -476,7 +477,7 @@ async fn delete_profile_media_response(
     field: ProfileMediaField,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,

@@ -1,16 +1,16 @@
 use super::{
-    AppConfig, D1Database, Error, LocalAccount, StatusRow, Visibility,
-    activitypub_audiences_for_status, build_add_featured_activity, build_announce_activity,
-    build_remove_featured_activity, build_status_update_activity, build_undo_announce_activity,
-    enqueue_targeted_outbox_activity, filter_delivery_inboxes_for_domain_blocks,
-    is_public_activitypub_visibility, list_all_account_domain_blocks,
-    list_follower_delivery_targets, load_remote_actor_delivery_inbox, local_status_target_uri,
-    local_username_from_actor_uri,
+    AppConfig, Error, LocalAccount, StatusRow, Visibility, activitypub_audiences_for_status,
+    build_add_featured_activity, build_announce_activity, build_remove_featured_activity,
+    build_status_update_activity, build_undo_announce_activity, enqueue_targeted_outbox_activity,
+    filter_delivery_inboxes_for_domain_blocks, is_public_activitypub_visibility,
+    list_all_account_domain_blocks, list_follower_delivery_targets,
+    load_remote_actor_delivery_inbox, local_status_target_uri, local_username_from_actor_uri,
 };
 use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
 
+use crate::D1Database;
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct OutboundActivityDescriptor {
     pub(crate) activity_id: String,

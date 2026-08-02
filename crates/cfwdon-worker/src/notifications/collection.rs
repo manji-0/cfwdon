@@ -10,8 +10,9 @@ use super::{
     notification_timestamp_sort_token,
 };
 use cfwdon_domain::LocalAccount;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 macro_rules! collect_notification_batch {
     ($collector:ident, $db:expr, $config:expr, $viewer:expr, $query:expr, $per_type_limit:expr) => {
         async {

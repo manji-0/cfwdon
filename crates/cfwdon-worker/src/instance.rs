@@ -193,7 +193,7 @@ fn configured_announcement_exists(config: &cfwdon_core::AppConfig, announcement_
 
 async fn build_viewer_announcement_stream_payload(
     config: &cfwdon_core::AppConfig,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
 ) -> Result<Option<String>> {
@@ -211,7 +211,7 @@ async fn build_viewer_announcement_stream_payload(
 async fn publish_announcement_reaction_stream_soft(
     env: &Env,
     config: &cfwdon_core::AppConfig,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
     reaction_name: &str,
@@ -243,7 +243,7 @@ async fn publish_announcement_reaction_stream_soft(
 async fn publish_announcement_stream_soft(
     env: &Env,
     config: &cfwdon_core::AppConfig,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
 ) {
@@ -275,7 +275,7 @@ async fn publish_announcement_stream_soft(
 }
 
 pub(crate) async fn list_announcement_read_ids(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<HashSet<String>> {
     let rows = db
@@ -292,7 +292,7 @@ pub(crate) async fn list_announcement_read_ids(
 }
 
 pub(crate) async fn load_announcement_reaction_state(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<HashMap<(String, String), (u64, bool)>> {
     let rows = db
@@ -323,7 +323,7 @@ pub(crate) async fn load_announcement_reaction_state(
 }
 
 async fn save_announcement_dismissal(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
 ) -> Result<()> {
@@ -342,7 +342,7 @@ async fn save_announcement_dismissal(
 }
 
 async fn save_announcement_reaction(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
     reaction_name: &str,
@@ -367,7 +367,7 @@ async fn save_announcement_reaction(
 }
 
 async fn delete_announcement_reaction(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     announcement_id: &str,
     reaction_name: &str,
@@ -390,18 +390,18 @@ async fn delete_announcement_reaction(
 
 pub(crate) async fn instance_summary_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     instance_summary_response_for_config(&db, config).await
 }
 
 pub(crate) async fn instance_summary_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
+    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
     instance_summary_response_for_config(&db, config).await
 }
 
 async fn instance_summary_response_for_config(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
@@ -425,14 +425,14 @@ async fn instance_summary_response_for_config(
 
 pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     instance_v2_response_for_config(&db, config, configured_translation_provider(&ctx).is_some())
         .await
 }
 
 pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
+    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
     instance_v2_response_for_config(
         &db,
         config,
@@ -442,7 +442,7 @@ pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response>
 }
 
 async fn instance_v2_response_for_config(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: super::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
@@ -458,7 +458,7 @@ async fn instance_v2_response_for_config(
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
 
     cache_public_response(
         Response::from_json(&load_known_peer_domains(&db, &config).await?)?,
@@ -477,7 +477,7 @@ pub(crate) async fn instance_peers_search_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: PeerSearchQuery = req.query().unwrap_or_default();
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let mut domains = load_known_peer_domains(&db, &config).await?;
 
     if let Some(q) = query
@@ -493,39 +493,57 @@ pub(crate) async fn instance_peers_search_response(
     cache_public_response(Response::from_json(&domains)?, CACHE_TTL_INSTANCE_SUMMARY)
 }
 
-pub(crate) async fn instance_activity_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn instance_activity_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
     // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
     let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()).map_err(|error| {
         worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
     })?;
     let midnight = now.replace_time(Time::MIDNIGHT);
     let week_floor = midnight - Duration::days(midnight.weekday().number_days_from_monday().into());
-
-    let mut weekly_totals = Vec::with_capacity(12);
-    for offset in (0..12).rev() {
-        let week_start = week_floor - Duration::weeks(offset);
-        let week_end = week_start + Duration::weeks(1);
-        let start = week_start.format(&Rfc3339).map_err(|error| {
-            worker::Error::RustError(format!("failed to format week start: {error}"))
+    let week_floor_rfc3339 = week_floor.format(&Rfc3339).map_err(|error| {
+        worker::Error::RustError(format!("failed to format week floor: {error}"))
+    })?;
+    let range_start = (week_floor - Duration::weeks(11))
+        .format(&Rfc3339)
+        .map_err(|error| {
+            worker::Error::RustError(format!("failed to format activity range start: {error}"))
         })?;
-        let end = week_end.format(&Rfc3339).map_err(|error| {
-            worker::Error::RustError(format!("failed to format week end: {error}"))
+    let range_end = (week_floor + Duration::weeks(1))
+        .format(&Rfc3339)
+        .map_err(|error| {
+            worker::Error::RustError(format!("failed to format activity range end: {error}"))
         })?;
-        weekly_totals.push((
-            count_local_statuses_between(&db, &start, &end).await?,
-            0,
-            count_accounts_created_between(&db, &start, &end).await?,
-        ));
-    }
 
-    cache_public_response(
-        Response::from_json(&build_instance_activity_document(
-            week_floor,
-            &weekly_totals,
-        ))?,
-        300,
+    let (status_counts, account_counts) = futures_util::try_join!(
+        count_local_statuses_by_week_offset(&db, &week_floor_rfc3339, &range_start, &range_end),
+        count_accounts_created_by_week_offset(&db, &week_floor_rfc3339, &range_start, &range_end),
+    )?;
+
+    let weekly_totals = (0..12)
+        .rev()
+        .map(|offset| {
+            (
+                status_counts.get(&offset).copied().unwrap_or(0),
+                0,
+                account_counts.get(&offset).copied().unwrap_or(0),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    with_d1_bookmark(
+        cache_public_response(
+            Response::from_json(&build_instance_activity_document(
+                week_floor,
+                &weekly_totals,
+            ))?,
+            300,
+        )?,
+        &session,
     )
 }
 
@@ -624,7 +642,7 @@ pub(crate) async fn announcements_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => {
@@ -649,7 +667,7 @@ pub(crate) async fn announcement_reaction_mutation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -689,7 +707,7 @@ pub(crate) async fn dismiss_announcement_mutation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -714,52 +732,12 @@ pub(crate) async fn trending_statuses_response(
     let limit = query.limit.unwrap_or(10).clamp(1, 20);
     let offset = query.offset.unwrap_or(0);
     let fetch_limit = limit.saturating_add(offset).clamp(limit, 200);
-    let db = ctx.d1(&config.database_binding)?;
-    let cursor = ResolvedTimelineCursor::default();
-    let mut entries = Vec::<(String, String, serde_json::Value)>::new();
+    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
+    let statuses = trending_status_documents(&db, &config, fetch_limit, offset, limit).await?;
 
-    for status in list_local_public_timeline_statuses(&db, &cursor, fetch_limit).await? {
-        let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
-            continue;
-        };
-        let media = find_media_attachments_by_status_id(&db, &status.id).await?;
-        let response = build_local_status_response(
-            &db,
-            &config,
-            None,
-            &status,
-            &account,
-            load_in_reply_to_account_id(&db, &status).await?,
-            media,
-        )
-        .await?;
-        entries.push((
-            status.created_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(response)?,
-        ));
-    }
-
-    for (status, actor) in list_remote_public_timeline_statuses(&db, &cursor, fetch_limit).await? {
-        let response = build_remote_status_response(&db, &config, None, &status, &actor).await?;
-        entries.push((
-            status.published_at.clone(),
-            status.id.clone(),
-            serde_json::to_value(response)?,
-        ));
-    }
-
-    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    cache_public_response(
-        Response::from_json(
-            &entries
-                .into_iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .map(|(_, _, status)| status)
-                .collect::<Vec<_>>(),
-        )?,
-        CACHE_TTL_TRENDS,
+    with_d1_bookmark(
+        cache_public_response(Response::from_json(&statuses)?, CACHE_TTL_TRENDS)?,
+        &session,
     )
 }
 
@@ -769,7 +747,7 @@ pub(crate) async fn trending_links_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     cache_public_response(
         Response::from_json(
             &list_trending_link_documents(
@@ -791,7 +769,7 @@ pub(crate) async fn trending_tags_response(
     let query: TrendsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(10).clamp(1, 20);
     let offset = query.offset.unwrap_or(0);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let cursor = ResolvedTimelineCursor::default();
     let mut tags = HashMap::<String, TrendingTagAggregate>::new();
 
@@ -841,7 +819,7 @@ pub(crate) async fn trending_tags_response(
 
 pub(crate) async fn custom_emojis_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     custom_emojis_response_direct(&config)
 }
@@ -852,13 +830,13 @@ pub(crate) fn custom_emojis_response_direct(config: &AppConfig) -> Result<Respon
 
 pub(crate) async fn custom_emojis_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
+    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     custom_emojis_response_direct(&config)
 }
 
 pub(crate) async fn trending_link_target_is_known(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     target_urls: &[String],
 ) -> Result<bool> {
     let known = list_trending_link_entries(db).await?;
@@ -870,7 +848,7 @@ pub(crate) async fn trending_link_target_is_known(
 }
 
 async fn list_trending_link_documents(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<serde_json::Value>> {
@@ -883,7 +861,7 @@ async fn list_trending_link_documents(
         .collect())
 }
 
-async fn list_trending_link_entries(db: &worker::D1Database) -> Result<Vec<TrendingLinkEntry>> {
+async fn list_trending_link_entries(db: &crate::D1Database) -> Result<Vec<TrendingLinkEntry>> {
     // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
     let now_ts = now_unix_timestamp();
     let now = OffsetDateTime::from_unix_timestamp(now_ts).map_err(|error| {
@@ -919,7 +897,7 @@ async fn list_trending_link_entries(db: &worker::D1Database) -> Result<Vec<Trend
 }
 
 async fn list_trending_local_link_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     cutoff: &str,
 ) -> Result<Vec<TrendingLocalLinkRow>> {
     let bindings = [D1Type::Text(cutoff)];
@@ -938,7 +916,7 @@ async fn list_trending_local_link_rows(
 }
 
 async fn list_trending_remote_link_rows(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     cutoff: &str,
 ) -> Result<Vec<TrendingRemoteLinkRow>> {
     let bindings = [D1Type::Text(cutoff)];
@@ -1082,18 +1060,18 @@ fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Respo
 
 pub(crate) async fn nodeinfo_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     nodeinfo_response_for_config(&db, config).await
 }
 
 pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
+    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
     nodeinfo_response_for_config(&db, config).await
 }
 
 async fn nodeinfo_response_for_config(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
@@ -1117,18 +1095,18 @@ async fn nodeinfo_response_for_config(
 
 pub(crate) async fn nodeinfo_21_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     nodeinfo_21_response_for_config(&db, config).await
 }
 
 pub(crate) async fn nodeinfo_21_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = env.d1(&config.database_binding)?;
+    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
     nodeinfo_21_response_for_config(&db, config).await
 }
 
 async fn nodeinfo_21_response_for_config(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;

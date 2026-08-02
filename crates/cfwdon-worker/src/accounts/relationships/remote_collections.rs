@@ -58,7 +58,7 @@ fn select_remote_follow_collection_page(
 }
 
 async fn resolve_remote_follow_collection_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
@@ -91,7 +91,7 @@ async fn resolve_remote_follow_collection_account(
 }
 
 pub(crate) async fn remote_follow_collection_entries(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     actor_uri: &str,

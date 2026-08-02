@@ -1,9 +1,8 @@
-use super::{
-    AccountReference, D1Database, FormEntry, Request, find_status_by_id, parse_optional_bool,
-};
+use super::{AccountReference, FormEntry, Request, find_status_by_id, parse_optional_bool};
 use serde::Deserialize;
 use worker::FormData;
 
+use crate::D1Database;
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct CreateReportRequest {
     pub(crate) account_id: String,

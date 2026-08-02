@@ -2,8 +2,8 @@ use super::{
     AppConfig, Error, LocalAccount, Result, StatusRow, actor_url, build_activitypub_actor_document,
     build_activitypub_note, generate_entity_id, now_iso_string, quote_context_mapping,
 };
-use worker::D1Database;
 
+use crate::D1Database;
 fn status_activity_context(object: &serde_json::Value) -> serde_json::Value {
     if object.get("_misskey_quote").is_some()
         || object.get("quoteUri").is_some()

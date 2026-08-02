@@ -2,8 +2,9 @@ use super::{
     Request, Response, Result, RouteContext, load_config, require_authenticated_local_account,
 };
 use serde::{Deserialize, Serialize};
-use worker::{D1Database, d1::D1Type};
+use worker::d1::D1Type;
 
+use crate::D1Database;
 pub(crate) const ASYNC_REFRESH_RETRY_SECONDS: u32 = 3;
 
 #[derive(Debug, Deserialize)]
@@ -119,7 +120,7 @@ pub(crate) async fn async_refresh_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(_viewer) = require_authenticated_local_account(&req, &db, &config).await? else {
         return Response::error("Auth0 authentication required", 401);
     };

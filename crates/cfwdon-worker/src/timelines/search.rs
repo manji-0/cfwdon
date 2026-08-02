@@ -86,7 +86,7 @@ async fn search_impl(
 }
 
 async fn search_url_mode_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -111,7 +111,7 @@ async fn search_url_mode_response(
 }
 
 async fn search_standard_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -143,14 +143,15 @@ async fn search_standard_response(
 fn search_database_from_context(
     ctx: &RouteContext<()>,
     config: &cfwdon_core::AppConfig,
-) -> std::result::Result<worker::D1Database, Response> {
+) -> std::result::Result<crate::D1Database, Response> {
     ctx.d1(&config.database_binding)
+        .map(crate::D1Database::new)
         .map_err(|error| search_error_response(error.to_string(), 500))
 }
 
 async fn authenticate_search_viewer(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     plan: &SearchV2ExecutionPlan,
 ) -> std::result::Result<Option<LocalAccount>, Response> {
@@ -206,7 +207,7 @@ fn search_worker_result<T>(result: Result<T>) -> std::result::Result<T, Response
 }
 
 async fn search_accounts_for_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -253,7 +254,7 @@ async fn search_accounts_for_response(
 }
 
 async fn search_statuses_for_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -286,7 +287,7 @@ async fn search_statuses_for_response(
 }
 
 async fn search_hashtags_for_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     query_text: &str,
     plan: &SearchV2ExecutionPlan,
@@ -303,7 +304,7 @@ async fn search_hashtags_for_response(
 }
 
 async fn resolve_search_url_only_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query: &str,

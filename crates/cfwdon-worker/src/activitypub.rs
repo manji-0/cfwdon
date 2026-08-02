@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -17,7 +18,7 @@ pub(crate) use social_activities::*;
 pub(crate) use updates::*;
 
 use cfwdon_core::AppConfig;
-use worker::{D1Database, Result};
+use worker::Result;
 
 pub(crate) async fn build_activitypub_delete(
     db: &D1Database,

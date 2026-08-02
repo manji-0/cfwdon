@@ -1,11 +1,12 @@
 use super::custom_emoji_to_json;
 use super::gif_static::gif_static_bytes;
 use crate::{
-    Result, generate_entity_id, log_r2_operation, media_object_url, observability_started_at_ms,
+    D1Database, Result, generate_entity_id, log_r2_operation, media_object_url,
+    observability_started_at_ms,
 };
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;
-use worker::{Bucket, D1Database, HttpMetadata, d1::D1Type};
+use worker::{Bucket, HttpMetadata, d1::D1Type};
 
 const CUSTOM_EMOJI_MAX_BYTES: usize = 256 * 1024;
 

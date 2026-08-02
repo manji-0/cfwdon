@@ -272,7 +272,7 @@ pub(crate) async fn resolve_social_action_context(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Ok(None),

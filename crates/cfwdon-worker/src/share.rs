@@ -22,7 +22,7 @@ struct ShareForm {
 pub(crate) async fn share_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: ShareQuery = req.query().unwrap_or_default();
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(_account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return share_login_redirect(&config, &req);
     };
@@ -39,7 +39,7 @@ pub(crate) async fn share_submit_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return share_login_redirect(&config, &req);

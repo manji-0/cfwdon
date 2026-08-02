@@ -9,8 +9,9 @@ use super::{
     preload_notification_statuses, remote_account_rest_id, remote_status_from_record,
 };
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow> {
     let visibility = Visibility::parse(&mention.visibility).ok()?;
     let quote_state = QuoteState::parse(&mention.quote_state).ok()?;

@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -17,7 +18,7 @@ use super::oauth_apps::{
 };
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
-use worker::{D1Database, Error, Request, Result};
+use worker::{Error, Request, Result};
 
 pub(crate) use self::account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,

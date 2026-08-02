@@ -1,10 +1,11 @@
 use super::{
-    AccountReference, CreateReportRequest, D1Database, Error, ReportRow, Result,
-    generate_entity_id, remote_account_rest_id,
+    AccountReference, CreateReportRequest, Error, ReportRow, Result, generate_entity_id,
+    remote_account_rest_id,
 };
 use cfwdon_domain::StoredReportIntent;
 use worker::d1::D1Type;
 
+use crate::D1Database;
 fn stored_report_intent(
     report_id: String,
     request: &CreateReportRequest,

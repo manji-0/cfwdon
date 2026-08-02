@@ -6,8 +6,9 @@ use super::{
     update_local_status_quote_approval_policy,
 };
 use serde::Deserialize;
-use worker::{D1Database, Env, Fetch, Headers, Method, RequestInit, d1::D1Type};
+use worker::{Env, Fetch, Headers, Method, RequestInit, d1::D1Type};
 
+use crate::D1Database;
 #[derive(Debug, Default, Deserialize)]
 struct InteractionPolicyUpdateRequest {
     quote_approval_policy: Option<String>,
@@ -1087,7 +1088,7 @@ pub(crate) async fn status_interaction_policy_response(
         }))?
         .with_status(401));
     }
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(viewer) = find_authenticated_local_account(&req, &db, &config).await? else {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "The access token is invalid",
@@ -1132,7 +1133,7 @@ pub(crate) async fn translate_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let bearer_token = app_bearer_token_from_request(&req)?;
     let app = match bearer_token.as_deref() {
         Some(token) => match find_oauth_app_by_bearer_token(&db, token).await? {

@@ -77,6 +77,12 @@ binding = "REMOTE_DNS_CACHE"
 id = "replace-with-remote-dns-cache-kv-namespace-id"
 preview_id = "replace-with-remote-dns-cache-kv-preview-id"
 
+# Account capability bits and other short-lived app cache entries.
+[[kv_namespaces]]
+binding = "APP_CACHE"
+id = "replace-with-app-cache-kv-namespace-id"
+preview_id = "replace-with-app-cache-kv-preview-id"
+
 # Configure the bucket behind a public custom domain and keep that domain
 # outside protected API authentication. Entity payloads will use MEDIA_PUBLIC_BASE_URL
 # directly; /media/:id remains as a fallback/redirect route.

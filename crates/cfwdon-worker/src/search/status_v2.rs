@@ -8,7 +8,7 @@ use super::statuses::{
     status_search_rank, text_mentions_search_library_viewer,
 };
 use crate::{
-    AccountReference, MastodonStatusResponse,
+    AccountReference, D1Database, MastodonStatusResponse,
     build_local_status_response_with_quote_count_preloads, build_remote_status_card_value,
     build_remote_status_response, build_status_card_value, can_view_local_status,
     find_account_by_id, find_account_by_username, find_media_attachments_by_status_id,
@@ -25,7 +25,7 @@ use crate::{
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccount};
-use worker::{D1Database, Result};
+use worker::Result;
 
 type SearchStatusSortKey = ((u8, u8, u8), Reverse<String>, Reverse<String>);
 

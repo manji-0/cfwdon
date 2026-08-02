@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -160,7 +161,7 @@ pub(crate) async fn shared_inbox_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let body = req.bytes().await?;
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
@@ -238,7 +239,7 @@ pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> R
     let body = req.bytes().await?;
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let accounts =
         resolve_shared_inbox_target_accounts(&db, &config, Some(username.as_str()), &activity)
             .await?;

@@ -6,7 +6,7 @@ use crate::extract_hashtags_from_text;
 use crate::find_media_attachments_by_status_id;
 use crate::parse_remote_http_url;
 use crate::{
-    MastodonStatusResponse, build_local_status_response, build_remote_status_response,
+    D1Database, MastodonStatusResponse, build_local_status_response, build_remote_status_response,
     can_view_local_status, find_local_status_by_object_uri, is_public_activitypub_visibility,
     load_in_reply_to_account_id, resolve_remote_status_by_url,
 };
@@ -15,7 +15,7 @@ use cfwdon_domain::LocalAccount;
 use time::format_description::parse as parse_format_description;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, OffsetDateTime};
-use worker::{D1Database, Result};
+use worker::Result;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParsedStatusSearchQuery {

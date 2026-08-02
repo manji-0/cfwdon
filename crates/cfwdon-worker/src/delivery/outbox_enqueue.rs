@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, D1Database, Error, LocalAccount, Result, StatusRow, Visibility,
+    AppConfig, Error, LocalAccount, Result, StatusRow, Visibility,
     activitypub_audiences_for_status, activitypub_datetime_string, actor_url,
     build_activitypub_delete, build_activitypub_note, describe_outbound_activity,
     filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
@@ -9,6 +9,7 @@ use super::{
 use std::collections::HashSet;
 use worker::d1::D1Type;
 
+use crate::D1Database;
 fn create_activity_context(status: &StatusRow) -> serde_json::Value {
     if status_has_active_quote(status) {
         serde_json::json!([
@@ -57,7 +58,7 @@ fn outbox_delivery_insert_statement(
     activity_id: &str,
     activity_type: &str,
     payload_json: &str,
-) -> Result<worker::d1::D1PreparedStatement> {
+) -> Result<crate::D1PreparedStatement> {
     let bindings = [
         D1Type::Text(account_id),
         D1Type::Text(status_id),
@@ -167,7 +168,7 @@ pub(crate) async fn outbox_create_insert_statement(
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
-) -> Result<Option<worker::d1::D1PreparedStatement>> {
+) -> Result<Option<crate::D1PreparedStatement>> {
     outbox_create_insert_statement_with_attachments(db, config, account, status, None).await
 }
 
@@ -177,7 +178,7 @@ pub(crate) async fn outbox_create_insert_statement_with_attachments(
     account: &LocalAccount,
     status: &StatusRow,
     attachments_override: Option<&[crate::MediaAttachmentRow]>,
-) -> Result<Option<worker::d1::D1PreparedStatement>> {
+) -> Result<Option<crate::D1PreparedStatement>> {
     if status.visibility == Visibility::Direct {
         return Ok(None);
     }
@@ -268,7 +269,7 @@ pub(crate) async fn outbox_delete_insert_statement(
     config: &AppConfig,
     account: &LocalAccount,
     status: &StatusRow,
-) -> Result<Option<worker::d1::D1PreparedStatement>> {
+) -> Result<Option<crate::D1PreparedStatement>> {
     if status.visibility == Visibility::Direct {
         return Ok(None);
     }

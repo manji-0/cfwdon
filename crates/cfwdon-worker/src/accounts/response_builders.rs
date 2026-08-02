@@ -5,8 +5,8 @@ use crate::{
     find_account_by_username, find_remote_actor_by_actor_uri, load_account_stats,
     local_username_from_actor_uri, log_json_event, upsert_remote_actor,
 };
-use worker::D1Database;
 
+use crate::D1Database;
 pub(crate) async fn build_local_account_response(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,

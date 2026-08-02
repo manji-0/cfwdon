@@ -27,7 +27,7 @@ struct SaveMarkersRequest {
 }
 
 async fn load_marker(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     scope: &str,
 ) -> Result<Option<serde_json::Value>> {
@@ -53,7 +53,7 @@ async fn load_marker(
 }
 
 async fn save_marker(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     scope: &str,
     marker: MarkerUpdateRequest,
@@ -117,7 +117,7 @@ fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
 
 pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -148,7 +148,7 @@ pub(crate) async fn save_markers_response(
         .json::<SaveMarkersRequest>()
         .await
         .map_err(|error| worker::Error::RustError(format!("invalid markers payload: {error}")))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

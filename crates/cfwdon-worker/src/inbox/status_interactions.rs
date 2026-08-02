@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
+    AppConfig, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
     delete_remote_favourite, delete_remote_reblog, extract_remote_note_object,
     fanout_and_delete_remote_status_by_object_uri_soft, find_conversation_id_by_status_id,
     find_local_status_by_object_uri, is_blocking_actor, is_remote_actor_following_local_account,
@@ -9,6 +9,7 @@ use super::{
 };
 use worker::{Env, Result};
 
+use crate::D1Database;
 pub(crate) async fn remote_actor_may_interact_with_local_status(
     db: &D1Database,
     status: &StatusRow,

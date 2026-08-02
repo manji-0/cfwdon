@@ -1,11 +1,12 @@
 use crate::{
-    CursorAccountCollection, MastodonAccountResponse, RemoteActorRow, find_local_account_response,
-    find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, list_endorsed_accounts_for_owner,
-    refreshed_remote_actor_response, upserted_remote_actor_response,
+    CursorAccountCollection, D1Database, MastodonAccountResponse, RemoteActorRow,
+    find_local_account_response, find_local_account_response_by_actor_uri,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+    list_endorsed_accounts_for_owner, refreshed_remote_actor_response,
+    upserted_remote_actor_response,
 };
 use std::collections::HashSet;
-use worker::{D1Database, Result};
+use worker::Result;
 
 const REMOTE_ENDORSEMENT_PAGE_FETCH_LIMIT: usize = 8;
 

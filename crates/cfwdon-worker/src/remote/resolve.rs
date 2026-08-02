@@ -1,18 +1,18 @@
 use crate::{
-    AppConfig, LocalAccount, MastodonAccountResponse, RemoteActorRow, RemoteCollectionFetchContext,
-    RemoteStatusRow, account_search_is_complete_handle, enrich_remote_account_response,
-    ensure_remote_actor_username_matches_handle, extract_remote_note_object,
-    fetch_activitypub_document_with_context, fetch_remote_actor_profile_with_context,
-    find_account_by_id, find_account_by_username, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_profile_url_or_actor_uri, find_remote_actor_by_username_domain,
-    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
-    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
-    log_json_event, parse_lookup_handle, parse_remote_http_url,
+    AppConfig, D1Database, LocalAccount, MastodonAccountResponse, RemoteActorRow,
+    RemoteCollectionFetchContext, RemoteStatusRow, account_search_is_complete_handle,
+    enrich_remote_account_response, ensure_remote_actor_username_matches_handle,
+    extract_remote_note_object, fetch_activitypub_document_with_context,
+    fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
+    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+    find_remote_actor_by_username_domain, find_remote_status_by_object_uri,
+    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
+    local_username_from_actor_uri, log_json_event, parse_lookup_handle, parse_remote_http_url,
     reconcile_remote_account_status_summary, remote_actor_uri_from_rest_id,
     resolve_webfinger_actor_uri, upsert_remote_actor, upsert_remote_status,
     visibility_from_activitypub_object,
 };
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
 pub(crate) enum AccountReference {
     Local(LocalAccount),

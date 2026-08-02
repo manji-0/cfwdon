@@ -53,7 +53,7 @@ pub(crate) async fn admin_deliveries_response(
 
     let query: AdminDeliveriesQuery = req.query().unwrap_or_default();
     let config = crate::load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let state_filter = normalize_delivery_state_filter(query.state.as_deref());
     let mut deliveries = list_outbound_admin_deliveries(&db, state_filter).await?;
     deliveries.extend(list_outbox_admin_deliveries(&db, state_filter).await?);
@@ -85,7 +85,7 @@ pub(crate) async fn admin_retry_delivery_response(
         .filter(|value| !value.is_empty())
         .unwrap_or("outbound");
     let config = crate::load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
 
     let retried = match source {
         "outbox" => retry_outbox_delivery(&db, &delivery_id).await?,
@@ -112,7 +112,7 @@ fn normalize_delivery_state_filter(value: Option<&str>) -> Option<&'static str> 
 }
 
 async fn list_outbound_admin_deliveries(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     state_filter: Option<&str>,
 ) -> Result<Vec<AdminDeliveryResponse>> {
     let (sql, bindings) = if let Some(state) = state_filter {
@@ -149,7 +149,7 @@ async fn list_outbound_admin_deliveries(
 }
 
 async fn list_outbox_admin_deliveries(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     state_filter: Option<&str>,
 ) -> Result<Vec<AdminDeliveryResponse>> {
     let (sql, bindings) = if let Some(state) = state_filter {
@@ -185,7 +185,7 @@ async fn list_outbox_admin_deliveries(
         .collect())
 }
 
-async fn retry_outbound_delivery(db: &worker::D1Database, delivery_id: &str) -> Result<bool> {
+async fn retry_outbound_delivery(db: &crate::D1Database, delivery_id: &str) -> Result<bool> {
     let bindings = [D1Type::Text(delivery_id)];
     let result = db
         .prepare(
@@ -202,7 +202,7 @@ async fn retry_outbound_delivery(db: &worker::D1Database, delivery_id: &str) -> 
     Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
-async fn retry_outbox_delivery(db: &worker::D1Database, delivery_id: &str) -> Result<bool> {
+async fn retry_outbox_delivery(db: &crate::D1Database, delivery_id: &str) -> Result<bool> {
     let bindings = [D1Type::Text(delivery_id)];
     let result = db
         .prepare(

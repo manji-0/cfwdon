@@ -1,7 +1,8 @@
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct EndorsedAccountEntryRow {
     pub(crate) cursor_id: i64,

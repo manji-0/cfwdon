@@ -172,6 +172,44 @@ mod tests {
     }
 
     #[test]
+    fn streaming_batch_from_entries_handles_empty_input() {
+        let batch = streaming_batch_from_entries(Vec::new(), Vec::new(), "update");
+
+        assert!(batch.events.is_empty());
+        assert!(batch.tracked_status_ids.is_empty());
+        assert!(batch.last_id.is_none());
+        assert!(batch.last_created_at.is_none());
+    }
+
+    #[test]
+    fn streaming_batch_from_entries_breaks_ties_by_id() {
+        let batch = streaming_batch_from_entries(
+            vec![
+                StreamingEntry::new(
+                    "2025-01-01T00:00:00Z".to_owned(),
+                    "b".to_owned(),
+                    "2".to_owned(),
+                ),
+                StreamingEntry::new(
+                    "2025-01-01T00:00:00Z".to_owned(),
+                    "a".to_owned(),
+                    "1".to_owned(),
+                ),
+            ],
+            Vec::new(),
+            "update",
+        );
+
+        assert_eq!(batch.events[0].id, "a");
+        assert_eq!(batch.events[1].id, "b");
+        assert_eq!(batch.last_id.as_deref(), Some("b"));
+        assert_eq!(
+            batch.last_created_at.as_deref(),
+            Some("2025-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
     fn streaming_public_plan_classifies_public_and_hashtag_streams() {
         assert_eq!(
             StreamingPublicPlan::from_stream("public"),

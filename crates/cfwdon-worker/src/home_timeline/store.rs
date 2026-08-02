@@ -4,7 +4,6 @@ use super::{
 };
 use serde::Deserialize;
 use std::collections::HashSet;
-use worker::d1::D1Type;
 
 pub(crate) const HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL: &str = "local";
 pub(crate) const HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE: &str = "remote";
@@ -49,21 +48,6 @@ pub(crate) async fn list_home_timeline_candidate_ids(
         remote_rows,
         limit,
     ))
-}
-
-pub(crate) async fn account_has_followed_tags(db: &D1Database, account_id: &str) -> Result<bool> {
-    let account_id = D1Type::Text(account_id);
-    Ok(db
-        .prepare(
-            "SELECT tag_name
-             FROM followed_tags
-             WHERE account_id = ?1
-             LIMIT 1",
-        )
-        .bind_refs(&account_id)?
-        .first::<serde_json::Value>(None)
-        .await?
-        .is_some())
 }
 
 async fn list_home_timeline_candidate_ids_for_source(

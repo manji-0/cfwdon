@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
+    AppConfig, LocalAccount, RemoteActorProfile, Result, activity_object_id,
     delete_remote_status_by_id, find_remote_status_by_object_uri, handle_inbox_actor_update,
     handle_inbox_collection_feature_authorization_delete, handle_inbox_collection_update,
     handle_inbox_poll_vote, load_remote_status_hashtag_names, note_targets_account_or_followers,
@@ -9,6 +9,7 @@ use super::{
 };
 use worker::Env;
 
+use crate::D1Database;
 pub(crate) async fn handle_inbox_create(
     db: &D1Database,
     activity: &serde_json::Value,

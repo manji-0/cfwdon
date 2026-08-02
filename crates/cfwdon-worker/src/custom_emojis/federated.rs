@@ -3,8 +3,9 @@ use crate::sanitize_remote_http_url;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use worker::{D1Database, Result, d1::D1Type};
+use worker::{Result, d1::D1Type};
 
+use crate::D1Database;
 pub(crate) type FederatedEmojiMap = HashMap<String, CustomEmoji>;
 
 #[derive(Debug, Default)]
@@ -15,6 +16,10 @@ pub(crate) struct RemoteStatusFederatedEmojisPreload {
 impl RemoteStatusFederatedEmojisPreload {
     pub(crate) fn get(&self, status_id: &str) -> Option<&FederatedEmojiMap> {
         self.by_status_id.get(status_id)
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.by_status_id.extend(other.by_status_id);
     }
 }
 

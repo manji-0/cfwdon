@@ -9,8 +9,9 @@ use super::{
 };
 use cfwdon_domain::LocalAccount;
 use std::collections::HashMap;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 pub(crate) async fn collect_reblog_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,

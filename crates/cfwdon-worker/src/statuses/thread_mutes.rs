@@ -19,7 +19,7 @@ struct ThreadRootStatusIdRow {
 }
 
 async fn resolve_thread_root_status_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status: &crate::StatusRow,
 ) -> Result<String> {
     let roots = resolve_thread_root_status_ids(db, &[status]).await?;
@@ -30,7 +30,7 @@ async fn resolve_thread_root_status_id(
 
 /// Resolve thread-root status ids for many local statuses with batched parent fetches.
 pub(crate) async fn resolve_thread_root_status_ids(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     statuses: &[&crate::StatusRow],
 ) -> Result<HashMap<String, String>> {
     let mut parent_by_id = HashMap::new();
@@ -96,7 +96,7 @@ fn thread_root_from_parent_map(
 }
 
 async fn load_status_reply_links(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status_ids: &[String],
 ) -> Result<HashMap<String, Option<String>>> {
     let ids = unique_ordered_refs(status_ids);
@@ -122,7 +122,7 @@ async fn load_status_reply_links(
 }
 
 async fn load_muted_thread_root_status_ids(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     root_status_ids: &[String],
 ) -> Result<HashSet<String>> {
@@ -151,7 +151,7 @@ async fn load_muted_thread_root_status_ids(
 
 /// Return the subset of status ids whose thread root is muted by `account_id`.
 pub(crate) async fn local_status_ids_thread_muted_by(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     statuses: &[&crate::StatusRow],
 ) -> Result<HashSet<String>> {
@@ -176,7 +176,7 @@ pub(crate) async fn local_status_ids_thread_muted_by(
 }
 
 pub(crate) async fn is_local_status_thread_muted_by(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status: &crate::StatusRow,
 ) -> Result<bool> {
@@ -185,25 +185,16 @@ pub(crate) async fn is_local_status_thread_muted_by(
 }
 
 pub(crate) async fn account_has_thread_mutes(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<bool> {
-    let account_id = D1Type::Text(account_id);
-    Ok(db
-        .prepare(
-            "SELECT thread_root_status_id
-             FROM thread_mutes
-             WHERE account_id = ?1
-             LIMIT 1",
-        )
-        .bind_refs(&account_id)?
-        .first::<serde_json::Value>(None)
+    Ok(crate::load_account_capabilities(db, account_id)
         .await?
-        .is_some())
+        .has_thread_mutes)
 }
 
 async fn mute_thread_for_status(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status: &crate::StatusRow,
 ) -> Result<()> {
@@ -220,11 +211,12 @@ async fn mute_thread_for_status(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
 async fn unmute_thread_for_status(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status: &crate::StatusRow,
 ) -> Result<()> {
@@ -241,6 +233,7 @@ async fn unmute_thread_for_status(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -251,7 +244,7 @@ pub(crate) async fn mute_status_response(req: Request, ctx: RouteContext<()>) ->
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -276,7 +269,7 @@ pub(crate) async fn unmute_status_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -292,7 +285,7 @@ pub(crate) async fn unmute_status_response(
 }
 
 async fn thread_mute_status_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
     subject: super::LoadedLocalStatusResponseSubject,

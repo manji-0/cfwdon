@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -77,7 +78,7 @@ pub(crate) fn local_quote_policy_allows(policy: &str, is_owner: bool, is_followe
 }
 
 pub(crate) async fn validate_local_quote_creation(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &LocalAccount,
     draft: &StatusDraft,
@@ -126,7 +127,7 @@ pub(crate) async fn validate_local_quote_creation(
 }
 
 async fn resolve_quoted_status_uri(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     value: Option<&str>,
 ) -> Result<Option<String>> {
@@ -162,7 +163,7 @@ async fn resolve_quoted_status_uri(
 
 async fn resolve_create_status_access(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<Option<CreateStatusAccess>> {
     if let Some(token) = app_bearer_token_from_request(req)? {
@@ -205,7 +206,7 @@ async fn resolve_create_status_access(
 
 pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let parsed = match parse_status_draft(&mut req, &config).await {
         Ok(draft) => draft,
@@ -312,7 +313,7 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
     };
     let query: DeleteStatusQuery = req.query().unwrap_or_default();
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -341,7 +342,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Ok(request) => request,
         Err(message) => return Response::error(message, 422),
     };
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,

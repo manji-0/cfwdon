@@ -23,7 +23,7 @@ pub(crate) struct NotificationsQuery {
 
 pub(crate) struct AuthenticatedNotificationContext {
     pub(crate) session: D1RequestSession,
-    pub(crate) db: worker::D1Database,
+    pub(crate) db: crate::D1Database,
     pub(crate) config: cfwdon_core::AppConfig,
     pub(crate) viewer: cfwdon_domain::LocalAccount,
 }

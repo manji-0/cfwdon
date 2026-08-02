@@ -5,7 +5,7 @@ use worker::d1::D1Type;
 pub(crate) const INBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
 
 pub(crate) async fn begin_inbox_activity_processing(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
     activity_id: &str,
     activity_type: &str,
@@ -56,7 +56,7 @@ pub(crate) async fn begin_inbox_activity_processing(
 }
 
 pub(crate) async fn mark_inbox_activity_processed(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
     activity_id: &str,
 ) -> Result<()> {
@@ -75,7 +75,7 @@ pub(crate) async fn mark_inbox_activity_processed(
 }
 
 pub(crate) async fn release_inbox_activity_processing(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
     activity_id: &str,
 ) -> Result<()> {
@@ -94,7 +94,7 @@ pub(crate) async fn release_inbox_activity_processing(
 }
 
 pub(crate) async fn upsert_follower_by_inbox(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     actor_uri: &str,
     inbox_uri: &str,
@@ -148,7 +148,7 @@ pub(crate) async fn upsert_follower_by_inbox(
 }
 
 pub(crate) async fn upsert_follower(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     remote_actor: &RemoteActorProfile,
     follow_activity_id: Option<&str>,
@@ -165,7 +165,7 @@ pub(crate) async fn upsert_follower(
 }
 
 pub(crate) async fn find_follower_follow_activity_id(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     actor_uri: &str,
     canonical_actor_uri: &str,
@@ -195,7 +195,7 @@ pub(crate) async fn find_follower_follow_activity_id(
 }
 
 pub(crate) async fn delete_follower_by_actor(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     actor_uri: &str,
     canonical_actor_uri: &str,

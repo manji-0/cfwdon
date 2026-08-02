@@ -1,10 +1,10 @@
 use super::{
-    AppConfig, D1Database, Error, Result, StatusRecord, StatusRow, find_account_by_id,
+    AppConfig, Error, Result, StatusRecord, StatusRow, find_account_by_id,
     find_remote_statuses_with_actors_by_ids, json_string_array, local_status_identity_from_uri,
     remote_account_rest_id, sql_in_json_each, status_from_record, statuses_from_records,
     unique_ordered_refs,
 };
-use crate::{append_local_status_id_cursor_parts, format_with_clauses};
+use crate::{D1Database, append_local_status_id_cursor_parts, format_with_clauses};
 use std::collections::HashMap;
 use worker::d1::D1Type;
 

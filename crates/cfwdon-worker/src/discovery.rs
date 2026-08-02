@@ -125,7 +125,7 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
         return Response::error("resource not found", 404);
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &handle.username).await? else {
         return Response::error("resource not found", 404);
     };
@@ -288,7 +288,7 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
         return Ok(response);
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -344,7 +344,7 @@ pub(crate) async fn remote_follow_response(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -650,7 +650,7 @@ pub(crate) async fn tag_response(ctx: RouteContext<()>) -> Result<Response> {
         .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing tag route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
 
     cache_public_response(
         Response::from_json(&build_tag_response(&db, &config, &tag).await?)?,
@@ -670,7 +670,7 @@ pub(crate) async fn followers_collection_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -704,7 +704,7 @@ pub(crate) async fn following_collection_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -729,7 +729,7 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };

@@ -6,8 +6,8 @@ use crate::timelines::{
     timeline_fetch_limit,
 };
 use crate::{
-    AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
-    RouteContext, StreamingBatch, StreamingEntry, StreamingEvent, StreamingLoopState,
+    AccountReference, D1Database, LocalApiAuthentication, NotificationsQuery, Request, Response,
+    Result, RouteContext, StreamingBatch, StreamingEntry, StreamingEvent, StreamingLoopState,
     StreamingPublicPlan, account_has_thread_mutes, actor_url, app_bearer_token_from_request,
     authenticate_local_api_request, build_announcements_document,
     build_app_verify_credentials_document_from_parts,
@@ -58,7 +58,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
-    D1Database, Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocket, WebSocketPair,
+    Env, Fetch, Headers, Method, RequestInit, ResponseBody, WebSocket, WebSocketPair,
     console_error, console_log, d1::D1Type, ws_events::WebsocketEvent,
 };
 
@@ -521,7 +521,7 @@ fn annual_report_document(row: &AnnualReportRow) -> serde_json::Value {
 }
 
 async fn list_generated_annual_reports(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     pending_only: bool,
 ) -> Result<Vec<AnnualReportRow>> {
@@ -546,7 +546,7 @@ async fn list_generated_annual_reports(
 }
 
 async fn find_generated_annual_report(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     year: i32,
 ) -> Result<Option<AnnualReportRow>> {
@@ -564,7 +564,7 @@ async fn find_generated_annual_report(
 }
 
 async fn count_account_statuses_between(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     start: &str,
     end: &str,
@@ -589,7 +589,7 @@ async fn count_account_statuses_between(
 }
 
 async fn list_recent_public_status_ids_between(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     start: &str,
     end: &str,
@@ -622,7 +622,7 @@ async fn list_recent_public_status_ids_between(
 }
 
 async fn create_generated_annual_report(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account: &cfwdon_domain::LocalAccount,
     year: i32,
 ) -> Result<AnnualReportRow> {
@@ -685,7 +685,7 @@ async fn create_generated_annual_report(
 }
 
 async fn mark_generated_annual_report_viewed(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     year: i32,
 ) -> Result<()> {
@@ -710,7 +710,7 @@ async fn mark_generated_annual_report_viewed(
 
 async fn is_authenticated_request(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<bool> {
     Ok(find_authenticated_local_account(req, db, config)
@@ -1188,7 +1188,7 @@ pub(crate) async fn oauth_userinfo_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match authenticate_local_api_request(&req, &db, &config).await? {
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["profile"]) {
@@ -1217,7 +1217,7 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
             return Response::error("Bad Request", 400);
         }
     }
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(status) = find_local_status_by_object_uri(&db, &config, &query.url).await? else {
         return Response::error("Record not found", 404);
     };
@@ -1254,7 +1254,7 @@ pub(crate) async fn donation_campaigns_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     if !is_authenticated_request(&req, &db, &config).await? {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "This method requires an authenticated user",
@@ -1272,7 +1272,7 @@ pub(crate) async fn annual_reports_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1290,7 +1290,7 @@ pub(crate) async fn annual_report_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1309,7 +1309,7 @@ pub(crate) async fn annual_report_action_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1343,7 +1343,7 @@ pub(crate) async fn annual_report_state_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1372,7 +1372,7 @@ pub(crate) async fn app_verify_credentials_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(token) = app_bearer_token_from_request(&req)? else {
         return Response::error("The access token is invalid", 401);
     };
@@ -1389,7 +1389,7 @@ pub(crate) async fn create_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let (account, request_oauth_app_id) =
         match authenticate_local_api_request(&req, &db, &config).await? {
             LocalApiAuthentication::OAuthToken(auth) => {
@@ -1456,7 +1456,7 @@ pub(crate) async fn email_confirmation_page_response(
             422,
         );
     };
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(pending) = find_pending_email_confirmation_by_token(&db, token).await? else {
         return email_confirmation_html_response(
             "Confirmation token is invalid",
@@ -1486,7 +1486,7 @@ pub(crate) async fn check_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return invalid_access_token_response();
     };
@@ -2404,6 +2404,9 @@ async fn streaming_home_batch(
                         attachments,
                         Some(&mention_preload),
                         Some(&boost_target_preload),
+                        None,
+                        None,
+                        None,
                     )
                     .await?;
                     (
@@ -3667,7 +3670,7 @@ fn streaming_channel_supports_live_events(stream: &str) -> bool {
 
 async fn resolve_streaming_auth(
     req: &Request,
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     query_access_token: Option<&str>,
     websocket_protocol_token: Option<&str>,
@@ -3766,7 +3769,7 @@ fn stream_hub_proxy_target(
 async fn streaming_websocket_upgrade_response(
     env: &Env,
     req: Request,
-    db: worker::D1Database,
+    db: crate::D1Database,
     config: cfwdon_core::AppConfig,
     initial_stream: Option<String>,
     tag: Option<String>,
@@ -3820,7 +3823,7 @@ async fn streaming_websocket_upgrade_response(
 
 fn streaming_sse_response(
     env: &Env,
-    db: worker::D1Database,
+    db: crate::D1Database,
     config: cfwdon_core::AppConfig,
     stream: String,
     tag: Option<String>,
@@ -3911,7 +3914,7 @@ pub(crate) async fn streaming_placeholder_response(
         }
     };
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let authenticated = match resolve_streaming_auth(
         &req,
         &db,
@@ -3970,7 +3973,7 @@ pub(crate) async fn statuses_index_placeholder_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
@@ -4027,7 +4030,7 @@ pub(crate) async fn accounts_index_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
@@ -4121,7 +4124,7 @@ pub(crate) async fn create_account_placeholder_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(token) = app_bearer_token_from_request(&req)? else {
         return invalid_access_token_response();
     };
@@ -4203,7 +4206,7 @@ pub(crate) async fn remove_from_followers_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

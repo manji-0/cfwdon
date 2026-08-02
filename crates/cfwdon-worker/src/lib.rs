@@ -10,6 +10,7 @@ mod accounts;
 mod activitypub;
 mod admin_api;
 mod admin_ui;
+mod app_cache;
 mod async_refreshes;
 mod auth;
 mod authorize_interaction;
@@ -19,6 +20,7 @@ mod conversation_store;
 mod conversations;
 mod crypto_keys;
 mod custom_emojis;
+mod d1_metrics;
 mod db_session;
 mod db_utils;
 mod delivery;
@@ -67,10 +69,12 @@ mod tag_actions;
 mod tags;
 mod time_html;
 mod timelines;
+mod tracked_d1;
 pub(crate) use accounts::*;
 pub(crate) use activitypub::*;
 pub(crate) use admin_api::*;
 pub(crate) use admin_ui::*;
+pub(crate) use app_cache::*;
 pub(crate) use async_refreshes::*;
 pub(crate) use auth::*;
 pub(crate) use authorize_interaction::*;
@@ -79,6 +83,7 @@ pub(crate) use content_helpers::*;
 pub(crate) use conversation_store::*;
 pub(crate) use conversations::*;
 pub(crate) use custom_emojis::*;
+pub(crate) use d1_metrics::*;
 pub(crate) use db_session::*;
 pub(crate) use db_utils::*;
 pub(crate) use delivery::*;
@@ -126,6 +131,7 @@ pub(crate) use tag_actions::*;
 pub(crate) use tags::*;
 pub(crate) use time_html::*;
 pub(crate) use timelines::*;
+pub(crate) use tracked_d1::{D1Database, D1PreparedStatement};
 
 #[event(fetch, respond_with_errors)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
@@ -152,8 +158,9 @@ fn scheduled_config(env: &Env) -> AppConfig {
 async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let config = scheduled_config(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
+    install_app_cache(&env, &config.app_cache_binding);
     let result = async {
-        let db = env.d1(&config.database_binding)?;
+        let db = D1Database::new(env.d1(&config.database_binding)?);
         match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
             Ok(true) => log_federation_event(
                 "outbox_queue_kick",
@@ -203,7 +210,8 @@ async fn queue(
     batch.ack_all();
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
-    let db = env.d1(&config.database_binding)?;
+    install_app_cache(&env, &config.app_cache_binding);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     if !pending_outbox_work_exists(&db).await? {
         log_federation_event(
             "outbox_queue_idle",

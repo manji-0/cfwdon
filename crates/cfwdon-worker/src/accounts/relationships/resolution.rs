@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub(crate) async fn resolve_requested_account_reference(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Option<AccountReference>> {

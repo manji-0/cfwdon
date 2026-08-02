@@ -5,9 +5,10 @@ use crate::remote::RemoteActorRow;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use std::collections::HashSet;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct LocalFollowAccountEntryRow {
     pub(crate) cursor_id: i64,

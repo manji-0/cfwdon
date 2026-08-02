@@ -13,8 +13,9 @@ use crate::timestamp_to_mastodon_iso8601;
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
 use serde::Deserialize;
 use worker::d1::D1Type;
-use worker::{D1Database, Env, Result, console_error};
+use worker::{Env, Result, console_error};
 
+use crate::D1Database;
 pub(crate) fn local_notification_response(
     id: String,
     notification_type: &str,

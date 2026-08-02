@@ -18,7 +18,7 @@ async fn suggested_accounts(
     let config = load_config(ctx);
     let query: SuggestionsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, &config)?;
     let Some(viewer) = require_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };
@@ -67,7 +67,7 @@ pub(crate) async fn delete_suggestion_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     if require_authenticated_local_account(&req, &db, &config)
         .await?
         .is_none()

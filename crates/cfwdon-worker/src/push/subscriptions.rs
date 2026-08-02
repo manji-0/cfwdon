@@ -4,9 +4,10 @@ use crate::runtime_config::load_config;
 use serde::Deserialize;
 use url::Url;
 use worker::d1::D1Type;
-use worker::{D1Database, Error, FormData};
+use worker::{Error, FormData};
 use worker::{Request, Response, Result, RouteContext};
 
+use crate::D1Database;
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct PushSubscriptionRow {
     pub(crate) id: i64,
@@ -583,7 +584,7 @@ pub(crate) async fn push_subscription_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -599,7 +600,7 @@ pub(crate) async fn create_push_subscription_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -620,7 +621,7 @@ pub(crate) async fn update_push_subscription_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -644,7 +645,7 @@ pub(crate) async fn delete_push_subscription_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

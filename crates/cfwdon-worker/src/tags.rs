@@ -13,9 +13,10 @@ use crate::statuses::{
 use cfwdon_core::AppConfig;
 use serde::Deserialize;
 use url::Url;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 pub(crate) fn tag_search_rank(query: &str, tag: &str) -> (u8, String) {
     (search_text_match_rank(query, tag), normalize_hashtag(tag))
 }

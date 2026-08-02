@@ -18,8 +18,9 @@ use cfwdon_domain::{LocalAccount, StoredRemotePollVoteIntent};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 struct RemoteStatusPollOptionPreloadRow {
     poll_id: String,
@@ -42,6 +43,10 @@ pub(crate) struct RemoteMastodonPollResponsePreload {
 impl RemoteMastodonPollResponsePreload {
     pub(crate) fn poll_response(&self, status_id: &str) -> Option<serde_json::Value> {
         self.polls_by_status_id.get(status_id).cloned()
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.polls_by_status_id.extend(other.polls_by_status_id);
     }
 }
 

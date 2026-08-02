@@ -44,7 +44,7 @@ pub(crate) async fn admin_reports_response(
     let query: AdminReportsQuery = req.query().unwrap_or_default();
     let pending_only = matches!(query.status.as_deref().map(str::trim), Some("pending"));
     let config = crate::load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let reports = list_reports_filtered(&db, 100, pending_only).await?;
     let mut responses = Vec::with_capacity(reports.len());
     for report in reports {
@@ -68,7 +68,7 @@ pub(crate) async fn admin_resolve_report_response(
         .ok_or_else(|| worker::Error::RustError("missing report id route parameter".to_owned()))?
         .to_owned();
     let config = crate::load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
 
     if !resolve_report(&db, &report_id, admin.id()).await? {
         return Response::error("report not found or already resolved", 404);
@@ -83,7 +83,7 @@ pub(crate) async fn admin_resolve_report_response(
 }
 
 async fn build_admin_report_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     report: &ReportRow,
 ) -> Result<AdminReportResponse> {
     let target = match resolve_account_reference(db, &report.target_account_id).await? {

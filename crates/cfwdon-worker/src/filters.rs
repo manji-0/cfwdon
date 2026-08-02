@@ -153,7 +153,7 @@ fn normalize_filter_action(value: Option<&str>) -> std::result::Result<String, E
 }
 
 pub(crate) async fn load_latest_filter_updated_at(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<Option<String>> {
     let account_id = D1Type::Text(account_id);
@@ -240,7 +240,7 @@ fn v2_filter_document_from_parts(
     })
 }
 
-async fn v2_filter_document(db: &worker::D1Database, row: &FilterRow) -> Result<serde_json::Value> {
+async fn v2_filter_document(db: &crate::D1Database, row: &FilterRow) -> Result<serde_json::Value> {
     let (keywords, statuses) = futures_util::try_join!(
         list_filter_keywords(db, &row.id),
         list_filter_statuses(db, &row.id),
@@ -249,7 +249,7 @@ async fn v2_filter_document(db: &worker::D1Database, row: &FilterRow) -> Result<
     Ok(v2_filter_document_from_parts(row, &keywords, &statuses))
 }
 
-async fn list_filters(db: &worker::D1Database, account_id: &str) -> Result<Vec<FilterRow>> {
+async fn list_filters(db: &crate::D1Database, account_id: &str) -> Result<Vec<FilterRow>> {
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
@@ -265,7 +265,7 @@ async fn list_filters(db: &worker::D1Database, account_id: &str) -> Result<Vec<F
 }
 
 async fn find_filter(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     filter_id: &str,
 ) -> Result<Option<FilterRow>> {
@@ -283,7 +283,7 @@ async fn find_filter(
 }
 
 async fn list_filter_keywords(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filter_id: &str,
 ) -> Result<Vec<FilterKeywordRow>> {
     let filter_id = D1Type::Text(filter_id);
@@ -301,7 +301,7 @@ async fn list_filter_keywords(
 }
 
 async fn list_filter_keywords_for_filters(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filters: &[FilterRow],
 ) -> Result<HashMap<String, Vec<FilterKeywordRow>>> {
     if filters.is_empty() {
@@ -335,7 +335,7 @@ async fn list_filter_keywords_for_filters(
 }
 
 async fn find_filter_keyword(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     keyword_id: &str,
 ) -> Result<Option<FilterKeywordRow>> {
@@ -354,7 +354,7 @@ async fn find_filter_keyword(
 }
 
 async fn list_filter_statuses(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filter_id: &str,
 ) -> Result<Vec<FilterStatusRow>> {
     let filter_id = D1Type::Text(filter_id);
@@ -372,7 +372,7 @@ async fn list_filter_statuses(
 }
 
 async fn list_filter_statuses_for_filters(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filters: &[FilterRow],
 ) -> Result<HashMap<String, Vec<FilterStatusRow>>> {
     if filters.is_empty() {
@@ -406,7 +406,7 @@ async fn list_filter_statuses_for_filters(
 }
 
 async fn find_filter_status(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status_filter_id: &str,
 ) -> Result<Option<FilterStatusRow>> {
@@ -424,7 +424,7 @@ async fn find_filter_status(
     .await
 }
 
-async fn list_v1_filters(db: &worker::D1Database, account_id: &str) -> Result<Vec<V1FilterRow>> {
+async fn list_v1_filters(db: &crate::D1Database, account_id: &str) -> Result<Vec<V1FilterRow>> {
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
@@ -441,7 +441,7 @@ async fn list_v1_filters(db: &worker::D1Database, account_id: &str) -> Result<Ve
 }
 
 async fn find_v1_filter(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     keyword_id: &str,
 ) -> Result<Option<V1FilterRow>> {
@@ -460,7 +460,7 @@ async fn find_v1_filter(
 }
 
 async fn create_filter_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     title: &str,
     contexts: &[String],
@@ -487,11 +487,12 @@ async fn create_filter_row(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(filter_id)
 }
 
 async fn update_filter_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     filter_id: &str,
     title: &str,
@@ -526,7 +527,7 @@ async fn update_filter_row(
 }
 
 async fn delete_filter_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     filter_id: &str,
 ) -> Result<bool> {
@@ -545,11 +546,15 @@ async fn delete_filter_row(
         .bind_refs(bindings.iter())?
         .run()
         .await?;
-    did_change(&result)
+    let changed = did_change(&result)?;
+    if changed {
+        crate::invalidate_account_capabilities(account_id).await;
+    }
+    Ok(changed)
 }
 
 async fn replace_filter_keywords(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filter_id: &str,
     keywords: &[(String, bool)],
 ) -> Result<()> {
@@ -579,7 +584,7 @@ async fn replace_filter_keywords(
 }
 
 async fn create_filter_keyword_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filter_id: &str,
     keyword: &str,
     whole_word: bool,
@@ -602,7 +607,7 @@ async fn create_filter_keyword_row(
 }
 
 async fn update_filter_keyword_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     keyword_id: &str,
     keyword: &str,
     whole_word: bool,
@@ -627,7 +632,7 @@ async fn update_filter_keyword_row(
 }
 
 async fn delete_filter_keyword_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     keyword_id: &str,
 ) -> Result<Option<String>> {
     let keyword_id_binding = D1Type::Text(keyword_id);
@@ -653,7 +658,7 @@ async fn delete_filter_keyword_row(
 }
 
 async fn create_filter_status_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     filter_id: &str,
     status_id: &str,
 ) -> Result<String> {
@@ -673,7 +678,7 @@ async fn create_filter_status_row(
     Ok(status_filter_id)
 }
 
-async fn delete_filter_status_row(db: &worker::D1Database, status_filter_id: &str) -> Result<bool> {
+async fn delete_filter_status_row(db: &crate::D1Database, status_filter_id: &str) -> Result<bool> {
     let status_filter_id_binding = D1Type::Text(status_filter_id);
     let result = db
         .prepare("DELETE FROM filter_statuses WHERE id = ?1")
@@ -785,9 +790,16 @@ impl AccountFilterMatcher {
 }
 
 pub(crate) async fn load_account_filter_matcher(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<AccountFilterMatcher> {
+    if !crate::load_account_capabilities(db, account_id)
+        .await?
+        .has_filters
+    {
+        return Ok(AccountFilterMatcher::default());
+    }
+
     let filters = list_filters(db, account_id).await?;
     if filters.is_empty() {
         return Ok(AccountFilterMatcher::default());
@@ -806,7 +818,7 @@ pub(crate) async fn load_account_filter_matcher(
 }
 
 pub(crate) async fn load_status_filtered(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status_id: &str,
     text: &str,
@@ -1028,7 +1040,7 @@ async fn parse_status_filter_request(
 
 pub(crate) async fn filters_v1_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1044,7 +1056,7 @@ pub(crate) async fn filters_v1_response(req: Request, ctx: RouteContext<()>) -> 
 
 pub(crate) async fn filter_v1_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1066,7 +1078,7 @@ pub(crate) async fn create_filter_v1_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1114,7 +1126,7 @@ pub(crate) async fn update_filter_v1_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1198,7 +1210,7 @@ pub(crate) async fn delete_filter_v1_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1225,7 +1237,7 @@ pub(crate) async fn delete_filter_v1_response(
 
 pub(crate) async fn filters_v2_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1257,7 +1269,7 @@ pub(crate) async fn filters_v2_response(req: Request, ctx: RouteContext<()>) -> 
 
 pub(crate) async fn filter_v2_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1279,7 +1291,7 @@ pub(crate) async fn create_filter_v2_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1347,7 +1359,7 @@ pub(crate) async fn update_filter_v2_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1426,7 +1438,7 @@ pub(crate) async fn delete_filter_v2_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1454,7 +1466,7 @@ pub(crate) async fn filter_keywords_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1480,7 +1492,7 @@ pub(crate) async fn create_filter_keyword_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1516,7 +1528,7 @@ pub(crate) async fn filter_keyword_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1537,7 +1549,7 @@ pub(crate) async fn update_filter_keyword_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1576,7 +1588,7 @@ pub(crate) async fn delete_filter_keyword_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1605,7 +1617,7 @@ pub(crate) async fn filter_statuses_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1631,7 +1643,7 @@ pub(crate) async fn create_filter_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1665,7 +1677,7 @@ pub(crate) async fn filter_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1686,7 +1698,7 @@ pub(crate) async fn delete_filter_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

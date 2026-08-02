@@ -1,7 +1,7 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, activity_object_id, activitypub_has_type,
-    ensure_account_keys, extract_inbox_target_username, find_account_by_id,
-    find_account_by_username, find_follow_by_activity_id, find_local_status_by_object_uri,
+    AppConfig, LocalAccount, activity_object_id, activitypub_has_type, ensure_account_keys,
+    extract_inbox_target_username, find_account_by_id, find_account_by_username,
+    find_follow_by_activity_id, find_local_status_by_object_uri,
     find_status_poll_vote_by_activity_uri, first_local_follower_for_remote_actor,
     list_local_follower_accounts_for_remote_actor, note_targets_account_or_followers,
     object_has_activitypub_actor_type, object_has_supported_remote_status_type,
@@ -10,6 +10,7 @@ use super::{
 use worker::Result;
 use worker::d1::D1Type;
 
+use crate::D1Database;
 #[allow(dead_code)]
 pub(crate) async fn resolve_inbox_target_account(
     db: &D1Database,

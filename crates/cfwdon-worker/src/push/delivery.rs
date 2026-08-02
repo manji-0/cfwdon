@@ -1,6 +1,7 @@
 use crate::{
-    AppConfig, Error, Result, StatusRow, build_local_status_response_for_recipient_soft,
-    find_account_by_id, find_local_status_by_object_uri, find_status_by_id, find_status_poll_by_id,
+    AppConfig, D1Database, Error, Result, StatusRow,
+    build_local_status_response_for_recipient_soft, find_account_by_id,
+    find_local_status_by_object_uri, find_status_by_id, find_status_poll_by_id,
     load_push_subscription, local_status_target_uri, notification_timestamp_sort_token,
     publish_local_actor_notification_soft, push_subscription_alert_enabled,
 };
@@ -12,7 +13,7 @@ use wasm_bindgen::JsValue;
 use web_push_native::{
     Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey,
 };
-use worker::{D1Database, Env, Fetch, Headers, Method, Request, RequestInit};
+use worker::{Env, Fetch, Headers, Method, Request, RequestInit};
 
 #[derive(Debug, Deserialize)]
 struct AccountIdRow {

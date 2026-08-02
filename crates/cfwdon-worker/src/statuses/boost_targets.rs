@@ -13,7 +13,8 @@ use super::{
     local_status_identity_from_uri,
 };
 use std::collections::{HashMap, HashSet};
-use worker::D1Database;
+
+use crate::D1Database;
 
 /// The status a boost points at, once resolved.
 #[derive(Debug, Clone)]
@@ -39,6 +40,10 @@ impl BoostTargetPreload {
         self.resolved_uris
             .contains(uri)
             .then(|| self.by_uri.get(uri))
+    }
+
+    pub(crate) fn resolved_targets(&self) -> impl Iterator<Item = &BoostTarget> {
+        self.by_uri.values()
     }
 }
 

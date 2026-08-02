@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use worker::{D1Database, Result, d1::D1Type};
+use worker::{Result, d1::D1Type};
 
-use crate::{json_string_array, sql_in_json_each};
+use crate::{D1Database, json_string_array, sql_in_json_each};
 
 #[derive(Debug, Deserialize)]
 struct StatusCountsRow {
@@ -27,6 +27,11 @@ impl StatusCountsPreload {
 
     pub(crate) fn remote_counts(&self, status_id: &str) -> Option<(u64, u64)> {
         self.remote.get(status_id).copied()
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.local.extend(other.local);
+        self.remote.extend(other.remote);
     }
 }
 

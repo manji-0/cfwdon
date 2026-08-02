@@ -15,10 +15,9 @@ use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use wasm_bindgen::JsValue;
-use worker::{
-    D1Database, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result,
-};
+use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 
+use crate::D1Database;
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
 const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
 const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";

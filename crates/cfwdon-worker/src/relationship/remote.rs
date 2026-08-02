@@ -1,7 +1,9 @@
-use crate::{FollowAccountRequest, FollowRow, LocalAccount, RemoteActorProfile, RemoteActorRow};
+use crate::{
+    D1Database, FollowAccountRequest, FollowRow, LocalAccount, RemoteActorProfile, RemoteActorRow,
+};
 use cfwdon_domain::{RemoteFollowState, initial_remote_follow_state};
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
 #[derive(Debug)]
 struct RemoteFollowUpsertDraft {

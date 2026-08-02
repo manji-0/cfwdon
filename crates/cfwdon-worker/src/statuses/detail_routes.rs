@@ -49,7 +49,7 @@ enum LoadedStatusApiSubject {
 struct StatusDetailBaseContext {
     config: cfwdon_core::AppConfig,
     session: crate::D1RequestSession,
-    db: worker::D1Database,
+    db: crate::D1Database,
     status_id: String,
 }
 
@@ -483,7 +483,7 @@ pub(crate) async fn enrich_card_with_remote_preview(card: &mut serde_json::Value
 }
 
 pub(crate) async fn resolve_status_reference(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     id: &str,
 ) -> Result<Option<ResolvedStatus>> {
@@ -542,7 +542,7 @@ async fn resolve_status_detail_request_context(
 }
 
 async fn build_local_interaction_account_responses(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     account_ids: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
@@ -562,7 +562,7 @@ async fn build_local_interaction_account_responses(
 }
 
 async fn build_remote_interaction_account_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
     let status_summary = crate::load_remote_actor_status_summary(db, actor_uri).await?;
@@ -633,7 +633,7 @@ async fn build_remote_interaction_account_response(
 }
 
 async fn build_remote_interaction_account_responses(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     actor_uris: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
     let mut responses = Vec::new();
@@ -758,7 +758,7 @@ pub(crate) async fn status_object_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing status id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -817,7 +817,7 @@ pub(crate) async fn status_quote_authorization_object_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing authorization key route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(target_account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -1019,7 +1019,7 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
 }
 
 async fn load_status_api_subject(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&crate::LocalAccount>,
     status: ResolvedStatus,
@@ -1033,7 +1033,7 @@ async fn load_status_api_subject(
 }
 
 async fn build_status_api_document(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&crate::LocalAccount>,
     subject: LoadedStatusApiSubject,
@@ -1067,7 +1067,7 @@ async fn build_status_api_document(
 }
 
 async fn load_local_status_api_subject(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     _config: &cfwdon_core::AppConfig,
     viewer: Option<&crate::LocalAccount>,
     status: crate::StatusRow,
@@ -1081,7 +1081,7 @@ async fn load_local_status_api_subject(
 }
 
 async fn load_remote_status_api_subject(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status: crate::RemoteStatusRow,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
@@ -1094,7 +1094,7 @@ async fn load_remote_status_api_subject(
 }
 
 async fn context_response_with_async_refresh<T: Serialize>(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     status_id: &str,
     viewer_present: bool,
     context: &T,

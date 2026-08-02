@@ -4,8 +4,9 @@ use super::{
 };
 use cfwdon_domain::AccountHandle;
 use std::collections::{HashMap, HashSet};
-use worker::{D1Database, Result, d1::D1Type};
+use worker::{Result, d1::D1Type};
 
+use crate::D1Database;
 pub(crate) async fn build_status_mentions(
     db: &D1Database,
     config: &AppConfig,

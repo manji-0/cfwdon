@@ -18,8 +18,9 @@ use crate::responses::MastodonAccountResponse;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
+use crate::D1Database;
 pub(crate) fn normalized_account_search_query(query: &str) -> String {
     let query = query.trim().trim_start_matches('@');
     let query = if query

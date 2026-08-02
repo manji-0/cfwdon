@@ -21,7 +21,7 @@ pub(crate) async fn admin_custom_emojis_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) if is_admin_account(&config, &account) => {}
         Some(_) => return Response::error("Forbidden", 403),
@@ -36,7 +36,7 @@ pub(crate) async fn admin_create_custom_emoji_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) if is_admin_account(&config, &account) => {}
@@ -98,7 +98,7 @@ pub(crate) async fn admin_update_custom_emoji_response(
             worker::Error::RustError("missing custom emoji id route parameter".to_owned())
         })?
         .to_owned();
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding).ok();
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) if is_admin_account(&config, &account) => {}
@@ -173,7 +173,7 @@ pub(crate) async fn admin_delete_custom_emoji_response(
             worker::Error::RustError("missing custom emoji id route parameter".to_owned())
         })?
         .to_owned();
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) if is_admin_account(&config, &account) => {}

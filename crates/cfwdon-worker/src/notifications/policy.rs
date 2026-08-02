@@ -53,7 +53,7 @@ fn build_notification_policy_document(row: &NotificationPolicyRow) -> serde_json
 }
 
 pub(crate) async fn load_notification_policy_row(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<NotificationPolicyRow> {
     let account_id = D1Type::Text(account_id);

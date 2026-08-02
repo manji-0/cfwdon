@@ -1,16 +1,20 @@
 //! D1 Sessions API helpers for request-scoped replica-aware queries.
 //!
-//! workers-rs exposes [`worker::D1DatabaseSession`] separately from [`worker::D1Database`].
+//! workers-rs exposes [`worker::D1DatabaseSession`] separately from [`crate::D1Database`].
 //! Existing cfwdon storage helpers take `&D1Database` and only call `prepare` / `batch`.
 //! Session JS objects implement those same methods, so this module re-views a session as the
 //! `D1Database` prepare/batch surface used throughout the worker. Do not call `dump`, `exec`,
 //! or `with_session` on handles returned by [`D1RequestSession::db_handle`].
 
 use cfwdon_core::AppConfig;
-use wasm_bindgen::JsCast;
-use worker::{D1Database, D1DatabaseSession, Method, Request, Response, Result, RouteContext};
+use worker::{
+    D1Database as InnerD1Database, D1DatabaseSession, Method, Request, Response, Result,
+    RouteContext,
+};
 
-/// Bookmark header used by Cloudflare's D1 Sessions examples and client continuations.
+use crate::D1Database;
+
+/// Bookmark header used by Cloudflare's D1 Sessions examples and client continuations. used by Cloudflare's D1 Sessions examples and client continuations.
 pub(crate) const D1_BOOKMARK_HEADER: &str = "x-d1-bookmark";
 
 /// Request-scoped D1 session with a prepare/batch-compatible database view.
@@ -21,7 +25,7 @@ pub(crate) struct D1RequestSession {
 impl D1RequestSession {
     /// Owned prepare/batch handle that shares the same JS session object.
     pub(crate) fn db_handle(&self) -> D1Database {
-        D1Database::unchecked_from_js(self.session.as_ref().clone())
+        D1Database::from_unchecked_js(self.session.as_ref().clone())
     }
 
     /// Latest bookmark observed by this session, if any query has run.
@@ -30,13 +34,22 @@ impl D1RequestSession {
     }
 }
 
+/// Bind the configured D1 database with per-request query metrics tracking.
+#[allow(clippy::needless_borrow)]
+pub(crate) fn bind_request_d1(ctx: &RouteContext<()>, config: &AppConfig) -> Result<D1Database> {
+    Ok(D1Database::new(ctx.d1(&config.database_binding)?))
+}
+
 /// Open a session for this HTTP request.
 ///
 /// Anchor selection:
 /// - `x-d1-bookmark` when present (client continuation)
 /// - `first-unconstrained` for safe methods (GET/HEAD) so reads can use replicas
 /// - `first-primary` for mutating methods so the first query sees the latest write state
-pub(crate) fn open_request_session(db: &D1Database, req: &Request) -> Result<D1RequestSession> {
+pub(crate) fn open_request_session(
+    db: &InnerD1Database,
+    req: &Request,
+) -> Result<D1RequestSession> {
     let anchor = session_anchor_for_request(req)?;
     let session = db.with_session(anchor.as_deref())?;
     Ok(D1RequestSession { session })

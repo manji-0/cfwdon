@@ -12,9 +12,10 @@ use cfwdon_domain::{
     QuoteTargetResolution, StatusDraft, StoredLocalReblogIntent, StoredLocalStatusIntent,
     Visibility,
 };
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 async fn quote_target_resolution(
     db: &D1Database,
     config: &AppConfig,
@@ -94,7 +95,7 @@ pub(crate) async fn insert_status(
 async fn insert_local_status_intent(
     db: &D1Database,
     intent: &StoredLocalStatusIntent,
-    outbox_statement: Option<worker::d1::D1PreparedStatement>,
+    outbox_statement: Option<crate::D1PreparedStatement>,
 ) -> Result<()> {
     let bindings = local_status_insert_bindings(intent);
 

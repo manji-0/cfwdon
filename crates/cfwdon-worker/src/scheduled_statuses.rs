@@ -527,7 +527,7 @@ pub(crate) async fn process_due_scheduled_statuses(
         None => return Response::error("Auth0 authentication required", 401),
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let summary =
         process_due_scheduled_statuses_for_config(&db, &config, Some(&ctx.env), 32).await?;
     Response::from_json(&summary)
@@ -1329,7 +1329,7 @@ pub(crate) async fn scheduled_statuses_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let access = match resolve_scheduled_status_request_access(
         &req,
         &db,
@@ -1388,7 +1388,7 @@ pub(crate) async fn scheduled_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let access = match resolve_scheduled_status_request_access(
         &req,
         &db,
@@ -1421,7 +1421,7 @@ pub(crate) async fn update_scheduled_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let access = match resolve_scheduled_status_request_access(
         &req,
         &db,
@@ -1503,7 +1503,7 @@ pub(crate) async fn delete_scheduled_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let access = match resolve_scheduled_status_request_access(
         &req,
         &db,

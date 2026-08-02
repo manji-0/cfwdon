@@ -1,3 +1,4 @@
+use crate::D1Database;
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
@@ -42,7 +43,7 @@ pub(crate) async fn poll_response(req: Request, ctx: RouteContext<()>) -> Result
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing poll id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     if let Some(poll) = find_status_poll_by_id(&db, &poll_id).await? {
         let Some(status) = find_status_by_id(&db, &poll.status_id).await? else {
@@ -94,7 +95,7 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing poll id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -221,7 +222,7 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
         None => return Response::error("Auth0 authentication required", 401),
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let summary = process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
     Response::from_json(&summary)
 }

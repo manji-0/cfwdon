@@ -1,12 +1,13 @@
 use super::{
-    AppConfig, D1Database, LocalAccount, RemoteActorProfile, activity_object_id,
-    apply_incoming_poll_vote, delete_incoming_poll_vote, enqueue_status_update_activity,
-    find_local_status_by_object_uri, find_status_by_id, find_status_poll_by_status_id,
+    AppConfig, LocalAccount, RemoteActorProfile, activity_object_id, apply_incoming_poll_vote,
+    delete_incoming_poll_vote, enqueue_status_update_activity, find_local_status_by_object_uri,
+    find_status_by_id, find_status_poll_by_status_id,
     find_status_poll_vote_for_remote_actor_by_activity_uri, is_iso_timestamp_in_past,
     list_status_poll_options,
 };
 use worker::Result;
 
+use crate::D1Database;
 pub(crate) async fn handle_inbox_poll_vote_undo(
     db: &D1Database,
     activity: &serde_json::Value,

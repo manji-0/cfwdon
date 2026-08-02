@@ -1,9 +1,11 @@
-use crate::{json_string_array, sql_in_json_each, sql_placeholders, unique_ordered_refs};
+use crate::{
+    D1Database, json_string_array, sql_in_json_each, sql_placeholders, unique_ordered_refs,
+};
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashMap;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
 pub(crate) type AccountRow = LocalAccountRecord;
 

@@ -20,8 +20,8 @@ use crate::{
     remote_status_from_record, sanitize_remote_http_url, sanitize_remote_plain_text,
     upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
 };
-use worker::D1Database;
 
+use crate::D1Database;
 struct RemoteAccountStatusPage {
     actor: RemoteActorRow,
     actor_social_counts: Option<crate::RemoteActorSocialCounts>,
@@ -340,6 +340,9 @@ async fn remote_account_statuses_json_response(
             remote_attachments_by_status_id
                 .remove(&status.id)
                 .unwrap_or_default(),
+            None,
+            None,
+            None,
             None,
             None,
         )

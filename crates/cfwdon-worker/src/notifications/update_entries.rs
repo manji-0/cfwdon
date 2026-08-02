@@ -7,8 +7,9 @@ use super::{
     preload_notification_statuses, remote_account_rest_id,
 };
 use cfwdon_domain::LocalAccount;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 pub(crate) async fn collect_update_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,

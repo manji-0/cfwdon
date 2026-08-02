@@ -17,7 +17,7 @@ pub(crate) async fn authorize_interaction_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AuthorizeInteractionQuery = req.query()?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match resolve_search_account(&db, &config, &query.uri).await? {
         Some(account) => account,
         None => return Response::error("remote interaction target not found", 404),
@@ -37,7 +37,7 @@ pub(crate) async fn authorize_interaction_submit_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let uri = authorize_interaction_uri(&mut req).await?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return access_login_redirect(&config, &req, &uri),

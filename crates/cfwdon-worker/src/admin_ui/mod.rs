@@ -15,7 +15,7 @@ pub(crate) async fn admin_ui_response(req: Request, ctx: RouteContext<()>) -> Re
         return serve_embedded_asset(&path);
     }
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) if is_admin_account(&config, &account) => account,
         Some(_) => return forbidden_html_response(),

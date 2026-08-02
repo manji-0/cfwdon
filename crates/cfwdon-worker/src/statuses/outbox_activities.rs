@@ -1,7 +1,6 @@
-use super::{
-    AppConfig, D1Database, LocalAccount, Result, StatusRow, actor_url, build_activitypub_note,
-};
+use super::{AppConfig, LocalAccount, Result, StatusRow, actor_url, build_activitypub_note};
 
+use crate::D1Database;
 pub(crate) async fn build_outbox_activities(
     db: &D1Database,
     config: &AppConfig,

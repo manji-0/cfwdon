@@ -10,8 +10,8 @@ use crate::{
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
 };
-use worker::D1Database;
 
+use crate::D1Database;
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn local_account_statuses_response(
     req: &Request,

@@ -1,12 +1,13 @@
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::{ComposingAccessProvision, LocalAccount};
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
 use crate::AccountRow;
 use crate::crypto_keys::generate_account_key_material;
 use crate::secret_storage::{decrypt_secret, encrypt_secret, is_encrypted_secret};
 
+use crate::D1Database;
 pub(crate) async fn resolve_local_account(
     db: &D1Database,
     config: &AppConfig,

@@ -1,6 +1,7 @@
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
     let bindings = [D1Type::Text(status_id)];
     db.prepare(

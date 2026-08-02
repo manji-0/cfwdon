@@ -14,7 +14,7 @@ pub(crate) async fn authorize_admin_request(
     ctx: &RouteContext<()>,
 ) -> Result<AdminAuthorization> {
     let config = load_config(ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, &config)?;
     Ok(
         match find_authenticated_local_account(req, &db, &config).await? {
             Some(account) if is_admin_account(&config, &account) => {

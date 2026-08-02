@@ -1,8 +1,9 @@
 use crate::db_utils::count_rows;
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
+use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct StatusPollRow {
     pub(crate) id: String,

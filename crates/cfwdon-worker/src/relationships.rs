@@ -7,8 +7,9 @@ use super::{
 use js_sys::Date;
 use serde::{Deserialize, Serialize};
 use worker::d1::D1Type;
-use worker::{D1Database, Error, Result};
+use worker::{Error, Result};
 
+use crate::D1Database;
 #[derive(Debug, Serialize)]
 pub(crate) struct RelationshipResponse {
     pub(crate) id: String,

@@ -11,6 +11,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
 - A KV namespace bound as `REMOTE_DNS_CACHE` (remote hostname DoH validation cache)
+- A KV namespace bound as `APP_CACHE` (account capability bits and other short-lived app cache)
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
 
 ## Provisioning Steps
@@ -37,7 +38,16 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
    Copy the returned ids into `[[kv_namespaces]]` for binding `REMOTE_DNS_CACHE`.
 
-4. Configure R2 CORS for the public instance origin.
+4. Create the app cache KV namespace.
+
+   ```sh
+   wrangler kv namespace create APP_CACHE
+   wrangler kv namespace create APP_CACHE --preview
+   ```
+
+   Copy the returned ids into `[[kv_namespaces]]` for binding `APP_CACHE`.
+
+5. Configure R2 CORS for the public instance origin.
 
    ```json
    {
@@ -61,13 +71,13 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
    If the bucket custom domain is already serving cached objects, purge the media hostname after changing the CORS policy so cached assets pick up the new headers.
 
-4. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
+6. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
 
-5. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
+7. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
 
    At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`.
 
-6. Configure secrets that should not be committed.
+8. Configure secrets that should not be committed.
 
    ```sh
    wrangler secret put RESEND_API_KEY
@@ -77,13 +87,13 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
    Only set optional secrets for features you enable.
 
-7. Apply migrations to the remote D1 database.
+9. Apply migrations to the remote D1 database.
 
    ```sh
    wrangler d1 migrations apply DB --remote
    ```
 
-8. Backfill deployed secret storage after migrations.
+10. Backfill deployed secret storage after migrations.
 <!-- constrained-by ../reference/configuration.md#secret-handling -->
 
    Set `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` in the shell running the backfill to the same secret value configured in Cloudflare, then hash existing OAuth tokens and move account private keys into encrypted storage.
@@ -94,13 +104,13 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
    Use `--dry-run` first if you want to inspect the generated SQL.
 
-9. Run the full local gate.
+11. Run the full local gate.
 
    ```sh
    devbox run ci
    ```
 
-10. Deploy the Worker.
+12. Deploy the Worker.
 
    ```sh
    wrangler deploy
@@ -111,7 +121,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - `devbox run ci`
 - `wrangler.toml` contains active `[[d1_databases]]` and `[[r2_buckets]]` bindings
 - production vars do not contain placeholder values from the sample `wrangler.toml`
-- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, and `REMOTE_DNS_CACHE`
+- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, and `APP_CACHE`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `migrations/` contains the schema required by the Worker code
 

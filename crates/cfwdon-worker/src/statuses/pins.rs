@@ -6,7 +6,7 @@ use super::{
 use worker::d1::D1Type;
 
 pub(crate) async fn is_local_status_pinned_by(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status_id: &str,
 ) -> Result<bool> {
@@ -26,7 +26,7 @@ pub(crate) async fn is_local_status_pinned_by(
 }
 
 pub(crate) async fn pin_local_status(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status_id: &str,
 ) -> Result<()> {
@@ -43,7 +43,7 @@ pub(crate) async fn pin_local_status(
 }
 
 pub(crate) async fn unpin_local_status(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
     status_id: &str,
 ) -> Result<()> {
@@ -60,7 +60,7 @@ pub(crate) async fn unpin_local_status(
 }
 
 pub(crate) async fn list_pinned_statuses_for_account(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     account_id: &str,
 ) -> Result<Vec<crate::StatusRow>> {
     let account_id = D1Type::Text(account_id);
@@ -82,7 +82,7 @@ pub(crate) async fn list_pinned_statuses_for_account(
 }
 
 async fn pinned_status_response(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
     subject: super::LoadedLocalStatusResponseSubject,
@@ -111,7 +111,7 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -133,7 +133,7 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),

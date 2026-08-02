@@ -8,8 +8,9 @@ use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::d1::D1Type;
-use worker::{Bucket, D1Database, Error, HttpMetadata, Result};
+use worker::{Bucket, Error, HttpMetadata, Result};
 
+use crate::D1Database;
 struct AccountSourceDefaults {
     post_visibility: String,
     quote_policy: String,

@@ -24,8 +24,9 @@ use super::{
 };
 use cfwdon_domain::LocalAccount;
 use std::collections::{HashMap, HashSet};
-use worker::{D1Database, Result, d1::D1Type};
+use worker::{Result, d1::D1Type};
 
+use crate::D1Database;
 fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: status.id.clone(),
@@ -141,6 +142,9 @@ impl NotificationStatusPreloads {
             media,
             Some(&self.mentions),
             Some(&self.boost_targets),
+            None,
+            None,
+            None,
         )
         .await
     }
@@ -550,4 +554,175 @@ pub(crate) async fn collect_status_notification_entries(
     entries.extend(remote_entries);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cfwdon_domain::{LocalAccountRecord, QuoteState, Visibility};
+
+    fn test_config() -> AppConfig {
+        AppConfig::new("https://social.example", "cfwdon", "test instance")
+    }
+
+    fn test_local_account(username: &str) -> LocalAccount {
+        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", username))
+    }
+
+    fn test_local_status(ap_id: Option<String>) -> StatusRow {
+        StatusRow {
+            id: "status-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            ap_id,
+            in_reply_to_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>Hello</p>".to_owned(),
+            text: "Hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: Visibility::Public,
+            sensitive: false,
+            language: Some("ja".to_owned()),
+            quote_approval_policy: None,
+            quote_state: QuoteState::Accepted,
+            application_id: None,
+            created_at: "2026-01-02T00:00:00.000Z".to_owned(),
+            updated_at: None,
+        }
+    }
+
+    fn test_remote_notification_row() -> RemoteStatusNotificationRow {
+        RemoteStatusNotificationRow {
+            id: "remote-status-1".to_owned(),
+            actor_uri: "https://remote.example/users/bob".to_owned(),
+            object_uri: "https://remote.example/users/bob/statuses/1".to_owned(),
+            url: Some("https://remote.example/@bob/1".to_owned()),
+            in_reply_to_uri: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>Hi</p>".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 1,
+            language: Some("en".to_owned()),
+            quote_state: "accepted".to_owned(),
+            published_at: "2026-01-02T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn empty_preloads() -> NotificationStatusPreloads {
+        NotificationStatusPreloads {
+            local_accounts_by_id: HashMap::new(),
+            local_media_by_status_id: HashMap::new(),
+            remote_actors_by_uri: HashMap::new(),
+            remote_attachments_by_status_id: HashMap::new(),
+            in_reply_to_account_ids: HashMap::new(),
+            resolved_config: test_config(),
+            counts: StatusCountsPreload::default(),
+            quote_counts: StatusQuoteCountsPreload::default(),
+            local_polls: MastodonPollResponsePreload::default(),
+            local_viewer_state: LocalStatusViewerStatePreload::default(),
+            remote_viewer_state: RemoteStatusViewerStatePreload::default(),
+            remote_polls: RemoteMastodonPollResponsePreload::default(),
+            remote_edit_updated_at: RemoteStatusEditUpdatedAtPreload::default(),
+            remote_federated_emojis: RemoteStatusFederatedEmojisPreload::default(),
+            applications: StatusApplicationPreload::default(),
+            mentions: MentionAccountsPreload::default(),
+            boost_targets: BoostTargetPreload::default(),
+            muted_notification_actor_uris: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn local_status_quote_count_uri_uses_ap_id_when_present() {
+        let config = test_config();
+        let account = test_local_account("alice");
+        let status = test_local_status(Some(
+            "https://social.example/users/alice/statuses/status-1".to_owned(),
+        ));
+
+        assert_eq!(
+            local_status_quote_count_uri(&config, &status, &account),
+            "https://social.example/users/alice/statuses/status-1"
+        );
+    }
+
+    #[test]
+    fn local_status_quote_count_uri_falls_back_to_actor_status_url() {
+        let config = test_config();
+        let account = test_local_account("alice");
+        let status = test_local_status(None);
+
+        assert_eq!(
+            local_status_quote_count_uri(&config, &status, &account),
+            "https://social.example/users/alice/statuses/status-1"
+        );
+    }
+
+    #[test]
+    fn remote_status_notification_row_maps_valid_row() {
+        let status = remote_status_notification_row(&test_remote_notification_row())
+            .expect("valid row maps to a remote status");
+
+        assert_eq!(status.id, "remote-status-1");
+        assert_eq!(status.actor_uri, "https://remote.example/users/bob");
+        assert_eq!(
+            status.object_uri,
+            "https://remote.example/users/bob/statuses/1"
+        );
+        assert_eq!(status.url.as_deref(), Some("https://remote.example/@bob/1"));
+        assert_eq!(status.content_html, "<p>Hi</p>");
+        assert_eq!(status.visibility, Visibility::Public);
+        assert!(status.sensitive);
+        assert_eq!(status.language.as_deref(), Some("en"));
+        assert_eq!(status.quote_state, QuoteState::Accepted);
+        assert_eq!(status.published_at, "2026-01-02T00:00:00Z");
+    }
+
+    #[test]
+    fn remote_status_notification_row_rejects_invalid_visibility() {
+        let mut row = test_remote_notification_row();
+        row.visibility = "invalid".to_owned();
+
+        assert!(remote_status_notification_row(&row).is_none());
+    }
+
+    #[test]
+    fn notification_preloads_default_mute_and_media_accessors() {
+        let preloads = empty_preloads();
+
+        assert!(!preloads.is_notification_muted("https://remote.example/users/bob"));
+        assert!(preloads.local_media("status-1").is_empty());
+        assert!(preloads.remote_media("status-1").is_empty());
+    }
+
+    #[test]
+    fn notification_preloads_accessors_return_stored_values() {
+        let mut preloads = empty_preloads();
+        preloads
+            .muted_notification_actor_uris
+            .insert("https://remote.example/users/bob".to_owned());
+        preloads.local_media_by_status_id.insert(
+            "status-1".to_owned(),
+            vec![MediaAttachmentRow {
+                id: "media-1".to_owned(),
+                account_id: "acct-1".to_owned(),
+                status_id: Some("status-1".to_owned()),
+                object_key: "media/status-1/1".to_owned(),
+                content_type: "image/png".to_owned(),
+                description: String::new(),
+                focus_x: None,
+                focus_y: None,
+                width: Some(640),
+                height: Some(480),
+                _created_at: "2026-01-02T00:00:00Z".to_owned(),
+            }],
+        );
+
+        assert!(preloads.is_notification_muted("https://remote.example/users/bob"));
+        assert!(!preloads.is_notification_muted("https://remote.example/users/carol"));
+        assert_eq!(preloads.local_media("status-1").len(), 1);
+        assert_eq!(preloads.local_media("status-1")[0].id, "media-1");
+        assert!(preloads.local_media("status-2").is_empty());
+    }
 }

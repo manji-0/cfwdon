@@ -10,8 +10,9 @@ use super::{
     resolve_remote_status_by_url, status_id_from_context,
 };
 use serde::Deserialize;
-use worker::{D1Database, Error};
+use worker::Error;
 
+use crate::D1Database;
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct StatusActionQuery {
     pub(crate) uri: Option<String>,
@@ -63,7 +64,7 @@ pub(crate) async fn resolve_authenticated_status_viewer_context(
     ctx: &RouteContext<()>,
 ) -> Result<Option<AuthenticatedStatusViewerContext>> {
     let config = load_config(ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, &config)?;
     let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Ok(None),

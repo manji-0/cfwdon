@@ -4,8 +4,9 @@ use super::{
     load_visible_notifications_for_account, notification_group_entries, notifications_fetch_limit,
 };
 use cfwdon_domain::LocalAccount;
-use worker::{D1Database, Result};
+use worker::Result;
 
+use crate::D1Database;
 pub(crate) async fn list_notifications_usecase(
     db: &D1Database,
     config: &AppConfig,

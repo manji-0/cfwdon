@@ -21,7 +21,7 @@ pub(crate) async fn follow_account(mut req: Request, ctx: RouteContext<()>) -> R
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
     let request = parse_follow_account_request(&mut req).await?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -53,7 +53,7 @@ pub(crate) async fn unfollow_account(req: Request, ctx: RouteContext<()>) -> Res
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let follower = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

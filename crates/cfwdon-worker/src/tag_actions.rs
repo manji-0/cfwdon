@@ -1,11 +1,11 @@
 use crate::{
-    Request, Response, Result, RouteContext, build_internal_cursor_link_header, build_tag_response,
-    load_config, normalize_hashtag, parse_internal_pagination_id,
+    D1Database, Request, Response, Result, RouteContext, build_internal_cursor_link_header,
+    build_tag_response, load_config, normalize_hashtag, parse_internal_pagination_id,
     require_authenticated_local_account,
 };
 use serde::Deserialize;
+use worker::Error;
 use worker::d1::D1Type;
-use worker::{D1Database, Error};
 
 const DEFAULT_LIMIT: u32 = 100;
 const MAX_LIMIT: u32 = 200;
@@ -88,6 +88,7 @@ async fn follow_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<()> 
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -101,6 +102,7 @@ async fn unfollow_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<()
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -193,7 +195,7 @@ async fn resolve_authenticated_account(
     )>,
 > {
     let config = load_config(ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(ctx, &config)?;
     let Some(account) = require_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };

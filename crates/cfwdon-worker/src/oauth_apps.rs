@@ -11,9 +11,10 @@ use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use worker::{D1Database, Fetch, FormData, Headers, Method, RequestInit, ResponseBody, d1::D1Type};
+use worker::{Fetch, FormData, Headers, Method, RequestInit, ResponseBody, d1::D1Type};
 use worker::{Request, Response, Result, RouteContext};
 
+use crate::D1Database;
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
 const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
@@ -1862,7 +1863,7 @@ fn parsed_create_app_request(
 }
 
 async fn insert_oauth_app(
-    db: &worker::D1Database,
+    db: &crate::D1Database,
     request: &ParsedCreateAppRequest,
 ) -> Result<OAuthAppRow> {
     let scopes_json = serde_json::to_string(&request.scopes).map_err(|error| {
@@ -2022,7 +2023,7 @@ fn auth0_callback_failure_message(error: &worker::Error) -> String {
 
 async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let callback = match req.query::<Auth0CallbackRequest>() {
         Ok(query) => query,
         Err(_) => return oauth_authorize_error_response("Invalid Auth0 callback request", 400),
@@ -2133,7 +2134,7 @@ pub(crate) async fn oauth_authorize_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     if req.method().as_ref() == "POST" {
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
@@ -2503,7 +2504,7 @@ pub(crate) async fn create_app_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = ctx.d1(&config.database_binding)?;
+    let db = crate::bind_request_d1(&ctx, &config)?;
     let request = match parse_create_app_request(&mut req).await {
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
@@ -2530,7 +2531,7 @@ pub(crate) async fn oauth_token_response(
         .get("Authorization")?
         .as_deref()
         .and_then(parse_basic_authorization_header);
-    let db = ctx.d1(&load_config(&ctx).database_binding)?;
+    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     if grant_type == "authorization_code" {
         return oauth_authorization_code_token_response(&db, request, header_credentials).await;
     }
@@ -2636,7 +2637,7 @@ pub(crate) async fn oauth_revoke_response(
     let (Some(client_id), Some(client_secret)) = (client_id, client_secret) else {
         return oauth_invalid_client_response();
     };
-    let db = ctx.d1(&load_config(&ctx).database_binding)?;
+    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
         return oauth_invalid_client_response();
     };

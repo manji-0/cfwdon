@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
 use crate::{
-    AppConfig, LocalAccount, StatusDraft, StatusRow, extract_account_handles_from_text,
+    AppConfig, D1Database, LocalAccount, StatusDraft, StatusRow, extract_account_handles_from_text,
     find_account_by_id, find_account_by_username, find_remote_actor_by_username_domain,
     generate_entity_id, now_iso_string,
 };
+use worker::Result;
 use worker::d1::D1Type;
-use worker::{D1Database, Result};
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct ConversationRow {
