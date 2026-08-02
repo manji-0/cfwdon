@@ -1,15 +1,12 @@
 use super::notifications::{
-    MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
-    notification_type_allowed, push_notification_entry,
+    NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };
 use super::{
     AppConfig, MastodonAccountResponse, MentionNotificationRow, NotificationsQuery,
     RemoteMentionNotificationRow, RemoteStatusRecord, RemoteStatusRow, StatusRow, actor_url,
-    build_local_status_response, build_remote_status_response, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    is_public_activitypub_visibility, list_local_mention_notifications_for_account,
-    list_remote_mention_notifications_for_account, load_in_reply_to_account_id,
-    muted_notifications_for_actor, remote_account_rest_id, remote_status_from_record,
+    build_status_notification_entry, can_view_local_status, is_public_activitypub_visibility,
+    list_local_mention_notifications_for_account, list_remote_mention_notifications_for_account,
+    preload_notification_statuses, remote_account_rest_id, remote_status_from_record,
 };
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
 use worker::{D1Database, Result};
@@ -70,72 +67,92 @@ pub(crate) async fn collect_mention_notification_entries(
         return Ok(());
     }
 
-    for mention in list_local_mention_notifications_for_account(
+    let (local_mentions, remote_mentions) = futures_util::try_join!(
+        list_local_mention_notifications_for_account(
+            db,
+            viewer,
+            config,
+            per_type_limit,
+            query.min_created_at.as_deref(),
+        ),
+        list_remote_mention_notifications_for_account(
+            db,
+            viewer,
+            config,
+            per_type_limit,
+            query.min_created_at.as_deref(),
+        ),
+    )?;
+    let local_statuses = local_mentions
+        .into_iter()
+        .filter_map(local_mention_status_row)
+        .collect::<Vec<_>>();
+    let remote_statuses = remote_mentions
+        .into_iter()
+        .filter_map(remote_mention_status_row)
+        .collect::<Vec<_>>();
+    let preloads = preload_notification_statuses(
         db,
-        viewer,
         config,
-        per_type_limit,
-        query.min_created_at.as_deref(),
+        viewer,
+        &local_statuses,
+        &remote_statuses,
+        &[],
+        &[],
     )
-    .await?
-    {
-        let Some(actor) = find_account_by_id(db, &mention.account_id).await? else {
+    .await?;
+    let preloads_ref = &preloads;
+
+    let mut local_candidates = Vec::new();
+    for status in local_statuses {
+        let Some(actor) = preloads.local_accounts_by_id.get(&status.account_id) else {
             continue;
         };
-        let Some(status) = local_mention_status_row(mention) else {
-            continue;
-        };
-        if !can_view_local_status(db, &status, Some(viewer), &actor).await?
-            || muted_notifications_for_actor(db, viewer.id(), &actor_url(config, actor.username()))
-                .await?
+        if !can_view_local_status(db, &status, Some(viewer), actor).await?
+            || preloads.is_notification_muted(&actor_url(config, actor.username()))
             || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
         {
             continue;
         }
-        let media = find_media_attachments_by_status_id(db, &status.id).await?;
-        let status_response = build_local_status_response(
-            db,
-            config,
-            Some(viewer),
-            &status,
-            &actor,
-            load_in_reply_to_account_id(db, &status).await?,
-            media,
-        )
-        .await?;
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("mention-local-{}-{}", actor.id(), status.id),
-                notification_type: "mention".to_owned(),
-                group_key: format!("mention-local-{}-{}", actor.id(), status.id),
-                created_at: status.created_at,
-                account: MastodonAccountResponse::from_account(&actor, config),
-                status: Some(status_response),
-                report: None,
-            },
-        );
+        local_candidates.push((status, actor.clone()));
     }
 
-    for mention in list_remote_mention_notifications_for_account(
-        db,
-        viewer,
-        config,
-        per_type_limit,
-        query.min_created_at.as_deref(),
-    )
-    .await?
-    {
-        if !is_public_activitypub_visibility(&mention.visibility)
-            && mention.visibility != "direct"
-            && mention.visibility != "private"
+    let local_entries = futures_util::future::try_join_all(local_candidates.into_iter().map(
+        |(status, actor)| async move {
+            let status_response = preloads_ref
+                .build_local_status_response(
+                    db,
+                    config,
+                    viewer,
+                    &status,
+                    &actor,
+                    preloads_ref.local_media(&status.id),
+                )
+                .await?;
+            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
+                format!("mention-local-{}-{}", actor.id(), status.id),
+                "mention",
+                status.created_at,
+                MastodonAccountResponse::from_account(&actor, config),
+                status_response,
+            ))
+        },
+    ))
+    .await?;
+    entries.extend(local_entries);
+
+    let mut remote_candidates = Vec::new();
+    for status in remote_statuses {
+        if !is_public_activitypub_visibility(status.visibility.as_str())
+            && status.visibility.as_str() != "direct"
+            && status.visibility.as_str() != "private"
         {
             continue;
         }
-        let Some(actor) = find_remote_actor_by_actor_uri(db, &mention.actor_uri).await? else {
+        let Some(actor) = preloads.remote_actors_by_uri.get(&status.actor_uri) else {
             continue;
         };
-        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
+        if preloads.is_notification_muted(&actor.actor_uri) {
             continue;
         }
         let remote_id = remote_account_rest_id(&actor.actor_uri);
@@ -146,24 +163,32 @@ pub(crate) async fn collect_mention_notification_entries(
         ) {
             continue;
         }
-        let Some(status) = remote_mention_status_row(mention) else {
-            continue;
-        };
-        let status_response =
-            build_remote_status_response(db, config, Some(viewer), &status, &actor).await?;
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("mention-remote-{}-{}", remote_id, status.id),
-                notification_type: "mention".to_owned(),
-                group_key: format!("mention-remote-{}-{}", remote_id, status.id),
-                created_at: status.published_at,
-                account: MastodonAccountResponse::from_remote_actor(&actor),
-                status: Some(status_response),
-                report: None,
-            },
-        );
+        remote_candidates.push((status, actor, remote_id));
     }
+
+    let remote_entries = futures_util::future::try_join_all(remote_candidates.into_iter().map(
+        |(status, actor, remote_id)| async move {
+            let status_response = preloads_ref
+                .build_remote_status_response(
+                    db,
+                    config,
+                    viewer,
+                    &status,
+                    actor,
+                    preloads_ref.remote_media(&status.id),
+                )
+                .await?;
+            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
+                format!("mention-remote-{}-{}", remote_id, status.id),
+                "mention",
+                status.published_at,
+                MastodonAccountResponse::from_remote_actor(actor),
+                status_response,
+            ))
+        },
+    ))
+    .await?;
+    entries.extend(remote_entries);
 
     Ok(())
 }

@@ -8,37 +8,48 @@ use crate::timelines::{
 use crate::{
     AccountReference, LocalApiAuthentication, NotificationsQuery, Request, Response, Result,
     RouteContext, StreamingBatch, StreamingEntry, StreamingEvent, StreamingLoopState,
-    StreamingPublicPlan, actor_url, app_bearer_token_from_request, authenticate_local_api_request,
-    build_announcements_document, build_app_verify_credentials_document_from_parts,
+    StreamingPublicPlan, account_has_thread_mutes, actor_url, app_bearer_token_from_request,
+    authenticate_local_api_request, build_announcements_document,
+    build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_local_status_response,
-    build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
-    build_remote_status_response, cache_public_response, can_view_local_status,
-    collect_visible_notifications, connect_stream_hub_websocket, delete_follow_by_target,
-    delete_follower_by_actor, delete_remote_follow_request_by_actor, escape_html,
-    extract_hashtags_from_html, extract_hashtags_from_text, filter_notification_entries_by_query,
-    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    build_local_status_response_with_timeline_preloads, build_oauth_token_document,
+    build_reject_follow_activity, build_relationship_for_target, build_remote_status_response,
+    build_remote_status_response_with_timeline_preloads, cache_public_response,
+    can_view_local_status, collect_visible_notifications, config_with_resolved_custom_emojis,
+    connect_stream_hub_websocket, delete_follow_by_target, delete_follower_by_actor,
+    delete_remote_follow_request_by_actor, escape_html, extract_hashtags_from_html,
+    extract_hashtags_from_text, filter_notification_entries_by_query, find_account_by_id,
+    find_account_by_username, find_accounts_by_ids, find_authenticated_local_account,
     find_conversation_for_account, find_conversation_id_by_status_id,
     find_follower_follow_activity_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_access_token_with_account_by_bearer_token,
-    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token,
-    find_pending_remote_follow_request_by_actor, find_remote_actor_by_actor_uri,
+    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
+    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
+    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
+    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_ids,
     find_remote_status_by_id, find_status_by_id, generate_entity_id, instance_base_url,
     is_local_status_thread_muted_by, is_muted_actor, is_public_activitypub_visibility,
-    issue_oauth_access_token, list_announcement_read_ids, list_followed_tag_names,
-    list_local_direct_timeline_statuses, list_local_home_timeline_statuses,
-    list_local_public_statuses_by_tag, list_local_public_timeline_statuses, list_membership_refs,
+    issue_oauth_access_token, list_active_muted_actor_uris_for_account, list_announcement_read_ids,
+    list_followed_tag_names, list_local_direct_timeline_statuses,
+    list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
+    list_local_public_timeline_statuses, list_membership_refs,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, list_row_by_id, load_account_stats,
     load_announcement_reaction_state, load_config, load_config_from_env,
-    load_in_reply_to_account_id, load_latest_filter_updated_at, load_remote_status_updated_at,
-    load_status_updated_at, local_status_ap_id, media_object_url, now_iso_string,
+    load_in_reply_to_account_id, load_in_reply_to_account_ids, load_latest_filter_updated_at,
+    load_remote_status_updated_at, load_status_updated_at, local_status_ap_id,
+    local_status_ids_thread_muted_by, media_object_url, now_iso_string,
     oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
-    parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity_required,
-    remote_account_rest_id, remote_status_has_media, resolve_account_reference,
-    resolve_status_reference, send_push_notification, store_account_password,
-    store_account_private_key, stream_hub_channel_id_name, stream_hub_session_id_name,
-    streaming_batch_from_entries, upgrade_stream_hub_websocket,
+    parse_optional_bool, parse_relationship_query_ids, preload_boost_targets,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_mention_accounts_from_texts, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_federated_emojis,
+    preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
+    preload_status_quote_counts, queue_remote_actor_activity_required, remote_account_rest_id,
+    remote_status_has_media, resolve_account_reference, resolve_status_reference,
+    send_push_notification, store_account_password, store_account_private_key,
+    stream_hub_channel_id_name, stream_hub_session_id_name, streaming_batch_from_entries,
+    strip_html_tags, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -2073,6 +2084,24 @@ async fn append_streaming_public_status_entries(
     Ok(())
 }
 
+enum StreamingHomeCandidate {
+    Local(crate::StatusRow),
+    Remote(crate::RemoteStatusRow, crate::RemoteActorRow),
+}
+
+enum PreparedStreamingHomeCandidate<'a> {
+    Local {
+        status: crate::StatusRow,
+        media: Vec<crate::MediaAttachmentRow>,
+        account: &'a crate::LocalAccount,
+    },
+    Remote {
+        status: crate::RemoteStatusRow,
+        actor: crate::RemoteActorRow,
+        attachments: Vec<crate::RemoteStatusAttachmentRow>,
+    },
+}
+
 async fn streaming_home_batch(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
@@ -2089,131 +2118,318 @@ async fn streaming_home_batch(
     )
     .await?;
     let query_limit = timeline_fetch_limit(40);
-    let mut entries = Vec::new();
-    let mut tracked_status_ids = Vec::new();
+
+    let (
+        local_home_statuses,
+        remote_home_statuses,
+        followed_tags,
+        muted_actor_uris,
+        viewer_has_thread_mutes,
+    ) = futures_util::try_join!(
+        list_local_home_timeline_statuses(db, viewer.id(), &cursor, query_limit),
+        list_remote_home_timeline_statuses(db, viewer.id(), &cursor, query_limit),
+        list_followed_tag_names(db, viewer.id()),
+        list_active_muted_actor_uris_for_account(db, viewer.id()),
+        account_has_thread_mutes(db, viewer.id()),
+    )?;
+    let followed_tag_candidates =
+        futures_util::future::try_join_all(followed_tags.iter().map(|tag| async {
+            let (local_statuses, remote_statuses) = futures_util::try_join!(
+                list_local_public_statuses_by_tag(db, tag, &cursor, query_limit),
+                list_remote_public_statuses_by_tag(db, tag, &cursor, query_limit),
+            )?;
+            Ok::<_, worker::Error>((local_statuses, remote_statuses))
+        }))
+        .await?;
+
     let mut seen_status_ids = HashSet::new();
-
-    for status in list_local_home_timeline_statuses(db, viewer.id(), &cursor, query_limit).await? {
-        append_streaming_home_local_status_entry(
-            db,
-            config,
-            viewer,
-            status,
-            &mut seen_status_ids,
-            &mut entries,
-            &mut tracked_status_ids,
-        )
-        .await?;
-    }
-
-    for (status, actor) in
-        list_remote_home_timeline_statuses(db, viewer.id(), &cursor, query_limit).await?
-    {
-        append_streaming_home_remote_status_entry(
-            db,
-            config,
-            viewer,
-            status,
-            actor,
-            &mut seen_status_ids,
-            &mut entries,
-            &mut tracked_status_ids,
-        )
-        .await?;
-    }
-
-    for tag in list_followed_tag_names(db, viewer.id()).await? {
-        for status in list_local_public_statuses_by_tag(db, &tag, &cursor, query_limit).await? {
-            append_streaming_home_local_status_entry(
-                db,
-                config,
-                viewer,
-                status,
-                &mut seen_status_ids,
-                &mut entries,
-                &mut tracked_status_ids,
-            )
-            .await?;
+    let mut candidate_rows = Vec::new();
+    for status in local_home_statuses {
+        if seen_status_ids.insert(status.id.clone()) {
+            candidate_rows.push(StreamingHomeCandidate::Local(status));
         }
+    }
+    for (status, actor) in remote_home_statuses {
+        if seen_status_ids.insert(status.id.clone()) {
+            candidate_rows.push(StreamingHomeCandidate::Remote(status, actor));
+        }
+    }
+    for (local_statuses, remote_statuses) in followed_tag_candidates {
+        for status in local_statuses {
+            if seen_status_ids.insert(status.id.clone()) {
+                candidate_rows.push(StreamingHomeCandidate::Local(status));
+            }
+        }
+        for (status, actor) in remote_statuses {
+            if seen_status_ids.insert(status.id.clone()) {
+                candidate_rows.push(StreamingHomeCandidate::Remote(status, actor));
+            }
+        }
+    }
 
-        for (status, actor) in
-            list_remote_public_statuses_by_tag(db, &tag, &cursor, query_limit).await?
+    let source_local_status_refs = candidate_rows
+        .iter()
+        .filter_map(|candidate| match candidate {
+            StreamingHomeCandidate::Local(status) => Some(status),
+            StreamingHomeCandidate::Remote(..) => None,
+        })
+        .collect::<Vec<_>>();
+    let source_local_account_ids = source_local_status_refs
+        .iter()
+        .map(|status| status.account_id.clone())
+        .collect::<Vec<_>>();
+    let source_local_status_ids = source_local_status_refs
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+    let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) = futures_util::try_join!(
+        async {
+            futures_util::try_join!(
+                find_accounts_by_ids(db, &source_local_account_ids),
+                find_media_attachments_by_status_ids(db, &source_local_status_ids),
+            )
+        },
+        async {
+            if viewer_has_thread_mutes {
+                local_status_ids_thread_muted_by(db, viewer.id(), &source_local_status_refs).await
+            } else {
+                Ok::<HashSet<String>, worker::Error>(HashSet::new())
+            }
+        },
+    )?;
+
+    let mut candidates = Vec::with_capacity(candidate_rows.len());
+    for candidate in candidate_rows {
+        match candidate {
+            StreamingHomeCandidate::Local(status) => {
+                let Some(account) = local_accounts_by_id.get(&status.account_id) else {
+                    continue;
+                };
+                let actor_uri = actor_url(config, account.username());
+                if muted_actor_uris.contains(&actor_uri)
+                    || muted_local_status_ids.contains(&status.id)
+                {
+                    continue;
+                }
+                candidates.push(PreparedStreamingHomeCandidate::Local {
+                    media: media_by_status_id.remove(&status.id).unwrap_or_default(),
+                    status,
+                    account,
+                });
+            }
+            StreamingHomeCandidate::Remote(status, actor) => {
+                if muted_actor_uris.contains(&actor.actor_uri) {
+                    continue;
+                }
+                candidates.push(PreparedStreamingHomeCandidate::Remote {
+                    status,
+                    actor,
+                    attachments: Vec::new(),
+                });
+            }
+        }
+    }
+
+    let local_status_refs = candidates
+        .iter()
+        .filter_map(|candidate| match candidate {
+            PreparedStreamingHomeCandidate::Local { status, .. } => Some(status),
+            PreparedStreamingHomeCandidate::Remote { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let remote_status_refs = candidates
+        .iter()
+        .filter_map(|candidate| match candidate {
+            PreparedStreamingHomeCandidate::Local { .. } => None,
+            PreparedStreamingHomeCandidate::Remote { status, actor, .. } => Some((status, actor)),
+        })
+        .collect::<Vec<_>>();
+    let local_status_ids = local_status_refs
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+    let remote_status_ids = remote_status_refs
+        .iter()
+        .map(|(status, _)| status.id.clone())
+        .collect::<Vec<_>>();
+    let local_statuses_for_replies = local_status_refs
+        .iter()
+        .map(|status| (*status).clone())
+        .collect::<Vec<_>>();
+
+    let mut quote_status_uris = Vec::with_capacity(candidates.len());
+    let mut mention_texts = Vec::with_capacity(candidates.len());
+    let mut remote_texts = Vec::new();
+    let mut boost_of_uris = Vec::new();
+    let mut seen_boost_uris = HashSet::new();
+    for candidate in &candidates {
+        match candidate {
+            PreparedStreamingHomeCandidate::Local {
+                status, account, ..
+            } => {
+                quote_status_uris.push(status.ap_id.clone().unwrap_or_else(|| {
+                    format!(
+                        "{}/statuses/{}",
+                        actor_url(config, account.username()),
+                        status.id
+                    )
+                }));
+                mention_texts.push(status.text.as_str());
+                if let Some(uri) = status.boost_of_uri.as_ref()
+                    && seen_boost_uris.insert(uri.as_str())
+                {
+                    boost_of_uris.push(uri.clone());
+                }
+            }
+            PreparedStreamingHomeCandidate::Remote { status, .. } => {
+                quote_status_uris.push(status.object_uri.clone());
+                remote_texts.push(strip_html_tags(&status.content_html));
+                if let Some(uri) = status.boost_of_uri.as_ref()
+                    && seen_boost_uris.insert(uri.as_str())
+                {
+                    boost_of_uris.push(uri.clone());
+                }
+            }
+        }
+    }
+    for text in &remote_texts {
+        mention_texts.push(text.as_str());
+    }
+
+    let (
+        counts_preload,
+        quote_counts_preload,
+        local_poll_preload,
+        local_viewer_state_preload,
+        remote_viewer_state_preload,
+        remote_poll_preload,
+        remote_edit_updated_at_preload,
+        remote_federated_emojis_preload,
+        in_reply_to_account_ids,
+        application_preload,
+        mut remote_attachments_by_status_id,
+        mention_preload,
+        emoji_resolved_config,
+        boost_target_preload,
+    ) = futures_util::try_join!(
+        preload_status_counts(db, &local_status_ids, &remote_status_ids),
+        preload_status_quote_counts(db, &quote_status_uris),
+        preload_mastodon_poll_responses(db, &local_status_ids, Some(viewer)),
+        preload_local_status_viewer_state(
+            db,
+            viewer.id(),
+            &local_status_refs,
+            Some(viewer_has_thread_mutes),
+        ),
+        preload_remote_status_viewer_state(db, viewer.id(), &remote_status_refs),
+        preload_remote_mastodon_poll_responses(db, &remote_status_ids, Some(viewer)),
+        preload_remote_status_edit_updated_at(db, &remote_status_ids),
+        preload_remote_status_federated_emojis(db, &remote_status_ids),
+        load_in_reply_to_account_ids(db, &local_statuses_for_replies),
+        preload_status_applications(db, config, &local_status_refs),
+        find_remote_status_attachments_by_status_ids(db, &remote_status_ids),
+        preload_mention_accounts_from_texts(db, config, &mention_texts),
+        config_with_resolved_custom_emojis(db, config),
+        preload_boost_targets(db, config, &boost_of_uris),
+    )?;
+
+    for candidate in &mut candidates {
+        if let PreparedStreamingHomeCandidate::Remote {
+            status,
+            attachments,
+            ..
+        } = candidate
         {
-            append_streaming_home_remote_status_entry(
-                db,
-                config,
-                viewer,
-                status,
-                actor,
-                &mut seen_status_ids,
-                &mut entries,
-                &mut tracked_status_ids,
-            )
-            .await?;
+            *attachments = remote_attachments_by_status_id
+                .remove(&status.id)
+                .unwrap_or_default();
         }
     }
+
+    let rendered =
+        futures_util::future::try_join_all(candidates.into_iter().map(|candidate| async {
+            let (created_at, id, data) = match candidate {
+                PreparedStreamingHomeCandidate::Local {
+                    status,
+                    media,
+                    account,
+                } => {
+                    let response = build_local_status_response_with_timeline_preloads(
+                        db,
+                        config,
+                        Some(&emoji_resolved_config),
+                        Some(viewer),
+                        &status,
+                        account,
+                        in_reply_to_account_ids.get(&status.id).cloned(),
+                        media,
+                        None,
+                        Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&local_poll_preload),
+                        Some(&local_viewer_state_preload),
+                        Some(&application_preload),
+                        Some(&mention_preload),
+                        Some(&boost_target_preload),
+                    )
+                    .await?;
+                    (
+                        status.created_at,
+                        status.id,
+                        serde_json::to_string(&response).map_err(|error| {
+                            worker::Error::RustError(format!(
+                                "failed to serialize home stream payload: {error}"
+                            ))
+                        })?,
+                    )
+                }
+                PreparedStreamingHomeCandidate::Remote {
+                    status,
+                    actor,
+                    attachments,
+                } => {
+                    let response = build_remote_status_response_with_timeline_preloads(
+                        db,
+                        config,
+                        Some(viewer),
+                        &status,
+                        &actor,
+                        None,
+                        Some(&counts_preload),
+                        Some(&quote_counts_preload),
+                        Some(&remote_viewer_state_preload),
+                        Some(&remote_poll_preload),
+                        Some(&remote_edit_updated_at_preload),
+                        Some(&remote_federated_emojis_preload),
+                        attachments,
+                        Some(&mention_preload),
+                        Some(&boost_target_preload),
+                    )
+                    .await?;
+                    (
+                        status.published_at,
+                        status.id,
+                        serde_json::to_string(&response).map_err(|error| {
+                            worker::Error::RustError(format!(
+                                "failed to serialize home stream payload: {error}"
+                            ))
+                        })?,
+                    )
+                }
+            };
+            Ok::<(StreamingEntry, String), worker::Error>((
+                StreamingEntry::new(created_at, id.clone(), data),
+                id,
+            ))
+        }))
+        .await?;
+    let (entries, tracked_status_ids) = rendered.into_iter().unzip();
 
     Ok(streaming_batch_from_entries(
         entries,
         tracked_status_ids,
         "update",
     ))
-}
-
-async fn append_streaming_home_local_status_entry(
-    db: &D1Database,
-    config: &cfwdon_core::AppConfig,
-    viewer: &crate::LocalAccount,
-    status: crate::StatusRow,
-    seen_status_ids: &mut HashSet<String>,
-    entries: &mut Vec<StreamingEntry>,
-    tracked_status_ids: &mut Vec<String>,
-) -> Result<()> {
-    if !seen_status_ids.insert(status.id.clone()) {
-        return Ok(());
-    }
-    append_streaming_local_status_entry(
-        db,
-        config,
-        Some(viewer),
-        status,
-        false,
-        true,
-        None,
-        true,
-        "home",
-        entries,
-        tracked_status_ids,
-    )
-    .await
-}
-
-async fn append_streaming_home_remote_status_entry(
-    db: &D1Database,
-    config: &cfwdon_core::AppConfig,
-    viewer: &crate::LocalAccount,
-    status: crate::RemoteStatusRow,
-    actor: crate::RemoteActorRow,
-    seen_status_ids: &mut HashSet<String>,
-    entries: &mut Vec<StreamingEntry>,
-    tracked_status_ids: &mut Vec<String>,
-) -> Result<()> {
-    if !seen_status_ids.insert(status.id.clone()) {
-        return Ok(());
-    }
-    append_streaming_remote_status_entry(
-        db,
-        config,
-        Some(viewer),
-        status,
-        actor,
-        false,
-        None,
-        "home",
-        entries,
-        tracked_status_ids,
-    )
-    .await
 }
 
 async fn streaming_direct_batch(
