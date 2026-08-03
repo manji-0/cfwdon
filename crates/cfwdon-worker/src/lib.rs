@@ -199,6 +199,24 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
             console_error!("background job processing failed: {error}");
         }
+        match reclaim_stale_inbox_activities(&db, 50).await {
+            Ok(report) if report.marked_processed > 0 || report.released > 0 => {
+                log_federation_event(
+                    "inbox_stale_reclaim",
+                    "ok",
+                    format!(
+                        "reclaimed stale inbox activities: marked={} released={}",
+                        report.marked_processed, report.released
+                    ),
+                    serde_json::json!({
+                        "marked_processed": report.marked_processed,
+                        "released": report.released,
+                    }),
+                );
+            }
+            Ok(_) => {}
+            Err(error) => console_error!("inbox stale reclaim failed: {error}"),
+        }
         if let Err(error) = purge_stale_public_remote_content(&db).await {
             console_error!("public remote retention purge failed: {error}");
         }

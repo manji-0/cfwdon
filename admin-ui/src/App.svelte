@@ -1,12 +1,21 @@
 <script lang="ts">
   import Dashboard from "./pages/Dashboard.svelte";
   import Deliveries from "./pages/Deliveries.svelte";
+  import DomainBlocks from "./pages/DomainBlocks.svelte";
   import Emojis from "./pages/Emojis.svelte";
   import Relays from "./pages/Relays.svelte";
   import Reports from "./pages/Reports.svelte";
+  import System from "./pages/System.svelte";
   import { fetchSession, type AdminSession } from "./lib/api";
 
-  type Page = "dashboard" | "reports" | "emojis" | "deliveries" | "relays";
+  type Page =
+    | "dashboard"
+    | "reports"
+    | "emojis"
+    | "deliveries"
+    | "relays"
+    | "domain-blocks"
+    | "system";
 
   let page: Page = "dashboard";
   let session: AdminSession | null = null;
@@ -89,6 +98,22 @@
         >
           リレー
         </a>
+        <a
+          class="nav-link"
+          class:active={page === "domain-blocks"}
+          href="/admin/domain-blocks"
+          on:click|preventDefault={() => selectPage("domain-blocks")}
+        >
+          ドメインブロック
+        </a>
+        <a
+          class="nav-link"
+          class:active={page === "system"}
+          href="/admin/system"
+          on:click|preventDefault={() => selectPage("system")}
+        >
+          システム
+        </a>
       </nav>
       <p class="muted" style="margin-top: 1.5rem; font-size: 0.85rem;">
         {session.username} ({session.email})
@@ -103,6 +128,10 @@
         <Emojis />
       {:else if page === "relays"}
         <Relays />
+      {:else if page === "domain-blocks"}
+        <DomainBlocks />
+      {:else if page === "system"}
+        <System />
       {:else}
         <Deliveries />
       {/if}

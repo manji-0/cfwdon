@@ -163,3 +163,69 @@ export function deleteRelay(relayId: string): Promise<void> {
     parseJson: false,
   });
 }
+
+export type AdminDashboard = {
+  pending_reports: number;
+  failed_deliveries: number;
+  queued_deliveries: number;
+  pending_background_jobs: number;
+  stuck_inbox_activities: number;
+  recent_signups: number;
+};
+
+export function fetchDashboard(): Promise<AdminDashboard> {
+  return apiFetch<AdminDashboard>("/api/cfwdon/admin/dashboard");
+}
+
+export type AdminBackgroundJob = {
+  id: string;
+  job_type: string;
+  status: string;
+  attempts: number;
+  next_run_at: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  payload_json: string;
+};
+
+export function fetchBackgroundJobs(status?: string): Promise<AdminBackgroundJob[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiFetch<AdminBackgroundJob[]>(`/api/cfwdon/admin/background-jobs${query}`);
+}
+
+export function retryBackgroundJob(jobId: string): Promise<void> {
+  return apiFetch<void>(`/api/cfwdon/admin/background-jobs/${jobId}/retry`, {
+    method: "POST",
+    parseJson: false,
+  });
+}
+
+export type AdminInboxActivity = {
+  actor_uri: string;
+  activity_id: string;
+  activity_type: string;
+  created_at: string;
+  processed_at: string | null;
+  completion_state:
+    | "completed"
+    | "effect_applied"
+    | "in_flight"
+    | "stuck";
+};
+
+export type AdminInboxReclaimResult = {
+  marked_processed: number;
+  released: number;
+};
+
+export function fetchInboxActivities(pendingOnly = false): Promise<AdminInboxActivity[]> {
+  const query = pendingOnly ? "?pending=true" : "";
+  return apiFetch<AdminInboxActivity[]>(`/api/cfwdon/admin/inbox-activities${query}`);
+}
+
+export function reclaimInboxActivities(): Promise<AdminInboxReclaimResult> {
+  return apiFetch<AdminInboxReclaimResult>("/api/cfwdon/admin/inbox-activities/reclaim", {
+    method: "POST",
+  });
+}

@@ -12,7 +12,7 @@ struct AdminReportsQuery {
 }
 
 #[derive(Debug, Serialize)]
-struct AdminReportTargetResponse {
+pub(crate) struct AdminReportTargetResponse {
     id: String,
     username: String,
     display_name: String,
@@ -20,7 +20,7 @@ struct AdminReportTargetResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct AdminReportResponse {
+pub(crate) struct AdminReportResponse {
     id: String,
     category: String,
     comment: String,
@@ -82,7 +82,7 @@ pub(crate) async fn admin_resolve_report_response(
     Response::from_json(&build_admin_report_response(&db, &report).await?)
 }
 
-async fn build_admin_report_response(
+pub(crate) async fn build_admin_report_response(
     db: &crate::D1Database,
     report: &ReportRow,
 ) -> Result<AdminReportResponse> {

@@ -74,6 +74,98 @@ pub(crate) async fn mark_inbox_activity_processed(
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InboxReclaimReport {
+    pub marked_processed: u32,
+    pub released: u32,
+}
+
+/// Reconcile inbox dedup rows left in-flight after worker timeouts.
+pub(crate) async fn reclaim_stale_inbox_activities(
+    db: &crate::D1Database,
+    limit: u32,
+) -> Result<InboxReclaimReport> {
+    let limit = i32::try_from(limit).unwrap_or(100);
+    let stale_modifier = INBOX_IN_FLIGHT_STALE_MODIFIER;
+
+    let marked_bindings = [
+        D1Type::Text(stale_modifier),
+        D1Type::Text(stale_modifier),
+        D1Type::Integer(limit),
+    ];
+    let marked = db
+        .prepare(
+            "UPDATE inbox_activities
+             SET processed_at = CURRENT_TIMESTAMP
+             WHERE processed_at IS NULL
+               AND created_at <= datetime(CURRENT_TIMESTAMP, ?1)
+               AND rowid IN (
+                 SELECT ia.rowid
+                 FROM inbox_activities ia
+                 WHERE ia.processed_at IS NULL
+                   AND ia.created_at <= datetime(CURRENT_TIMESTAMP, ?2)
+                   AND (
+                     (ia.activity_type = 'Create' AND EXISTS (
+                       SELECT 1 FROM remote_statuses rs
+                       WHERE rs.object_uri = REPLACE(ia.activity_id, '/activity', '')
+                     ))
+                     OR (ia.activity_type = 'Update' AND (
+                       (ia.activity_id LIKE '%#updates/%' AND EXISTS (
+                         SELECT 1 FROM remote_actors ra WHERE ra.actor_uri = ia.actor_uri
+                       ))
+                       OR EXISTS (
+                         SELECT 1 FROM remote_statuses rs
+                         WHERE rs.object_uri = REPLACE(ia.activity_id, '/activity', '')
+                           OR rs.object_uri = ia.activity_id
+                       )
+                     ))
+                     OR (ia.activity_type = 'Delete' AND NOT EXISTS (
+                       SELECT 1 FROM remote_statuses rs
+                       WHERE rs.object_uri = ia.activity_id
+                          OR rs.url = ia.activity_id
+                     ))
+                   )
+                 LIMIT ?3
+               )",
+        )
+        .bind_refs(marked_bindings.iter())?
+        .run()
+        .await?;
+
+    let released_bindings = [
+        D1Type::Text(stale_modifier),
+        D1Type::Text(stale_modifier),
+        D1Type::Integer(limit),
+    ];
+    let released = db
+        .prepare(
+            "DELETE FROM inbox_activities
+             WHERE processed_at IS NULL
+               AND created_at <= datetime(CURRENT_TIMESTAMP, ?1)
+               AND activity_type = 'Create'
+               AND rowid IN (
+                 SELECT ia.rowid
+                 FROM inbox_activities ia
+                 WHERE ia.processed_at IS NULL
+                   AND ia.created_at <= datetime(CURRENT_TIMESTAMP, ?2)
+                   AND ia.activity_type = 'Create'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM remote_statuses rs
+                     WHERE rs.object_uri = REPLACE(ia.activity_id, '/activity', '')
+                   )
+                 LIMIT ?3
+               )",
+        )
+        .bind_refs(released_bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(InboxReclaimReport {
+        marked_processed: marked.meta()?.and_then(|meta| meta.changes).unwrap_or(0) as u32,
+        released: released.meta()?.and_then(|meta| meta.changes).unwrap_or(0) as u32,
+    })
+}
+
 pub(crate) async fn release_inbox_activity_processing(
     db: &crate::D1Database,
     actor_uri: &str,

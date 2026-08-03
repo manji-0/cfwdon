@@ -2,7 +2,7 @@ use crate::instance::load_known_peer_domains;
 use crate::profile::require_authenticated_local_account;
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::runtime_config::load_config;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use url::Url;
 use worker::d1::D1Type;
@@ -339,6 +339,89 @@ pub(crate) async fn delete_domain_block_response(
         }
         None => Response::error("Auth0 authentication required", 401),
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct InstanceDomainBlockRow {
+    pub id: i64,
+    pub domain: String,
+    pub created_at: String,
+}
+
+fn normalize_instance_domain(domain: &str) -> Result<String> {
+    let normalized = domain.trim().trim_start_matches('@').to_ascii_lowercase();
+    if normalized.is_empty() || normalized.contains('/') {
+        return Err(worker::Error::RustError("invalid domain".to_owned()));
+    }
+    Ok(normalized)
+}
+
+pub(crate) async fn list_instance_domain_blocks(
+    db: &D1Database,
+    limit: u32,
+) -> Result<Vec<InstanceDomainBlockRow>> {
+    let limit = i32::try_from(limit.clamp(1, MAX_LIMIT)).unwrap_or(100);
+    let result = db
+        .prepare(
+            "SELECT id, domain, created_at
+             FROM instance_domain_blocks
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?1",
+        )
+        .bind_refs(&[D1Type::Integer(limit)])?
+        .all()
+        .await?;
+    Ok(result.results::<InstanceDomainBlockRow>()?)
+}
+
+pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Result<Vec<String>> {
+    let result = db
+        .prepare("SELECT domain FROM instance_domain_blocks ORDER BY domain ASC")
+        .all()
+        .await?;
+    Ok(result
+        .results::<serde_json::Value>()?
+        .into_iter()
+        .filter_map(|row| {
+            row.get("domain")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect())
+}
+
+pub(crate) async fn insert_instance_domain_block(
+    db: &D1Database,
+    domain: &str,
+    created_by_account_id: Option<&str>,
+) -> Result<()> {
+    let domain = normalize_instance_domain(domain)?;
+    let bindings = [
+        D1Type::Text(&domain),
+        match created_by_account_id {
+            Some(value) => D1Type::Text(value),
+            None => D1Type::Null,
+        },
+    ];
+    db.prepare(
+        "INSERT OR IGNORE INTO instance_domain_blocks (domain, created_by_account_id)
+         VALUES (?1, ?2)",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn delete_instance_domain_block(db: &D1Database, domain: &str) -> Result<bool> {
+    let domain = normalize_instance_domain(domain)?;
+    let bindings = [D1Type::Text(&domain)];
+    let result = db
+        .prepare("DELETE FROM instance_domain_blocks WHERE domain = ?1")
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
 #[cfg(test)]

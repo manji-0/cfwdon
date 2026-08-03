@@ -10,6 +10,7 @@ use worker::{Env, Error, Result, d1::D1Type};
 pub(crate) const JOB_CARD_UNFURL: &str = "card_unfurl";
 pub(crate) const JOB_RESOLVE_IN_REPLY_TO: &str = "resolve_in_reply_to";
 pub(crate) const JOB_REMOTE_CONTEXT_FETCH: &str = "remote_context_fetch";
+pub(crate) const JOB_REMOTE_STATUS_NOTIFY: &str = "remote_status_notify";
 
 const MAX_ATTEMPTS: i32 = 5;
 const BASE_BACKOFF_SECS: i64 = 60;
@@ -189,6 +190,9 @@ async fn handle_job(
         JOB_REMOTE_CONTEXT_FETCH => {
             handle_remote_context_fetch(db, config, env, payload_json).await
         }
+        JOB_REMOTE_STATUS_NOTIFY => {
+            handle_remote_status_notify(db, config, env, payload_json).await
+        }
         other => Err(Error::RustError(format!("unknown job type: {other}"))),
     }
 }
@@ -327,6 +331,34 @@ async fn handle_remote_context_fetch(
     // Best-effort: use the existing resolve path which handles auth checks.
     let _ = resolve_remote_status_by_url(db, config, &payload.uri, None).await;
     Ok(())
+}
+
+// ─── remote_status_notify ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RemoteStatusNotifyPayload {
+    status_id: String,
+    actor_uri: String,
+    kind: String,
+}
+
+async fn handle_remote_status_notify(
+    db: &D1Database,
+    config: &AppConfig,
+    env: Option<&Env>,
+    payload_json: &str,
+) -> Result<()> {
+    let payload: RemoteStatusNotifyPayload = serde_json::from_str(payload_json)
+        .map_err(|error| Error::RustError(format!("invalid remote_status_notify payload: {error}")))?;
+    crate::dispatch_remote_status_notifications(
+        env,
+        db,
+        config,
+        &payload.status_id,
+        &payload.actor_uri,
+        &payload.kind,
+    )
+    .await
 }
 
 // ─── Payload helpers used from call sites ────────────────────────────────────
