@@ -49,6 +49,7 @@ mod profile;
 mod push;
 mod relationship;
 mod relationships;
+mod relays;
 mod remote;
 mod reports;
 mod request_utils;
@@ -113,6 +114,7 @@ pub(crate) use profile::*;
 pub(crate) use push::*;
 pub(crate) use relationship::*;
 pub(crate) use relationships::*;
+pub(crate) use relays::*;
 pub(crate) use remote::*;
 pub(crate) use reports::*;
 pub(crate) use request_utils::*;
@@ -196,6 +198,9 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         }
         if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
             console_error!("background job processing failed: {error}");
+        }
+        if let Err(error) = purge_stale_public_remote_content(&db).await {
+            console_error!("public remote retention purge failed: {error}");
         }
         if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
             console_error!("trending tags cache refresh failed: {error}");

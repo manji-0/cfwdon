@@ -259,7 +259,29 @@ pub(crate) async fn verify_incoming_activitypub_request(
     body: &[u8],
     activity: &serde_json::Value,
 ) -> Result<RemoteActorProfile> {
-    let actor_uri = extract_activity_actor_uri(activity)?;
+    let delivery = verify_incoming_activitypub_delivery(req, db, body, activity).await?;
+    if delivery.relayed {
+        return Err(Error::RustError(
+            "activitypub unauthorized: relayed delivery must use shared inbox handler".to_owned(),
+        ));
+    }
+    Ok(delivery.delivery_actor)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VerifiedActivityPubDelivery {
+    pub(crate) delivery_actor: RemoteActorProfile,
+    pub(crate) content_actor_uri: String,
+    pub(crate) relayed: bool,
+}
+
+pub(crate) async fn verify_incoming_activitypub_delivery(
+    req: &Request,
+    db: &D1Database,
+    body: &[u8],
+    activity: &serde_json::Value,
+) -> Result<VerifiedActivityPubDelivery> {
+    let content_actor_uri = extract_activity_actor_uri(activity)?;
     let signature_header = req
         .headers()
         .get("Signature")?
@@ -272,13 +294,35 @@ pub(crate) async fn verify_incoming_activitypub_request(
     validate_request_date(req.headers())?;
     validate_request_digest(req.headers(), body).await?;
 
+    let delivery_actor = resolve_remote_actor_for_signature(
+        db,
+        &parsed_signature.key_id,
+        signing_string.as_bytes(),
+        &parsed_signature.signature,
+    )
+    .await?;
+    let relayed = delivery_actor.actor_uri != content_actor_uri;
+    Ok(VerifiedActivityPubDelivery {
+        delivery_actor,
+        content_actor_uri,
+        relayed,
+    })
+}
+
+async fn resolve_remote_actor_for_signature(
+    db: &D1Database,
+    key_id: &str,
+    signing_string: &[u8],
+    signature: &[u8],
+) -> Result<RemoteActorProfile> {
+    let actor_uri = actor_uri_from_key_id(key_id)?;
     if let Some(remote_actor) =
         find_cached_remote_actor_profile_by_actor_uri(db, &actor_uri).await?
-        && cached_remote_actor_matches_key(&remote_actor, &parsed_signature.key_id, &actor_uri)
+        && cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri)
         && verify_http_signature_bytes(
             &remote_actor.public_key_pem,
-            signing_string.as_bytes(),
-            &parsed_signature.signature,
+            signing_string,
+            signature,
         )
         .await
         .is_ok()
@@ -287,20 +331,26 @@ pub(crate) async fn verify_incoming_activitypub_request(
     }
 
     let remote_actor = fetch_remote_actor_profile(&actor_uri).await?;
-    if !cached_remote_actor_matches_key(&remote_actor, &parsed_signature.key_id, &actor_uri) {
+    if !cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri) {
         return Err(Error::RustError(
-            "Signature keyId did not match activity actor".to_owned(),
+            "Signature keyId did not match delivery actor".to_owned(),
         ));
     }
     verify_http_signature_bytes(
         &remote_actor.public_key_pem,
-        signing_string.as_bytes(),
-        &parsed_signature.signature,
+        signing_string,
+        signature,
     )
     .await?;
     upsert_remote_actor(db, &remote_actor).await?;
-
     Ok(remote_actor)
+}
+
+fn actor_uri_from_key_id(key_id: &str) -> Result<String> {
+    let parsed = parse_remote_http_url(key_id)?;
+    let mut actor_url = parsed.clone();
+    actor_url.set_fragment(None);
+    Ok(actor_url.to_string())
 }
 
 pub(crate) fn inbox_activity_id(activity: &serde_json::Value) -> Option<String> {

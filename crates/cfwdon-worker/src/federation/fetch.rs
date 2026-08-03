@@ -11,7 +11,7 @@ use worker::{Error, Result};
 
 use super::{fetch_remote_http_json, validate_remote_actor_profile_url};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RemoteActorProfile {
     pub(crate) actor_uri: String,
     pub(crate) username: String,

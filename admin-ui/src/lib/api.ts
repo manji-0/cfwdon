@@ -126,3 +126,40 @@ export function retryDelivery(
     { method: "POST", parseJson: false },
   );
 }
+
+export type AdminRelay = {
+  id: string;
+  inbox_url: string;
+  actor_uri: string | null;
+  follow_activity_id: string | null;
+  signing_account_id: string;
+  state: "idle" | "pending" | "accepted" | "rejected";
+  created_at: string;
+  updated_at: string;
+};
+
+export function fetchRelays(): Promise<AdminRelay[]> {
+  return apiFetch<AdminRelay[]>("/api/cfwdon/admin/relays");
+}
+
+export function createRelay(inboxUrl: string): Promise<AdminRelay> {
+  return apiFetch<AdminRelay>("/api/cfwdon/admin/relays", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inbox_url: inboxUrl }),
+  });
+}
+
+export function disableRelay(relayId: string): Promise<void> {
+  return apiFetch<void>(`/api/cfwdon/admin/relays/${relayId}/disable`, {
+    method: "POST",
+    parseJson: false,
+  });
+}
+
+export function deleteRelay(relayId: string): Promise<void> {
+  return apiFetch<void>(`/api/cfwdon/admin/relays/${relayId}`, {
+    method: "DELETE",
+    parseJson: false,
+  });
+}

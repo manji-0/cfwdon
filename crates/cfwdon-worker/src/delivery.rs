@@ -546,6 +546,22 @@ async fn process_generic_outbox_deliveries(
             filtered_targets.insert(account_id, targets);
         }
     }
+    let relay_inboxes = list_enabled_relay_inbox_urls(db).await?;
+    if !relay_inboxes.is_empty() {
+        for delivery in &deliveries {
+            if !outbox_payload_is_public_relay_candidate(&delivery.payload_json) {
+                continue;
+            }
+            let entry = filtered_targets
+                .entry(delivery.account_id.clone())
+                .or_default();
+            for inbox in &relay_inboxes {
+                if !entry.iter().any(|existing| existing == inbox) {
+                    entry.push(inbox.clone());
+                }
+            }
+        }
+    }
     let targets_by_account = filtered_targets;
     let target_count = targets_by_account
         .values()

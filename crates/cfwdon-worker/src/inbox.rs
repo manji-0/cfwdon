@@ -7,6 +7,7 @@ mod actor_updates;
 mod follow_handlers;
 mod interactions;
 mod poll_interactions;
+mod relay_handlers;
 mod status_handlers;
 mod status_interactions;
 mod target_resolution;
@@ -15,6 +16,7 @@ pub(crate) use actor_updates::*;
 pub(crate) use follow_handlers::*;
 pub(crate) use interactions::*;
 pub(crate) use poll_interactions::*;
+pub(crate) use relay_handlers::*;
 pub(crate) use status_handlers::*;
 pub(crate) use status_interactions::*;
 pub(crate) use target_resolution::*;
@@ -166,31 +168,48 @@ pub(crate) async fn shared_inbox_response(
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
 
-    if activitypub_has_type(&activity, "Delete") {
-        return handle_inbox_request(&req, &db, &config, None, &body, &activity, Some(&ctx.env))
-            .await;
+    let delivery =
+        match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
+            Ok(delivery) => delivery,
+            Err(error) => {
+                log_federation_event(
+                    "inbox_signature_failed",
+                    "unauthorized",
+                    format!(
+                        "shared inbox signature verification failed: activity_type={} error={error}",
+                        inbox_activity_type(&activity)
+                    ),
+                    serde_json::json!({
+                        "inbox": "shared",
+                        "activity_type": inbox_activity_type(&activity),
+                        "error": error.to_string(),
+                    }),
+                );
+                return Response::error("invalid activitypub signature", 401);
+            }
+        };
+
+    if delivery.relayed {
+        match handle_relay_delivered_activity(
+            &db,
+            &config,
+            &activity,
+            &delivery,
+            Some(&ctx.env),
+        )
+        .await
+        {
+            Ok(true) => {
+                return Ok(Response::empty()?.with_status(202));
+            }
+            Ok(false) => {
+                return Response::error("invalid activitypub signature", 401);
+            }
+            Err(error) => return inbox_result_response(Err(error)),
+        }
     }
 
-    let remote_actor = match verify_incoming_activitypub_request(&req, &db, &body, &activity).await
-    {
-        Ok(remote_actor) => remote_actor,
-        Err(error) => {
-            log_federation_event(
-                "inbox_signature_failed",
-                "unauthorized",
-                format!(
-                    "shared inbox signature verification failed: activity_type={} error={error}",
-                    inbox_activity_type(&activity)
-                ),
-                serde_json::json!({
-                    "inbox": "shared",
-                    "activity_type": inbox_activity_type(&activity),
-                    "error": error.to_string(),
-                }),
-            );
-            return Response::error("invalid activitypub signature", 401);
-        }
-    };
+    let remote_actor = delivery.delivery_actor;
     let accounts = resolve_shared_inbox_target_accounts(&db, &config, None, &activity).await?;
     match shared_inbox_preprocess_outcome(true, !accounts.is_empty()) {
         SharedInboxPreprocessOutcome::Unauthorized => {

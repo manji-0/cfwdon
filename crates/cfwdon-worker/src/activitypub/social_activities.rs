@@ -141,6 +141,55 @@ pub(crate) fn build_undo_follow_activity(
         .map_err(|error| Error::RustError(format!("failed to serialize Undo activity: {error}")))
 }
 
+const ACTIVITYPUB_PUBLIC_COLLECTION: &str = "https://www.w3.org/ns/activitystreams#Public";
+
+pub(crate) fn build_relay_follow_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    follow_activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": follow_activity_id,
+        "type": "Follow",
+        "actor": actor,
+        "object": ACTIVITYPUB_PUBLIC_COLLECTION,
+    });
+    serde_json::to_string(&activity)
+        .map_err(|error| Error::RustError(format!("failed to serialize relay Follow activity: {error}")))
+}
+
+pub(crate) fn build_relay_undo_follow_activity(
+    config: &AppConfig,
+    account: &LocalAccount,
+    follow_activity_id: &str,
+) -> Result<String> {
+    let actor = actor_url(config, account.username());
+    let activity = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{actor}/relay-undo/{}", generate_entity_id(12)?),
+        "type": "Undo",
+        "actor": actor,
+        "object": {
+            "id": follow_activity_id,
+            "type": "Follow",
+            "actor": actor,
+            "object": ACTIVITYPUB_PUBLIC_COLLECTION,
+        }
+    });
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!("failed to serialize relay Undo activity: {error}"))
+    })
+}
+
+
+pub(crate) fn relay_follow_activity_id_from_accept(activity: &serde_json::Value) -> Option<String> {
+    activity
+        .get("object")
+        .and_then(|object| crate::activity_object_id(Some(object)).map(str::to_owned))
+}
+
 pub(crate) fn build_like_activity(
     config: &AppConfig,
     account: &LocalAccount,

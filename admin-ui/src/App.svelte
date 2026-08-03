@@ -2,10 +2,11 @@
   import Dashboard from "./pages/Dashboard.svelte";
   import Deliveries from "./pages/Deliveries.svelte";
   import Emojis from "./pages/Emojis.svelte";
+  import Relays from "./pages/Relays.svelte";
   import Reports from "./pages/Reports.svelte";
   import { fetchSession, type AdminSession } from "./lib/api";
 
-  type Page = "dashboard" | "reports" | "emojis" | "deliveries";
+  type Page = "dashboard" | "reports" | "emojis" | "deliveries" | "relays";
 
   let page: Page = "dashboard";
   let session: AdminSession | null = null;
@@ -80,6 +81,14 @@
         >
           配信キュー
         </a>
+        <a
+          class="nav-link"
+          class:active={page === "relays"}
+          href="/admin/relays"
+          on:click|preventDefault={() => selectPage("relays")}
+        >
+          リレー
+        </a>
       </nav>
       <p class="muted" style="margin-top: 1.5rem; font-size: 0.85rem;">
         {session.username} ({session.email})
@@ -92,6 +101,8 @@
         <Reports />
       {:else if page === "emojis"}
         <Emojis />
+      {:else if page === "relays"}
+        <Relays />
       {:else}
         <Deliveries />
       {/if}

@@ -4,6 +4,10 @@ use emojis::{
     admin_emojis_create_response, admin_emojis_delete_response, admin_emojis_list_response,
     admin_emojis_update_response,
 };
+use relays::{
+    admin_relays_create_response, admin_relays_delete_response, admin_relays_disable_response,
+    admin_relays_list_response,
+};
 use reports::{admin_reports_response, admin_resolve_report_response};
 use session::{admin_me_response, is_admin_api_path};
 use worker::{Env, Request, Response, Result, Router};
@@ -67,10 +71,25 @@ fn admin_api_router() -> Router<'static, ()> {
         .delete_async("/api/cfwdon/admin/emojis/:id", |req, ctx| async move {
             admin_emojis_delete_response(req, ctx).await
         })
+        .get_async("/api/cfwdon/admin/relays", |req, ctx| async move {
+            admin_relays_list_response(req, ctx).await
+        })
+        .post_async("/api/cfwdon/admin/relays", |req, ctx| async move {
+            admin_relays_create_response(req, ctx).await
+        })
+        .post_async(
+            "/api/cfwdon/admin/relays/:id/disable",
+            |req, ctx| async move { admin_relays_disable_response(req, ctx).await },
+        )
+        .delete_async(
+            "/api/cfwdon/admin/relays/:id",
+            |req, ctx| async move { admin_relays_delete_response(req, ctx).await },
+        )
 }
 
 mod deliveries;
 mod emojis;
 mod guard;
+mod relays;
 mod reports;
 mod session;
