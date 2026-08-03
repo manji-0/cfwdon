@@ -1343,6 +1343,33 @@ fn set_auth0_session_cookie(response: &mut Response, access_token: &str) -> Resu
     Ok(())
 }
 
+fn clear_auth0_session_cookie(response: &mut Response) -> Result<()> {
+    response.headers_mut().append(
+        "Set-Cookie",
+        &format!(
+            "{AUTH0_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0"
+        ),
+    )?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(())
+}
+
+pub(crate) fn auth0_logout_redirect_response(config: &cfwdon_core::AppConfig) -> Result<Response> {
+    let logout_url = auth0_logout_url(config).map_err(worker::Error::RustError)?;
+    let mut response = redirect_response(logout_url.as_str())?;
+    clear_auth0_session_cookie(&mut response)?;
+    Ok(response)
+}
+
+pub(crate) fn auth0_relogin_redirect_response(
+    config: &cfwdon_core::AppConfig,
+    return_url: &Url,
+) -> Result<Response> {
+    let mut response = auth0_login_redirect_response(config, return_url, return_url)?;
+    clear_auth0_session_cookie(&mut response)?;
+    Ok(response)
+}
+
 fn clear_auth0_authorize_state_cookie(response: &mut Response) -> Result<()> {
     response.headers_mut().append(
         "Set-Cookie",

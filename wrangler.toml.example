@@ -59,6 +59,9 @@ AUTH0_DOMAIN = "example.us.auth0.com"
 AUTH0_CLIENT_ID = "replace-with-auth0-application-client-id"
 AUTH0_AUDIENCE = "https://example.com/api"
 AUTH0_EMAIL_CLAIM = "email"
+# Optional Auth0 RBAC roles for /admin access.
+# AUTH0_ROLES_CLAIM = "https://example.com/api/roles"
+# AUTH0_ADMIN_ROLES = "admin"
 
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.

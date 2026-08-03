@@ -60,6 +60,8 @@ pub struct AppConfig {
     pub auth0_client_id: String,
     pub auth0_audience: String,
     pub auth0_email_claim: String,
+    pub auth0_roles_claim: String,
+    pub auth0_admin_roles: Vec<String>,
 }
 
 impl AppConfig {
@@ -107,6 +109,8 @@ impl AppConfig {
             auth0_client_id: String::new(),
             auth0_audience: String::new(),
             auth0_email_claim: "email".to_owned(),
+            auth0_roles_claim: String::new(),
+            auth0_admin_roles: Vec::new(),
         }
     }
 }

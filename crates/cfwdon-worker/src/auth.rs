@@ -10,7 +10,9 @@ pub(crate) use account_store::*;
 pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;
-pub(crate) use self::jwt::verify_auth0_jwt;
+pub(crate) use self::jwt::{
+    auth0_roles_from_claims, verify_auth0_jwt,
+};
 use super::oauth_apps::{
     OAuthAccessTokenRow, app_bearer_token_from_request,
     find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
@@ -68,7 +70,9 @@ pub(crate) async fn extract_authenticated_user(
             ))
         })?;
 
-    Ok(Some(AuthenticatedUser::auth0(email, true)))
+    let roles = auth0_roles_from_claims(&claims, config);
+
+    Ok(Some(AuthenticatedUser::auth0(email, true, roles)))
 }
 
 fn auth0_token_from_request(req: &Request, config: &AppConfig) -> Result<Option<String>> {
@@ -101,27 +105,42 @@ pub(crate) async fn find_authenticated_local_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<LocalAccount>> {
+    Ok(
+        find_authenticated_local_account_with_roles(req, db, config)
+            .await?
+            .map(|(account, _roles)| account),
+    )
+}
+
+pub(crate) async fn find_authenticated_local_account_with_roles(
+    req: &Request,
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<Option<(LocalAccount, Vec<String>)>> {
     if let Some(token) = app_bearer_token_from_request(req)?
         && let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
     {
         if oauth_access_token_allows_request(req, &auth.token) {
-            return Ok(auth.account);
+            return Ok(auth.account.map(|account| (account, Vec::new())));
         }
         return Ok(None);
     }
 
-    find_auth0_local_account(req, db, config).await
+    find_auth0_local_account_with_roles(req, db, config).await
 }
 
-async fn find_auth0_local_account(
+async fn find_auth0_local_account_with_roles(
     req: &Request,
     db: &D1Database,
     config: &AppConfig,
-) -> Result<Option<LocalAccount>> {
+) -> Result<Option<(LocalAccount, Vec<String>)>> {
     let Some(user) = extract_authenticated_user(req, config).await? else {
         return Ok(None);
     };
-    find_account_by_email(db, &user.email).await
+    let Some(account) = find_account_by_email(db, &user.email).await? else {
+        return Ok(None);
+    };
+    Ok(Some((account, user.roles)))
 }
 
 fn oauth_access_token_allows_request(req: &Request, token: &OAuthAccessTokenRow) -> bool {
@@ -220,8 +239,8 @@ pub(crate) async fn authenticate_local_api_request(
         if find_oauth_app_by_bearer_token(db, &token).await?.is_some() {
             return Ok(LocalApiAuthentication::AppToken);
         }
-        return match find_auth0_local_account(req, db, config).await {
-            Ok(Some(account)) => Ok(LocalApiAuthentication::Auth0(account)),
+        return match find_auth0_local_account_with_roles(req, db, config).await {
+            Ok(Some((account, _roles))) => Ok(LocalApiAuthentication::Auth0(account)),
             Ok(None) | Err(_) => Ok(LocalApiAuthentication::InvalidBearer),
         };
     }

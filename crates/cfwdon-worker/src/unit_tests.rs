@@ -44,7 +44,7 @@ use super::{
     filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
     format_async_refresh_header_value, hash_account_password, image_dimensions,
     include_local_source, include_remote_source, instance_base_url, instance_open_registrations,
-    is_activitypub_actor_type, is_admin_account, is_follow_undo, local_quote_policy_allows,
+    is_activitypub_actor_type, is_admin_account, is_admin_authorized, is_follow_undo, local_quote_policy_allows,
     local_quote_revoke_allowed, local_status_allows_viewer, local_status_ap_id,
     local_username_from_actor_uri, local_username_from_status_uri, mastodon_account_fields,
     matches_tag_timeline_filters, media_fallback_url, media_kind_label, media_object_url,
@@ -5669,6 +5669,34 @@ fn is_admin_account_matches_configured_emails() {
     record.access_email = "user@example.com".to_owned();
     let account = LocalAccount::from_record(record);
     assert!(!is_admin_account(&config, &account));
+}
+
+#[test]
+fn is_admin_authorized_accepts_auth0_roles_or_admin_emails() {
+    let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    config.auth0_admin_roles = vec!["admin".to_owned()];
+    let mut record = LocalAccountRecord::test_fixture("acct-1", "alice");
+    record.access_email = "user@example.com".to_owned();
+    let account = LocalAccount::from_record(record);
+
+    assert!(is_admin_authorized(
+        &config,
+        &account,
+        &["admin".to_owned()]
+    ));
+    assert!(is_admin_authorized(
+        &config,
+        &account,
+        &["ADMIN".to_owned()]
+    ));
+    assert!(!is_admin_authorized(
+        &config,
+        &account,
+        &["moderator".to_owned()]
+    ));
+
+    config.admin_emails = vec!["user@example.com".to_owned()];
+    assert!(is_admin_authorized(&config, &account, &[]));
 }
 
 #[test]

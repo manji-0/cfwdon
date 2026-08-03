@@ -262,6 +262,8 @@ fn set_auth0_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConf
     set_raw_string(vars, "AUTH0_CLIENT_ID", &mut config.auth0_client_id);
     set_raw_string(vars, "AUTH0_AUDIENCE", &mut config.auth0_audience);
     set_raw_string(vars, "AUTH0_EMAIL_CLAIM", &mut config.auth0_email_claim);
+    set_raw_string(vars, "AUTH0_ROLES_CLAIM", &mut config.auth0_roles_claim);
+    set_csv_list(vars, "AUTH0_ADMIN_ROLES", &mut config.auth0_admin_roles);
 }
 
 fn set_content_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {

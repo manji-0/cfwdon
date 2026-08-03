@@ -4,8 +4,8 @@ use super::store::{
     update_custom_emoji,
 };
 use crate::{
-    Response, Result, RouteContext, is_admin_account, load_config, parse_optional_bool,
-    require_authenticated_local_account, resolve_custom_emojis,
+    AdminAuthorization, Response, Result, RouteContext, authorize_admin_request, load_config,
+    parse_optional_bool, resolve_custom_emojis,
 };
 use serde::Deserialize;
 use worker::{FormEntry, Request};
@@ -22,10 +22,9 @@ pub(crate) async fn admin_custom_emojis_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = crate::bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) if is_admin_account(&config, &account) => {}
-        Some(_) => return Response::error("Forbidden", 403),
-        None => return Response::error("Auth0 authentication required", 401),
+    match authorize_admin_request(&req, &ctx).await? {
+        AdminAuthorization::Authorized(_) => {}
+        AdminAuthorization::Denied(response) => return Ok(response),
     }
     let emojis = list_admin_custom_emojis(&db, &config).await?;
     Response::from_json(&emojis)
@@ -38,10 +37,9 @@ pub(crate) async fn admin_create_custom_emoji_response(
     let config = load_config(&ctx);
     let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) if is_admin_account(&config, &account) => {}
-        Some(_) => return Response::error("Forbidden", 403),
-        None => return Response::error("Auth0 authentication required", 401),
+    match authorize_admin_request(&req, &ctx).await? {
+        AdminAuthorization::Authorized(_) => {}
+        AdminAuthorization::Denied(response) => return Ok(response),
     }
 
     let form = req
@@ -100,10 +98,9 @@ pub(crate) async fn admin_update_custom_emoji_response(
         .to_owned();
     let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding).ok();
-    match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) if is_admin_account(&config, &account) => {}
-        Some(_) => return Response::error("Forbidden", 403),
-        None => return Response::error("Auth0 authentication required", 401),
+    match authorize_admin_request(&req, &ctx).await? {
+        AdminAuthorization::Authorized(_) => {}
+        AdminAuthorization::Denied(response) => return Ok(response),
     }
 
     let content_type = req
@@ -175,10 +172,9 @@ pub(crate) async fn admin_delete_custom_emoji_response(
         .to_owned();
     let db = crate::bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) if is_admin_account(&config, &account) => {}
-        Some(_) => return Response::error("Forbidden", 403),
-        None => return Response::error("Auth0 authentication required", 401),
+    match authorize_admin_request(&req, &ctx).await? {
+        AdminAuthorization::Authorized(_) => {}
+        AdminAuthorization::Denied(response) => return Ok(response),
     }
     let _ = req;
 

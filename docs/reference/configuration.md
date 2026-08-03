@@ -44,6 +44,8 @@ Protected API routes validate Auth0-issued RS256 JWTs. By default, the Worker re
 | `AUTH0_CLIENT_ID` | Required for browser login redirects | unset | Auth0 application client ID used when redirecting `/oauth/authorize` flows to Auth0. |
 | `AUTH0_AUDIENCE` | Required for protected API | unset | Auth0 API identifier expected in the JWT `aud` claim. |
 | `AUTH0_EMAIL_CLAIM` | Required for protected API | `email` | String claim used to map the Auth0 user to `accounts.access_email`. |
+| `AUTH0_ROLES_CLAIM` | Optional | `{AUTH0_AUDIENCE}/roles` | JWT claim containing Auth0 role names. Used with `AUTH0_ADMIN_ROLES` for `/admin` access. |
+| `AUTH0_ADMIN_ROLES` | Optional | empty | Comma-separated Auth0 role names that grant `/admin` access. `ADMIN_EMAILS` remains a fallback when set. |
 
 Set real values for `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`. Do not deploy production with placeholders. Auth0 domain, client ID, audience, and claim names are configuration values rather than secrets, so keep the canonical deployment values in `wrangler.toml`.
 

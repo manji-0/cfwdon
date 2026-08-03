@@ -89,6 +89,46 @@ impl Auth0JwtClaims {
     }
 }
 
+pub(crate) fn auth0_roles_claim_name(config: &AppConfig) -> String {
+    let configured = config.auth0_roles_claim.trim();
+    if !configured.is_empty() {
+        return configured.to_owned();
+    }
+    let audience = config.auth0_audience.trim().trim_end_matches('/');
+    if audience.is_empty() {
+        return String::new();
+    }
+    format!("{audience}/roles")
+}
+
+pub(crate) fn auth0_roles_from_claims(claims: &Auth0JwtClaims, config: &AppConfig) -> Vec<String> {
+    let claim_name = auth0_roles_claim_name(config);
+    if claim_name.is_empty() {
+        return Vec::new();
+    }
+    parse_string_claim_list(claims.claim_value(&claim_name))
+}
+
+fn parse_string_claim_list(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .collect(),
+        Some(serde_json::Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                Vec::new()
+            } else {
+                vec![trimmed.to_owned()]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) async fn verify_auth0_jwt(token: &str, config: &AppConfig) -> Result<Auth0JwtClaims> {
     let (header_segment, payload_segment, signature_segment) =
         split_jwt(token).ok_or_else(|| Error::RustError("malformed Auth0 JWT".to_owned()))?;
@@ -423,9 +463,11 @@ fn current_unix_timestamp() -> u64 {
 mod tests {
     use super::{
         Auth0AudClaim, Auth0Jwk, Auth0JwtClaims, JWT_CLOCK_SKEW_LEEWAY_SECS, auth0_email_verified,
-        jwk_is_usable_rs256_signing_key, normalized_auth0_issuer, require_auth0_email_verified,
-        require_rs256_alg, select_auth0_signing_jwk, validate_auth0_time_claims,
+        auth0_roles_claim_name, auth0_roles_from_claims, jwk_is_usable_rs256_signing_key,
+        normalized_auth0_issuer, require_auth0_email_verified, require_rs256_alg,
+        select_auth0_signing_jwk, validate_auth0_time_claims,
     };
+    use cfwdon_core::AppConfig;
     use serde_json::json;
 
     fn sample_jwk(kid: &str, kty: &str, alg: Option<&str>, use_: Option<&str>) -> Auth0Jwk {
@@ -673,5 +715,50 @@ mod tests {
             json!(true),
         );
         assert!(auth0_email_verified(&claims_with_extra(extra), email_claim));
+    }
+
+    #[test]
+    fn auth0_roles_claim_defaults_to_audience_roles() {
+        let config = AppConfig {
+            auth0_audience: "https://social.example/api".to_owned(),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            auth0_roles_claim_name(&config),
+            "https://social.example/api/roles"
+        );
+    }
+
+    #[test]
+    fn auth0_roles_claim_uses_configured_override() {
+        let config = AppConfig {
+            auth0_roles_claim: "https://social.example/claims/roles".to_owned(),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            auth0_roles_claim_name(&config),
+            "https://social.example/claims/roles"
+        );
+    }
+
+    #[test]
+    fn auth0_roles_from_claims_accepts_array_or_string() {
+        let config = AppConfig {
+            auth0_roles_claim: "roles".to_owned(),
+            ..AppConfig::default()
+        };
+        let mut array_extra = serde_json::Map::new();
+        array_extra.insert("roles".to_owned(), json!(["admin", "moderator"]));
+        assert_eq!(
+            auth0_roles_from_claims(&claims_with_extra(array_extra), &config),
+            vec!["admin".to_owned(), "moderator".to_owned()]
+        );
+
+        let mut string_extra = serde_json::Map::new();
+        string_extra.insert("roles".to_owned(), json!("admin"));
+        assert_eq!(
+            auth0_roles_from_claims(&claims_with_extra(string_extra), &config),
+            vec!["admin".to_owned()]
+        );
     }
 }

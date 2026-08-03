@@ -94,6 +94,40 @@ exports.onExecutePostLogin = async (event, api) => {
 
 Use an HTTPS namespace that you control. If you keep `AUTH0_EMAIL_CLAIM = "email"`, verify with a real access token that the `email` claim is present in the access token issued for `AUTH0_AUDIENCE`; otherwise protected routes and the Auth0 callback will fail after JWT validation.
 
+## Configure Admin Roles
+<!-- derived-from #configure-the-e-mail-claim -->
+
+`/admin` access can be granted through Auth0 roles instead of, or in addition to, `ADMIN_EMAILS`.
+
+1. In the Auth0 API settings, enable **RBAC** and **Add Roles in the Access Token**.
+2. Create an Auth0 role such as `admin` and assign it to the users who should access `/admin`.
+3. Set the Worker vars:
+
+```toml
+AUTH0_ADMIN_ROLES = "admin"
+# Optional when the default claim name differs from {AUTH0_AUDIENCE}/roles
+# AUTH0_ROLES_CLAIM = "https://<INSTANCE_DOMAIN>/api/roles"
+```
+
+The Worker reads role names from `AUTH0_ROLES_CLAIM`. When unset, it defaults to `{AUTH0_AUDIENCE}/roles`, which matches Auth0 RBAC access tokens for a custom API.
+
+If you prefer a Post Login Action instead of Auth0 RBAC, copy role names into the same claim namespace:
+
+```js
+exports.onExecutePostLogin = async (event, api) => {
+  const namespace = "https://<INSTANCE_DOMAIN>/api";
+
+  if (event.authorization?.roles?.length) {
+    api.accessToken.setCustomClaim(
+      `${namespace}/roles`,
+      event.authorization.roles.map((role) => role.name),
+    );
+  }
+};
+```
+
+`ADMIN_EMAILS` still grants `/admin` access and continues to control admin notification delivery when set.
+
 ## Configure `wrangler.toml`
 <!-- derived-from #create-the-auth0-api -->
 <!-- derived-from #create-the-auth0-application -->

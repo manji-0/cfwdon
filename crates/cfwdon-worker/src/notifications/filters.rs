@@ -69,3 +69,22 @@ pub(crate) fn is_admin_account(config: &AppConfig, account: &LocalAccount) -> bo
         .iter()
         .any(|email| email == &account.access_email().to_ascii_lowercase())
 }
+
+pub(crate) fn is_admin_authorized(
+    config: &AppConfig,
+    account: &LocalAccount,
+    auth0_roles: &[String],
+) -> bool {
+    if is_admin_account(config, account) {
+        return true;
+    }
+    if config.auth0_admin_roles.is_empty() {
+        return false;
+    }
+    auth0_roles.iter().any(|role| {
+        config
+            .auth0_admin_roles
+            .iter()
+            .any(|admin_role| admin_role.eq_ignore_ascii_case(role))
+    })
+}

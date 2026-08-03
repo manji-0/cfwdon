@@ -66,6 +66,7 @@ AUTH0_DOMAIN = "auth.manji.app"
 AUTH0_CLIENT_ID = "6rUFgYfL4yxUBAGBogpStU4ZUfBlv9p6"
 AUTH0_AUDIENCE = "https://fedi.manji.app"
 AUTH0_EMAIL_CLAIM = "https://fedi.manji.app/claims/email"
+AUTH0_ADMIN_ROLES = "fedi-admin"
 
 # Configure these before the first real deploy. The binding names must stay
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.

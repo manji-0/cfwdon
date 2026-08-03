@@ -137,3 +137,4 @@ mod moderation;
 mod relays;
 mod reports;
 mod session;
+pub(crate) use guard::*;
