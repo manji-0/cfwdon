@@ -50,7 +50,7 @@ struct TrendingLocalLinkRow {
 
 #[derive(Debug, serde::Deserialize)]
 struct TrendingRemoteLinkRow {
-    content_html: String,
+    text_content: String,
     published_at: String,
     actor_uri: String,
 }
@@ -69,13 +69,6 @@ struct TrendingLinkAggregate {
     accounts: HashSet<String>,
     uses_by_day: HashMap<i64, u64>,
     accounts_by_day: HashMap<i64, HashSet<String>>,
-}
-
-#[derive(Debug, Default)]
-struct TrendingTagAggregate {
-    statuses_count: u64,
-    accounts: HashSet<String>,
-    last_status_at: String,
 }
 
 const TRENDING_LINK_HISTORY_DAYS: usize = 7;
@@ -770,51 +763,17 @@ pub(crate) async fn trending_tags_response(
     let limit = query.limit.unwrap_or(10).clamp(1, 20);
     let offset = query.offset.unwrap_or(0);
     let db = crate::bind_request_d1(&ctx, &config)?;
-    let cursor = ResolvedTimelineCursor::default();
-    let mut tags = HashMap::<String, TrendingTagAggregate>::new();
 
-    for status in list_local_public_timeline_statuses(&db, &cursor, 200).await? {
-        for tag in extract_hashtags_from_text(&status.text) {
-            let entry = tags.entry(tag).or_default();
-            entry.statuses_count += 1;
-            entry.accounts.insert(status.account_id.clone());
-            if status.created_at > entry.last_status_at {
-                entry.last_status_at = status.created_at.clone();
-            }
-        }
-    }
+    let documents = if let Some(cached) = load_trending_tags_cache(&db).await? {
+        slice_trending_tags_cache(cached, offset, limit)
+    } else {
+        let live = trending_tags_documents(&db, &config, offset, limit).await?;
+        live.into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()?
+    };
 
-    for (status, _actor) in list_remote_public_timeline_statuses(&db, &cursor, 200).await? {
-        for tag in extract_hashtags_from_html(&status.content_html) {
-            let entry = tags.entry(tag).or_default();
-            entry.statuses_count += 1;
-            entry.accounts.insert(status.actor_uri.clone());
-            if status.published_at > entry.last_status_at {
-                entry.last_status_at = status.published_at.clone();
-            }
-        }
-    }
-
-    let mut entries = tags.into_iter().collect::<Vec<_>>();
-    entries.sort_by(|left, right| {
-        right
-            .1
-            .statuses_count
-            .cmp(&left.1.statuses_count)
-            .then_with(|| right.1.accounts.len().cmp(&left.1.accounts.len()))
-            .then_with(|| right.1.last_status_at.cmp(&left.1.last_status_at))
-            .then_with(|| left.0.cmp(&right.0))
-    });
-
-    let mut response = Vec::new();
-    for (tag, _aggregate) in entries
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-    {
-        response.push(build_tag_response(&db, &config, &tag).await?);
-    }
-    cache_public_response(Response::from_json(&response)?, CACHE_TTL_TRENDS)
+    cache_public_response(Response::from_json(&documents)?, CACHE_TTL_TRENDS)
 }
 
 pub(crate) async fn custom_emojis_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -884,11 +843,9 @@ async fn list_trending_link_entries(db: &crate::D1Database) -> Result<Vec<Trendi
     }
 
     for row in list_trending_remote_link_rows(db, &cutoff).await? {
-        if let Some(candidate) = build_trending_link_candidate(
-            &strip_html_tags(&row.content_html),
-            &row.published_at,
-            &row.actor_uri,
-        ) {
+        if let Some(candidate) =
+            build_trending_link_candidate(&row.text_content, &row.published_at, &row.actor_uri)
+        {
             candidates.push(candidate);
         }
     }
@@ -921,7 +878,7 @@ async fn list_trending_remote_link_rows(
 ) -> Result<Vec<TrendingRemoteLinkRow>> {
     let bindings = [D1Type::Text(cutoff)];
     db.prepare(
-        "SELECT rs.content_html, rs.published_at, rs.actor_uri
+        "SELECT rs.text_content, rs.published_at, rs.actor_uri
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.visibility = 'public'

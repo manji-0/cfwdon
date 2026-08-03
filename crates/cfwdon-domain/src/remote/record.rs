@@ -15,6 +15,8 @@ pub struct RemoteStatusRecord {
     #[serde(default)]
     pub quote_of_uri: Option<String>,
     pub content_html: String,
+    #[serde(default)]
+    pub text_content: String,
     pub spoiler_text: String,
     pub visibility: String,
     pub sensitive: i32,
@@ -22,6 +24,14 @@ pub struct RemoteStatusRecord {
     #[serde(default = "default_quote_state")]
     pub quote_state: String,
     pub published_at: String,
+    #[serde(default)]
+    pub edited_at: Option<String>,
+    #[serde(default)]
+    pub card_json: Option<String>,
+    #[serde(default)]
+    pub federated_emojis_json: String,
+    #[serde(default)]
+    pub in_reply_to_id: Option<String>,
 }
 
 fn default_quote_state() -> String {
@@ -65,12 +75,17 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: quote_of_uri.map(str::to_owned),
             content_html: "<p>hello</p>".to_owned(),
+            text_content: "hello".to_owned(),
             spoiler_text: String::new(),
             visibility: "public".to_owned(),
             sensitive: 0,
             language: None,
             quote_state: quote_state.to_owned(),
             published_at: "2026-01-01T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         }
     }
 

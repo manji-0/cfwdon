@@ -1,10 +1,11 @@
 use crate::{
     AppConfig, D1Database, RemoteActorProfile, RemoteStatusAttachmentRow,
-    build_remote_status_response, count_followers_by_actor, delete_remote_status_poll_by_status_id,
-    extract_remote_poll_draft, find_account_by_id, find_local_status_by_object_uri,
-    find_remote_actor_by_actor_uri, generate_entity_id, insert_remote_status_edit_snapshot,
-    normalize_status_history_entry, now_iso_string,
-    publish_remote_status_create_stream_fanout_soft,
+    build_remote_status_card_value, build_remote_status_response, card_unfurl_payload,
+    count_followers_by_actor, delete_remote_status_poll_by_status_id,
+    extract_federated_emojis_from_activitypub_object, extract_remote_poll_draft,
+    find_account_by_id, find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
+    generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
+    now_iso_string, publish_remote_status_create_stream_fanout_soft,
     publish_remote_status_create_stream_notifications_soft,
     publish_remote_status_update_stream_notifications_soft,
     publish_remote_status_update_user_stream_fanout_soft, quote_target_uri_from_object,
@@ -12,8 +13,9 @@ use crate::{
         activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
     },
     replace_remote_status_attachments, replace_remote_status_hashtags,
+    replace_remote_status_mentions, resolve_in_reply_to_payload,
     send_remote_status_quote_notification, send_remote_status_update_notifications,
-    upsert_remote_status_poll,
+    soft_enqueue_background_job, upsert_remote_status_poll,
 };
 use cfwdon_domain::{
     QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus, StatusId,
@@ -52,7 +54,7 @@ pub(crate) async fn find_remote_status_by_id(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_id_bindings(status_id);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE id = ?1
          LIMIT 1",
@@ -98,7 +100,7 @@ pub(crate) async fn find_remote_status_by_object_uri(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE object_uri = ?1
          LIMIT 1",
@@ -115,7 +117,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_lookup_value_bindings(value);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE object_uri = ?1
             OR url = ?1
@@ -144,7 +146,7 @@ pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     let values_json = crate::json_string_array(&values);
     let in_list = crate::sql_in_json_each(1);
     let sql = format!(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE object_uri {in_list}
             OR url {in_list}"
@@ -265,7 +267,8 @@ async fn find_remote_status_edit_state_by_object_uri(
     let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri,
-                content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at,
+                content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at,
+                edited_at, card_json, federated_emojis_json, in_reply_to_id,
                 raw_object_json
          FROM remote_statuses
          WHERE object_uri = ?1
@@ -317,6 +320,7 @@ fn remote_status_upsert_sql() -> &'static str {
         boost_of_uri,
         quote_of_uri,
         content_html,
+        text_content,
         spoiler_text,
         visibility,
         sensitive,
@@ -325,11 +329,16 @@ fn remote_status_upsert_sql() -> &'static str {
         published_at,
         raw_object_json,
         created_at,
-        updated_at
+        updated_at,
+        edited_at,
+        card_json,
+        federated_emojis_json,
+        in_reply_to_id
     ) VALUES (
-        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+        ?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
         CURRENT_TIMESTAMP,
-        ?16
+        ?16,
+        ?17, ?18, ?19, ?20
     )
     ON CONFLICT(object_uri) DO UPDATE SET
         actor_uri = excluded.actor_uri,
@@ -338,6 +347,7 @@ fn remote_status_upsert_sql() -> &'static str {
         boost_of_uri = excluded.boost_of_uri,
         quote_of_uri = excluded.quote_of_uri,
         content_html = excluded.content_html,
+        text_content = excluded.text_content,
         spoiler_text = excluded.spoiler_text,
         visibility = excluded.visibility,
         sensitive = excluded.sensitive,
@@ -349,19 +359,26 @@ fn remote_status_upsert_sql() -> &'static str {
         END,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
-        updated_at = ?16"
+        updated_at = ?16,
+        edited_at = excluded.edited_at,
+        card_json = CASE
+            WHEN excluded.card_json IS NOT NULL THEN excluded.card_json
+            ELSE remote_statuses.card_json
+        END,
+        federated_emojis_json = excluded.federated_emojis_json,
+        in_reply_to_id = COALESCE(excluded.in_reply_to_id, remote_statuses.in_reply_to_id)"
 }
 
-fn remote_status_upsert_bindings(intent: &StoredRemoteStatusIntent) -> [D1Type<'_>; 16] {
+fn remote_status_upsert_bindings(intent: &StoredRemoteStatusIntent) -> [D1Type<'_>; 20] {
     [
         D1Type::Text(intent.status_id.as_str()),
         D1Type::Text(intent.actor_uri.as_str()),
         D1Type::Text(intent.object_uri.as_str()),
         optional_text_binding(intent.url.as_deref()),
         optional_text_binding(intent.in_reply_to_uri.as_deref()),
-        D1Type::Null,
         optional_text_binding(intent.quote_of_uri.as_deref()),
         D1Type::Text(intent.content_html.as_str()),
+        D1Type::Text(intent.text_content.as_str()),
         D1Type::Text(intent.spoiler_text.as_str()),
         D1Type::Text(intent.visibility.as_str()),
         bool_binding(intent.sensitive),
@@ -370,6 +387,10 @@ fn remote_status_upsert_bindings(intent: &StoredRemoteStatusIntent) -> [D1Type<'
         D1Type::Text(intent.published_at.as_str()),
         D1Type::Text(intent.raw_object_json.as_str()),
         D1Type::Text(intent.revision_at.as_str()),
+        optional_text_binding(intent.edited_at.as_deref()),
+        optional_text_binding(intent.card_json.as_deref()),
+        D1Type::Text(intent.federated_emojis_json.as_str()),
+        optional_text_binding(intent.in_reply_to_id.as_deref()),
     ]
 }
 
@@ -399,9 +420,10 @@ async fn reload_upserted_remote_status(
 
 async fn replace_remote_status_dependents(
     db: &D1Database,
+    config: &AppConfig,
     status: &RemoteStatusRow,
     object: &serde_json::Value,
-) -> Result<()> {
+) -> Result<Vec<RemoteStatusAttachmentRow>> {
     replace_remote_status_hashtags(
         db,
         &status.id,
@@ -410,18 +432,42 @@ async fn replace_remote_status_dependents(
         &status.content_html,
     )
     .await?;
-    replace_remote_status_attachments(
-        db,
-        &status.id,
-        &remote_status_attachments_from_object(&status.id, object),
-    )
-    .await?;
+    let attachments = remote_status_attachments_from_object(&status.id, object);
+    replace_remote_status_attachments(db, &status.id, &attachments).await?;
     if let Some(poll) = extract_remote_poll_draft(object) {
         upsert_remote_status_poll(db, &status.id, &poll).await?;
     } else {
         delete_remote_status_poll_by_status_id(db, &status.id).await?;
     }
+    replace_remote_status_mentions(
+        db,
+        config,
+        &status.id,
+        &status.published_at,
+        object,
+        &status.plain_text(),
+    )
+    .await?;
 
+    Ok(attachments)
+}
+
+async fn update_remote_status_card_json(
+    db: &D1Database,
+    status_id: &str,
+    card_json: Option<String>,
+) -> Result<()> {
+    let card_value = optional_text_binding(card_json.as_deref());
+    let id_value = D1Type::Text(status_id);
+    db.prepare(
+        "UPDATE remote_statuses
+         SET card_json = ?1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2",
+    )
+    .bind_refs(&[card_value, id_value])?
+    .run()
+    .await?;
     Ok(())
 }
 
@@ -490,6 +536,24 @@ pub(crate) async fn upsert_remote_status(
             previous.status_row()?.quote_state,
             intent.quote_state,
         );
+        // Mark as edited when content has changed.
+        if previous.raw_object_json != intent.raw_object_json {
+            intent.edited_at = Some(intent.revision_at.clone());
+        }
+    }
+
+    // Denormalize federated emoji map.
+    intent.federated_emojis_json =
+        serde_json::to_string(&extract_federated_emojis_from_activitypub_object(object))
+            .unwrap_or_else(|_| "{}".to_owned());
+
+    // Resolve in_reply_to_id from the URI if present.
+    if let Some(ref uri) = intent.in_reply_to_uri.clone() {
+        if let Some(remote) = find_remote_status_by_url_or_object_uri(db, uri).await? {
+            intent.in_reply_to_id = Some(remote.id);
+        } else if let Some(local) = find_local_status_by_object_uri(db, config, uri).await? {
+            intent.in_reply_to_id = Some(local.id);
+        }
     }
 
     insert_previous_remote_status_snapshot_if_changed(db, config, previous.as_ref(), &intent)
@@ -497,7 +561,33 @@ pub(crate) async fn upsert_remote_status(
     upsert_remote_status_draft(db, &intent).await?;
 
     let status = reload_upserted_remote_status(db, &intent).await?;
-    replace_remote_status_dependents(db, &status, object).await?;
+    let attachments = replace_remote_status_dependents(db, config, &status, object).await?;
+
+    // Compute card from plain text + attachments and persist it.
+    let card_json = build_remote_status_card_value(&status.plain_text(), &attachments)
+        .and_then(|v| serde_json::to_string(&v).ok());
+    update_remote_status_card_json(db, &status.id, card_json).await?;
+
+    // Soft-enqueue a card unfurl job for link preview enrichment.
+    let _ = soft_enqueue_background_job(
+        db,
+        crate::JOB_CARD_UNFURL,
+        &card_unfurl_payload("remote", &status.id),
+        &intent.revision_at,
+    )
+    .await;
+
+    // Soft-enqueue in_reply_to resolution if still unresolved.
+    if status.in_reply_to_id.is_none() && status.in_reply_to_uri.is_some() {
+        let _ = soft_enqueue_background_job(
+            db,
+            crate::JOB_RESOLVE_IN_REPLY_TO,
+            &resolve_in_reply_to_payload(&status.id),
+            &intent.revision_at,
+        )
+        .await;
+    }
+
     send_remote_status_change_notifications(
         env,
         db,
@@ -838,6 +928,9 @@ mod tests {
         assert!(sql.contains("WHEN remote_statuses.quote_state IN ('rejected', 'revoked')"));
         assert!(sql.contains("ELSE excluded.quote_state"));
         assert!(sql.contains("updated_at = ?16"));
+        assert!(sql.contains("edited_at = excluded.edited_at"));
+        assert!(sql.contains("federated_emojis_json = excluded.federated_emojis_json"));
+        assert!(sql.contains("in_reply_to_id = COALESCE(excluded.in_reply_to_id"));
     }
 
     #[test]
@@ -960,12 +1053,17 @@ mod tests {
             in_reply_to_uri: Some("https://remote.example/users/bob/statuses/9".to_owned()),
             quote_of_uri: Some("https://local.example/users/alice/statuses/2".to_owned()),
             content_html: "<p>Hello</p>".to_owned(),
+            text_content: "Hello".to_owned(),
             spoiler_text: "spoiler".to_owned(),
             visibility: Visibility::Public,
             sensitive: true,
             language: Some("ja".to_owned()),
             quote_state: QuoteState::Accepted,
             published_at: "2026-05-10T01:02:03Z".to_owned(),
+            edited_at: Some("2026-05-11T00:00:00Z".to_owned()),
+            card_json: Some("{\"url\":\"https://example.test\"}".to_owned()),
+            federated_emojis_json: "{\"emoji\":true}".to_owned(),
+            in_reply_to_id: Some("reply-id".to_owned()),
             raw_object_json: "{\"type\":\"Note\"}".to_owned(),
             revision_at: "revision-time".to_owned(),
         };
@@ -988,12 +1086,12 @@ mod tests {
             bindings[4],
             D1Type::Text("https://remote.example/users/bob/statuses/9")
         ));
-        assert!(matches!(bindings[5], D1Type::Null));
         assert!(matches!(
-            bindings[6],
+            bindings[5],
             D1Type::Text("https://local.example/users/alice/statuses/2")
         ));
-        assert!(matches!(bindings[7], D1Type::Text("<p>Hello</p>")));
+        assert!(matches!(bindings[6], D1Type::Text("<p>Hello</p>")));
+        assert!(matches!(bindings[7], D1Type::Text("Hello")));
         assert!(matches!(bindings[8], D1Type::Text("spoiler")));
         assert!(matches!(bindings[9], D1Type::Text("public")));
         assert!(matches!(bindings[10], D1Type::Integer(1)));
@@ -1002,6 +1100,13 @@ mod tests {
         assert!(matches!(bindings[13], D1Type::Text("2026-05-10T01:02:03Z")));
         assert!(matches!(bindings[14], D1Type::Text("{\"type\":\"Note\"}")));
         assert!(matches!(bindings[15], D1Type::Text("revision-time")));
+        assert!(matches!(bindings[16], D1Type::Text("2026-05-11T00:00:00Z")));
+        assert!(matches!(
+            bindings[17],
+            D1Type::Text("{\"url\":\"https://example.test\"}")
+        ));
+        assert!(matches!(bindings[18], D1Type::Text("{\"emoji\":true}")));
+        assert!(matches!(bindings[19], D1Type::Text("reply-id")));
     }
 
     #[test]

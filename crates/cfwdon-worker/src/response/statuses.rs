@@ -180,10 +180,7 @@ impl MastodonStatusResponse {
             tags: status_tag_values(config, extract_hashtags_from_html(&row.content_html)),
             emojis: resolve_status_emojis(
                 federated_emojis,
-                &[
-                    crate::strip_html_tags(&row.content_html).as_str(),
-                    row.spoiler_text.as_str(),
-                ],
+                &[row.plain_text().as_str(), row.spoiler_text.as_str()],
                 config,
             ),
             quote_approval: None,

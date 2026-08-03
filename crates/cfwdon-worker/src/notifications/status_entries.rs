@@ -20,7 +20,7 @@ use super::{
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    remote_account_rest_id, remote_status_from_record, strip_html_tags,
+    remote_account_rest_id, remote_status_from_record,
 };
 use cfwdon_domain::LocalAccount;
 use std::collections::{HashMap, HashSet};
@@ -37,12 +37,17 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Optio
         boost_of_uri: status.boost_of_uri.clone(),
         quote_of_uri: status.quote_of_uri.clone(),
         content_html: status.content_html.clone(),
+        text_content: status.text_content.clone(),
         spoiler_text: status.spoiler_text.clone(),
         visibility: status.visibility.clone(),
         sensitive: status.sensitive,
         language: status.language.clone(),
         quote_state: status.quote_state.clone(),
         published_at: status.published_at.clone(),
+        edited_at: status.edited_at.clone(),
+        card_json: status.card_json.clone(),
+        federated_emojis_json: status.federated_emojis_json.clone(),
+        in_reply_to_id: status.in_reply_to_id.clone(),
     })
     .ok()
 }
@@ -232,11 +237,7 @@ pub(crate) async fn preload_notification_statuses(
         .iter()
         .map(|status| status.text.clone())
         .collect::<Vec<_>>();
-    mention_texts_owned.extend(
-        remote_statuses
-            .iter()
-            .map(|status| strip_html_tags(&status.content_html)),
-    );
+    mention_texts_owned.extend(remote_statuses.iter().map(|status| status.plain_text()));
     let mention_texts = mention_texts_owned
         .iter()
         .map(String::as_str)
@@ -575,6 +576,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id,
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>Hello</p>".to_owned(),
@@ -586,6 +588,7 @@ mod tests {
             quote_approval_policy: None,
             quote_state: QuoteState::Accepted,
             application_id: None,
+            card_json: None,
             created_at: "2026-01-02T00:00:00.000Z".to_owned(),
             updated_at: None,
         }
@@ -601,12 +604,17 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>Hi</p>".to_owned(),
+            text_content: "Hi".to_owned(),
             spoiler_text: String::new(),
             visibility: "public".to_owned(),
             sensitive: 1,
             language: Some("en".to_owned()),
             quote_state: "accepted".to_owned(),
             published_at: "2026-01-02T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         }
     }
 

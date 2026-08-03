@@ -14,6 +14,8 @@ pub(crate) struct RemoteStatusNotificationRow {
     pub(crate) boost_of_uri: Option<String>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
+    #[serde(default)]
+    pub(crate) text_content: String,
     pub(crate) spoiler_text: String,
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
@@ -21,6 +23,14 @@ pub(crate) struct RemoteStatusNotificationRow {
     #[serde(default = "crate::default_remote_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) published_at: String,
+    #[serde(default)]
+    pub(crate) edited_at: Option<String>,
+    #[serde(default)]
+    pub(crate) card_json: Option<String>,
+    #[serde(default)]
+    pub(crate) federated_emojis_json: String,
+    #[serde(default)]
+    pub(crate) in_reply_to_id: Option<String>,
 }
 
 pub(crate) async fn list_local_status_notifications_for_account(
@@ -60,7 +70,7 @@ pub(crate) async fn list_remote_status_notifications_for_account(
     let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
+            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
              FROM remote_statuses rs
              JOIN follows f
                ON f.target_actor_uri = rs.actor_uri

@@ -773,6 +773,8 @@ fn remote_status_row_from_activitypub_object(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let content_html = remote_status_content_html(object);
+    let text_content = crate::strip_html_tags(&content_html);
     remote_status_from_record(RemoteStatusRecord {
         id: remote_account_rest_id(&object_uri),
         actor_uri: actor.actor_uri.clone(),
@@ -784,7 +786,8 @@ fn remote_status_row_from_activitypub_object(
             .map(ToOwned::to_owned),
         boost_of_uri: None,
         quote_of_uri: None,
-        content_html: remote_status_content_html(object),
+        content_html,
+        text_content,
         spoiler_text: object
             .get("summary")
             .and_then(serde_json::Value::as_str)
@@ -803,6 +806,10 @@ fn remote_status_row_from_activitypub_object(
             .and_then(|map| map.keys().next().cloned()),
         quote_state: "accepted".to_owned(),
         published_at: remote_status_published_at(object),
+        edited_at: None,
+        card_json: None,
+        federated_emojis_json: String::new(),
+        in_reply_to_id: None,
     })
 }
 

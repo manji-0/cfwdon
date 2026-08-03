@@ -95,12 +95,15 @@ pub(crate) async fn build_status_mentions_with_preload(
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-struct MentionLookupKeys {
-    local_usernames: Vec<String>,
-    remote_pairs: Vec<(String, String)>,
+pub(super) struct MentionLookupKeys {
+    pub(super) local_usernames: Vec<String>,
+    pub(super) remote_pairs: Vec<(String, String)>,
 }
 
-fn mention_lookup_keys(handles: &[AccountHandle], instance_domain: &str) -> MentionLookupKeys {
+pub(super) fn mention_lookup_keys(
+    handles: &[AccountHandle],
+    instance_domain: &str,
+) -> MentionLookupKeys {
     let mut keys = MentionLookupKeys::default();
     for handle in handles {
         if handle.is_local_to(instance_domain) {
@@ -165,7 +168,7 @@ fn mention_local_accounts_sql() -> String {
     )
 }
 
-async fn load_mention_local_accounts(
+pub(super) async fn load_mention_local_accounts(
     db: &D1Database,
     usernames: &[String],
 ) -> Result<HashMap<String, LocalAccount>> {
@@ -207,7 +210,7 @@ fn mention_remote_actors_sql() -> String {
     )
 }
 
-async fn load_mention_remote_actors(
+pub(super) async fn load_mention_remote_actors(
     db: &D1Database,
     pairs: &[(String, String)],
 ) -> Result<HashMap<(String, String), RemoteActorRow>> {

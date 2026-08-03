@@ -21,7 +21,7 @@ use crate::{
     load_in_reply_to_account_id, local_status_ap_id, parse_lookup_handle,
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    resolve_account_reference, strip_html_tags,
+    resolve_account_reference,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccount};
@@ -200,11 +200,7 @@ async fn remote_status_is_in_search_library(
     if is_remote_status_reblogged_by(db, viewer.id(), &status.id).await? {
         return Ok(true);
     }
-    if text_mentions_search_library_viewer(
-        config,
-        &strip_html_tags(&status.content_html),
-        viewer.username(),
-    ) {
+    if text_mentions_search_library_viewer(config, &status.plain_text(), viewer.username()) {
         return Ok(true);
     }
     Ok(false)
@@ -369,7 +365,7 @@ async fn collect_remote_search_status_entries(
         if !status_is_searchable_by_scope(parsed_query, is_public, is_library) {
             continue;
         }
-        let text_content = strip_html_tags(&status.content_html);
+        let text_content = status.plain_text();
         if !status_matches_search_syntax(
             parsed_query,
             &text_content,

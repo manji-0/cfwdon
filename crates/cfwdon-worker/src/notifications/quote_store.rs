@@ -13,6 +13,8 @@ pub(crate) struct QuotedUpdateNotificationRow {
     pub(crate) account_id: String,
     pub(crate) ap_id: Option<String>,
     pub(crate) in_reply_to_id: Option<String>,
+    #[serde(default)]
+    pub(crate) in_reply_to_account_id: Option<String>,
     pub(crate) boost_of_uri: Option<String>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
@@ -64,7 +66,7 @@ pub(crate) async fn list_remote_quote_notifications_for_account(
     let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
-            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
+            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
              FROM remote_statuses rs
              JOIN statuses target
                ON target.ap_id = rs.quote_of_uri

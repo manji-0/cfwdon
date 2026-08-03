@@ -15,6 +15,8 @@ pub(crate) struct UpdateNotificationRow {
     pub(crate) boost_of_uri: Option<String>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
+    #[serde(default)]
+    pub(crate) text_content: String,
     pub(crate) spoiler_text: String,
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
@@ -34,7 +36,7 @@ pub(crate) async fn list_update_notifications_for_account(
     let result = db
         .prepare(
             "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri,
-                    rs.quote_of_uri, rs.content_html, rs.spoiler_text, rs.visibility, rs.sensitive,
+                    rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive,
                     rs.language, rs.quote_state, rs.published_at, rs.updated_at AS remote_updated_at
              FROM remote_statuses rs
              JOIN reblogs r
@@ -62,12 +64,17 @@ impl UpdateNotificationRow {
             boost_of_uri: self.boost_of_uri.clone(),
             quote_of_uri: self.quote_of_uri.clone(),
             content_html: self.content_html.clone(),
+            text_content: self.text_content.clone(),
             spoiler_text: self.spoiler_text.clone(),
             visibility: self.visibility.clone(),
             sensitive: self.sensitive,
             language: self.language.clone(),
             quote_state: self.quote_state.clone(),
             published_at: self.published_at.clone(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         })
     }
 }

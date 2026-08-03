@@ -499,6 +499,151 @@ async fn load_indexed_tag_search_metrics(db: &D1Database, tag: &str) -> Result<T
         .unwrap_or_default())
 }
 
+const TRENDING_TAGS_CACHE_ID: &str = "default";
+const TRENDING_TAGS_CACHE_SIZE: u32 = 200;
+
+fn trending_tags_metrics_sql() -> &'static str {
+    "SELECT tag,
+            SUM(statuses_count) AS statuses_count,
+            SUM(accounts_count) AS accounts_count,
+            MAX(last_status_at) AS last_status_at
+     FROM (
+         SELECT h.tag AS tag,
+                COUNT(*) AS statuses_count,
+                COUNT(DISTINCT h.account_id) AS accounts_count,
+                MAX(h.created_at) AS last_status_at
+         FROM status_hashtags h
+         JOIN statuses s ON s.id = h.status_id
+         WHERE s.visibility = 'public'
+         GROUP BY h.tag
+         UNION ALL
+         SELECT h.tag AS tag,
+                COUNT(*) AS statuses_count,
+                COUNT(DISTINCT h.actor_uri) AS accounts_count,
+                MAX(h.published_at) AS last_status_at
+         FROM remote_status_hashtags h
+         JOIN remote_statuses rs ON rs.id = h.status_id
+         WHERE rs.visibility = 'public'
+         GROUP BY h.tag
+     )
+     GROUP BY tag
+     ORDER BY statuses_count DESC,
+              accounts_count DESC,
+              last_status_at DESC,
+              tag ASC
+     LIMIT ?1"
+}
+
+pub(crate) async fn list_trending_tag_metrics(
+    db: &D1Database,
+    fetch_limit: u32,
+) -> Result<Vec<(String, TagSearchMetrics)>> {
+    let bindings = [D1Type::Integer(
+        i32::try_from(fetch_limit).unwrap_or(i32::MAX),
+    )];
+    let result = db
+        .prepare(trending_tags_metrics_sql())
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+
+    Ok(result
+        .results::<TagSearchRow>()?
+        .into_iter()
+        .map(|row| {
+            (
+                row.tag,
+                TagSearchMetrics {
+                    statuses_count: row.statuses_count,
+                    accounts_count: row.accounts_count,
+                    last_status_at: row.last_status_at,
+                },
+            )
+        })
+        .collect())
+}
+
+pub(crate) async fn trending_tags_documents(
+    db: &D1Database,
+    config: &AppConfig,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<MastodonTagResponse>> {
+    let fetch_limit = offset
+        .saturating_add(limit)
+        .clamp(limit, TRENDING_TAGS_CACHE_SIZE);
+    let metrics = list_trending_tag_metrics(db, fetch_limit).await?;
+    Ok(metrics
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|(tag, metrics)| build_tag_response_with_metrics(config, &tag, metrics))
+        .collect())
+}
+
+#[derive(Debug, Deserialize)]
+struct TrendingTagsCacheRow {
+    payload_json: String,
+}
+
+pub(crate) async fn load_trending_tags_cache(
+    db: &D1Database,
+) -> Result<Option<Vec<serde_json::Value>>> {
+    let bindings = [D1Type::Text(TRENDING_TAGS_CACHE_ID)];
+    let Some(row) = db
+        .prepare(
+            "SELECT payload_json
+             FROM trending_tags_cache
+             WHERE id = ?1
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<TrendingTagsCacheRow>(None)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    serde_json::from_str(&row.payload_json)
+        .map(Some)
+        .map_err(|error| worker::Error::RustError(format!("invalid trending tags cache: {error}")))
+}
+
+pub(crate) fn slice_trending_tags_cache(
+    documents: Vec<serde_json::Value>,
+    offset: u32,
+    limit: u32,
+) -> Vec<serde_json::Value> {
+    documents
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect()
+}
+
+pub(crate) async fn refresh_trending_tags_cache(db: &D1Database, config: &AppConfig) -> Result<()> {
+    let documents = trending_tags_documents(db, config, 0, TRENDING_TAGS_CACHE_SIZE).await?;
+    let payload_json = serde_json::to_string(&documents)
+        .map_err(|error| worker::Error::RustError(error.to_string()))?;
+    let now = crate::now_iso_string()?;
+    let bindings = [
+        D1Type::Text(TRENDING_TAGS_CACHE_ID),
+        D1Type::Text(&payload_json),
+        D1Type::Text(&now),
+    ];
+    db.prepare(
+        "INSERT INTO trending_tags_cache (id, payload_json, computed_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+             payload_json = excluded.payload_json,
+             computed_at = excluded.computed_at",
+    )
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    Ok(())
+}
+
 async fn load_scanned_local_tag_search_metrics(
     db: &D1Database,
     tag: &str,
@@ -539,4 +684,30 @@ async fn load_scanned_remote_tag_search_metrics(
         .first::<TagSearchMetrics>(None)
         .await?
         .unwrap_or_default())
+}
+
+#[cfg(test)]
+mod trending_tags_tests {
+    use super::trending_tags_metrics_sql;
+
+    #[test]
+    fn trending_tags_metrics_sql_uses_hashtag_tables() {
+        let sql = trending_tags_metrics_sql();
+        assert!(sql.contains("FROM status_hashtags"));
+        assert!(sql.contains("FROM remote_status_hashtags"));
+        assert!(sql.contains("ORDER BY statuses_count DESC"));
+        assert!(!sql.contains("text_content"));
+    }
+
+    #[test]
+    fn slice_trending_tags_cache_applies_offset_and_limit() {
+        let documents = vec![
+            serde_json::json!({"name": "a"}),
+            serde_json::json!({"name": "b"}),
+            serde_json::json!({"name": "c"}),
+        ];
+        let sliced = super::slice_trending_tags_cache(documents, 1, 1);
+        assert_eq!(sliced.len(), 1);
+        assert_eq!(sliced[0]["name"], "b");
+    }
 }

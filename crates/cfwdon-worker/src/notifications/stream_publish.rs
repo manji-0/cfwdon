@@ -7,7 +7,6 @@ use super::{
     find_remote_actor_by_actor_uri, is_public_activitypub_visibility, load_in_reply_to_account_id,
     load_remote_status_updated_at, notification_timestamp_sort_token, now_iso_string,
     publish_notification_stream_hub_event_soft, remote_account_rest_id, statuses_from_records,
-    strip_html_tags,
 };
 use crate::timestamp_to_mastodon_iso8601;
 use cfwdon_domain::{LocalAccount, QuoteState, Visibility};
@@ -237,7 +236,7 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
         || visibility == "private";
 
     if mention_visibility_allowed {
-        let text_content = strip_html_tags(&remote_status.content_html);
+        let text_content = remote_status.plain_text();
         for handle in extract_mentions_from_text(&text_content, config) {
             if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await {
                 let recipient_account_id = account.id();

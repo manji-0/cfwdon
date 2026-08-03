@@ -14,6 +14,7 @@ mod app_cache;
 mod async_refreshes;
 mod auth;
 mod authorize_interaction;
+mod background_jobs;
 mod collections_alpha;
 mod content_helpers;
 mod conversation_store;
@@ -78,6 +79,7 @@ pub(crate) use app_cache::*;
 pub(crate) use async_refreshes::*;
 pub(crate) use auth::*;
 pub(crate) use authorize_interaction::*;
+pub(crate) use background_jobs::*;
 pub(crate) use collections_alpha::*;
 pub(crate) use content_helpers::*;
 pub(crate) use conversation_store::*;
@@ -191,6 +193,12 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
         {
             console_error!("due scheduled status processing failed: {error}");
+        }
+        if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
+            console_error!("background job processing failed: {error}");
+        }
+        if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
+            console_error!("trending tags cache refresh failed: {error}");
         }
         Ok::<(), Error>(())
     }

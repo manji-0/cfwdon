@@ -9,8 +9,8 @@ use crate::{
 use std::collections::HashSet;
 use worker::d1::D1Type;
 
-const LOCAL_STATUS_COLUMNS: &str = "id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at, updated_at";
-const LOCAL_STATUS_S_SELECT: &str = "s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at, s.updated_at";
+const LOCAL_STATUS_COLUMNS: &str = "id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, application_id, card_json, created_at, updated_at";
+const LOCAL_STATUS_S_SELECT: &str = "s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.in_reply_to_account_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.application_id, s.card_json, s.created_at, s.updated_at";
 
 pub(crate) async fn list_local_home_timeline_statuses(
     db: &D1Database,

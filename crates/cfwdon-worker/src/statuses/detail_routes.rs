@@ -963,7 +963,7 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
             }
             let attachments =
                 find_remote_status_attachments_by_status_id(&detail.db, &status.id).await?;
-            build_remote_status_card_value(&strip_html_tags(&status.content_html), &attachments)
+            build_remote_status_card_value(&status.plain_text(), &attachments)
         }
     }
     .unwrap_or(serde_json::Value::Null);

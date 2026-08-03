@@ -207,6 +207,7 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
         account_id: update.account_id.clone(),
         ap_id: update.ap_id.clone(),
         in_reply_to_id: update.in_reply_to_id.clone(),
+        in_reply_to_account_id: update.in_reply_to_account_id.clone(),
         boost_of_uri: update.boost_of_uri.clone(),
         quote_of_uri: update.quote_of_uri.clone(),
         content_html: update.content_html.clone(),
@@ -218,6 +219,7 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
         quote_approval_policy: None,
         quote_state: QuoteState::parse(&update.quote_state).unwrap_or(QuoteState::Accepted),
         application_id: None,
+        card_json: None,
         created_at: update.created_at.clone(),
         updated_at: None,
     }
@@ -235,6 +237,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: Some("https://example.com/users/alice/statuses/1".to_owned()),
             in_reply_to_id: Some("status-0".to_owned()),
+            in_reply_to_account_id: None,
             boost_of_uri: Some("https://remote.example/statuses/boost".to_owned()),
             quote_of_uri: Some("https://remote.example/statuses/quoted".to_owned()),
             content_html: "<p>hello</p>".to_owned(),

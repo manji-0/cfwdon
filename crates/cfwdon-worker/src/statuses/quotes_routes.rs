@@ -396,7 +396,7 @@ async fn list_remote_status_quotes_by_uri(
     limit: u32,
 ) -> Result<Vec<crate::RemoteStatusRow>> {
     let (sql, bindings) = status_quotes_list_sql(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE quote_of_uri = ?1
                AND quote_state = 'accepted'",

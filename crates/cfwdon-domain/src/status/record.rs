@@ -10,6 +10,8 @@ pub struct LocalStatusRecord {
     pub ap_id: Option<String>,
     pub in_reply_to_id: Option<String>,
     #[serde(default)]
+    pub in_reply_to_account_id: Option<String>,
+    #[serde(default)]
     pub boost_of_uri: Option<String>,
     #[serde(default)]
     pub quote_of_uri: Option<String>,
@@ -26,6 +28,8 @@ pub struct LocalStatusRecord {
     pub quote_state: String,
     #[serde(default)]
     pub application_id: Option<i64>,
+    #[serde(default)]
+    pub card_json: Option<String>,
     pub created_at: String,
     #[serde(default)]
     pub updated_at: Option<String>,
@@ -75,6 +79,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: Some("https://example.com/users/alice/statuses/1".to_owned()),
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: None,
             quote_of_uri: quote_of_uri.map(str::to_owned),
             content_html: "<p>hello</p>".to_owned(),
@@ -86,6 +91,7 @@ mod tests {
             quote_approval_policy: None,
             quote_state: quote_state.to_owned(),
             application_id: None,
+            card_json: None,
             created_at: "2026-01-01T00:00:00Z".to_owned(),
             updated_at: None,
         }

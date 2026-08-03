@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use worker::d1::D1Type;
 
 use crate::D1Database;
-const LOCAL_STATUS_SEARCH_SELECT: &str = "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
+const LOCAL_STATUS_SEARCH_SELECT: &str = "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, application_id, card_json, created_at, updated_at
              FROM statuses";
 
 const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
@@ -19,12 +19,17 @@ const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
                 rs.boost_of_uri,
                 rs.quote_of_uri,
                 rs.content_html,
+                rs.text_content,
                 rs.spoiler_text,
                 rs.visibility,
                 rs.sensitive,
                 rs.language,
                 rs.quote_state,
                 rs.published_at,
+                rs.edited_at,
+                rs.card_json,
+                rs.federated_emojis_json,
+                rs.in_reply_to_id,
                 ra.username,
                 ra.domain,
                 ra.display_name,
@@ -133,6 +138,7 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<Remo
         boost_of_uri: optional_json_string(value, "boost_of_uri"),
         quote_of_uri: optional_json_string(value, "quote_of_uri"),
         content_html: json_string(value, "content_html"),
+        text_content: json_string(value, "text_content"),
         spoiler_text: json_string(value, "spoiler_text"),
         visibility: json_string(value, "visibility"),
         sensitive: value
@@ -146,6 +152,10 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<Remo
             .unwrap_or("accepted")
             .to_owned(),
         published_at: json_string(value, "published_at"),
+        edited_at: None,
+        card_json: None,
+        federated_emojis_json: "[]".to_owned(),
+        in_reply_to_id: None,
     })
 }
 

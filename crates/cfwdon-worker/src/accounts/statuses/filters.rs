@@ -99,6 +99,7 @@ mod tests {
             account_id: "account-1".to_owned(),
             ap_id: None,
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>#rust hello</p>".to_owned(),
@@ -110,6 +111,7 @@ mod tests {
             quote_approval_policy: None,
             quote_state: QuoteState::Accepted,
             application_id: None,
+            card_json: None,
             created_at: "2026-01-01T00:00:00Z".to_owned(),
             updated_at: None,
         }
@@ -125,12 +127,17 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>#rust hello</p>".to_owned(),
+            text_content: "#rust hello".to_owned(),
             spoiler_text: String::new(),
             visibility: Visibility::Public,
             sensitive: false,
             language: None,
             quote_state: QuoteState::Accepted,
             published_at: "2026-01-01T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         }
     }
 

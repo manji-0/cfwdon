@@ -1,10 +1,11 @@
 use super::{
-    StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string,
+    StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string, build_status_card_value,
     enqueue_addressed_create_activity, enqueue_addressed_delete_activity,
     enqueue_direct_create_activity, enqueue_direct_delete_activity,
     find_local_status_by_object_uri, generate_entity_id, now_iso_string,
     outbox_create_insert_statement, outbox_delete_insert_statement, render_status_html,
-    replace_local_status_hashtags, require_status_by_id, status_from_record,
+    replace_local_status_hashtags, replace_local_status_mentions, require_status_by_id,
+    status_from_record,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -38,6 +39,7 @@ pub(crate) async fn insert_status(
     application_id: Option<i64>,
     quote_of_uri: Option<&str>,
     defer_outbox: bool,
+    in_reply_to_account_id: Option<String>,
 ) -> Result<StatusRow> {
     let quote_resolution = quote_target_resolution(db, config, quote_of_uri).await?;
     let publish_intent = draft
@@ -46,6 +48,8 @@ pub(crate) async fn insert_status(
         .state;
     let status_id = generate_entity_id(16)?;
     let created_at = now_iso_string()?;
+    let card_json =
+        build_status_card_value(draft.text()).and_then(|v| serde_json::to_string(&v).ok());
     let stored = publish_intent
         .into_stored_intent(LocalStatusPersistenceFacts {
             status_id: status_id.clone(),
@@ -58,6 +62,8 @@ pub(crate) async fn insert_status(
             quote_of_uri: quote_of_uri.map(str::to_owned),
             content_html: render_status_html(draft.text()),
             application_id,
+            in_reply_to_account_id,
+            card_json,
             created_at: created_at.clone(),
         })
         .state;
@@ -80,6 +86,15 @@ pub(crate) async fn insert_status(
         db,
         &stored.status_id,
         &stored.account_id,
+        &stored.created_at,
+        &stored.text_content,
+    )
+    .await?;
+
+    replace_local_status_mentions(
+        db,
+        config,
+        &stored.status_id,
         &stored.created_at,
         &stored.text_content,
     )
@@ -117,6 +132,8 @@ async fn insert_local_status_intent(
             quote_approval_policy,
             quote_state,
             application_id,
+            in_reply_to_account_id,
+            card_json,
             created_at,
             updated_at
         ) VALUES (
@@ -136,7 +153,9 @@ async fn insert_local_status_intent(
             ?14,
             ?15,
             ?16,
-            ?17
+            ?17,
+            ?18,
+            ?18
         )",
         )
         .bind_refs(bindings.iter())?;
@@ -152,7 +171,7 @@ async fn insert_local_status_intent(
     Ok(())
 }
 
-fn local_status_insert_bindings(intent: &StoredLocalStatusIntent) -> [D1Type<'_>; 17] {
+fn local_status_insert_bindings(intent: &StoredLocalStatusIntent) -> [D1Type<'_>; 18] {
     [
         D1Type::Text(intent.status_id.as_str()),
         D1Type::Text(intent.account_id.as_str()),
@@ -180,7 +199,14 @@ fn local_status_insert_bindings(intent: &StoredLocalStatusIntent) -> [D1Type<'_>
         intent.application_id.map_or(D1Type::Null, |value| {
             D1Type::Integer(i32::try_from(value).unwrap_or(i32::MAX))
         }),
-        D1Type::Text(intent.created_at.as_str()),
+        intent
+            .in_reply_to_account_id
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
+        intent
+            .card_json
+            .as_deref()
+            .map_or(D1Type::Null, D1Type::Text),
         D1Type::Text(intent.created_at.as_str()),
     ]
 }
@@ -575,6 +601,7 @@ pub(crate) async fn delete_local_status_with_outbox(
 
 pub(crate) async fn update_local_status(
     db: &D1Database,
+    config: &AppConfig,
     status: &StatusRow,
     text: &str,
     spoiler_text: &str,
@@ -608,6 +635,8 @@ pub(crate) async fn update_local_status(
 
     replace_local_status_hashtags(db, &status.id, &status.account_id, &status.created_at, text)
         .await?;
+
+    replace_local_status_mentions(db, config, &status.id, &status.created_at, text).await?;
 
     require_status_by_id(db, &status.id).await
 }
@@ -695,6 +724,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: "https://social.example/users/alice/statuses/status-1".to_owned(),
             in_reply_to_id: Some("reply-1".to_owned()),
+            in_reply_to_account_id: None,
             quote_of_uri: Some("https://remote.example/statuses/quote-1".to_owned()),
             content_html: "<p>hello</p>".to_owned(),
             text_content: "hello".to_owned(),
@@ -705,6 +735,7 @@ mod tests {
             quote_approval_policy: cfwdon_domain::QuoteApprovalPolicy::Followers,
             quote_state: cfwdon_domain::QuoteState::Pending,
             application_id: Some(42),
+            card_json: None,
             created_at: "2026-01-02T03:04:05.000Z".to_owned(),
         };
         let bindings = local_status_insert_bindings(&intent);
@@ -730,12 +761,10 @@ mod tests {
         assert!(matches!(bindings[12], D1Type::Text("followers")));
         assert!(matches!(bindings[13], D1Type::Text("pending")));
         assert!(matches!(bindings[14], D1Type::Integer(42)));
+        assert!(matches!(bindings[15], D1Type::Null)); // in_reply_to_account_id
+        assert!(matches!(bindings[16], D1Type::Null)); // card_json
         assert!(matches!(
-            bindings[15],
-            D1Type::Text("2026-01-02T03:04:05.000Z")
-        ));
-        assert!(matches!(
-            bindings[16],
+            bindings[17],
             D1Type::Text("2026-01-02T03:04:05.000Z")
         ));
     }
@@ -747,6 +776,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: "https://social.example/users/alice/statuses/status-1".to_owned(),
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             quote_of_uri: None,
             content_html: "<p>hello</p>".to_owned(),
             text_content: "hello".to_owned(),
@@ -757,6 +787,7 @@ mod tests {
             quote_approval_policy: cfwdon_domain::QuoteApprovalPolicy::Public,
             quote_state: cfwdon_domain::QuoteState::Accepted,
             application_id: None,
+            card_json: None,
             created_at: "2026-01-02T03:04:05.000Z".to_owned(),
         };
         let bindings = local_status_insert_bindings(&intent);
@@ -766,6 +797,8 @@ mod tests {
         assert!(matches!(bindings[10], D1Type::Integer(0)));
         assert!(matches!(bindings[11], D1Type::Null));
         assert!(matches!(bindings[14], D1Type::Null));
+        assert!(matches!(bindings[15], D1Type::Null)); // in_reply_to_account_id
+        assert!(matches!(bindings[16], D1Type::Null)); // card_json
     }
 
     #[test]

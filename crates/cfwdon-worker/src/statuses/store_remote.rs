@@ -18,12 +18,17 @@ const REMOTE_STATUS_WITH_ACTOR_SELECT: &str = "rs.id,
             rs.boost_of_uri,
             rs.quote_of_uri,
             rs.content_html,
+            rs.text_content,
             rs.spoiler_text,
             rs.visibility,
             rs.sensitive,
             rs.language,
             rs.quote_state,
             rs.published_at,
+            rs.edited_at,
+            rs.card_json,
+            rs.federated_emojis_json,
+            rs.in_reply_to_id,
             ra.username,
             ra.domain,
             ra.display_name,
@@ -134,31 +139,7 @@ pub(crate) async fn find_remote_statuses_with_actors_by_ids(
 fn remote_statuses_with_actors_by_ids_sql() -> String {
     format!(
         "SELECT
-            rs.id,
-            rs.actor_uri,
-            rs.object_uri,
-            rs.url,
-            rs.in_reply_to_uri,
-            rs.boost_of_uri,
-            rs.quote_of_uri,
-            rs.content_html,
-            rs.spoiler_text,
-            rs.visibility,
-            rs.sensitive,
-            rs.language,
-            rs.quote_state,
-            rs.published_at,
-            ra.username,
-            ra.domain,
-            ra.display_name,
-            ra.summary_html,
-            ra.profile_url,
-            ra.avatar_url,
-            ra.header_url,
-            ra.locked,
-            ra.bot,
-            ra.discoverable,
-            ra.indexable
+            {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.id {}",
@@ -481,7 +462,7 @@ fn remote_actor_statuses_by_actor_uri_sql(
     let mut all_predicates = predicates.to_vec();
     all_predicates.extend(cursor_parts.predicates.clone());
     format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE {}
          ORDER BY published_at DESC, id DESC
@@ -519,7 +500,7 @@ fn public_remote_statuses_by_actor_uri_sql<'a>(
     ];
     predicates.extend(cursor_parts.predicates);
     let sql = format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
          FROM remote_statuses
          WHERE {}
          ORDER BY published_at DESC, id DESC
@@ -533,12 +514,9 @@ pub(crate) async fn list_direct_remote_replies_by_uri(
     db: &D1Database,
     object_uri: &str,
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
-    query_remote_statuses_with_actor(
-        db,
-        direct_remote_replies_by_uri_sql(),
-        &direct_remote_replies_by_uri_bindings(object_uri),
-    )
-    .await
+    let sql = direct_remote_replies_by_uri_sql();
+    query_remote_statuses_with_actor(db, &sql, &direct_remote_replies_by_uri_bindings(object_uri))
+        .await
 }
 
 pub(crate) async fn list_remote_direct_statuses_mentioning_viewer(
@@ -580,37 +558,15 @@ fn direct_remote_replies_by_uri_bindings(object_uri: &str) -> [D1Type<'_>; 1] {
     [D1Type::Text(object_uri)]
 }
 
-fn direct_remote_replies_by_uri_sql() -> &'static str {
-    "SELECT
-            rs.id,
-            rs.actor_uri,
-            rs.object_uri,
-            rs.url,
-            rs.in_reply_to_uri,
-            rs.boost_of_uri,
-            rs.quote_of_uri,
-            rs.content_html,
-            rs.spoiler_text,
-            rs.visibility,
-            rs.sensitive,
-            rs.language,
-            rs.quote_state,
-            rs.published_at,
-            ra.username,
-            ra.domain,
-            ra.display_name,
-            ra.summary_html,
-            ra.profile_url,
-            ra.avatar_url,
-            ra.header_url,
-            ra.locked,
-            ra.bot,
-            ra.discoverable,
-            ra.indexable
+fn direct_remote_replies_by_uri_sql() -> String {
+    format!(
+        "SELECT
+            {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          WHERE rs.in_reply_to_uri = ?1
          ORDER BY rs.published_at ASC"
+    )
 }
 
 async fn query_remote_statuses_with_actor(
@@ -651,12 +607,17 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatu
         boost_of_uri: optional_json_string(value, "boost_of_uri"),
         quote_of_uri: optional_json_string(value, "quote_of_uri"),
         content_html: json_string(value, "content_html"),
+        text_content: json_string(value, "text_content"),
         spoiler_text: json_string(value, "spoiler_text"),
         visibility: json_string_or(value, "visibility", "public"),
         sensitive: json_i32(value, "sensitive"),
         language: optional_json_string(value, "language"),
         quote_state: json_string_or(value, "quote_state", "accepted"),
         published_at: json_string(value, "published_at"),
+        edited_at: optional_json_string(value, "edited_at"),
+        card_json: optional_json_string(value, "card_json"),
+        federated_emojis_json: json_string_or(value, "federated_emojis_json", "[]"),
+        in_reply_to_id: optional_json_string(value, "in_reply_to_id"),
     })
 }
 
@@ -961,6 +922,8 @@ mod tests {
         assert!(sql.contains("JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri"));
         assert!(sql.contains("WHERE rs.in_reply_to_uri = ?1"));
         assert!(sql.contains("ORDER BY rs.published_at ASC"));
+        assert!(sql.contains("rs.edited_at"));
+        assert!(sql.contains("rs.in_reply_to_id"));
     }
 
     #[test]
@@ -1075,5 +1038,9 @@ mod tests {
         assert!(row.language.is_none());
         assert_eq!(row.quote_state, cfwdon_domain::QuoteState::Accepted);
         assert_eq!(row.published_at, "");
+        assert!(row.edited_at.is_none());
+        assert!(row.card_json.is_none());
+        assert_eq!(row.federated_emojis_json, "[]");
+        assert!(row.in_reply_to_id.is_none());
     }
 }

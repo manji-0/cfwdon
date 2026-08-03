@@ -4,9 +4,10 @@ use super::{
     context_descendant_max_depth, extract_remote_note_object, fetch_remote_activitypub_document,
     fetch_remote_actor_profile, find_account_by_id, find_remote_actor_by_actor_uri,
     find_remote_status_by_object_uri, find_status_by_ap_id, find_status_by_id,
-    is_public_activitypub_visibility, list_direct_remote_replies_by_uri,
-    resolve_remote_status_by_url, trim_context_ancestors, trim_context_descendants,
-    upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
+    is_public_activitypub_visibility, list_direct_remote_replies_by_uri, now_iso_string,
+    remote_context_fetch_payload, resolve_remote_status_by_url, soft_enqueue_background_job,
+    trim_context_ancestors, trim_context_descendants, upsert_remote_actor, upsert_remote_status,
+    visibility_from_activitypub_object,
 };
 use std::collections::HashSet;
 use worker::Result;
@@ -97,7 +98,19 @@ async fn collect_ancestors_for_remote_root(
                 };
                 status
             }
-            None => break,
+            None => {
+                // Enqueue background fetch so future reads don't block here.
+                if let Ok(now) = now_iso_string() {
+                    let _ = soft_enqueue_background_job(
+                        db,
+                        crate::JOB_REMOTE_CONTEXT_FETCH,
+                        &remote_context_fetch_payload(&object_uri),
+                        &now,
+                    )
+                    .await;
+                }
+                break;
+            }
         };
         if !seen_remote_ids.insert(status.id.clone()) {
             break;

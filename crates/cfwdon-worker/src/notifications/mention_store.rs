@@ -13,6 +13,8 @@ pub(crate) struct MentionNotificationRow {
     pub(crate) account_id: String,
     pub(crate) ap_id: Option<String>,
     pub(crate) in_reply_to_id: Option<String>,
+    #[serde(default)]
+    pub(crate) in_reply_to_account_id: Option<String>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
     #[serde(rename = "text_content")]
@@ -36,6 +38,8 @@ pub(crate) struct RemoteMentionNotificationRow {
     pub(crate) boost_of_uri: Option<String>,
     pub(crate) quote_of_uri: Option<String>,
     pub(crate) content_html: String,
+    #[serde(default)]
+    pub(crate) text_content: String,
     pub(crate) spoiler_text: String,
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
@@ -43,6 +47,14 @@ pub(crate) struct RemoteMentionNotificationRow {
     #[serde(default = "crate::default_remote_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) published_at: String,
+    #[serde(default)]
+    pub(crate) edited_at: Option<String>,
+    #[serde(default)]
+    pub(crate) card_json: Option<String>,
+    #[serde(default)]
+    pub(crate) federated_emojis_json: String,
+    #[serde(default)]
+    pub(crate) in_reply_to_id: Option<String>,
 }
 
 pub(crate) async fn list_local_mention_notifications_for_account(
@@ -130,7 +142,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
             D1Type::Integer(limit as i32),
         ];
         db.prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE (lower(content_html) LIKE ?1
                 OR lower(spoiler_text) LIKE ?1)
@@ -147,7 +159,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
             D1Type::Integer(limit as i32),
         ];
         db.prepare(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, spoiler_text, visibility, sensitive, language, quote_state, published_at
+            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
              WHERE lower(content_html) LIKE ?1
                 OR lower(spoiler_text) LIKE ?1
@@ -175,7 +187,11 @@ fn remote_mention_row_targets_viewer(
     viewer: &LocalAccount,
     config: &AppConfig,
 ) -> bool {
-    let text_content = strip_html_tags(&row.content_html);
+    let text_content = if row.text_content.is_empty() {
+        strip_html_tags(&row.content_html)
+    } else {
+        row.text_content.clone()
+    };
     extract_mentions_from_text(&text_content, config)
         .into_iter()
         .any(|handle| handle.username == viewer.username())
@@ -207,6 +223,7 @@ mod tests {
             account_id: "acct-bob".to_owned(),
             ap_id: None,
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             quote_of_uri: None,
             content_html: String::new(),
             text_content: "hello @alice".to_owned(),
@@ -233,12 +250,17 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>hello <a>@alice@example.com</a></p>".to_owned(),
+            text_content: "hello @alice@example.com".to_owned(),
             spoiler_text: String::new(),
             visibility: "public".to_owned(),
             sensitive: 0,
             language: None,
             quote_state: "accepted".to_owned(),
             published_at: "2025-01-01T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         };
         assert!(remote_mention_row_targets_viewer(&row, &viewer, &config));
     }

@@ -61,6 +61,7 @@ fn fixture_status() -> StatusRow {
         account_id: "acct-1".to_owned(),
         ap_id: Some("https://social.example/users/alice/statuses/status-1".to_owned()),
         in_reply_to_id: None,
+        in_reply_to_account_id: None,
         boost_of_uri: None,
         quote_of_uri: None,
         content_html: "<p>Hello <span class=\"h-card\"><a href=\"https://social.example/@bob\" class=\"u-url mention\">@<span>bob</span></a></span> #Workers</p>".to_owned(),
@@ -72,6 +73,7 @@ fn fixture_status() -> StatusRow {
         quote_approval_policy: None,
         quote_state: QuoteState::Accepted,
         application_id: None,
+        card_json: None,
         created_at: "2026-01-02T00:00:00.000Z".to_owned(),
         updated_at: None,
     }

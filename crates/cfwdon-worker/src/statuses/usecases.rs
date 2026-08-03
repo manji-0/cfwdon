@@ -190,6 +190,7 @@ pub(crate) async fn apply_local_status_update(
 
     let status = update_local_status(
         db,
+        config,
         input.status,
         input.next_text,
         input.next_spoiler_text,
@@ -322,6 +323,7 @@ pub(crate) async fn create_published_status_and_response(
         input.application_id,
         input.quote_of_uri,
         defer_outbox,
+        input.in_reply_to_account_id.clone(),
     )
     .await?;
     ensure_direct_conversation_for_status(db, config, input.account, input.draft, &status).await?;

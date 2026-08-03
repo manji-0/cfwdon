@@ -29,11 +29,11 @@ use super::{
     is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
     load_local_status_counts, load_local_status_response_preload, load_mastodon_poll_response,
     load_remote_mastodon_poll_response, load_remote_status_counts, load_remote_status_updated_at,
-    load_status_filtered, load_status_updated_at, local_status_identity_from_uri,
-    local_status_ids_thread_muted_by, local_status_target_uri, pending_quote_document,
-    quote_document_for_local_state, quote_document_from_response,
-    remote_quote_visibility_is_embeddable, resolve_boost_target,
-    resolve_local_status_response_subject, strip_html_tags, unauthorized_quote_document,
+    load_status_filtered, load_status_updated_at, load_stored_remote_status_mentions,
+    load_stored_status_mentions, local_status_identity_from_uri, local_status_ids_thread_muted_by,
+    local_status_target_uri, pending_quote_document, quote_document_for_local_state,
+    quote_document_from_response, remote_quote_visibility_is_embeddable, resolve_boost_target,
+    resolve_local_status_response_subject, unauthorized_quote_document,
 };
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -190,20 +190,11 @@ fn local_status_edited_at_from_updated_at(
 }
 
 fn accepted_status_quotes_count_sql() -> &'static str {
-    // Keep local and remote quote counts in one D1 round trip while preserving
-    // separate table indexes on quote_of_uri.
-    "SELECT COALESCE(SUM(count), 0) AS count
-     FROM (
-         SELECT COUNT(*) AS count
-         FROM statuses
-         WHERE quote_of_uri = ?1
-           AND quote_state = 'accepted'
-         UNION ALL
-         SELECT COUNT(*) AS count
-         FROM remote_statuses
-         WHERE quote_of_uri = ?1
-           AND quote_state = 'accepted'
-     )"
+    // Read from the pre-aggregated quote_target_counts table (maintained by
+    // triggers in migration 114) for a single indexed lookup.
+    "SELECT COALESCE(quotes_count, 0) AS count
+     FROM quote_target_counts
+     WHERE target_uri = ?1"
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -560,22 +551,10 @@ pub(crate) async fn preload_status_quote_counts(
 
     let uris_json = json_string_array(&uris);
     let sql = format!(
-        "SELECT quote_of_uri, SUM(count) AS count
-         FROM (
-             SELECT quote_of_uri, COUNT(*) AS count
-             FROM statuses
-             WHERE quote_state = 'accepted'
-               AND quote_of_uri {in_clause}
-             GROUP BY quote_of_uri
-             UNION ALL
-             SELECT quote_of_uri, COUNT(*) AS count
-             FROM remote_statuses
-             WHERE quote_state = 'accepted'
-               AND quote_of_uri {in_clause}
-             GROUP BY quote_of_uri
-         )
-         GROUP BY quote_of_uri",
-        in_clause = sql_in_json_each(1)
+        "SELECT target_uri AS quote_of_uri, quotes_count AS count
+         FROM quote_target_counts
+         WHERE target_uri {}",
+        sql_in_json_each(1)
     );
     let binding = D1Type::Text(uris_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
@@ -1048,10 +1027,17 @@ async fn load_local_status_response_details(
             Some(application) => application,
             None => build_status_application(db, status.application_id).await?,
         };
-    let card = build_status_card_value(&status.text);
+    let card = if let Some(json) = status.card_json.as_deref().filter(|s| !s.is_empty()) {
+        serde_json::from_str(json).ok()
+    } else {
+        build_status_card_value(&status.text)
+    };
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
-    let mentions =
-        build_status_mentions_with_preload(db, config, &status.text, mention_preload).await?;
+    let mentions = if let Some(stored) = load_stored_status_mentions(db, &status.id).await? {
+        stored
+    } else {
+        build_status_mentions_with_preload(db, config, &status.text, mention_preload).await?
+    };
     let (favourites_count, reblogs_count) =
         local_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
@@ -1309,6 +1295,16 @@ async fn federated_emojis_for_remote_status(
     Ok(object.map(|value| extract_federated_emojis_from_activitypub_object(&value)))
 }
 
+fn federated_emojis_from_json(federated_emojis_json: &str) -> Option<FederatedEmojiMap> {
+    if federated_emojis_json.is_empty()
+        || federated_emojis_json == "[]"
+        || federated_emojis_json == "{}"
+    {
+        return None;
+    }
+    serde_json::from_str(federated_emojis_json).ok()
+}
+
 async fn build_remote_status_response_inner(
     db: &D1Database,
     config: &AppConfig,
@@ -1356,7 +1352,11 @@ async fn build_remote_status_response_inner(
     }
 
     let federated_emojis =
-        federated_emojis_for_remote_status(db, &status.id, federated_emojis_preload).await?;
+        if let Some(emojis) = federated_emojis_from_json(&status.federated_emojis_json) {
+            Some(emojis)
+        } else {
+            federated_emojis_for_remote_status(db, &status.id, federated_emojis_preload).await?
+        };
     let mut response =
         MastodonStatusResponse::from_remote_row(status, actor, config, federated_emojis.as_ref());
     let details = load_remote_status_response_details(
@@ -1402,15 +1402,22 @@ async fn load_remote_status_response_details(
     boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<RemoteStatusResponseDetails> {
-    let text_content = strip_html_tags(&status.content_html);
+    let text_content = status.plain_text();
     let remote_attachments = match remote_attachments {
         Some(attachments) => attachments,
         None => find_remote_status_attachments_by_status_id(db, &status.id).await?,
     };
-    let card = build_remote_status_card_value(&text_content, &remote_attachments);
+    let card = if let Some(json) = status.card_json.as_deref().filter(|s| !s.is_empty()) {
+        serde_json::from_str(json).ok()
+    } else {
+        build_remote_status_card_value(&text_content, &remote_attachments)
+    };
     let media_attachments = remote_media_attachment_values(&remote_attachments);
-    let mentions =
-        build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?;
+    let mentions = if let Some(stored) = load_stored_remote_status_mentions(db, &status.id).await? {
+        stored
+    } else {
+        build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?
+    };
     let (favourites_count, reblogs_count) =
         remote_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
@@ -1421,13 +1428,17 @@ async fn load_remote_status_response_details(
         Some(preload) => preload.poll_response(&status.id),
         None => load_remote_mastodon_poll_response(db, status, viewer).await?,
     };
-    let edited_at = match edit_updated_at_preload {
-        Some(preload) => preload.updated_at(&status.id).map(ToOwned::to_owned),
-        None => {
-            if has_remote_status_edit_snapshots(db, &status.id).await? {
-                load_remote_status_updated_at(db, &status.id).await?
-            } else {
-                None
+    let edited_at = if let Some(ref ts) = status.edited_at {
+        Some(ts.clone())
+    } else {
+        match edit_updated_at_preload {
+            Some(preload) => preload.updated_at(&status.id).map(ToOwned::to_owned),
+            None => {
+                if has_remote_status_edit_snapshots(db, &status.id).await? {
+                    load_remote_status_updated_at(db, &status.id).await?
+                } else {
+                    None
+                }
             }
         }
     };
@@ -1466,11 +1477,15 @@ async fn load_remote_status_response_details(
     } else {
         (None, None, None, None)
     };
-    let in_reply_to_id = match remote_in_reply_to_preload {
-        Some(preload) => preload.get(&status.id).cloned().unwrap_or(None),
-        None => {
-            resolve_remote_in_reply_to_status_id(db, config, status.in_reply_to_uri.as_deref())
-                .await?
+    let in_reply_to_id = if let Some(ref id) = status.in_reply_to_id {
+        Some(id.clone())
+    } else {
+        match remote_in_reply_to_preload {
+            Some(preload) => preload.get(&status.id).cloned().unwrap_or(None),
+            None => {
+                resolve_remote_in_reply_to_status_id(db, config, status.in_reply_to_uri.as_deref())
+                    .await?
+            }
         }
     };
 
@@ -1736,7 +1751,7 @@ async fn build_remote_quoted_status_from_row(
         config,
         federated_emojis.as_ref(),
     );
-    let text_content = strip_html_tags(&remote_status.content_html);
+    let text_content = remote_status.plain_text();
     let remote_attachments =
         find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
     response.card = build_remote_status_card_value(&text_content, &remote_attachments);
@@ -2164,13 +2179,12 @@ mod tests {
     use cfwdon_domain::LocalAccountRecord;
 
     #[test]
-    fn accepted_status_quotes_count_sql_counts_local_and_remote_quotes_once() {
+    fn accepted_status_quotes_count_sql_reads_from_quote_target_counts() {
         let sql = accepted_status_quotes_count_sql();
 
-        assert_eq!(sql.matches("quote_of_uri = ?1").count(), 2);
-        assert!(sql.contains("FROM statuses"));
-        assert!(sql.contains("FROM remote_statuses"));
-        assert!(sql.contains("UNION ALL"));
+        assert!(sql.contains("quote_target_counts"));
+        assert!(sql.contains("target_uri = ?1"));
+        assert!(!sql.contains("UNION ALL"));
     }
 
     #[test]
@@ -2460,12 +2474,17 @@ mod tests {
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>Hello</p>".to_owned(),
+            text_content: "Hello".to_owned(),
             spoiler_text: String::new(),
             visibility: cfwdon_domain::Visibility::Public,
             sensitive: false,
             language: Some("en".to_owned()),
             quote_state: cfwdon_domain::QuoteState::Accepted,
             published_at: "2026-05-10T01:02:03Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
         }
     }
 
@@ -2497,6 +2516,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: ap_id.map(str::to_owned),
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: None,
             quote_of_uri: None,
             content_html: "<p>Hello</p>".to_owned(),
@@ -2508,6 +2528,7 @@ mod tests {
             quote_approval_policy: None,
             quote_state: cfwdon_domain::QuoteState::Accepted,
             application_id: None,
+            card_json: None,
             created_at: "2026-05-10T01:02:03Z".to_owned(),
             updated_at: None,
         }

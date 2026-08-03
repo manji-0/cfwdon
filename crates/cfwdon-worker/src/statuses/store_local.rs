@@ -39,7 +39,7 @@ pub(crate) async fn find_status_by_id(
 ) -> Result<Option<StatusRow>> {
     let status_id = D1Type::Text(status_id);
     db.prepare(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE id = ?1
          LIMIT 1",
@@ -61,7 +61,7 @@ pub(crate) async fn find_statuses_by_ids(
 
     let ids_json = json_string_array(&ids);
     let sql = format!(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE id {}",
         sql_in_json_each(1)
@@ -80,7 +80,7 @@ pub(crate) async fn find_status_by_ap_id(
 ) -> Result<Option<StatusRow>> {
     let ap_id = D1Type::Text(ap_id);
     db.prepare(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE ap_id = ?1
          LIMIT 1",
@@ -102,7 +102,7 @@ pub(crate) async fn find_statuses_by_ap_ids(
 
     let ap_ids_json = json_string_array(&ap_ids);
     let sql = format!(
-        "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE ap_id {}",
         sql_in_json_each(1)
@@ -119,6 +119,9 @@ pub(crate) async fn load_in_reply_to_account_id(
     db: &D1Database,
     status: &StatusRow,
 ) -> Result<Option<String>> {
+    if let Some(ref stored) = status.in_reply_to_account_id {
+        return Ok(Some(stored.clone()));
+    }
     match status.in_reply_to_id.as_deref() {
         Some(reply_id) => super::resolve_in_reply_to_account_id(db, reply_id).await,
         None => Ok(None),
@@ -129,13 +132,26 @@ pub(crate) async fn load_in_reply_to_account_ids(
     db: &D1Database,
     statuses: &[StatusRow],
 ) -> Result<HashMap<String, String>> {
+    // Seed the result map from statuses that already have the column stored.
+    let mut result_map: HashMap<String, String> = statuses
+        .iter()
+        .filter_map(|status| {
+            status
+                .in_reply_to_account_id
+                .as_ref()
+                .map(|acct_id| (status.id.clone(), acct_id.clone()))
+        })
+        .collect();
+
+    // Only resolve reply IDs that don't already have a stored account_id.
     let reply_ids = statuses
         .iter()
+        .filter(|status| status.in_reply_to_id.is_some() && !result_map.contains_key(&status.id))
         .filter_map(|status| status.in_reply_to_id.clone())
         .collect::<Vec<_>>();
     let reply_ids = unique_ordered_refs(&reply_ids);
     if reply_ids.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(result_map);
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -173,16 +189,18 @@ pub(crate) async fn load_in_reply_to_account_ids(
         }
     }
 
-    Ok(statuses
-        .iter()
-        .filter_map(|status| {
-            status
-                .in_reply_to_id
-                .as_ref()
-                .and_then(|reply_id| reply_accounts_by_status_id.get(reply_id))
-                .map(|account_id| (status.id.clone(), account_id.clone()))
-        })
-        .collect())
+    for status in statuses {
+        if result_map.contains_key(&status.id) {
+            continue;
+        }
+        if let Some(reply_id) = status.in_reply_to_id.as_ref()
+            && let Some(account_id) = reply_accounts_by_status_id.get(reply_id)
+        {
+            result_map.insert(status.id.clone(), account_id.clone());
+        }
+    }
+
+    Ok(result_map)
 }
 
 pub(crate) async fn list_public_outbox_statuses(
@@ -204,7 +222,7 @@ pub(crate) async fn list_public_outbox_statuses_page(
     let offset = D1Type::Integer(offset as i32);
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
              FROM statuses
              WHERE account_id = ?1
                AND visibility IN ('public', 'unlisted')
@@ -305,7 +323,7 @@ pub(crate) async fn list_account_statuses(
     bindings.push(D1Type::Integer(options.limit as i32));
     let with_clause = format_with_clauses(&cursor_parts.with_clauses);
     let sql = format!(
-        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE {}
          ORDER BY created_at DESC, id DESC
@@ -352,7 +370,7 @@ fn public_account_statuses_sql<'a>(
     ];
     predicates.extend(cursor_parts.predicates);
     let sql = format!(
-        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, created_at, updated_at
+        "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE {}
          ORDER BY created_at DESC, id DESC
@@ -369,7 +387,7 @@ pub(crate) async fn list_direct_local_replies(
     let status_id = D1Type::Text(status_id);
     let result = db
         .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at, updated_at
+            "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
              FROM statuses
              WHERE in_reply_to_id = ?1
              ORDER BY created_at ASC",

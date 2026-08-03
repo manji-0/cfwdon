@@ -20,6 +20,7 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow
         account_id: mention.account_id.clone(),
         ap_id: mention.ap_id,
         in_reply_to_id: mention.in_reply_to_id,
+        in_reply_to_account_id: mention.in_reply_to_account_id,
         boost_of_uri: None,
         quote_of_uri: mention.quote_of_uri,
         content_html: mention.content_html,
@@ -31,6 +32,7 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow
         quote_approval_policy: None,
         quote_state,
         application_id: None,
+        card_json: None,
         created_at: mention.created_at.clone(),
         updated_at: None,
     })
@@ -46,12 +48,17 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<Re
         boost_of_uri: mention.boost_of_uri,
         quote_of_uri: mention.quote_of_uri,
         content_html: mention.content_html,
+        text_content: mention.text_content,
         spoiler_text: mention.spoiler_text,
         visibility: mention.visibility,
         sensitive: mention.sensitive,
         language: mention.language,
         quote_state: mention.quote_state,
         published_at: mention.published_at.clone(),
+        edited_at: mention.edited_at,
+        card_json: mention.card_json,
+        federated_emojis_json: mention.federated_emojis_json,
+        in_reply_to_id: mention.in_reply_to_id,
     })
     .ok()
 }

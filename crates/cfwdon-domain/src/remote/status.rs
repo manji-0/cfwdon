@@ -57,7 +57,8 @@ impl ActivityPubStatusInput {
             url: normalize_optional_uri(self.url),
             in_reply_to_uri: normalize_optional_uri(self.in_reply_to),
             quote_of_uri,
-            content_html: self.content_html,
+            content_html: self.content_html.clone(),
+            text_content: strip_basic_html_tags(&self.content_html),
             spoiler_text: self
                 .spoiler_text
                 .map(|value| value.trim().to_owned())
@@ -78,6 +79,7 @@ pub struct IncomingRemoteStatus {
     in_reply_to_uri: Option<String>,
     quote_of_uri: Option<String>,
     content_html: String,
+    text_content: String,
     spoiler_text: String,
     visibility: Visibility,
     sensitive: bool,
@@ -122,12 +124,17 @@ impl IncomingRemoteStatus {
             in_reply_to_uri: self.in_reply_to_uri,
             quote_of_uri: self.quote_of_uri,
             content_html: self.content_html,
+            text_content: self.text_content,
             spoiler_text: self.spoiler_text,
             visibility: self.visibility,
             sensitive: self.sensitive,
             language: self.language,
             quote_state: quote_resolution.initial_quote_state(),
             published_at: self.published_at,
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
             raw_object_json,
             revision_at,
         })
@@ -191,12 +198,17 @@ pub struct StoredRemoteStatusIntent {
     pub in_reply_to_uri: Option<String>,
     pub quote_of_uri: Option<String>,
     pub content_html: String,
+    pub text_content: String,
     pub spoiler_text: String,
     pub visibility: Visibility,
     pub sensitive: bool,
     pub language: Option<String>,
     pub quote_state: QuoteState,
     pub published_at: String,
+    pub edited_at: Option<String>,
+    pub card_json: Option<String>,
+    pub federated_emojis_json: String,
+    pub in_reply_to_id: Option<String>,
     pub raw_object_json: String,
     pub revision_at: String,
 }
@@ -307,6 +319,20 @@ pub struct StoredRemoteReblogIntent {
     pub quote_state: QuoteState,
     pub published_at: String,
     pub raw_object_json: String,
+}
+
+fn strip_basic_html_tags(html: &str) -> String {
+    let mut output = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+    output
 }
 
 fn normalize_optional_uri(value: Option<String>) -> Option<String> {

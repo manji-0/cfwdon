@@ -49,7 +49,7 @@ use crate::{
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    require_authenticated_local_account, strip_html_tags,
+    require_authenticated_local_account,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -660,7 +660,7 @@ async fn timeline_entries_from_candidates(
                 mention_texts.push(status.text.as_str());
             }
             PublicTimelineCandidate::Remote { status, .. } => {
-                remote_text_owned.push(strip_html_tags(&status.content_html));
+                remote_text_owned.push(status.plain_text());
             }
         }
     }
@@ -1561,8 +1561,7 @@ pub(crate) async fn link_timeline_response(
     }
 
     for (status, actor) in remote_link_statuses {
-        if !status_card_url_matches_targets(&strip_html_tags(&status.content_html), &target_url_set)
-        {
+        if !status_card_url_matches_targets(&status.plain_text(), &target_url_set) {
             continue;
         }
         candidates.push(PublicTimelineCandidateEntry {
@@ -1621,7 +1620,7 @@ pub(crate) async fn direct_timeline_response(
     let remote_direct_rows = remote_direct_rows
         .into_iter()
         .filter(|(status, _)| {
-            let text = crate::strip_html_tags(&status.content_html);
+            let text = status.plain_text();
             crate::extract_mentions_from_text(&text, &config)
                 .into_iter()
                 .any(|handle| handle.username == viewer.username())
@@ -1730,6 +1729,7 @@ mod tests {
                     account_id: "account".to_owned(),
                     ap_id: None,
                     in_reply_to_id: None,
+                    in_reply_to_account_id: None,
                     boost_of_uri: None,
                     quote_of_uri: None,
                     content_html: String::new(),
@@ -1741,6 +1741,7 @@ mod tests {
                     quote_approval_policy: None,
                     quote_state: cfwdon_domain::QuoteState::Accepted,
                     application_id: None,
+                    card_json: None,
                     created_at: created_at.to_owned(),
                     updated_at: Some(created_at.to_owned()),
                 },

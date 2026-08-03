@@ -14,6 +14,8 @@ pub struct LocalStatusPersistenceFacts {
     pub quote_of_uri: Option<String>,
     pub content_html: String,
     pub application_id: Option<i64>,
+    pub in_reply_to_account_id: Option<String>,
+    pub card_json: Option<String>,
     pub created_at: String,
 }
 
@@ -34,6 +36,8 @@ pub struct StoredLocalStatusIntent {
     pub quote_approval_policy: QuoteApprovalPolicy,
     pub quote_state: QuoteState,
     pub application_id: Option<i64>,
+    pub in_reply_to_account_id: Option<String>,
+    pub card_json: Option<String>,
     pub created_at: String,
 }
 
@@ -57,6 +61,8 @@ impl PublishIntent {
             quote_approval_policy: self.quote_policy,
             quote_state: self.quote_state,
             application_id: facts.application_id,
+            in_reply_to_account_id: facts.in_reply_to_account_id,
+            card_json: facts.card_json,
             created_at: facts.created_at,
         })
     }
@@ -69,6 +75,7 @@ impl StoredLocalStatusIntent {
             account_id: self.account_id.clone(),
             ap_id: Some(self.ap_id.clone()),
             in_reply_to_id: self.in_reply_to_id.clone(),
+            in_reply_to_account_id: self.in_reply_to_account_id.clone(),
             boost_of_uri: None,
             quote_of_uri: self.quote_of_uri.clone(),
             content_html: self.content_html.clone(),
@@ -80,6 +87,7 @@ impl StoredLocalStatusIntent {
             quote_approval_policy: Some(self.quote_approval_policy.as_str().to_owned()),
             quote_state: self.quote_state.as_str().to_owned(),
             application_id: self.application_id,
+            card_json: self.card_json.clone(),
             created_at: self.created_at.clone(),
             updated_at: Some(self.created_at.clone()),
         }
@@ -126,6 +134,7 @@ impl StoredLocalReblogIntent {
             account_id: self.account_id.clone(),
             ap_id: Some(self.ap_id.clone()),
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: Some(self.boost_of_uri.clone()),
             quote_of_uri: None,
             content_html: String::new(),
@@ -137,6 +146,7 @@ impl StoredLocalReblogIntent {
             quote_approval_policy: Some(QuoteApprovalPolicy::Public.as_str().to_owned()),
             quote_state: QuoteState::Accepted.as_str().to_owned(),
             application_id: None,
+            card_json: None,
             created_at: self.created_at.clone(),
             updated_at: Some(self.created_at.clone()),
         }
@@ -186,6 +196,8 @@ mod tests {
                 quote_of_uri: Some("https://remote.example/statuses/quote-1".to_owned()),
                 content_html: "<p>hello</p>".to_owned(),
                 application_id: Some(42),
+                in_reply_to_account_id: Some("reply-acct".to_owned()),
+                card_json: None,
                 created_at: "2026-01-02T03:04:05.000Z".to_owned(),
             })
             .state;

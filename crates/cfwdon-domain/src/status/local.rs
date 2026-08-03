@@ -10,6 +10,7 @@ pub struct LocalStatus {
     pub account_id: String,
     pub ap_id: Option<String>,
     pub in_reply_to_id: Option<String>,
+    pub in_reply_to_account_id: Option<String>,
     pub boost_of_uri: Option<String>,
     pub quote_of_uri: Option<String>,
     pub content_html: String,
@@ -21,6 +22,7 @@ pub struct LocalStatus {
     pub quote_approval_policy: Option<QuoteApprovalPolicy>,
     pub quote_state: QuoteState,
     pub application_id: Option<i64>,
+    pub card_json: Option<String>,
     pub created_at: String,
     pub updated_at: Option<String>,
 }
@@ -32,6 +34,7 @@ impl LocalStatus {
             account_id: record.account_id,
             ap_id: record.ap_id,
             in_reply_to_id: record.in_reply_to_id,
+            in_reply_to_account_id: record.in_reply_to_account_id,
             boost_of_uri: record.boost_of_uri,
             quote_of_uri: record.quote_of_uri,
             content_html: record.content_html,
@@ -46,6 +49,7 @@ impl LocalStatus {
                 .and_then(|value| QuoteApprovalPolicy::parse(value).ok()),
             quote_state: QuoteState::parse(&record.quote_state)?,
             application_id: record.application_id,
+            card_json: record.card_json,
             created_at: record.created_at,
             updated_at: record.updated_at,
         })
@@ -61,6 +65,7 @@ impl LocalStatus {
             account_id: self.account_id.clone(),
             ap_id: self.ap_id.clone(),
             in_reply_to_id: self.in_reply_to_id.clone(),
+            in_reply_to_account_id: self.in_reply_to_account_id.clone(),
             boost_of_uri: self.boost_of_uri.clone(),
             quote_of_uri: self.quote_of_uri.clone(),
             content_html: self.content_html.clone(),
@@ -74,6 +79,7 @@ impl LocalStatus {
                 .map(|policy| policy.as_str().to_owned()),
             quote_state: self.quote_state.as_str().to_owned(),
             application_id: self.application_id,
+            card_json: self.card_json.clone(),
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
         }
@@ -106,6 +112,7 @@ mod tests {
             account_id: "acct-1".to_owned(),
             ap_id: Some("https://example.com/users/alice/statuses/1".to_owned()),
             in_reply_to_id: None,
+            in_reply_to_account_id: None,
             boost_of_uri: None,
             quote_of_uri: Some("https://example.com/status/2".to_owned()),
             content_html: "<p>hello</p>".to_owned(),
@@ -117,6 +124,7 @@ mod tests {
             quote_approval_policy: Some(QuoteApprovalPolicy::Followers),
             quote_state: QuoteState::Pending,
             application_id: Some(7),
+            card_json: None,
             created_at: "2026-01-01T00:00:00Z".to_owned(),
             updated_at: Some("2026-01-02T00:00:00Z".to_owned()),
         };

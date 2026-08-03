@@ -49,7 +49,7 @@ use crate::{
     remote_status_has_media, resolve_account_reference, resolve_status_reference,
     send_push_notification, store_account_password, store_account_private_key,
     stream_hub_channel_id_name, stream_hub_session_id_name, streaming_batch_from_entries,
-    strip_html_tags, upgrade_stream_hub_websocket,
+    upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -2283,7 +2283,7 @@ async fn streaming_home_batch(
             }
             PreparedStreamingHomeCandidate::Remote { status, .. } => {
                 quote_status_uris.push(status.object_uri.clone());
-                remote_texts.push(strip_html_tags(&status.content_html));
+                remote_texts.push(status.plain_text());
                 if let Some(uri) = status.boost_of_uri.as_ref()
                     && seen_boost_uris.insert(uri.as_str())
                 {
