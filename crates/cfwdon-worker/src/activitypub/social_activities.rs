@@ -156,8 +156,11 @@ pub(crate) fn build_relay_follow_activity(
         "actor": actor,
         "object": ACTIVITYPUB_PUBLIC_COLLECTION,
     });
-    serde_json::to_string(&activity)
-        .map_err(|error| Error::RustError(format!("failed to serialize relay Follow activity: {error}")))
+    serde_json::to_string(&activity).map_err(|error| {
+        Error::RustError(format!(
+            "failed to serialize relay Follow activity: {error}"
+        ))
+    })
 }
 
 pub(crate) fn build_relay_undo_follow_activity(
@@ -182,7 +185,6 @@ pub(crate) fn build_relay_undo_follow_activity(
         Error::RustError(format!("failed to serialize relay Undo activity: {error}"))
     })
 }
-
 
 pub(crate) fn relay_follow_activity_id_from_accept(activity: &serde_json::Value) -> Option<String> {
     activity

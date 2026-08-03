@@ -319,13 +319,9 @@ async fn resolve_remote_actor_for_signature(
     if let Some(remote_actor) =
         find_cached_remote_actor_profile_by_actor_uri(db, &actor_uri).await?
         && cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri)
-        && verify_http_signature_bytes(
-            &remote_actor.public_key_pem,
-            signing_string,
-            signature,
-        )
-        .await
-        .is_ok()
+        && verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature)
+            .await
+            .is_ok()
     {
         return Ok(remote_actor);
     }
@@ -336,12 +332,7 @@ async fn resolve_remote_actor_for_signature(
             "Signature keyId did not match delivery actor".to_owned(),
         ));
     }
-    verify_http_signature_bytes(
-        &remote_actor.public_key_pem,
-        signing_string,
-        signature,
-    )
-    .await?;
+    verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature).await?;
     upsert_remote_actor(db, &remote_actor).await?;
     Ok(remote_actor)
 }

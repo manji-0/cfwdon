@@ -1,7 +1,8 @@
 use crate::{
     AppConfig, D1Database, Error, LocalAccount, RemoteActorProfile, Result, actor_url,
-    build_relay_follow_activity, build_relay_undo_follow_activity, delivery_inbox_blocked_by_domains,
-    enqueue_targeted_outbox_activity, ensure_account_keys, generate_entity_id, parse_remote_http_url,
+    build_relay_follow_activity, build_relay_undo_follow_activity,
+    delivery_inbox_blocked_by_domains, enqueue_targeted_outbox_activity, ensure_account_keys,
+    generate_entity_id, list_instance_domain_block_domains, parse_remote_http_url,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -30,7 +31,9 @@ pub(crate) struct FederationRelayRow {
 fn normalize_relay_inbox_url(value: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(Error::RustError("relay inbox URL must not be empty".to_owned()));
+        return Err(Error::RustError(
+            "relay inbox URL must not be empty".to_owned(),
+        ));
     }
     let parsed = parse_remote_http_url(trimmed)?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
@@ -58,23 +61,6 @@ fn relay_row_from_value(value: serde_json::Value) -> Option<FederationRelayRow> 
         created_at: value.get("created_at")?.as_str()?.to_owned(),
         updated_at: value.get("updated_at")?.as_str()?.to_owned(),
     })
-}
-
-async fn list_instance_blocked_domains(db: &D1Database) -> Result<Vec<String>> {
-    let result = db
-        .prepare("SELECT domain FROM instance_domain_blocks ORDER BY domain ASC")
-        .all()
-        .await?;
-    Ok(result
-        .results::<serde_json::Value>()?
-        .into_iter()
-        .filter_map(|value| {
-            value
-                .get("domain")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .collect())
 }
 
 pub(crate) async fn list_federation_relays(db: &D1Database) -> Result<Vec<FederationRelayRow>> {
@@ -109,24 +95,8 @@ pub(crate) async fn find_federation_relay_by_id(
     Ok(row.and_then(relay_row_from_value))
 }
 
-pub(crate) async fn find_federation_relay_by_follow_activity_id(
-    db: &D1Database,
-    follow_activity_id: &str,
-) -> Result<Option<FederationRelayRow>> {
-    let row = db
-        .prepare(
-            "SELECT id, inbox_url, actor_uri, follow_activity_id, signing_account_id, state, created_at, updated_at
-             FROM federation_relays
-             WHERE follow_activity_id = ?1",
-        )
-        .bind_refs(&[D1Type::Text(follow_activity_id)])?
-        .first::<serde_json::Value>(None)
-        .await?;
-    Ok(row.and_then(relay_row_from_value))
-}
-
 pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec<String>> {
-    let blocked_domains = list_instance_blocked_domains(db).await?;
+    let blocked_domains = list_instance_domain_block_domains(db).await?;
     let result = db
         .prepare(
             "SELECT inbox_url
@@ -140,7 +110,11 @@ pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec
     Ok(result
         .results::<serde_json::Value>()?
         .into_iter()
-        .filter_map(|row| row.get("inbox_url").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .filter_map(|row| {
+            row.get("inbox_url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
         .filter(|inbox| !delivery_inbox_blocked_by_domains(inbox, &blocked_domains))
         .collect())
 }
@@ -247,8 +221,14 @@ pub(crate) async fn disable_federation_relay(
     let account = ensure_account_keys(db, config, account).await?;
     if let Some(follow_activity_id) = relay.follow_activity_id.as_deref() {
         let payload = build_relay_undo_follow_activity(config, &account, follow_activity_id)?;
-        enqueue_targeted_outbox_activity(db, account.id(), None, &payload, &[relay.inbox_url.clone()])
-            .await?;
+        enqueue_targeted_outbox_activity(
+            db,
+            account.id(),
+            None,
+            &payload,
+            std::slice::from_ref(&relay.inbox_url),
+        )
+        .await?;
     }
     db.prepare(
         "UPDATE federation_relays

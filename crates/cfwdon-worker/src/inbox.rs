@@ -168,36 +168,29 @@ pub(crate) async fn shared_inbox_response(
     let activity: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
 
-    let delivery =
-        match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
-            Ok(delivery) => delivery,
-            Err(error) => {
-                log_federation_event(
-                    "inbox_signature_failed",
-                    "unauthorized",
-                    format!(
-                        "shared inbox signature verification failed: activity_type={} error={error}",
-                        inbox_activity_type(&activity)
-                    ),
-                    serde_json::json!({
-                        "inbox": "shared",
-                        "activity_type": inbox_activity_type(&activity),
-                        "error": error.to_string(),
-                    }),
-                );
-                return Response::error("invalid activitypub signature", 401);
-            }
-        };
+    let delivery = match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
+        Ok(delivery) => delivery,
+        Err(error) => {
+            log_federation_event(
+                "inbox_signature_failed",
+                "unauthorized",
+                format!(
+                    "shared inbox signature verification failed: activity_type={} error={error}",
+                    inbox_activity_type(&activity)
+                ),
+                serde_json::json!({
+                    "inbox": "shared",
+                    "activity_type": inbox_activity_type(&activity),
+                    "error": error.to_string(),
+                }),
+            );
+            return Response::error("invalid activitypub signature", 401);
+        }
+    };
 
     if delivery.relayed {
-        match handle_relay_delivered_activity(
-            &db,
-            &config,
-            &activity,
-            &delivery,
-            Some(&ctx.env),
-        )
-        .await
+        match handle_relay_delivered_activity(&db, &config, &activity, &delivery, Some(&ctx.env))
+            .await
         {
             Ok(true) => {
                 return Ok(Response::empty()?.with_status(202));

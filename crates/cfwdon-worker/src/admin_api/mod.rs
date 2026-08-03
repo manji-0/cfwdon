@@ -96,10 +96,9 @@ fn admin_api_router() -> Router<'static, ()> {
             "/api/cfwdon/admin/relays/:id/disable",
             |req, ctx| async move { admin_relays_disable_response(req, ctx).await },
         )
-        .delete_async(
-            "/api/cfwdon/admin/relays/:id",
-            |req, ctx| async move { admin_relays_delete_response(req, ctx).await },
-        )
+        .delete_async("/api/cfwdon/admin/relays/:id", |req, ctx| async move {
+            admin_relays_delete_response(req, ctx).await
+        })
         .get_async("/api/cfwdon/admin/domain-blocks", |req, ctx| async move {
             admin_domain_blocks_list_response(req, ctx).await
         })
@@ -117,9 +116,10 @@ fn admin_api_router() -> Router<'static, ()> {
             "/api/cfwdon/admin/background-jobs/:id/retry",
             |req, ctx| async move { admin_retry_background_job_response(req, ctx).await },
         )
-        .get_async("/api/cfwdon/admin/inbox-activities", |req, ctx| async move {
-            admin_inbox_activities_response(req, ctx).await
-        })
+        .get_async(
+            "/api/cfwdon/admin/inbox-activities",
+            |req, ctx| async move { admin_inbox_activities_response(req, ctx).await },
+        )
         .post_async(
             "/api/cfwdon/admin/inbox-activities/reclaim",
             |req, ctx| async move { admin_reclaim_inbox_activities_response(req, ctx).await },

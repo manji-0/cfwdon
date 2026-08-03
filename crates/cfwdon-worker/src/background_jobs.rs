@@ -348,8 +348,10 @@ async fn handle_remote_status_notify(
     env: Option<&Env>,
     payload_json: &str,
 ) -> Result<()> {
-    let payload: RemoteStatusNotifyPayload = serde_json::from_str(payload_json)
-        .map_err(|error| Error::RustError(format!("invalid remote_status_notify payload: {error}")))?;
+    let payload: RemoteStatusNotifyPayload =
+        serde_json::from_str(payload_json).map_err(|error| {
+            Error::RustError(format!("invalid remote_status_notify payload: {error}"))
+        })?;
     crate::dispatch_remote_status_notifications(
         env,
         db,

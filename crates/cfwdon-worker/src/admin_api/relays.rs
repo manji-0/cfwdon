@@ -93,8 +93,7 @@ pub(crate) async fn admin_relays_delete_response(
     let config = crate::load_config(&ctx);
     let db = crate::bind_request_d1(&ctx, &config)?;
     if delete_federation_relay(&db, &config, relay_id).await? {
-        let _ =
-            crate::enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_delete").await;
+        let _ = crate::enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_delete").await;
         Response::from_json(&serde_json::json!({ "deleted": true, "id": relay_id }))
     } else {
         Response::error("relay not found", 404)

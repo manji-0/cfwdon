@@ -371,7 +371,7 @@ pub(crate) async fn list_instance_domain_blocks(
         .bind_refs(&[D1Type::Integer(limit)])?
         .all()
         .await?;
-    Ok(result.results::<InstanceDomainBlockRow>()?)
+    result.results::<InstanceDomainBlockRow>()
 }
 
 pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Result<Vec<String>> {

@@ -4,9 +4,9 @@ use crate::{
     count_followers_by_actor, delete_remote_status_poll_by_status_id,
     extract_federated_emojis_from_activitypub_object, extract_remote_poll_draft,
     find_account_by_id, find_cached_remote_actor_profile_by_actor_uri,
-    find_local_status_by_object_uri, find_remote_actor_by_actor_uri,
-    generate_entity_id, insert_remote_status_edit_snapshot, normalize_status_history_entry,
-    now_iso_string, publish_remote_status_create_stream_fanout_soft,
+    find_local_status_by_object_uri, find_remote_actor_by_actor_uri, generate_entity_id,
+    insert_remote_status_edit_snapshot, normalize_status_history_entry, now_iso_string,
+    publish_remote_status_create_stream_fanout_soft,
     publish_remote_status_create_stream_notifications_soft,
     publish_remote_status_update_stream_notifications_soft,
     publish_remote_status_update_user_stream_fanout_soft, quote_target_uri_from_object,
@@ -472,11 +472,7 @@ async fn update_remote_status_card_json(
     Ok(())
 }
 
-pub(crate) fn remote_status_notify_payload(
-    status_id: &str,
-    actor_uri: &str,
-    kind: &str,
-) -> String {
+pub(crate) fn remote_status_notify_payload(status_id: &str, actor_uri: &str, kind: &str) -> String {
     serde_json::json!({
         "status_id": status_id,
         "actor_uri": actor_uri,
@@ -511,8 +507,10 @@ pub(crate) async fn dispatch_remote_status_notifications(
                 status.quote_of_uri.as_deref(),
             )
             .await;
-            publish_remote_status_create_stream_notifications_soft(env, db, config, &actor, &status)
-                .await;
+            publish_remote_status_create_stream_notifications_soft(
+                env, db, config, &actor, &status,
+            )
+            .await;
             publish_remote_status_create_stream_fanout_soft(env, db, config, &actor, &status).await;
         }
         "update" => {
@@ -524,11 +522,15 @@ pub(crate) async fn dispatch_remote_status_notifications(
                 &status.object_uri,
             )
             .await;
-            publish_remote_status_update_stream_notifications_soft(env, db, config, &actor, &status)
-                .await;
+            publish_remote_status_update_stream_notifications_soft(
+                env, db, config, &actor, &status,
+            )
+            .await;
             if let Some(env) = env {
-                publish_remote_status_update_user_stream_fanout_soft(env, db, config, &actor, &status)
-                    .await;
+                publish_remote_status_update_user_stream_fanout_soft(
+                    env, db, config, &actor, &status,
+                )
+                .await;
             }
         }
         _ => {}
