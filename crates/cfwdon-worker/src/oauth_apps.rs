@@ -1346,9 +1346,7 @@ fn set_auth0_session_cookie(response: &mut Response, access_token: &str) -> Resu
 fn clear_auth0_session_cookie(response: &mut Response) -> Result<()> {
     response.headers_mut().append(
         "Set-Cookie",
-        &format!(
-            "{AUTH0_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0"
-        ),
+        &format!("{AUTH0_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0"),
     )?;
     response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(())
