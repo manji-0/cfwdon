@@ -10,9 +10,7 @@ pub(crate) use account_store::*;
 pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;
-pub(crate) use self::jwt::{
-    auth0_roles_from_claims, verify_auth0_jwt,
-};
+pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
 use super::oauth_apps::{
     OAuthAccessTokenRow, app_bearer_token_from_request,
     find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
@@ -105,11 +103,9 @@ pub(crate) async fn find_authenticated_local_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<LocalAccount>> {
-    Ok(
-        find_authenticated_local_account_with_roles(req, db, config)
-            .await?
-            .map(|(account, _roles)| account),
-    )
+    Ok(find_authenticated_local_account_with_roles(req, db, config)
+        .await?
+        .map(|(account, _roles)| account))
 }
 
 pub(crate) async fn find_authenticated_local_account_with_roles(

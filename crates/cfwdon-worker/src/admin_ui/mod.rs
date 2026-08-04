@@ -69,8 +69,10 @@ fn admin_return_url(config: &crate::AppConfig, req: &Request) -> Result<Url> {
     return_url.set_path("/admin/");
     return_url.set_query(None);
     if return_url.host_str().is_none() {
-        return_url = Url::parse(&format!("{}/admin/", instance_base_url(config)))
-            .map_err(|error| worker::Error::RustError(format!("invalid admin return URL: {error}")))?;
+        return_url =
+            Url::parse(&format!("{}/admin/", instance_base_url(config))).map_err(|error| {
+                worker::Error::RustError(format!("invalid admin return URL: {error}"))
+            })?;
     }
     Ok(return_url)
 }
@@ -119,9 +121,7 @@ fn forbidden_html_document() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        forbidden_html_document, is_admin_ui_path, is_public_admin_asset_path,
-    };
+    use super::{forbidden_html_document, is_admin_ui_path, is_public_admin_asset_path};
 
     #[test]
     fn admin_ui_paths_are_detected() {
