@@ -49,7 +49,11 @@ impl HttpRequestContext {
     }
 
     pub(crate) fn finish_response(&self, mut response: Response) -> Result<Response> {
-        if is_cors_enabled_path(&self.path) {
+        if should_apply_cors_headers(
+            &self.path,
+            response.status_code(),
+            response.headers().get("Upgrade")?.as_deref(),
+        ) {
             apply_cors_headers(&mut response, self.origin.as_deref())?;
         }
         self.log_response(response)
@@ -143,6 +147,20 @@ pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
         || path == "/nodeinfo/2.1"
 }
 
+fn should_apply_cors_headers(path: &str, status: u16, upgrade_header: Option<&str>) -> bool {
+    is_cors_enabled_path(path) && !is_websocket_upgrade(status, upgrade_header)
+}
+
+fn is_websocket_upgrade(status: u16, upgrade_header: Option<&str>) -> bool {
+    if status == 101 {
+        return true;
+    }
+    upgrade_header
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+}
+
 fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<()> {
     response
         .headers_mut()
@@ -203,8 +221,8 @@ pub(crate) fn error_response_with_plain_content_type(
 #[cfg(test)]
 mod tests {
     use super::{
-        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path,
-        missing_content_type_fallback, sanitize_log_value,
+        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
+        missing_content_type_fallback, sanitize_log_value, should_apply_cors_headers,
     };
 
     #[test]
@@ -245,5 +263,39 @@ mod tests {
         assert_eq!(missing_content_type_fallback(404, true), None);
         assert_eq!(missing_content_type_fallback(500, false), None);
         assert_eq!(missing_content_type_fallback(200, false), None);
+    }
+
+    #[test]
+    fn websocket_upgrade_detects_status_101() {
+        assert!(is_websocket_upgrade(101, None));
+    }
+
+    #[test]
+    fn websocket_upgrade_detects_upgrade_header() {
+        assert!(is_websocket_upgrade(200, Some("websocket")));
+        assert!(is_websocket_upgrade(200, Some("WebSocket")));
+    }
+
+    #[test]
+    fn websocket_upgrade_rejects_normal_json_response() {
+        assert!(!is_websocket_upgrade(200, None));
+    }
+
+    #[test]
+    fn cors_skipped_for_streaming_websocket_upgrade() {
+        assert!(!should_apply_cors_headers(
+            "/api/v1/streaming",
+            101,
+            Some("websocket")
+        ));
+    }
+
+    #[test]
+    fn cors_applied_for_normal_api_response() {
+        assert!(should_apply_cors_headers(
+            "/api/v1/timelines/public",
+            200,
+            None
+        ));
     }
 }
