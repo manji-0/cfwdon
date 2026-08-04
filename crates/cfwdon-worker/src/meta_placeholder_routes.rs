@@ -47,9 +47,9 @@ use crate::{
     preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
     preload_status_quote_counts, queue_remote_actor_activity_required, remote_account_rest_id,
     remote_status_has_media, resolve_account_reference, resolve_status_reference,
-    send_push_notification, store_account_password, store_account_private_key,
-    stream_hub_channel_id_name, stream_hub_session_id_name, streaming_batch_from_entries,
-    upgrade_stream_hub_websocket,
+    send_push_notification, snapshot_d1_request_metrics, store_account_password,
+    store_account_private_key, stream_hub_channel_id_name, stream_hub_session_id_name,
+    streaming_batch_from_entries, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -66,6 +66,8 @@ const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
 const STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS: u64 = 30;
 const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
 const STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION: u32 = 200;
+/// Cloudflare's per-invocation subrequest cap is 1000; recycle before D1 polling exhausts it.
+const STREAMING_MAX_D1_SUBREQUESTS_PER_INVOCATION: u32 = 900;
 
 #[derive(Debug, Deserialize)]
 struct OembedQuery {
@@ -1600,6 +1602,9 @@ async fn yield_streaming_poll_round(
     state: &mut StreamingLoopState,
     poll_rounds: &mut u32,
 ) -> StreamingPollYield {
+    if streaming_poll_budget_exhausted(*poll_rounds, *poll_rounds) {
+        return StreamingPollYield::Recycle;
+    }
     *poll_rounds = poll_rounds.saturating_add(1);
     let events =
         match poll_streaming_events(db, config, stream_name, tag, list, viewer, state).await {
@@ -1697,6 +1702,7 @@ fn streaming_websocket_error_message(message: &str, status: u16) -> String {
 fn streaming_poll_budget_exhausted(poll_rounds: u32, subscription_polls: u32) -> bool {
     poll_rounds >= STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION
         || subscription_polls >= STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION
+        || snapshot_d1_request_metrics().query_count >= STREAMING_MAX_D1_SUBREQUESTS_PER_INVOCATION
 }
 
 fn streaming_error_is_subrequest_limit(error: &worker::Error) -> bool {
@@ -3506,6 +3512,9 @@ async fn poll_streaming_websocket_subscriptions(
     subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
 ) -> bool {
     for subscription in subscriptions.values_mut() {
+        if streaming_poll_budget_exhausted(0, 0) {
+            return false;
+        }
         let events = match poll_streaming_events(
             db,
             config,
@@ -3616,9 +3625,19 @@ async fn run_streaming_websocket(
                     if subscriptions.is_empty() {
                         continue;
                     }
+                    let next_subscription_polls = subscription_polls
+                        .saturating_add(subscriptions.len() as u32);
+                    if streaming_poll_budget_exhausted(poll_rounds, next_subscription_polls) {
+                        console_log!(
+                            "websocket streaming recycled before subrequest limit rounds={} subscription_polls={} d1_queries={}",
+                            poll_rounds,
+                            next_subscription_polls,
+                            snapshot_d1_request_metrics().query_count
+                        );
+                        break;
+                    }
                     poll_rounds = poll_rounds.saturating_add(1);
-                    subscription_polls =
-                        subscription_polls.saturating_add(subscriptions.len() as u32);
+                    subscription_polls = next_subscription_polls;
                     if !poll_streaming_websocket_subscriptions(
                         &websocket,
                         &db,
@@ -3632,9 +3651,10 @@ async fn run_streaming_websocket(
                     }
                     if streaming_poll_budget_exhausted(poll_rounds, subscription_polls) {
                         console_log!(
-                            "websocket streaming recycled before subrequest limit rounds={} subscription_polls={}",
+                            "websocket streaming recycled before subrequest limit rounds={} subscription_polls={} d1_queries={}",
                             poll_rounds,
-                            subscription_polls
+                            subscription_polls,
+                            snapshot_d1_request_metrics().query_count
                         );
                         break;
                     }
@@ -4300,6 +4320,7 @@ pub(crate) async fn remove_from_followers_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{record_d1_query_duration, reset_d1_request_metrics};
 
     #[test]
     fn annual_report_bounds_cover_exact_calendar_year() {
@@ -4772,6 +4793,7 @@ mod tests {
 
     #[test]
     fn streaming_poll_budget_exhausts_before_cloudflare_subrequest_limit() {
+        reset_d1_request_metrics();
         assert!(!streaming_poll_budget_exhausted(
             STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION - 1,
             STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION - 1
@@ -4784,6 +4806,17 @@ mod tests {
             1,
             STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION
         ));
+        reset_d1_request_metrics();
+    }
+
+    #[test]
+    fn streaming_poll_budget_exhausts_on_d1_subrequest_count() {
+        reset_d1_request_metrics();
+        for _ in 0..STREAMING_MAX_D1_SUBREQUESTS_PER_INVOCATION {
+            record_d1_query_duration(1);
+        }
+        assert!(streaming_poll_budget_exhausted(1, 1));
+        reset_d1_request_metrics();
     }
 
     #[test]
