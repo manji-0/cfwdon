@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dagayn": {
+      "command": "dagayn",
+      "args": [
+        "serve",
+        "--local-embedding"
+      ],
+      "type": "stdio"
+    }
+  }
+}
