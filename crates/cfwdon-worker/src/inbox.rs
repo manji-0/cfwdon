@@ -158,6 +158,13 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
     }
 }
 
+fn parse_activitypub_payload(body: &[u8]) -> Result<serde_json::Value, &'static str> {
+    if body.is_empty() {
+        return Err("invalid activitypub payload");
+    }
+    serde_json::from_slice(body).map_err(|_| "invalid activitypub payload")
+}
+
 pub(crate) async fn shared_inbox_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -165,8 +172,10 @@ pub(crate) async fn shared_inbox_response(
     let config = load_config(&ctx);
     let db = crate::bind_request_d1(&ctx, &config)?;
     let body = req.bytes().await?;
-    let activity: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
+    let activity = match parse_activitypub_payload(&body) {
+        Ok(activity) => activity,
+        Err(message) => return Response::error(message, 400),
+    };
 
     let delivery = match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
         Ok(delivery) => delivery,
@@ -249,8 +258,10 @@ pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> R
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
     let body = req.bytes().await?;
-    let activity: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|error| Error::RustError(format!("invalid activitypub payload: {error}")))?;
+    let activity = match parse_activitypub_payload(&body) {
+        Ok(activity) => activity,
+        Err(message) => return Response::error(message, 400),
+    };
     let db = crate::bind_request_d1(&ctx, &config)?;
     let accounts =
         resolve_shared_inbox_target_accounts(&db, &config, Some(username.as_str()), &activity)
@@ -405,6 +416,28 @@ async fn process_verified_inbox_activity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_activitypub_payload_accepts_valid_json() {
+        let activity = parse_activitypub_payload(br#"{"type":"Create"}"#).unwrap();
+        assert_eq!(activity["type"], "Create");
+    }
+
+    #[test]
+    fn parse_activitypub_payload_rejects_empty_body() {
+        assert_eq!(
+            parse_activitypub_payload(b""),
+            Err("invalid activitypub payload")
+        );
+    }
+
+    #[test]
+    fn parse_activitypub_payload_rejects_invalid_json() {
+        assert_eq!(
+            parse_activitypub_payload(b"{not-json}"),
+            Err("invalid activitypub payload")
+        );
+    }
 
     #[test]
     fn inbox_activity_type_defaults_missing_or_non_string_type() {
