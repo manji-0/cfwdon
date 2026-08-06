@@ -244,9 +244,7 @@ pub(crate) async fn search_local_status_rows(
         .await?
     };
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn search_remote_status_rows(
@@ -321,9 +319,9 @@ pub(crate) async fn search_remote_status_rows(
         .await?
     };
 
-    Ok(remote_search_rows_from_values(
-        result.results::<serde_json::Value>()?,
-    ))
+    Ok(remote_search_rows_from_values(crate::d1_results::<
+        serde_json::Value,
+    >(&result)?))
 }
 
 #[cfg(test)]

@@ -96,7 +96,7 @@ pub(crate) async fn claim_pending_generic_outbox_deliveries(
         .all()
         .await?;
 
-    result.results::<OutboxDeliveryRow>()
+    crate::d1_results::<OutboxDeliveryRow>(&result)
 }
 
 pub(crate) async fn claim_pending_target_outbox_deliveries(
@@ -125,7 +125,7 @@ pub(crate) async fn claim_pending_target_outbox_deliveries(
         .all()
         .await?;
 
-    result.results::<OutboxDeliveryRow>()
+    crate::d1_results::<OutboxDeliveryRow>(&result)
 }
 
 pub(crate) async fn list_follower_delivery_targets(
@@ -144,8 +144,7 @@ pub(crate) async fn list_follower_delivery_targets(
         .all()
         .await?;
 
-    Ok(result
-        .results::<FollowerTargetRow>()?
+    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())
@@ -177,7 +176,7 @@ pub(crate) async fn list_follower_delivery_targets_by_account_ids(
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     let mut by_account = HashMap::<String, Vec<String>>::new();
-    for row in result.results::<FollowerAccountTargetRow>()? {
+    for row in crate::d1_results::<FollowerAccountTargetRow>(&result)? {
         if !row.target_inbox.trim().is_empty() {
             by_account
                 .entry(row.account_id)
@@ -204,8 +203,7 @@ pub(crate) async fn list_follower_actor_uris(
         .all()
         .await?;
 
-    Ok(result
-        .results::<FollowerTargetRow>()?
+    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())

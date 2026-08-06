@@ -188,7 +188,7 @@ async fn load_status_polls_for_status_ids(
     );
     let binding = D1Type::Text(ids_json.as_str());
     let poll_result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
-    poll_result.results::<StatusPollRow>()
+    crate::d1_results::<StatusPollRow>(&poll_result)
 }
 
 fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
@@ -214,7 +214,7 @@ async fn preload_poll_options_by_poll_id(
     let binding = D1Type::Text(poll_ids_json.as_str());
     let options_result = db.prepare(&options_sql).bind_refs(&binding)?.all().await?;
     let mut options_by_poll_id: HashMap<String, Vec<StatusPollOptionRow>> = HashMap::new();
-    for row in options_result.results::<PreloadedStatusPollOptionRow>()? {
+    for row in crate::d1_results::<PreloadedStatusPollOptionRow>(&options_result)? {
         options_by_poll_id
             .entry(row.poll_id)
             .or_default()
@@ -251,7 +251,7 @@ async fn preload_own_votes_by_poll_id(
             .bind_refs(vote_bindings.iter())?
             .all()
             .await?;
-        for row in vote_result.results::<PreloadedPollVotePositionRow>()? {
+        for row in crate::d1_results::<PreloadedPollVotePositionRow>(&vote_result)? {
             if let Ok(position) = u32::try_from(row.option_position) {
                 own_votes_by_poll_id
                     .entry(row.poll_id)
@@ -278,11 +278,12 @@ async fn preload_voters_count_by_poll_id(
     );
     let binding = D1Type::Text(poll_ids_json.as_str());
     let voters_result = db.prepare(&voters_sql).bind_refs(&binding)?.all().await?;
-    Ok(voters_result
-        .results::<PreloadedPollVotersCountRow>()?
-        .into_iter()
-        .map(|row| (row.poll_id, row.count))
-        .collect::<HashMap<_, _>>())
+    Ok(
+        crate::d1_results::<PreloadedPollVotersCountRow>(&voters_result)?
+            .into_iter()
+            .map(|row| (row.poll_id, row.count))
+            .collect::<HashMap<_, _>>(),
+    )
 }
 
 fn mastodon_poll_response_from_rows(

@@ -141,8 +141,7 @@ pub(crate) async fn list_active_muted_actor_uris(
         .all()
         .await?;
 
-    Ok(result
-        .results::<MutedActorUriRow>()?
+    Ok(crate::d1_results::<MutedActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())
@@ -175,8 +174,7 @@ pub(crate) async fn list_active_muted_actor_uris_for_account(
         .all()
         .await?;
 
-    Ok(result
-        .results::<MutedActorUriRow>()?
+    Ok(crate::d1_results::<MutedActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())
@@ -235,7 +233,7 @@ pub(crate) async fn list_mutes_for_account(
         .all()
         .await?;
 
-    result.results::<MuteEntryRow>()
+    crate::d1_results::<MuteEntryRow>(&result)
 }
 
 pub(crate) async fn list_blocks_for_account(
@@ -269,5 +267,5 @@ pub(crate) async fn list_blocks_for_account(
         .all()
         .await?;
 
-    result.results::<BlockEntryRow>()
+    crate::d1_results::<BlockEntryRow>(&result)
 }

@@ -428,8 +428,7 @@ async fn preload_notification_mutes(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    Ok(result
-        .results::<NotificationMuteActorRow>()?
+    Ok(crate::d1_results::<NotificationMuteActorRow>(&result)?
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())

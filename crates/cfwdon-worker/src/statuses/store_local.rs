@@ -69,9 +69,7 @@ pub(crate) async fn find_statuses_by_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn find_status_by_ap_id(
@@ -110,9 +108,7 @@ pub(crate) async fn find_statuses_by_ap_ids(
     let binding = D1Type::Text(ap_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn load_in_reply_to_account_id(
@@ -169,8 +165,7 @@ pub(crate) async fn load_in_reply_to_account_ids(
     );
     let binding = D1Type::Text(reply_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let mut reply_accounts_by_status_id = result
-        .results::<ReplyAccountIdRow>()?
+    let mut reply_accounts_by_status_id = crate::d1_results::<ReplyAccountIdRow>(&result)?
         .into_iter()
         .map(|row| (row.id, row.account_id))
         .collect::<HashMap<_, _>>();
@@ -233,9 +228,7 @@ pub(crate) async fn list_public_outbox_statuses_page(
         .all()
         .await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn count_public_outbox_statuses(db: &D1Database, account_id: &str) -> Result<u64> {
@@ -332,9 +325,7 @@ pub(crate) async fn list_account_statuses(
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_public_account_statuses(
@@ -347,9 +338,7 @@ pub(crate) async fn list_public_account_statuses(
     let (sql, bindings) = public_account_statuses_sql(account_id, max_id, min_id, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn public_account_statuses_sql<'a>(
@@ -396,9 +385,7 @@ pub(crate) async fn list_direct_local_replies(
         .all()
         .await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) fn local_status_target_uri(status: &StatusRow) -> String {

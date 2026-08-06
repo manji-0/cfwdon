@@ -50,7 +50,7 @@ pub(crate) async fn list_update_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<UpdateNotificationRow>()
+    crate::d1_results::<UpdateNotificationRow>(&result)
 }
 
 impl UpdateNotificationRow {

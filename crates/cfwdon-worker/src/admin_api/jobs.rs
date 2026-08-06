@@ -78,8 +78,7 @@ pub(crate) async fn admin_background_jobs_response(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    let jobs = result
-        .results::<AdminJobRow>()?
+    let jobs = crate::d1_results::<AdminJobRow>(&result)?
         .into_iter()
         .map(|row| AdminBackgroundJobResponse {
             id: row.id,

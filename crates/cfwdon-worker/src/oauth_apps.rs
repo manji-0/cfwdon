@@ -679,8 +679,8 @@ pub(crate) async fn find_oauth_apps_by_ids(
     db.prepare(&sql)
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<OAuthAppRow>()
+        .await
+        .and_then(|__d1| crate::d1_results::<OAuthAppRow>(&__d1))
 }
 
 pub(crate) async fn find_oauth_app_id_by_bearer_token(

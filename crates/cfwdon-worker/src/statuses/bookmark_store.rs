@@ -175,5 +175,5 @@ pub(crate) async fn list_bookmarks_for_account(
         .all()
         .await?;
 
-    result.results::<BookmarkEntryRow>()
+    crate::d1_results::<BookmarkEntryRow>(&result)
 }

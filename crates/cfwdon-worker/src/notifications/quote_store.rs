@@ -53,9 +53,7 @@ pub(crate) async fn list_local_quote_notifications_for_account(
         .all()
         .await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_quote_notifications_for_account(
@@ -79,9 +77,7 @@ pub(crate) async fn list_remote_quote_notifications_for_account(
         .all()
         .await?;
 
-    result
-        .results::<RemoteStatusRecord>()
-        .and_then(remote_statuses_from_records)
+    crate::d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
 }
 
 pub(crate) async fn list_quoted_update_notifications_for_account(
@@ -107,5 +103,5 @@ pub(crate) async fn list_quoted_update_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<QuotedUpdateNotificationRow>()
+    crate::d1_results::<QuotedUpdateNotificationRow>(&result)
 }

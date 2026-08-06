@@ -364,8 +364,7 @@ async fn preload_timeline_candidate_reply_account_ids(
     );
     let binding = D1Type::Text(reply_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let reply_accounts_by_status_id = result
-        .results::<ReplyAccountIdRow>()?
+    let reply_accounts_by_status_id = crate::d1_results::<ReplyAccountIdRow>(&result)?
         .into_iter()
         .map(|row| (row.id, row.account_id))
         .collect::<HashMap<_, _>>();

@@ -132,7 +132,7 @@ pub(crate) async fn list_endorsed_accounts_for_owner(
         .all()
         .await?;
 
-    result.results::<EndorsedAccountEntryRow>()
+    crate::d1_results::<EndorsedAccountEntryRow>(&result)
 }
 
 async fn prune_account_social_metadata(

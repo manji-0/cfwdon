@@ -104,7 +104,7 @@ pub(crate) async fn list_local_mention_notifications_for_account(
     };
 
     let mut rows = Vec::new();
-    for row in result.results::<MentionNotificationRow>()? {
+    for row in crate::d1_results::<MentionNotificationRow>(&result)? {
         if local_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }
@@ -173,7 +173,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
 
     // The SQL LIKE is only a cheap prefilter; HTML parsing keeps mention matching exact.
     let mut rows = Vec::new();
-    for row in result.results::<RemoteMentionNotificationRow>()? {
+    for row in crate::d1_results::<RemoteMentionNotificationRow>(&result)? {
         if remote_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }

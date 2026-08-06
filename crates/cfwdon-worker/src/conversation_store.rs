@@ -176,8 +176,7 @@ pub(crate) async fn list_conversation_participants(
         .bind_refs(&conversation_id)?
         .all()
         .await?;
-    Ok(result
-        .results::<ConversationParticipantRow>()?
+    Ok(crate::d1_results::<ConversationParticipantRow>(&result)?
         .into_iter()
         .map(|row| row.participant_ref)
         .collect())
@@ -295,7 +294,7 @@ pub(crate) async fn list_conversations_for_account(
         ])?
         .all()
         .await?;
-    result.results::<ConversationRow>()
+    crate::d1_results::<ConversationRow>(&result)
 }
 
 pub(crate) async fn find_conversation_for_account(

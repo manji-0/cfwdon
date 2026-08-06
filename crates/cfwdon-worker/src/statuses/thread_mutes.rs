@@ -114,8 +114,7 @@ async fn load_status_reply_links(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(result
-        .results::<StatusReplyLinkRow>()?
+    Ok(crate::d1_results::<StatusReplyLinkRow>(&result)?
         .into_iter()
         .map(|row| (row.id, row.in_reply_to_id))
         .collect())
@@ -142,8 +141,7 @@ async fn load_muted_thread_root_status_ids(
     let bindings = [D1Type::Text(account_id), D1Type::Text(roots_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<ThreadRootStatusIdRow>()?
+    Ok(crate::d1_results::<ThreadRootStatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.thread_root_status_id)
         .collect())

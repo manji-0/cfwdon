@@ -153,7 +153,7 @@ async fn load_remote_status_polls_for_status_ids(
     );
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
-    result.results::<RemoteStatusPollRow>()
+    crate::d1_results::<RemoteStatusPollRow>(&result)
 }
 
 fn remote_poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
@@ -181,8 +181,8 @@ async fn preload_remote_poll_options_by_poll_id(
         .prepare(&options_sql)
         .bind_refs(&binding)?
         .all()
-        .await?
-        .results::<RemoteStatusPollOptionPreloadRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<RemoteStatusPollOptionPreloadRow>(&__d1))?;
     let mut options_by_poll_id: HashMap<String, Vec<RemoteStatusPollOptionRow>> = HashMap::new();
     for row in option_rows {
         options_by_poll_id
@@ -221,8 +221,8 @@ async fn preload_remote_poll_votes_by_poll_id(
         .prepare(&vote_sql)
         .bind_refs(vote_bindings.iter())?
         .all()
-        .await?
-        .results::<RemoteStatusPollVotePreloadRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<RemoteStatusPollVotePreloadRow>(&__d1))?;
     let mut rows_by_poll_id: HashMap<String, Vec<RemoteStatusPollVoteRow>> = HashMap::new();
     for row in vote_rows {
         rows_by_poll_id

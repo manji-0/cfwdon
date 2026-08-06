@@ -49,8 +49,7 @@ pub(crate) async fn list_status_edit_snapshots(
         .all()
         .await?;
 
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value

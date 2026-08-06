@@ -64,7 +64,7 @@ pub(crate) async fn list_custom_emojis_from_db(
         )
         .all()
         .await?;
-    let rows = result.results::<CustomEmojiRow>()?;
+    let rows = crate::d1_results::<CustomEmojiRow>(&result)?;
 
     Ok(rows
         .into_iter()
@@ -84,7 +84,7 @@ pub(crate) async fn list_admin_custom_emojis(
         )
         .all()
         .await?;
-    let rows = result.results::<CustomEmojiRow>()?;
+    let rows = crate::d1_results::<CustomEmojiRow>(&result)?;
 
     Ok(rows
         .into_iter()

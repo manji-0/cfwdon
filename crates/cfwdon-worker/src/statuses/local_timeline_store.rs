@@ -34,9 +34,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
     let (sql, bindings) = local_home_timeline_sql(viewer_account_id, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn list_local_home_timeline_statuses_since(
@@ -50,9 +48,7 @@ async fn list_local_home_timeline_statuses_since(
         local_home_timeline_since_sql(viewer_account_id, min_timestamp, min_id, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_home_timeline_sql<'a>(
@@ -138,9 +134,7 @@ pub(crate) async fn list_local_public_timeline_statuses(
     let (sql, bindings) = local_public_timeline_sql(cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_timeline_sql<'a>(
@@ -217,8 +211,7 @@ async fn list_local_public_statuses_by_tags_indexed(
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     Ok((
-        result
-            .results::<StatusRecord>()?
+        crate::d1_results::<StatusRecord>(&result)?
             .into_iter()
             .map(status_from_record)
             .collect::<Result<Vec<_>>>()?,
@@ -277,9 +270,7 @@ async fn list_local_public_statuses_by_tags_legacy(
     let (sql, bindings) = local_public_statuses_by_tags_legacy_sql(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
@@ -331,9 +322,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
     let (sql, bindings) = local_public_statuses_by_link_sql(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_link_patterns(urls: &[String]) -> Vec<String> {
@@ -382,9 +371,7 @@ pub(crate) async fn list_local_direct_timeline_statuses(
     let (sql, bindings) = local_direct_timeline_sql(viewer_account_id, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_direct_timeline_sql<'a>(

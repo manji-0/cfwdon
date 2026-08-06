@@ -155,7 +155,7 @@ pub(crate) async fn list_reports_filtered(
         .all()
         .await?;
 
-    result.results::<ReportRow>()
+    crate::d1_results::<ReportRow>(&result)
 }
 
 pub(crate) async fn resolve_report(
@@ -196,8 +196,7 @@ pub(crate) async fn list_report_status_ids(
         .all()
         .await?;
 
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value

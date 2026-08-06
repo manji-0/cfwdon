@@ -104,7 +104,7 @@ pub(crate) async fn find_media_attachments_by_status_id(
         .all()
         .await?;
 
-    result.results::<MediaAttachmentRow>()
+    crate::d1_results::<MediaAttachmentRow>(&result)
 }
 
 pub(crate) async fn find_media_attachments_by_status_ids(
@@ -131,7 +131,7 @@ pub(crate) async fn find_media_attachments_by_status_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for row in result.results::<MediaAttachmentRow>()? {
+    for row in crate::d1_results::<MediaAttachmentRow>(&result)? {
         by_status_id
             .entry(row.status_id.clone().unwrap_or_default())
             .or_insert_with(Vec::new)
@@ -157,7 +157,7 @@ pub(crate) async fn find_remote_status_attachments_by_status_id(
         .all()
         .await?;
 
-    result.results::<RemoteStatusAttachmentRow>()
+    crate::d1_results::<RemoteStatusAttachmentRow>(&result)
 }
 
 pub(crate) async fn find_remote_status_attachments_by_status_ids(
@@ -184,7 +184,7 @@ pub(crate) async fn find_remote_status_attachments_by_status_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for row in result.results::<RemoteStatusAttachmentRow>()? {
+    for row in crate::d1_results::<RemoteStatusAttachmentRow>(&result)? {
         by_status_id
             .entry(row.status_id.clone())
             .or_insert_with(Vec::new)
@@ -309,8 +309,7 @@ pub(crate) async fn find_remote_status_ids_with_media(
         .all()
         .await?;
 
-    Ok(result
-        .results::<RemoteMediaStatusIdRow>()?
+    Ok(crate::d1_results::<RemoteMediaStatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.status_id)
         .collect())
@@ -337,7 +336,7 @@ pub(crate) async fn list_orphan_media(
         .all()
         .await?;
 
-    result.results::<OrphanMediaRow>()
+    crate::d1_results::<OrphanMediaRow>(&result)
 }
 
 pub(crate) async fn delete_media_attachment_row(db: &D1Database, media_id: &str) -> Result<()> {

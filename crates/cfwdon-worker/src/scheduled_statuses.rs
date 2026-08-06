@@ -293,8 +293,8 @@ pub(crate) async fn list_due_scheduled_statuses(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<serde_json::Value>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?;
     Ok(rows
         .iter()
         .filter_map(|row| due_scheduled_status_from_value(row).ok())
@@ -998,8 +998,8 @@ async fn list_scheduled_statuses_for_account(
         .prepare(query)
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<serde_json::Value>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?;
     let mut statuses = rows
         .iter()
         .filter_map(|row| scheduled_status_from_value(row).ok())

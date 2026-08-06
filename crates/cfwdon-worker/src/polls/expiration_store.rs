@@ -24,7 +24,7 @@ pub(crate) async fn list_expired_polls_requiring_federation_close(
         .all()
         .await?;
 
-    result.results::<ExpiredPollQueueRow>()
+    crate::d1_results::<ExpiredPollQueueRow>(&result)
 }
 
 pub(crate) async fn mark_status_poll_federated_closed(

@@ -298,7 +298,7 @@ pub(crate) async fn load_stored_status_mentions(
         .bind_refs(&binding)?
         .all()
         .await?;
-    let rows = result.results::<StoredMentionRow>()?;
+    let rows = crate::d1_results::<StoredMentionRow>(&result)?;
     if rows.is_empty() {
         return Ok(None);
     }
@@ -321,7 +321,7 @@ pub(crate) async fn load_stored_remote_status_mentions(
         .bind_refs(&binding)?
         .all()
         .await?;
-    let rows = result.results::<StoredMentionRow>()?;
+    let rows = crate::d1_results::<StoredMentionRow>(&result)?;
     if rows.is_empty() {
         return Ok(None);
     }

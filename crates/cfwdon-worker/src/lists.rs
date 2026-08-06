@@ -168,7 +168,7 @@ async fn list_rows_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result.results::<AccountListRow>()
+    crate::d1_results::<AccountListRow>(&result)
 }
 
 pub(crate) async fn list_row_by_id(
@@ -327,7 +327,7 @@ pub(crate) async fn list_local_account_list_stream_fanout(
         .all()
         .await?;
 
-    let lists = result.results::<ListStreamFanoutRow>()?;
+    let lists = crate::d1_results::<ListStreamFanoutRow>(&result)?;
     let truncated = lists.len() > STREAM_HUB_LIST_FANOUT_LIMIT as usize;
     let lists = if truncated {
         lists
@@ -356,7 +356,7 @@ pub(crate) async fn list_membership_refs(
         .bind_refs(&list_id)?
         .all()
         .await?;
-    result.results::<AccountListMembershipRow>()
+    crate::d1_results::<AccountListMembershipRow>(&result)
 }
 
 async fn add_accounts_to_list(

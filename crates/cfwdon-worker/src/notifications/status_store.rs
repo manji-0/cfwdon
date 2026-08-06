@@ -57,9 +57,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
         .all()
         .await?;
 
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_status_notifications_for_account(
@@ -85,5 +83,5 @@ pub(crate) async fn list_remote_status_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<RemoteStatusNotificationRow>()
+    crate::d1_results::<RemoteStatusNotificationRow>(&result)
 }

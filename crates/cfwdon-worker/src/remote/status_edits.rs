@@ -75,8 +75,7 @@ pub(crate) async fn list_remote_status_edit_snapshots(
         .all()
         .await?;
 
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value
@@ -143,8 +142,7 @@ pub(crate) async fn preload_remote_status_edit_updated_at(
     let sql = remote_status_edit_updated_at_preload_sql();
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let updated_at_by_status_id = result
-        .results::<RemoteStatusUpdatedAtRow>()?
+    let updated_at_by_status_id = crate::d1_results::<RemoteStatusUpdatedAtRow>(&result)?
         .into_iter()
         .map(|row| (row.id, row.updated_at))
         .collect::<HashMap<_, _>>();

@@ -185,8 +185,7 @@ pub(super) async fn load_mention_local_accounts(
         .all()
         .await?;
 
-    Ok(result
-        .results::<AccountRow>()?
+    Ok(crate::d1_results::<AccountRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -235,8 +234,7 @@ pub(super) async fn load_mention_remote_actors(
         .all()
         .await?;
 
-    Ok(result
-        .results::<RemoteActorRow>()?
+    Ok(crate::d1_results::<RemoteActorRow>(&result)?
         .into_iter()
         .map(|row| {
             (

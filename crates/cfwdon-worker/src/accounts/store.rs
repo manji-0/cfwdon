@@ -96,8 +96,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
     ];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<DiscoverableAccountRow>()?
+    Ok(crate::d1_results::<DiscoverableAccountRow>(&result)?
         .into_iter()
         .map(|row| {
             let sort_key = row.sort_key.clone();
@@ -195,8 +194,7 @@ pub(crate) async fn load_account_stats_map(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<AccountStatsMapRow>()?
+    Ok(crate::d1_results::<AccountStatsMapRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -231,8 +229,7 @@ pub(crate) async fn find_accounts_by_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(result
-        .results::<AccountRow>()?
+    Ok(crate::d1_results::<AccountRow>(&result)?
         .into_iter()
         .map(|row| {
             let id = row.id.clone();

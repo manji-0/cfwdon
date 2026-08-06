@@ -62,7 +62,7 @@ pub(crate) async fn list_local_follow_request_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<LocalFollowRequestNotificationRow>()
+    crate::d1_results::<LocalFollowRequestNotificationRow>(&result)
 }
 
 pub(crate) async fn list_remote_follow_request_notifications_for_account(
@@ -83,7 +83,7 @@ pub(crate) async fn list_remote_follow_request_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<RemoteFollowRequestNotificationRow>()
+    crate::d1_results::<RemoteFollowRequestNotificationRow>(&result)
 }
 
 pub(crate) async fn list_local_follow_notifications_for_account(
@@ -105,7 +105,7 @@ pub(crate) async fn list_local_follow_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<LocalFollowNotificationRow>()
+    crate::d1_results::<LocalFollowNotificationRow>(&result)
 }
 
 pub(crate) async fn list_admin_sign_up_notifications(
@@ -129,8 +129,7 @@ pub(crate) async fn list_admin_sign_up_notifications(
         .all()
         .await?;
 
-    Ok(result
-        .results::<AccountRow>()?
+    Ok(crate::d1_results::<AccountRow>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -154,7 +153,7 @@ pub(crate) async fn list_remote_follow_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<RemoteFollowNotificationRow>()
+    crate::d1_results::<RemoteFollowNotificationRow>(&result)
 }
 
 pub(crate) async fn list_favourite_notifications_for_account(
@@ -202,7 +201,7 @@ pub(crate) async fn list_favourite_notifications_for_account(
         .await?
     };
 
-    result.results::<FavouriteNotificationRow>()
+    crate::d1_results::<FavouriteNotificationRow>(&result)
 }
 
 pub(crate) async fn list_remote_favourite_notifications_for_account(
@@ -246,7 +245,7 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
         .await?
     };
 
-    result.results::<RemoteStatusInteractionRow>()
+    crate::d1_results::<RemoteStatusInteractionRow>(&result)
 }
 
 pub(crate) async fn list_remote_reblog_notifications_for_account(
@@ -269,5 +268,5 @@ pub(crate) async fn list_remote_reblog_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<RemoteStatusInteractionRow>()
+    crate::d1_results::<RemoteStatusInteractionRow>(&result)
 }

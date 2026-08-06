@@ -155,8 +155,7 @@ pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     let binding = D1Type::Text(values_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    result
-        .results::<RemoteStatusRecord>()?
+    crate::d1_results::<RemoteStatusRecord>(&result)?
         .into_iter()
         .map(remote_status_from_record)
         .collect()

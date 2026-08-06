@@ -575,7 +575,7 @@ async fn query_remote_statuses_with_actor(
     bindings: &[D1Type<'_>],
 ) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
-    let values = result.results::<serde_json::Value>()?;
+    let values = crate::d1_results::<serde_json::Value>(&result)?;
     Ok(values
         .into_iter()
         .filter_map(|value| {
@@ -592,9 +592,7 @@ async fn query_remote_status_rows(
     bindings: &[D1Type<'_>],
 ) -> Result<Vec<RemoteStatusRow>> {
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
-    result
-        .results::<RemoteStatusRecord>()
-        .and_then(remote_statuses_from_records)
+    crate::d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
 }
 
 fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {

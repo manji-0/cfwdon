@@ -57,7 +57,7 @@ pub(crate) async fn claim_pending_outbound_activities(
         .all()
         .await?;
 
-    result.results::<OutboundActivityRow>()
+    crate::d1_results::<OutboundActivityRow>(&result)
 }
 
 pub(crate) async fn mark_outbound_activity_delivered(
@@ -208,7 +208,7 @@ pub(crate) async fn requeue_stale_in_flight_outbound_activities(db: &D1Database)
         .all()
         .await?;
 
-    for delivery in result.results::<OutboundActivityRow>()? {
+    for delivery in crate::d1_results::<OutboundActivityRow>(&result)? {
         if delivery.state.as_deref() == Some("failed") {
             reconcile_follow_state_for_terminal_outbound(db, &delivery).await?;
         }

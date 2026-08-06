@@ -261,7 +261,7 @@ async fn list_filters(db: &crate::D1Database, account_id: &str) -> Result<Vec<Fi
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result.results::<FilterRow>()
+    crate::d1_results::<FilterRow>(&result)
 }
 
 async fn find_filter(
@@ -297,7 +297,7 @@ async fn list_filter_keywords(
         .bind_refs(&filter_id)?
         .all()
         .await?;
-    result.results::<FilterKeywordRow>()
+    crate::d1_results::<FilterKeywordRow>(&result)
 }
 
 async fn list_filter_keywords_for_filters(
@@ -324,7 +324,7 @@ async fn list_filter_keywords_for_filters(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     let mut by_filter_id = HashMap::new();
-    for keyword in result.results::<FilterKeywordRow>()? {
+    for keyword in crate::d1_results::<FilterKeywordRow>(&result)? {
         by_filter_id
             .entry(keyword.filter_id.clone())
             .or_insert_with(Vec::new)
@@ -368,7 +368,7 @@ async fn list_filter_statuses(
         .bind_refs(&filter_id)?
         .all()
         .await?;
-    result.results::<FilterStatusRow>()
+    crate::d1_results::<FilterStatusRow>(&result)
 }
 
 async fn list_filter_statuses_for_filters(
@@ -395,7 +395,7 @@ async fn list_filter_statuses_for_filters(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     let mut by_filter_id = HashMap::new();
-    for status in result.results::<FilterStatusRow>()? {
+    for status in crate::d1_results::<FilterStatusRow>(&result)? {
         by_filter_id
             .entry(status.filter_id.clone())
             .or_insert_with(Vec::new)
@@ -437,7 +437,7 @@ async fn list_v1_filters(db: &crate::D1Database, account_id: &str) -> Result<Vec
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result.results::<V1FilterRow>()
+    crate::d1_results::<V1FilterRow>(&result)
 }
 
 async fn find_v1_filter(

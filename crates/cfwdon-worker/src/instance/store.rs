@@ -136,8 +136,8 @@ async fn count_rows_by_week_offset(
         ))
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<WeekOffsetCountRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<WeekOffsetCountRow>(&__d1))?;
 
     Ok(rows
         .into_iter()
@@ -181,8 +181,8 @@ pub(crate) async fn load_known_peer_domains(
                AND trim(domain) != ''",
         )
         .all()
-        .await?
-        .results::<serde_json::Value>()?
+        .await
+        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?
     {
         if let Some(domain) = value.get("domain").and_then(serde_json::Value::as_str) {
             let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -211,8 +211,8 @@ pub(crate) async fn load_known_peer_domains(
         for value in db
             .prepare(sql)
             .all()
-            .await?
-            .results::<serde_json::Value>()?
+            .await
+            .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?
         {
             if let Some(uri) = value.get(field).and_then(serde_json::Value::as_str)
                 && let Some(peer) = peer_authority_from_uri(config, uri)

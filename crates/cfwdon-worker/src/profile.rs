@@ -735,7 +735,7 @@ async fn featured_tags_payload(
         .all()
         .await?;
 
-    let rows = result.results::<FeaturedTagRow>()?;
+    let rows = crate::d1_results::<FeaturedTagRow>(&result)?;
     let tag_names = rows
         .iter()
         .map(|row| row.tag_name.clone())
@@ -791,8 +791,7 @@ async fn featured_tag_metrics_by_tag(
     bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<FeaturedTagMetricsRow>()?
+    Ok(crate::d1_results::<FeaturedTagMetricsRow>(&result)?
         .into_iter()
         .map(|row| (row.tag_name.clone(), row))
         .collect())

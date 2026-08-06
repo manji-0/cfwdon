@@ -212,7 +212,7 @@ pub(crate) async fn list_favourites_for_account(
         .all()
         .await?;
 
-    result.results::<FavouriteEntryRow>()
+    crate::d1_results::<FavouriteEntryRow>(&result)
 }
 
 pub(crate) async fn find_favourite_activity_by_target_uri(
@@ -317,8 +317,7 @@ async fn list_interaction_account_ids(
     let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<InteractionAccountIdRow>()?
+    Ok(crate::d1_results::<InteractionAccountIdRow>(&result)?
         .into_iter()
         .map(|row| row.account_id)
         .collect())
@@ -333,8 +332,7 @@ async fn list_interaction_actor_uris(
     let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<InteractionActorUriRow>()?
+    Ok(crate::d1_results::<InteractionActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.remote_actor_uri)
         .collect())

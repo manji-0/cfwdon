@@ -30,8 +30,7 @@ pub(crate) async fn load_dismissed_notification_ids(
         .all()
         .await?;
 
-    Ok(result
-        .results::<NotificationDismissalRow>()?
+    Ok(crate::d1_results::<NotificationDismissalRow>(&result)?
         .into_iter()
         .map(|row| row.notification_id)
         .collect())

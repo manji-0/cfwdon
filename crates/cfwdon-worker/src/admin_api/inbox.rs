@@ -88,8 +88,7 @@ pub(crate) async fn admin_inbox_activities_response(
     };
 
     let result = db.prepare(&sql).all().await?;
-    let activities = result
-        .results::<AdminInboxRow>()?
+    let activities = crate::d1_results::<AdminInboxRow>(&result)?
         .into_iter()
         .map(|row| AdminInboxActivityResponse {
             actor_uri: row.actor_uri,

@@ -40,7 +40,7 @@ pub(crate) async fn list_reblog_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<ReblogNotificationRow>()
+    crate::d1_results::<ReblogNotificationRow>(&result)
 }
 
 pub(crate) async fn list_poll_notifications_for_account(
@@ -71,5 +71,5 @@ pub(crate) async fn list_poll_notifications_for_account(
         .all()
         .await?;
 
-    result.results::<PollNotificationRow>()
+    crate::d1_results::<PollNotificationRow>(&result)
 }

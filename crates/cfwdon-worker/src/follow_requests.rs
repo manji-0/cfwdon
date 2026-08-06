@@ -258,8 +258,8 @@ async fn list_pending_follow_requests(
         )
         .bind_refs(&account_id)?
         .all()
-        .await?
-        .results::<PendingLocalFollowRequestRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<PendingLocalFollowRequestRow>(&__d1))?;
     let remote_rows = db
         .prepare(
             "SELECT CAST(strftime('%s', created_at) AS INTEGER) * 1000000 + rowid AS cursor_id,
@@ -273,8 +273,8 @@ async fn list_pending_follow_requests(
         )
         .bind_refs(&account_id)?
         .all()
-        .await?
-        .results::<PendingRemoteFollowRequestRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<PendingRemoteFollowRequestRow>(&__d1))?;
 
     let mut requests = Vec::with_capacity(local_rows.len() + remote_rows.len());
     for row in local_rows {

@@ -86,8 +86,7 @@ async fn load_account_ids(
     bindings: &[D1Type<'_>],
 ) -> Result<Vec<String>> {
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
-    Ok(result
-        .results::<AccountIdRow>()?
+    Ok(crate::d1_results::<AccountIdRow>(&result)?
         .into_iter()
         .map(|row| row.account_id)
         .collect())
@@ -142,9 +141,7 @@ async fn list_local_quote_statuses_for_remote_object_uri(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result
-        .results::<StatusRecord>()
-        .and_then(statuses_from_records)
+    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn build_remote_status_response_for_recipient_soft(

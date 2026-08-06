@@ -279,8 +279,8 @@ pub(crate) async fn list_announcement_read_ids(
         )
         .bind_refs(&[D1Type::Text(account_id)])?
         .all()
-        .await?
-        .results::<AnnouncementDismissalRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<AnnouncementDismissalRow>(&__d1))?;
     Ok(rows.into_iter().map(|row| row.announcement_id).collect())
 }
 
@@ -300,8 +300,8 @@ pub(crate) async fn load_announcement_reaction_state(
         )
         .bind_refs(&[D1Type::Text(account_id)])?
         .all()
-        .await?
-        .results::<AnnouncementReactionCountRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<AnnouncementReactionCountRow>(&__d1))?;
     let mut state = HashMap::new();
     for row in rows {
         if row.announcement_id.is_empty() || row.reaction_name.is_empty() {
@@ -935,8 +935,8 @@ async fn list_trending_local_link_rows(
     )
     .bind_refs(&bindings)?
     .all()
-    .await?
-    .results::<TrendingLocalLinkRow>()
+    .await
+    .and_then(|__d1| crate::d1_results::<TrendingLocalLinkRow>(&__d1))
 }
 
 async fn list_trending_remote_link_rows(
@@ -954,8 +954,8 @@ async fn list_trending_remote_link_rows(
     )
     .bind_refs(&bindings)?
     .all()
-    .await?
-    .results::<TrendingRemoteLinkRow>()
+    .await
+    .and_then(|__d1| crate::d1_results::<TrendingRemoteLinkRow>(&__d1))
 }
 
 fn build_trending_link_candidate(

@@ -203,7 +203,7 @@ async fn list_queued_media_deletions(
         .all()
         .await?;
 
-    result.results::<QueuedMediaDeletionRow>()
+    crate::d1_results::<QueuedMediaDeletionRow>(&result)
 }
 
 async fn queue_media_deletion(db: &D1Database, object_key: &str, error: &str) -> Result<()> {

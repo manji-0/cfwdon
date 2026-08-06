@@ -76,9 +76,7 @@ pub(crate) async fn list_pinned_statuses_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result
-        .results::<crate::StatusRecord>()
-        .and_then(crate::statuses_from_records)
+    crate::d1_results::<crate::StatusRecord>(&result).and_then(crate::statuses_from_records)
 }
 
 async fn pinned_status_response(

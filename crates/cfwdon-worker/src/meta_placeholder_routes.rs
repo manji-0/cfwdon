@@ -543,8 +543,8 @@ async fn list_generated_annual_reports(
     db.prepare(sql)
         .bind_refs(&D1Type::Text(account_id))?
         .all()
-        .await?
-        .results::<AnnualReportRow>()
+        .await
+        .and_then(|__d1| crate::d1_results::<AnnualReportRow>(&__d1))
 }
 
 async fn find_generated_annual_report(
@@ -616,8 +616,8 @@ async fn list_recent_public_status_ids_between(
         )
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<StatusIdRow>()?
+        .await
+        .and_then(|__d1| crate::d1_results::<StatusIdRow>(&__d1))?
         .into_iter()
         .map(|row| row.id)
         .collect())

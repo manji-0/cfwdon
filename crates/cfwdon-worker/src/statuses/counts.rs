@@ -82,7 +82,7 @@ pub(crate) async fn load_local_status_counts_map(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    for row in result.results::<StatusCountsRow>()? {
+    for row in crate::d1_results::<StatusCountsRow>(&result)? {
         counts.insert(row.status_id, (row.favourites_count, row.reblogs_count));
     }
     Ok(counts)
@@ -135,7 +135,7 @@ pub(crate) async fn load_remote_status_counts_map(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    for row in result.results::<StatusCountsRow>()? {
+    for row in crate::d1_results::<StatusCountsRow>(&result)? {
         counts.insert(
             row.remote_status_id,
             (row.favourites_count, row.reblogs_count),

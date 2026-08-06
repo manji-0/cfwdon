@@ -197,7 +197,7 @@ pub(crate) async fn process_due_background_jobs(
         .all()
         .await?;
 
-    let jobs = job_ids_result.results::<BackgroundJobRow>()?;
+    let jobs = crate::d1_results::<BackgroundJobRow>(&job_ids_result)?;
     if jobs.is_empty() {
         return Ok(0);
     }

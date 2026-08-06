@@ -215,8 +215,7 @@ pub(crate) async fn find_remote_actors_by_actor_uris(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<RemoteActorRow>()?
+    Ok(crate::d1_results::<RemoteActorRow>(&result)?
         .into_iter()
         .map(|row| (row.actor_uri.clone(), row))
         .collect())
@@ -298,19 +297,20 @@ pub(crate) async fn load_remote_actor_status_summaries(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<RemoteActorStatusSummaryMapRow>()?
-        .into_iter()
-        .map(|row| {
-            (
-                row.actor_uri,
-                RemoteActorStatusSummary {
-                    statuses_count: row.statuses_count,
-                    last_status_at: row.last_status_at,
-                },
-            )
-        })
-        .collect())
+    Ok(
+        crate::d1_results::<RemoteActorStatusSummaryMapRow>(&result)?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.actor_uri,
+                    RemoteActorStatusSummary {
+                        statuses_count: row.statuses_count,
+                        last_status_at: row.last_status_at,
+                    },
+                )
+            })
+            .collect(),
+    )
 }
 
 pub(crate) async fn find_remote_actor_by_username_domain(

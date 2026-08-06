@@ -91,7 +91,7 @@ async fn list_featured_tags_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    result.results::<FeaturedTagRow>()
+    crate::d1_results::<FeaturedTagRow>(&result)
 }
 
 async fn featured_tag_metrics(
@@ -132,8 +132,7 @@ async fn featured_tag_metrics_by_tag(
     bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<FeaturedTagStatusMetricsRow>()?
+    Ok(crate::d1_results::<FeaturedTagStatusMetricsRow>(&result)?
         .into_iter()
         .map(|row| (row.tag_name.clone(), row))
         .collect())
@@ -272,8 +271,7 @@ async fn suggested_featured_tag_names(
     bindings.push(D1Type::Integer(MAX_FEATURED_TAGS as i32));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<SuggestedFeaturedTagRow>()?
+    Ok(crate::d1_results::<SuggestedFeaturedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag_name)
         .collect())

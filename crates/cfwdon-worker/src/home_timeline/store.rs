@@ -70,7 +70,7 @@ async fn list_home_timeline_candidate_ids_for_source(
         .bind_refs(query.bindings.iter())?
         .all()
         .await?;
-    result.results::<HomeTimelineCandidateRow>()
+    crate::d1_results::<HomeTimelineCandidateRow>(&result)
 }
 
 pub(super) fn merge_home_timeline_candidate_rows(

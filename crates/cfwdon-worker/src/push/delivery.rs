@@ -26,8 +26,7 @@ async fn load_account_ids(
     bindings: &[worker::d1::D1Type<'_>],
 ) -> Result<Vec<String>> {
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
-    Ok(result
-        .results::<AccountIdRow>()?
+    Ok(crate::d1_results::<AccountIdRow>(&result)?
         .into_iter()
         .map(|row| row.account_id)
         .collect())

@@ -225,8 +225,7 @@ async fn search_indexed_tags_for_v2(
         .all()
         .await?;
 
-    Ok(result
-        .results::<TagSearchRow>()?
+    Ok(crate::d1_results::<TagSearchRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -335,8 +334,7 @@ async fn load_local_status_hashtag_names(
         .all()
         .await?;
 
-    Ok(result
-        .results::<IndexedTagRow>()?
+    Ok(crate::d1_results::<IndexedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag)
         .collect())
@@ -392,8 +390,7 @@ pub(crate) async fn load_remote_status_hashtag_names(
         .all()
         .await?;
 
-    Ok(result
-        .results::<IndexedTagRow>()?
+    Ok(crate::d1_results::<IndexedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag)
         .collect())
@@ -547,8 +544,7 @@ pub(crate) async fn list_trending_tag_metrics(
         .all()
         .await?;
 
-    Ok(result
-        .results::<TagSearchRow>()?
+    Ok(crate::d1_results::<TagSearchRow>(&result)?
         .into_iter()
         .map(|row| {
             (

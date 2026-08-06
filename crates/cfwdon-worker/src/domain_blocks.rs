@@ -138,7 +138,7 @@ async fn list_account_domain_blocks(
         .all()
         .await?;
 
-    result.results::<DomainBlockEntryRow>()
+    crate::d1_results::<DomainBlockEntryRow>(&result)
 }
 
 async fn insert_account_domain_block(
@@ -181,8 +181,7 @@ pub(crate) async fn list_all_account_domain_blocks(
         .all()
         .await?;
 
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value
@@ -371,7 +370,7 @@ pub(crate) async fn list_instance_domain_blocks(
         .bind_refs(&[D1Type::Integer(limit)])?
         .all()
         .await?;
-    result.results::<InstanceDomainBlockRow>()
+    crate::d1_results::<InstanceDomainBlockRow>(&result)
 }
 
 pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Result<Vec<String>> {
@@ -379,8 +378,7 @@ pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Resul
         .prepare("SELECT domain FROM instance_domain_blocks ORDER BY domain ASC")
         .all()
         .await?;
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|row| {
             row.get("domain")

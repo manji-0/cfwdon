@@ -384,8 +384,7 @@ async fn load_viewer_target_uri_set(
     let bindings = [D1Type::Text(account_id), D1Type::Text(uris_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<TargetUriRow>()?
+    Ok(crate::d1_results::<TargetUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_uri)
         .collect())
@@ -412,8 +411,7 @@ async fn load_viewer_remote_status_id_set(
     let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<RemoteStatusIdRow>()?
+    Ok(crate::d1_results::<RemoteStatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.remote_status_id)
         .collect())
@@ -439,8 +437,7 @@ async fn load_viewer_pinned_status_ids(
     let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(result
-        .results::<StatusIdRow>()?
+    Ok(crate::d1_results::<StatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.status_id)
         .collect())
@@ -558,8 +555,7 @@ pub(crate) async fn preload_status_quote_counts(
     );
     let binding = D1Type::Text(uris_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let counts = result
-        .results::<StatusQuoteCountRow>()?
+    let counts = crate::d1_results::<StatusQuoteCountRow>(&result)?
         .into_iter()
         .map(|row| (row.quote_of_uri, row.count))
         .collect::<HashMap<_, _>>();

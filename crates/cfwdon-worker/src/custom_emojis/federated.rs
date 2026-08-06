@@ -48,8 +48,8 @@ pub(crate) async fn preload_remote_status_federated_emojis(
         .prepare(&query)
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<RemoteStatusRawObjectRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<RemoteStatusRawObjectRow>(&__d1))?;
 
     let mut by_status_id = HashMap::with_capacity(rows.len());
     for row in rows {

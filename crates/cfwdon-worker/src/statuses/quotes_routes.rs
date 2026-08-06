@@ -384,9 +384,7 @@ async fn list_local_status_quotes_by_uri(
         limit,
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    result
-        .results::<crate::StatusRecord>()
-        .and_then(crate::statuses_from_records)
+    crate::d1_results::<crate::StatusRecord>(&result).and_then(crate::statuses_from_records)
 }
 
 async fn list_remote_status_quotes_by_uri(
@@ -407,8 +405,7 @@ async fn list_remote_status_quotes_by_uri(
         limit,
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    result
-        .results::<crate::RemoteStatusRecord>()
+    crate::d1_results::<crate::RemoteStatusRecord>(&result)
         .and_then(crate::remote_statuses_from_records)
 }
 

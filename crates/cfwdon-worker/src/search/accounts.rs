@@ -346,8 +346,7 @@ pub(crate) async fn search_local_accounts(
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(result
-        .results::<AccountRow>()?
+    Ok(crate::d1_results::<AccountRow>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -445,7 +444,7 @@ pub(crate) async fn search_remote_accounts(
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    result.results::<RemoteActorRow>()
+    crate::d1_results::<RemoteActorRow>(&result)
 }
 
 pub(crate) async fn search_cached_accounts(

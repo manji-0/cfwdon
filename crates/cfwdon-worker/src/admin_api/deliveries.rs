@@ -141,8 +141,7 @@ async fn list_outbound_admin_deliveries(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(result
-        .results::<AdminDeliveryRow>()?
+    Ok(crate::d1_results::<AdminDeliveryRow>(&result)?
         .into_iter()
         .map(|row| row_to_admin_delivery(row, "outbound"))
         .collect())
@@ -178,8 +177,7 @@ async fn list_outbox_admin_deliveries(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(result
-        .results::<AdminDeliveryRow>()?
+    Ok(crate::d1_results::<AdminDeliveryRow>(&result)?
         .into_iter()
         .map(|row| row_to_admin_delivery(row, "outbox"))
         .collect())

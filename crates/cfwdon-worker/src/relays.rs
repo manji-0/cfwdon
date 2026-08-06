@@ -72,8 +72,7 @@ pub(crate) async fn list_federation_relays(db: &D1Database) -> Result<Vec<Federa
         )
         .all()
         .await?;
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(relay_row_from_value)
         .collect())
@@ -107,8 +106,7 @@ pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec
         .bind_refs(&[D1Type::Text(RELAY_STATE_ACCEPTED)])?
         .all()
         .await?;
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|row| {
             row.get("inbox_url")
@@ -135,8 +133,8 @@ pub(crate) async fn relay_delivery_is_enabled(
         )
         .bind_refs(&[D1Type::Text(RELAY_STATE_ACCEPTED)])?
         .all()
-        .await?
-        .results::<serde_json::Value>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?;
     for row in rows {
         if row
             .get("actor_uri")

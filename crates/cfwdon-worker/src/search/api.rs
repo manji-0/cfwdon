@@ -74,8 +74,8 @@ async fn list_discoverable_remote_actor_rows(
     db.prepare(sql)
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-        .results::<DirectoryRemoteActorRow>()
+        .await
+        .and_then(|__d1| crate::d1_results::<DirectoryRemoteActorRow>(&__d1))
 }
 
 pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Result<Response> {

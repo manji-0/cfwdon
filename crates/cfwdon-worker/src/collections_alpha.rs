@@ -537,7 +537,7 @@ async fn list_collection_rows_for_account(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<CollectionRow>()
+    crate::d1_results::<CollectionRow>(&result)
 }
 
 async fn count_collection_rows_for_account(
@@ -673,7 +673,7 @@ async fn list_remote_collection_rows_for_actor(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<RemoteCollectionRow>()
+    crate::d1_results::<RemoteCollectionRow>(&result)
 }
 
 async fn count_remote_collection_rows_for_actor(
@@ -739,7 +739,7 @@ async fn list_collection_items(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<CollectionItemRow>()
+    crate::d1_results::<CollectionItemRow>(&result)
 }
 
 async fn list_remote_collection_items(
@@ -769,7 +769,7 @@ async fn list_remote_collection_items(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<RemoteCollectionItemRow>()
+    crate::d1_results::<RemoteCollectionItemRow>(&result)
 }
 
 async fn remote_collection_item_by_id(
@@ -828,7 +828,7 @@ async fn list_remote_collection_items_due_for_approval_revalidation(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<RemoteCollectionItemRow>()
+    crate::d1_results::<RemoteCollectionItemRow>(&result)
 }
 
 async fn list_stale_remote_collection_items_for_approval_revalidation(
@@ -856,7 +856,7 @@ async fn list_stale_remote_collection_items_for_approval_revalidation(
         .bind_refs(&[D1Type::Integer(limit)])?
         .all()
         .await?;
-    result.results::<RemoteCollectionItemRevalidationRow>()
+    crate::d1_results::<RemoteCollectionItemRevalidationRow>(&result)
 }
 
 async fn list_remote_in_collection_rows(
@@ -895,7 +895,7 @@ async fn list_remote_in_collection_rows(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<RemoteCollectionRow>()
+    crate::d1_results::<RemoteCollectionRow>(&result)
 }
 
 async fn list_local_in_collection_rows(
@@ -930,7 +930,7 @@ async fn list_local_in_collection_rows(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<CollectionRow>()
+    crate::d1_results::<CollectionRow>(&result)
 }
 
 fn in_collection_entry_sort_key(entry: &InCollectionPageEntry) -> (&str, &str) {
@@ -2618,7 +2618,7 @@ async fn list_collection_notifications_for_account(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    result.results::<CollectionNotificationRow>()
+    crate::d1_results::<CollectionNotificationRow>(&result)
 }
 
 pub(crate) async fn collect_collection_notification_entries(

@@ -69,8 +69,8 @@ pub(crate) async fn list_followed_tag_names(
         )
         .bind_refs(&account_id)?
         .all()
-        .await?
-        .results::<FollowedTagRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<FollowedTagRow>(&__d1))?;
     Ok(rows.into_iter().map(|row| row.tag_name).collect())
 }
 
@@ -274,8 +274,8 @@ pub(crate) async fn followed_tags_response(
         )
         .bind_refs(&account_id)?
         .all()
-        .await?
-        .results::<FollowedTagRow>()?;
+        .await
+        .and_then(|__d1| crate::d1_results::<FollowedTagRow>(&__d1))?;
 
     let mut rows = rows
         .into_iter()

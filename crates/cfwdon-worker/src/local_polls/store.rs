@@ -80,7 +80,7 @@ pub(crate) async fn list_status_poll_options(
         .all()
         .await?;
 
-    result.results::<StatusPollOptionRow>()
+    crate::d1_results::<StatusPollOptionRow>(&result)
 }
 
 pub(crate) async fn list_poll_vote_positions_for_account(
@@ -101,8 +101,7 @@ pub(crate) async fn list_poll_vote_positions_for_account(
         .all()
         .await?;
 
-    Ok(result
-        .results::<serde_json::Value>()?
+    Ok(crate::d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value

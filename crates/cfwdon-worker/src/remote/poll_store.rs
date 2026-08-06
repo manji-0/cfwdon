@@ -84,7 +84,7 @@ pub(crate) async fn list_remote_status_poll_options(
         .all()
         .await?;
 
-    result.results::<RemoteStatusPollOptionRow>()
+    crate::d1_results::<RemoteStatusPollOptionRow>(&result)
 }
 
 pub(crate) fn resolve_remote_poll_vote_position(
@@ -149,7 +149,7 @@ pub(crate) async fn list_remote_poll_votes_for_account(
         .all()
         .await?;
 
-    result.results::<RemoteStatusPollVoteRow>()
+    crate::d1_results::<RemoteStatusPollVoteRow>(&result)
 }
 
 pub(crate) async fn list_remote_poll_votes_by_poll(
@@ -167,7 +167,7 @@ pub(crate) async fn list_remote_poll_votes_by_poll(
         .all()
         .await?;
 
-    result.results::<RemoteStatusPollVoteWithIdRow>()
+    crate::d1_results::<RemoteStatusPollVoteWithIdRow>(&result)
 }
 
 pub(crate) async fn prune_remote_poll_vote_rows(
