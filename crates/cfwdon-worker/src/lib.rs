@@ -46,6 +46,7 @@ mod oauth_apps;
 mod observability;
 mod polls;
 mod profile;
+mod public_endpoint_cache;
 mod push;
 mod relationship;
 mod relationships;
@@ -111,6 +112,7 @@ pub(crate) use oauth_apps::*;
 pub(crate) use observability::*;
 pub(crate) use polls::*;
 pub(crate) use profile::*;
+pub(crate) use public_endpoint_cache::*;
 pub(crate) use push::*;
 pub(crate) use relationship::*;
 pub(crate) use relationships::*;
@@ -240,6 +242,12 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         }
         if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
             console_error!("trending tags cache refresh failed: {error}");
+        }
+        if let Err(error) = refresh_instance_activity_cache(&db).await {
+            console_error!("instance activity cache refresh failed: {error}");
+        }
+        if let Err(error) = refresh_trending_statuses_cache(&db, &config).await {
+            console_error!("trending statuses cache refresh failed: {error}");
         }
         Ok::<(), Error>(())
     }

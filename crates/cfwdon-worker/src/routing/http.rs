@@ -1,6 +1,6 @@
 use crate::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
-    snapshot_d1_request_metrics,
+    publish_d1_request_pressure, snapshot_d1_request_metrics,
 };
 use worker::{Env, Request, Response, Result};
 
@@ -97,6 +97,7 @@ fn log_api_request(
         return;
     }
     let d1_metrics = snapshot_d1_request_metrics();
+    publish_d1_request_pressure();
     let payload = add_log_message(
         serde_json::json!({
             "event": "api_request",

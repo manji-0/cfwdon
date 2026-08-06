@@ -490,8 +490,34 @@ pub(crate) async fn instance_activity_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+        return Ok(response);
+    }
+
     let config = load_config(&ctx);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
+
+    let document = if let Some(cached) =
+        crate::load_public_endpoint_cache(&db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY).await?
+    {
+        cached
+    } else {
+        let live = compute_instance_activity_document(&db).await?;
+        let _ =
+            crate::store_public_endpoint_cache(&db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY, &live)
+                .await;
+        live
+    };
+
+    with_d1_bookmark(
+        cache_public_response(Response::from_json(&document)?, 300)?,
+        &session,
+    )
+}
+
+pub(crate) async fn compute_instance_activity_document(
+    db: &crate::D1Database,
+) -> Result<serde_json::Value> {
     // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
     let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()).map_err(|error| {
         worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
@@ -513,8 +539,8 @@ pub(crate) async fn instance_activity_response(
         })?;
 
     let (status_counts, account_counts) = futures_util::try_join!(
-        count_local_statuses_by_week_offset(&db, &week_floor_rfc3339, &range_start, &range_end),
-        count_accounts_created_by_week_offset(&db, &week_floor_rfc3339, &range_start, &range_end),
+        count_local_statuses_by_week_offset(db, &week_floor_rfc3339, &range_start, &range_end),
+        count_accounts_created_by_week_offset(db, &week_floor_rfc3339, &range_start, &range_end),
     )?;
 
     let weekly_totals = (0..12)
@@ -528,16 +554,12 @@ pub(crate) async fn instance_activity_response(
         })
         .collect::<Vec<_>>();
 
-    with_d1_bookmark(
-        cache_public_response(
-            Response::from_json(&build_instance_activity_document(
-                week_floor,
-                &weekly_totals,
-            ))?,
-            300,
-        )?,
-        &session,
-    )
+    Ok(build_instance_activity_document(week_floor, &weekly_totals))
+}
+
+pub(crate) async fn refresh_instance_activity_cache(db: &crate::D1Database) -> Result<()> {
+    let document = compute_instance_activity_document(db).await?;
+    crate::store_public_endpoint_cache(db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY, &document).await
 }
 
 pub(crate) async fn instance_rules_response(_ctx: RouteContext<()>) -> Result<Response> {
@@ -720,18 +742,59 @@ pub(crate) async fn trending_statuses_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+        return Ok(response);
+    }
+
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(10).clamp(1, 20);
     let offset = query.offset.unwrap_or(0);
-    let fetch_limit = limit.saturating_add(offset).clamp(limit, 200);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
-    let statuses = trending_status_documents(&db, &config, fetch_limit, offset, limit).await?;
+
+    let statuses = if let Some(cached) =
+        crate::load_public_endpoint_cache(&db, crate::PUBLIC_CACHE_TRENDING_STATUSES).await?
+    {
+        crate::slice_json_array_cache(cached, offset, limit)
+    } else {
+        let live = trending_status_documents(
+            &db,
+            &config,
+            crate::TRENDING_STATUSES_CACHE_SIZE,
+            0,
+            crate::TRENDING_STATUSES_CACHE_SIZE,
+        )
+        .await?;
+        let payload = serde_json::Value::Array(live.clone());
+        let _ = crate::store_public_endpoint_cache(
+            &db,
+            crate::PUBLIC_CACHE_TRENDING_STATUSES,
+            &payload,
+        )
+        .await;
+        crate::slice_json_array_cache(payload, offset, limit)
+    };
 
     with_d1_bookmark(
         cache_public_response(Response::from_json(&statuses)?, CACHE_TTL_TRENDS)?,
         &session,
     )
+}
+
+pub(crate) async fn refresh_trending_statuses_cache(
+    db: &crate::D1Database,
+    config: &AppConfig,
+) -> Result<()> {
+    let statuses = trending_status_documents(
+        db,
+        config,
+        crate::TRENDING_STATUSES_CACHE_SIZE,
+        0,
+        crate::TRENDING_STATUSES_CACHE_SIZE,
+    )
+    .await?;
+    let payload = serde_json::Value::Array(statuses);
+    crate::store_public_endpoint_cache(db, crate::PUBLIC_CACHE_TRENDING_STATUSES, &payload).await
 }
 
 pub(crate) async fn trending_links_response(
@@ -758,6 +821,10 @@ pub(crate) async fn trending_tags_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+        return Ok(response);
+    }
+
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(10).clamp(1, 20);

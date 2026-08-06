@@ -1151,6 +1151,10 @@ pub(crate) async fn public_timeline_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
+    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+        return Ok(response);
+    }
+
     let config = load_config(&ctx);
     let query: PublicTimelineQuery = req.query().unwrap_or_default();
     let pagination = query.pagination();

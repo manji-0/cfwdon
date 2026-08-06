@@ -496,7 +496,9 @@ mod tests {
     fn reclaim_max_attempts_boundary_matches_process_due() {
         // process_due fails when attempts + 1 >= MAX_ATTEMPTS; reclaim SQL uses the same.
         assert_eq!(MAX_ATTEMPTS, 5);
-        assert!((MAX_ATTEMPTS - 1) + 1 >= MAX_ATTEMPTS);
-        assert!((MAX_ATTEMPTS - 2) + 1 < MAX_ATTEMPTS);
+        let fail_at = MAX_ATTEMPTS - 1;
+        let requeue_at = MAX_ATTEMPTS - 2;
+        assert!(fail_at.saturating_add(1) >= MAX_ATTEMPTS);
+        assert!(requeue_at.saturating_add(1) < MAX_ATTEMPTS);
     }
 }
