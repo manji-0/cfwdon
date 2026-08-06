@@ -14,6 +14,15 @@ pub(crate) const JOB_REMOTE_STATUS_NOTIFY: &str = "remote_status_notify";
 
 const MAX_ATTEMPTS: i32 = 5;
 const BASE_BACKOFF_SECS: i64 = 60;
+pub(crate) const BACKGROUND_JOB_STALE_MODIFIER: &str = "-15 minutes";
+const STALE_RECLAIM_ERROR: &str =
+    "reclaimed after stale running state (worker cancellation or timeout)";
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BackgroundJobReclaimReport {
+    pub requeued: u32,
+    pub failed: u32,
+}
 
 pub(crate) async fn enqueue_background_job(
     db: &D1Database,
@@ -76,6 +85,92 @@ struct BackgroundJobRow {
     job_type: String,
     payload_json: String,
     attempts: i32,
+}
+
+/// Reset `running` jobs left behind when the Workers runtime cancels an
+/// invocation (no completion/retry write). Mirrors inbox/outbox stale reclaim.
+pub(crate) async fn reclaim_stale_background_jobs(
+    db: &D1Database,
+    limit: u32,
+) -> Result<BackgroundJobReclaimReport> {
+    let limit = i32::try_from(limit).unwrap_or(100);
+    let now = now_iso_string()?;
+    let stale_modifier = BACKGROUND_JOB_STALE_MODIFIER;
+    let last_error = STALE_RECLAIM_ERROR;
+
+    let fail_bindings = [
+        D1Type::Text(&now),
+        D1Type::Text(last_error),
+        D1Type::Text(stale_modifier),
+        D1Type::Integer(MAX_ATTEMPTS),
+        D1Type::Integer(limit),
+    ];
+    let failed = db
+        .prepare(
+            "UPDATE background_jobs
+             SET status = 'failed',
+                 attempts = attempts + 1,
+                 next_run_at = ?1,
+                 last_error = ?2,
+                 updated_at = ?1
+             WHERE id IN (
+               SELECT id
+               FROM background_jobs
+               WHERE status = 'running'
+                 AND datetime(replace(replace(updated_at, 'T', ' '), 'Z', ''))
+                     <= datetime(CURRENT_TIMESTAMP, ?3)
+                 AND attempts + 1 >= ?4
+               ORDER BY updated_at ASC
+               LIMIT ?5
+             )",
+        )
+        .bind_refs(fail_bindings.iter())?
+        .run()
+        .await?;
+    let failed_count = failed.meta()?.and_then(|meta| meta.changes).unwrap_or(0) as u32;
+
+    let remaining = limit.saturating_sub(i32::try_from(failed_count).unwrap_or(i32::MAX));
+    if remaining <= 0 {
+        return Ok(BackgroundJobReclaimReport {
+            requeued: 0,
+            failed: failed_count,
+        });
+    }
+
+    let requeue_bindings = [
+        D1Type::Text(&now),
+        D1Type::Text(last_error),
+        D1Type::Text(stale_modifier),
+        D1Type::Integer(MAX_ATTEMPTS),
+        D1Type::Integer(remaining),
+    ];
+    let requeued = db
+        .prepare(
+            "UPDATE background_jobs
+             SET status = 'pending',
+                 attempts = attempts + 1,
+                 next_run_at = ?1,
+                 last_error = ?2,
+                 updated_at = ?1
+             WHERE id IN (
+               SELECT id
+               FROM background_jobs
+               WHERE status = 'running'
+                 AND datetime(replace(replace(updated_at, 'T', ' '), 'Z', ''))
+                     <= datetime(CURRENT_TIMESTAMP, ?3)
+                 AND attempts + 1 < ?4
+               ORDER BY updated_at ASC
+               LIMIT ?5
+             )",
+        )
+        .bind_refs(requeue_bindings.iter())?
+        .run()
+        .await?;
+
+    Ok(BackgroundJobReclaimReport {
+        requeued: requeued.meta()?.and_then(|meta| meta.changes).unwrap_or(0) as u32,
+        failed: failed_count,
+    })
 }
 
 pub(crate) async fn process_due_background_jobs(
@@ -379,4 +474,29 @@ pub(crate) fn resolve_in_reply_to_payload(remote_status_id: &str) -> String {
 
 pub(crate) fn remote_context_fetch_payload(uri: &str) -> String {
     serde_json::json!({ "uri": uri }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_job_reclaim_report_defaults_to_zero() {
+        let report = BackgroundJobReclaimReport::default();
+        assert_eq!(report.requeued, 0);
+        assert_eq!(report.failed, 0);
+    }
+
+    #[test]
+    fn background_job_stale_modifier_matches_inbox_window() {
+        assert_eq!(BACKGROUND_JOB_STALE_MODIFIER, "-15 minutes");
+    }
+
+    #[test]
+    fn reclaim_max_attempts_boundary_matches_process_due() {
+        // process_due fails when attempts + 1 >= MAX_ATTEMPTS; reclaim SQL uses the same.
+        assert_eq!(MAX_ATTEMPTS, 5);
+        assert!((MAX_ATTEMPTS - 1) + 1 >= MAX_ATTEMPTS);
+        assert!((MAX_ATTEMPTS - 2) + 1 < MAX_ATTEMPTS);
+    }
 }

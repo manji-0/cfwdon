@@ -1,5 +1,5 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{Response, Result, RouteContext};
+use crate::{Response, Result, RouteContext, reclaim_stale_background_jobs};
 use serde::{Deserialize, Serialize};
 use worker::{Request, d1::D1Type};
 
@@ -133,4 +133,28 @@ pub(crate) async fn admin_retry_background_job_response(
     } else {
         Response::error("job not found or not in failed state", 404)
     }
+}
+
+#[derive(Debug, Serialize)]
+struct AdminBackgroundJobReclaimResponse {
+    requeued: u32,
+    failed: u32,
+}
+
+pub(crate) async fn admin_reclaim_background_jobs_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
+    match authorize_admin_request(&req, &ctx).await? {
+        AdminAuthorization::Authorized(_) => {}
+        AdminAuthorization::Denied(response) => return Ok(response),
+    }
+
+    let config = crate::load_config(&ctx);
+    let db = crate::bind_request_d1(&ctx, &config)?;
+    let report = reclaim_stale_background_jobs(&db, 100).await?;
+    Response::from_json(&AdminBackgroundJobReclaimResponse {
+        requeued: report.requeued,
+        failed: report.failed,
+    })
 }

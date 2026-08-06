@@ -196,6 +196,24 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         {
             console_error!("due scheduled status processing failed: {error}");
         }
+        match reclaim_stale_background_jobs(&db, 50).await {
+            Ok(report) if report.requeued > 0 || report.failed > 0 => {
+                log_federation_event(
+                    "background_job_stale_reclaim",
+                    "ok",
+                    format!(
+                        "reclaimed stale background jobs: requeued={} failed={}",
+                        report.requeued, report.failed
+                    ),
+                    serde_json::json!({
+                        "requeued": report.requeued,
+                        "failed": report.failed,
+                    }),
+                );
+            }
+            Ok(_) => {}
+            Err(error) => console_error!("background job stale reclaim failed: {error}"),
+        }
         if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
             console_error!("background job processing failed: {error}");
         }

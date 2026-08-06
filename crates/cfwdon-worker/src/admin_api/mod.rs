@@ -10,7 +10,10 @@ use emojis::{
     admin_emojis_update_response,
 };
 use inbox::{admin_inbox_activities_response, admin_reclaim_inbox_activities_response};
-use jobs::{admin_background_jobs_response, admin_retry_background_job_response};
+use jobs::{
+    admin_background_jobs_response, admin_reclaim_background_jobs_response,
+    admin_retry_background_job_response,
+};
 use moderation::admin_report_action_response;
 use relays::{
     admin_relays_create_response, admin_relays_delete_response, admin_relays_disable_response,
@@ -112,6 +115,10 @@ fn admin_api_router() -> Router<'static, ()> {
         .get_async("/api/cfwdon/admin/background-jobs", |req, ctx| async move {
             admin_background_jobs_response(req, ctx).await
         })
+        .post_async(
+            "/api/cfwdon/admin/background-jobs/reclaim",
+            |req, ctx| async move { admin_reclaim_background_jobs_response(req, ctx).await },
+        )
         .post_async(
             "/api/cfwdon/admin/background-jobs/:id/retry",
             |req, ctx| async move { admin_retry_background_job_response(req, ctx).await },
