@@ -11,7 +11,10 @@ use crate::D1Database;
 
 pub(crate) const PUBLIC_CACHE_INSTANCE_ACTIVITY: &str = "instance_activity";
 pub(crate) const PUBLIC_CACHE_TRENDING_STATUSES: &str = "trending_statuses";
+pub(crate) const PUBLIC_CACHE_PUBLIC_TIMELINE: &str = "public_timeline";
 pub(crate) const TRENDING_STATUSES_CACHE_SIZE: u32 = 200;
+/// Max public-timeline page is 40; keep one extra row so Link `next` stays accurate.
+pub(crate) const PUBLIC_TIMELINE_CACHE_SIZE: u32 = 41;
 
 #[derive(Debug, Deserialize)]
 struct PublicEndpointCacheRow {

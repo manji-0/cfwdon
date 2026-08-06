@@ -910,6 +910,24 @@ fn timeline_cursor_requested(pagination: &TimelinePaginationQuery) -> bool {
     has_max_id || has_min_id
 }
 
+/// First-page anonymous federated public timeline — safe to serve from D1 cache.
+pub(crate) fn public_timeline_first_page_cacheable(
+    query: &PublicTimelineQuery,
+    has_viewer: bool,
+) -> bool {
+    if has_viewer {
+        return false;
+    }
+    if timeline_cursor_requested(&query.pagination()) {
+        return false;
+    }
+    if query.only_media.unwrap_or(false) {
+        return false;
+    }
+    include_local_source(query.local, query.remote)
+        && include_remote_source(query.local, query.remote)
+}
+
 fn timeline_cursor_is_unresolved(
     pagination: &TimelinePaginationQuery,
     cursor: &crate::ResolvedTimelineCursor,
@@ -1158,7 +1176,6 @@ pub(crate) async fn public_timeline_response(
     let query: PublicTimelineQuery = req.query().unwrap_or_default();
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
-    let query_limit = timeline_fetch_limit(limit);
     let include_local = include_local_source(query.local, query.remote);
     let include_remote = include_remote_source(query.local, query.remote);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
@@ -1173,46 +1190,145 @@ pub(crate) async fn public_timeline_response(
         return timeline_invalid_access_token_response();
     }
     let viewer = access.viewer();
+    let cacheable = public_timeline_first_page_cacheable(&query, viewer.is_some());
+
+    if cacheable
+        && let Some(cached) =
+            crate::load_public_endpoint_cache(&db, crate::PUBLIC_CACHE_PUBLIC_TIMELINE).await?
+    {
+        return with_d1_bookmark(
+            timeline_response_from_cached_statuses(&req, limit, cached)?,
+            &session,
+        );
+    }
+
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return with_d1_bookmark(empty_timeline_response()?, &session);
     }
+
+    let fetch_limit = if cacheable {
+        crate::PUBLIC_TIMELINE_CACHE_SIZE
+    } else {
+        timeline_fetch_limit(limit)
+    };
+    let only_media = query.only_media.unwrap_or(false);
     let filter_matcher = match viewer {
         Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
         None => None,
     };
+    let viewer_has_thread_mutes = match viewer {
+        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
+        None => false,
+    };
+
+    let entries = build_public_timeline_entries(
+        &db,
+        &config,
+        &cursor,
+        viewer,
+        filter_matcher.as_ref(),
+        include_local,
+        include_remote,
+        only_media,
+        fetch_limit,
+        if cacheable {
+            crate::PUBLIC_TIMELINE_CACHE_SIZE
+        } else {
+            limit
+        },
+        viewer_has_thread_mutes,
+    )
+    .await?;
+
+    if cacheable {
+        let payload = serde_json::Value::Array(
+            entries
+                .iter()
+                .take(crate::PUBLIC_TIMELINE_CACHE_SIZE as usize)
+                .map(|(_, _, value)| value.clone())
+                .collect(),
+        );
+        let _ =
+            crate::store_public_endpoint_cache(&db, crate::PUBLIC_CACHE_PUBLIC_TIMELINE, &payload)
+                .await;
+    }
+
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
+}
+
+pub(crate) async fn refresh_public_timeline_cache(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+) -> Result<()> {
+    let cursor = ResolvedTimelineCursor::default();
+    let entries = build_public_timeline_entries(
+        db,
+        config,
+        &cursor,
+        None,
+        None,
+        true,
+        true,
+        false,
+        crate::PUBLIC_TIMELINE_CACHE_SIZE,
+        crate::PUBLIC_TIMELINE_CACHE_SIZE,
+        false,
+    )
+    .await?;
+    let payload = serde_json::Value::Array(
+        entries
+            .into_iter()
+            .take(crate::PUBLIC_TIMELINE_CACHE_SIZE as usize)
+            .map(|(_, _, value)| value)
+            .collect(),
+    );
+    crate::store_public_endpoint_cache(db, crate::PUBLIC_CACHE_PUBLIC_TIMELINE, &payload).await
+}
+
+async fn build_public_timeline_entries(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    cursor: &crate::ResolvedTimelineCursor,
+    viewer: Option<&crate::LocalAccount>,
+    filter_matcher: Option<&crate::AccountFilterMatcher>,
+    include_local: bool,
+    include_remote: bool,
+    only_media: bool,
+    query_limit: u32,
+    select_limit: u32,
+    viewer_has_thread_mutes: bool,
+) -> Result<Vec<TimelineEntry>> {
     let (local_statuses, remote_statuses) = futures_util::try_join!(
         async {
             if include_local {
-                list_local_public_timeline_statuses(&db, &cursor, query_limit).await
+                list_local_public_timeline_statuses(db, cursor, query_limit).await
             } else {
                 Ok(Vec::new())
             }
         },
         async {
             if include_remote {
-                list_remote_public_timeline_statuses(&db, &cursor, query_limit).await
+                list_remote_public_timeline_statuses(db, cursor, query_limit).await
             } else {
                 Ok(Vec::new())
             }
         },
     )?;
-    let only_media = query.only_media.unwrap_or(false);
     let mut candidates = Vec::new();
     let mut local_accounts_by_id = HashMap::new();
-    let viewer_has_thread_mutes = match viewer {
-        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
-        None => false,
-    };
 
     if include_local {
         let (accounts_by_id, mut media_by_status_id) =
-            preload_local_timeline_rows(&db, &local_statuses).await?;
+            preload_local_timeline_rows(db, &local_statuses).await?;
         local_accounts_by_id = accounts_by_id;
         let muted_local_status_ids = match viewer {
             Some(viewer) => {
                 muted_local_timeline_status_ids(
-                    &db,
+                    db,
                     viewer.id(),
                     viewer_has_thread_mutes,
                     &local_statuses.iter().collect::<Vec<_>>(),
@@ -1242,7 +1358,7 @@ pub(crate) async fn public_timeline_response(
 
     if include_remote {
         let remote_media_status_ids =
-            remote_media_status_ids_for_filter(&db, only_media, &remote_statuses).await?;
+            remote_media_status_ids_for_filter(db, only_media, &remote_statuses).await?;
         for (status, actor) in remote_statuses {
             if only_media && !remote_media_status_ids.contains(&status.id) {
                 continue;
@@ -1255,23 +1371,56 @@ pub(crate) async fn public_timeline_response(
         }
     }
 
-    let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = timeline_entries_from_candidates(
-        &db,
-        &config,
+    let candidates = select_public_timeline_candidates(candidates, select_limit);
+    timeline_entries_from_candidates(
+        db,
+        config,
         viewer,
-        filter_matcher.as_ref(),
+        filter_matcher,
         &local_accounts_by_id,
         candidates,
         false,
         Some(viewer_has_thread_mutes),
     )
-    .await?;
+    .await
+}
 
-    with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
-        &session,
-    )
+fn timeline_response_from_cached_statuses(
+    req: &Request,
+    limit: u32,
+    payload: serde_json::Value,
+) -> Result<Response> {
+    let statuses = match payload {
+        serde_json::Value::Array(items) => items,
+        other => vec![other],
+    };
+    let has_next_page = statuses.len() > limit as usize;
+    let page = statuses
+        .into_iter()
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let first_id = page
+        .first()
+        .and_then(|value| value.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned);
+    let last_id = has_next_page
+        .then(|| {
+            page.last()
+                .and_then(|value| value.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        })
+        .flatten();
+    let mut builder = Response::from_json(&page)?;
+    if let Some(link) =
+        build_timeline_link_header(req, limit, first_id.as_deref(), last_id.as_deref())?
+    {
+        builder.headers_mut().set("Link", &link)?;
+    }
+    Ok(builder)
 }
 
 pub(crate) async fn trending_status_documents(
@@ -1704,8 +1853,9 @@ pub(crate) async fn direct_timeline_response(
 #[cfg(test)]
 mod tests {
     use super::{
-        PublicTimelineCandidate, PublicTimelineCandidateEntry, select_public_timeline_candidates,
-        status_card_url_matches_targets, timeline_page_response,
+        PublicTimelineCandidate, PublicTimelineCandidateEntry, PublicTimelineQuery,
+        build_timeline_link_header_for_url, public_timeline_first_page_cacheable,
+        select_public_timeline_candidates, status_card_url_matches_targets, timeline_page_response,
         timeline_request_requires_authorization, timeline_source_requires_authorization,
     };
     use cfwdon_core::TimelineAccessLevel;
@@ -1875,5 +2025,51 @@ mod tests {
             "see https://example.com/other and https://example.com/articles/rust",
             &targets,
         ));
+    }
+
+    #[test]
+    fn public_timeline_first_page_cacheable_only_for_anonymous_federated_home() {
+        let default_query = PublicTimelineQuery::default();
+        assert!(public_timeline_first_page_cacheable(&default_query, false));
+        assert!(!public_timeline_first_page_cacheable(&default_query, true));
+
+        let media_only = PublicTimelineQuery {
+            only_media: Some(true),
+            ..PublicTimelineQuery::default()
+        };
+        assert!(!public_timeline_first_page_cacheable(&media_only, false));
+
+        let local_only = PublicTimelineQuery {
+            local: Some(true),
+            ..PublicTimelineQuery::default()
+        };
+        assert!(!public_timeline_first_page_cacheable(&local_only, false));
+
+        let paged = PublicTimelineQuery {
+            max_id: Some("status-1".to_owned()),
+            ..PublicTimelineQuery::default()
+        };
+        assert!(!public_timeline_first_page_cacheable(&paged, false));
+    }
+
+    #[test]
+    fn public_timeline_cached_page_link_bounds_match_oversampled_ids() {
+        let payload = serde_json::json!([
+            {"id": "newer"},
+            {"id": "older"},
+            {"id": "overflow"}
+        ]);
+        let statuses = payload.as_array().cloned().unwrap();
+        let limit = 2u32;
+        let page = statuses
+            .into_iter()
+            .take(limit as usize)
+            .collect::<Vec<_>>();
+        let first_id = page[0].get("id").and_then(|v| v.as_str());
+        let last_id = page[1].get("id").and_then(|v| v.as_str());
+        let url = url::Url::parse("https://social.example/api/v1/timelines/public").unwrap();
+        let link = build_timeline_link_header_for_url(&url, limit, first_id, last_id).unwrap();
+        assert!(link.contains("max_id=older"), "{link}");
+        assert!(link.contains("min_id=newer"), "{link}");
     }
 }

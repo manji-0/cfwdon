@@ -249,6 +249,9 @@ async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         if let Err(error) = refresh_trending_statuses_cache(&db, &config).await {
             console_error!("trending statuses cache refresh failed: {error}");
         }
+        if let Err(error) = refresh_public_timeline_cache(&db, &config).await {
+            console_error!("public timeline cache refresh failed: {error}");
+        }
         Ok::<(), Error>(())
     }
     .await;
