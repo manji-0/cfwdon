@@ -12,7 +12,9 @@ use crate::D1Database;
 pub(crate) const PUBLIC_CACHE_INSTANCE_ACTIVITY: &str = "instance_activity";
 pub(crate) const PUBLIC_CACHE_TRENDING_STATUSES: &str = "trending_statuses";
 pub(crate) const PUBLIC_CACHE_PUBLIC_TIMELINE: &str = "public_timeline";
-pub(crate) const TRENDING_STATUSES_CACHE_SIZE: u32 = 200;
+/// Keep this small enough for a single D1 TEXT upsert (~75KB public_timeline works;
+/// ~200 hydrated statuses overflows and silently fails to materialize).
+pub(crate) const TRENDING_STATUSES_CACHE_SIZE: u32 = 40;
 /// Max public-timeline page is 40; keep one extra row so Link `next` stays accurate.
 pub(crate) const PUBLIC_TIMELINE_CACHE_SIZE: u32 = 41;
 

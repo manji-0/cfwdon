@@ -766,12 +766,15 @@ pub(crate) async fn trending_statuses_response(
         )
         .await?;
         let payload = serde_json::Value::Array(live.clone());
-        let _ = crate::store_public_endpoint_cache(
+        if let Err(error) = crate::store_public_endpoint_cache(
             &db,
             crate::PUBLIC_CACHE_TRENDING_STATUSES,
             &payload,
         )
-        .await;
+        .await
+        {
+            worker::console_error!("trending statuses cache store failed: {error}");
+        }
         crate::slice_json_array_cache(payload, offset, limit)
     };
 
