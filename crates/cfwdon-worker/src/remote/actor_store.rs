@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use worker::Result;
 use worker::d1::D1Type;
 
-use crate::{D1Database, RemoteActorSocialCounts, sql_placeholders, unique_ordered_refs};
+use crate::{
+    D1Database, RemoteActorSocialCounts, json_string_array, sql_in_json_each, unique_ordered_refs,
+};
 
 pub(crate) const REMOTE_ACTOR_ROW_COLUMNS: &str = "actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url, followers_count, following_count, statuses_count, social_counts_updated_at";
 
@@ -203,17 +205,15 @@ pub(crate) async fn find_remote_actors_by_actor_uris(
         return Ok(HashMap::new());
     }
 
-    let placeholders = sql_placeholders(1, uris.len());
+    let uris_json = json_string_array(&uris);
     let sql = format!(
         "SELECT {REMOTE_ACTOR_ROW_COLUMNS}
          FROM remote_actors
-         WHERE actor_uri IN ({placeholders})"
+         WHERE actor_uri {}",
+        sql_in_json_each(1)
     );
-    let bindings = uris
-        .iter()
-        .map(|uri| D1Type::Text(uri.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(uris_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     Ok(crate::d1_results::<RemoteActorRow>(&result)?
         .into_iter()
@@ -282,20 +282,18 @@ pub(crate) async fn load_remote_actor_status_summaries(
         last_status_at: Option<String>,
     }
 
-    let placeholders = sql_placeholders(1, uris.len());
+    let uris_json = json_string_array(&uris);
     let sql = format!(
         "SELECT actor_uri,
                 COUNT(*) AS statuses_count,
                 MAX(substr(published_at, 1, 10)) AS last_status_at
          FROM remote_statuses
-         WHERE actor_uri IN ({placeholders})
-         GROUP BY actor_uri"
+         WHERE actor_uri {}
+         GROUP BY actor_uri",
+        sql_in_json_each(1)
     );
-    let bindings = uris
-        .iter()
-        .map(|uri| D1Type::Text(uri.as_str()))
-        .collect::<Vec<_>>();
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
+    let binding = D1Type::Text(uris_json.as_str());
+    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     Ok(
         crate::d1_results::<RemoteActorStatusSummaryMapRow>(&result)?

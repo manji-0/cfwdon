@@ -31,22 +31,19 @@ pub(crate) async fn preload_remote_status_federated_emojis(
         return Ok(RemoteStatusFederatedEmojisPreload::default());
     }
 
-    let placeholders = (1..=status_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    // O(1) binds — large trending/notification batches exceed D1's 100-parameter limit
+    // when using per-id `IN (?1, ?2, …)` placeholders (#23).
+    let ids_json = crate::json_string_array(status_ids);
     let query = format!(
         "SELECT id, raw_object_json
          FROM remote_statuses
-         WHERE id IN ({placeholders})"
+         WHERE id {}",
+        crate::sql_in_json_each(1)
     );
-    let bindings = status_ids
-        .iter()
-        .map(|status_id| D1Type::Text(status_id.as_str()))
-        .collect::<Vec<_>>();
+    let binding = D1Type::Text(ids_json.as_str());
     let rows = db
         .prepare(&query)
-        .bind_refs(bindings.iter())?
+        .bind_refs(&binding)?
         .all()
         .await
         .and_then(|__d1| crate::d1_results::<RemoteStatusRawObjectRow>(&__d1))?;

@@ -151,6 +151,18 @@ mod tests {
     }
 
     #[test]
+    fn trending_sized_id_lists_fit_d1_bind_budget_via_json_each() {
+        // Historical TRENDING_STATUSES_CACHE_SIZE was 200 (> D1_MAX_BOUND_PARAMETERS).
+        // Membership helpers must stay O(1) binds so emoji/actor hydration cannot 500 (#23).
+        let ids = (0..200)
+            .map(|index| format!("status-{index}"))
+            .collect::<Vec<_>>();
+        let sql = format!("WHERE id {}", sql_in_json_each(1));
+        assert_eq!(sql.matches('?').count(), 1);
+        assert!(json_string_array(&ids).len() > D1_MAX_BOUND_PARAMETERS);
+    }
+
+    #[test]
     fn deserialize_d1_row_values_returns_structured_error_on_missing_field() {
         let rows = vec![serde_json::json!({ "id": "acct-1" })];
         let error =
