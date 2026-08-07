@@ -18,11 +18,6 @@ use std::collections::HashSet;
 use url::Url;
 use worker::ResponseBody;
 
-#[derive(Debug, serde::Deserialize)]
-struct RemoteFollowQuery {
-    domain: String,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedWebFingerQuery {
     resource: String,
@@ -344,12 +339,18 @@ pub(crate) async fn remote_follow_response(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let domain = match parse_remote_follow_domain_query(req.url()?.query_pairs()) {
+        Ok(domain) => domain,
+        Err(message) => return Response::error(message, 400),
+    };
+    let remote_base = match remote_follow_base_url(&domain) {
+        Ok(base) => base,
+        Err(error) => return Response::error(error.to_string(), 400),
+    };
     let db = crate::bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
-    let query: RemoteFollowQuery = req.query()?;
-    let remote_base = remote_follow_base_url(&query.domain)?;
     let acct = format!("acct:{}@{}", account.username(), instance_host(&config));
     let location = format!(
         "{}/authorize_interaction?uri={}",
@@ -357,6 +358,30 @@ pub(crate) async fn remote_follow_response(
         urlencoding::encode(&acct)
     );
     redirect_response(&location)
+}
+
+/// Extract the required `domain` query parameter for remote-follow redirects.
+///
+/// Missing or blank values must be 400s; do not let serde `req.query()` map them
+/// to handler `Err` → HTTP 500 via `router::handle_fetch`.
+fn parse_remote_follow_domain_query<I, K, V>(pairs: I) -> std::result::Result<String, String>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let mut domain = None;
+    for (key, value) in pairs {
+        if key.as_ref() == "domain" {
+            domain = Some(value.as_ref().to_owned());
+        }
+    }
+    let domain = domain.unwrap_or_default();
+    let domain = domain.trim();
+    if domain.is_empty() {
+        return Err("missing domain parameter".to_owned());
+    }
+    Ok(domain.to_owned())
 }
 
 fn route_username(ctx: &RouteContext<()>) -> Result<String> {
@@ -830,8 +855,9 @@ fn build_ordered_collection_document(
 mod tests {
     use super::{
         HOST_META_JRD_CONTENT_TYPE, WebFingerLink, WebFingerResponse, escape_xml_attr,
-        filter_webfinger_links, host_meta_jrd_document, parse_webfinger_query_pairs,
-        profile_avatar_html, profile_header_style, profile_posts_section,
+        filter_webfinger_links, host_meta_jrd_document, parse_remote_follow_domain_query,
+        parse_webfinger_query_pairs, profile_avatar_html, profile_header_style,
+        profile_posts_section,
     };
 
     #[test]
@@ -980,6 +1006,28 @@ mod tests {
 
         let error = parse_webfinger_query_pairs([("resource", "   ")]).unwrap_err();
         assert!(error.contains("resource"));
+    }
+
+    #[test]
+    fn parse_remote_follow_domain_query_requires_domain() {
+        let error = parse_remote_follow_domain_query(Vec::<(&str, &str)>::new()).unwrap_err();
+        assert!(error.contains("domain"));
+
+        let error = parse_remote_follow_domain_query([("domain", "   ")]).unwrap_err();
+        assert!(error.contains("domain"));
+
+        assert_eq!(
+            parse_remote_follow_domain_query([("domain", "Social.Example")]).unwrap(),
+            "Social.Example"
+        );
+        assert_eq!(
+            parse_remote_follow_domain_query([
+                ("domain", "first.example"),
+                ("domain", "second.example"),
+            ])
+            .unwrap(),
+            "second.example"
+        );
     }
 
     #[test]
