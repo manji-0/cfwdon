@@ -3786,6 +3786,47 @@ fn stream_hub_proxy_target(
     }
 }
 
+/// Resolved StreamHub websocket upgrade target for a Mastodon client.
+struct StreamHubWebSocketUpgradePlan {
+    hub_name: String,
+    stream: Option<String>,
+    tag: Option<String>,
+    list: Option<String>,
+    account_id: Option<String>,
+}
+
+/// Resolve a StreamHub websocket upgrade target.
+///
+/// When `initial_stream` is set, route using the per-channel mapping. When it is
+/// unset but the client is authenticated, route to the account session hub so
+/// Mastodon-style post-connect `subscribe` messages are handled by StreamHub.
+fn stream_hub_websocket_upgrade_plan(
+    initial_stream: Option<&str>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    tag: Option<&str>,
+    list: Option<&str>,
+) -> Option<StreamHubWebSocketUpgradePlan> {
+    if let Some(stream) = initial_stream {
+        return stream_hub_proxy_target(stream, viewer, tag, list).map(|(hub_name, account_id)| {
+            StreamHubWebSocketUpgradePlan {
+                hub_name,
+                stream: Some(stream.to_owned()),
+                tag: tag.map(str::to_owned),
+                list: list.map(str::to_owned),
+                account_id,
+            }
+        });
+    }
+
+    viewer.map(|viewer| StreamHubWebSocketUpgradePlan {
+        hub_name: stream_hub_session_id_name(viewer.id()),
+        stream: None,
+        tag: None,
+        list: None,
+        account_id: Some(viewer.id().to_owned()),
+    })
+}
+
 async fn streaming_websocket_upgrade_response(
     env: &Env,
     req: Request,
@@ -3797,27 +3838,34 @@ async fn streaming_websocket_upgrade_response(
     viewer: Option<cfwdon_domain::LocalAccount>,
     websocket_protocol_token: Option<&str>,
 ) -> Result<Response> {
-    if let Some(stream) = initial_stream.as_deref()
-        && let Some((hub_name, account_id)) =
-            stream_hub_proxy_target(stream, viewer.as_ref(), tag.as_deref(), list.as_deref())
-    {
+    if let Some(plan) = stream_hub_websocket_upgrade_plan(
+        initial_stream.as_deref(),
+        viewer.as_ref(),
+        tag.as_deref(),
+        list.as_deref(),
+    ) {
+        let params = StreamHubUpgradeParams {
+            stream: plan.stream.as_deref(),
+            tag: plan.tag.as_deref(),
+            list: plan.list.as_deref(),
+            account_id: plan.account_id.as_deref(),
+        };
         // The hub reads the subscription from these params, not from anything the
         // client sent, so a forged X-Account-Id or X-Stream cannot take effect.
-        let params = StreamHubUpgradeParams {
-            stream,
-            tag: tag.as_deref(),
-            list: list.as_deref(),
-            account_id: account_id.as_deref(),
-        };
-
-        match upgrade_stream_hub_websocket(env, &config.stream_hub_binding, &hub_name, req, &params)
-            .await
+        match upgrade_stream_hub_websocket(
+            env,
+            &config.stream_hub_binding,
+            &plan.hub_name,
+            req,
+            &params,
+        )
+        .await
         {
             Ok(response) => return Ok(response),
             Err(error) => {
                 console_log!(
                     "stream hub websocket upgrade failed for hub {}: {:?}; falling back to worker poll",
-                    hub_name,
+                    plan.hub_name,
                     error
                 );
             }
@@ -4498,6 +4546,32 @@ mod tests {
         );
         assert!(stream_hub_proxy_target("hashtag", None, None, None).is_none());
         assert!(stream_hub_proxy_target("unknown", None, None, None).is_none());
+    }
+
+    #[test]
+    fn stream_hub_websocket_upgrade_plan_maps_deferred_authenticated_subscribe() {
+        let viewer = stream_hub_proxy_test_account();
+        let plan = stream_hub_websocket_upgrade_plan(None, Some(&viewer), None, None).unwrap();
+        assert_eq!(plan.hub_name, "user:acct-1");
+        assert!(plan.stream.is_none());
+        assert!(plan.tag.is_none());
+        assert!(plan.list.is_none());
+        assert_eq!(plan.account_id.as_deref(), Some("acct-1"));
+    }
+
+    #[test]
+    fn stream_hub_websocket_upgrade_plan_keeps_explicit_stream_mapping() {
+        let viewer = stream_hub_proxy_test_account();
+        let plan =
+            stream_hub_websocket_upgrade_plan(Some("user"), Some(&viewer), None, None).unwrap();
+        assert_eq!(plan.hub_name, "user:acct-1");
+        assert_eq!(plan.stream.as_deref(), Some("user"));
+        assert_eq!(plan.account_id.as_deref(), Some("acct-1"));
+    }
+
+    #[test]
+    fn stream_hub_websocket_upgrade_plan_defers_anonymous_subscribe_to_worker_poll() {
+        assert!(stream_hub_websocket_upgrade_plan(None, None, None, None).is_none());
     }
 
     #[test]
