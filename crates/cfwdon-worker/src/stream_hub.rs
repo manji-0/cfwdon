@@ -777,7 +777,7 @@ pub(crate) async fn connect_stream_hub_websocket(
     set_stream_hub_subscription_headers(
         &headers,
         &StreamHubUpgradeParams {
-            stream,
+            stream: Some(stream),
             tag,
             list,
             account_id,
@@ -798,7 +798,7 @@ pub(crate) async fn connect_stream_hub_websocket(
 
 /// Subscription the Worker authorised for a hub connection.
 pub(crate) struct StreamHubUpgradeParams<'a> {
-    pub(crate) stream: &'a str,
+    pub(crate) stream: Option<&'a str>,
     pub(crate) tag: Option<&'a str>,
     pub(crate) list: Option<&'a str>,
     pub(crate) account_id: Option<&'a str>,
@@ -808,7 +808,13 @@ fn set_stream_hub_subscription_headers(
     headers: &worker::Headers,
     params: &StreamHubUpgradeParams<'_>,
 ) -> Result<()> {
-    headers.set(STREAM_HUB_STREAM_HEADER, params.stream)?;
+    if let Some(stream) = params
+        .stream
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.set(STREAM_HUB_STREAM_HEADER, stream)?;
+    }
     if let Some(tag) = params.tag.map(str::trim).filter(|value| !value.is_empty()) {
         headers.set(STREAM_HUB_TAG_HEADER, tag)?;
     }
