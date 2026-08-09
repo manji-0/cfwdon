@@ -74,9 +74,12 @@ install_devbox() {
   fi
 }
 
-# 1. Ensure the devbox binary is present.
+# 1. Ensure the pinned devbox binary is first on PATH (not an older Jetify install).
 if ! command -v devbox >/dev/null 2>&1; then
-  log "Installing devbox..."
+  log "Installing devbox ${DEVBOX_VERSION}..."
+  install_devbox
+elif [ "$(devbox version)" != "$DEVBOX_VERSION" ]; then
+  log "devbox $(devbox version) on PATH does not match pinned ${DEVBOX_VERSION}; reinstalling..."
   install_devbox
 fi
 
