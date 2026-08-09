@@ -16,11 +16,68 @@ cd "$REPO_ROOT"
 
 log() { printf '\n[cfwdon-install] %s\n' "$*"; }
 
+# Pin the devbox CLI to the same version used in .github/workflows/ci.yml.
+DEVBOX_VERSION="0.17.5"
+DEVBOX_RELEASE_BASE="https://github.com/jetify-com/devbox/releases/download/${DEVBOX_VERSION}"
+
+# SHA256 checksums from the official 0.17.5 release assets:
+# https://github.com/jetify-com/devbox/releases/download/0.17.5/checksums.txt
+declare -A DEVBOX_CHECKSUMS=(
+  [linux_amd64]=eb2d8fb34266ba3befc294d7d6f56e2cd4da2cacb7a0cf52db5b8092575544f8
+  [linux_arm64]=880901fff1ce7bf48086c12d84535bc14c257b56cb0d05e93e037f2cb1b1d529
+  [darwin_amd64]=715480b386a4ed2a14c4eb766e9074772c36a00593d57c3dafc834da5c7fb60f
+  [darwin_arm64]=0684fecd68bf2009a2ad57be1ba1ea2bbd735a02017fff355cea0f1b15a7e00f
+)
+
+install_devbox() {
+  local os arch platform archive expected_checksum actual_checksum tmpdir installed_version
+
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64 | amd64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *)
+      log "ERROR: unsupported architecture: $(uname -m)"
+      exit 1
+      ;;
+  esac
+
+  platform="${os}_${arch}"
+  expected_checksum="${DEVBOX_CHECKSUMS[$platform]:-}"
+  if [ -z "$expected_checksum" ]; then
+    log "ERROR: unsupported platform: ${platform}"
+    exit 1
+  fi
+
+  archive="devbox_${DEVBOX_VERSION}_${platform}.tar.gz"
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  log "Downloading devbox ${DEVBOX_VERSION} for ${platform}..."
+  curl -fsSL "${DEVBOX_RELEASE_BASE}/${archive}" -o "${tmpdir}/${archive}"
+
+  actual_checksum="$(sha256sum "${tmpdir}/${archive}" | awk '{print $1}')"
+  if [ "$actual_checksum" != "$expected_checksum" ]; then
+    log "ERROR: devbox checksum mismatch (expected ${expected_checksum}, got ${actual_checksum})"
+    exit 1
+  fi
+
+  tar -xzf "${tmpdir}/${archive}" -C "$tmpdir"
+  mkdir -p "${HOME}/.local/bin"
+  install -m 0755 "${tmpdir}/devbox" "${HOME}/.local/bin/devbox"
+  export PATH="${HOME}/.local/bin:${PATH}"
+
+  installed_version="$(devbox version)"
+  if [ "$installed_version" != "$DEVBOX_VERSION" ]; then
+    log "ERROR: devbox version mismatch (expected ${DEVBOX_VERSION}, got ${installed_version})"
+    exit 1
+  fi
+}
+
 # 1. Ensure the devbox binary is present.
 if ! command -v devbox >/dev/null 2>&1; then
   log "Installing devbox..."
-  curl -fsSL https://get.jetify.com/devbox -o /tmp/install-devbox.sh
-  FORCE=1 bash /tmp/install-devbox.sh -f
+  install_devbox
 fi
 
 # 2. Ensure Nix is installed. devbox's first run installs it, but because this
