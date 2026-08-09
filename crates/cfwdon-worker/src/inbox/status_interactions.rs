@@ -1,11 +1,14 @@
 use super::{
     AppConfig, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
     delete_remote_favourite, delete_remote_reblog, extract_remote_note_object,
-    fanout_and_delete_remote_status_by_object_uri_soft, find_conversation_id_by_status_id,
-    find_local_status_by_object_uri, is_blocking_actor, is_remote_actor_following_local_account,
-    list_conversation_participants, object_attributed_to_remote_actor,
-    publish_remote_status_interaction_notification_soft, upsert_remote_actor, upsert_remote_reblog,
-    upsert_remote_reblog_status, upsert_remote_status,
+    fanout_and_delete_remote_status_by_object_uri_soft, fetch_remote_actor_profile,
+    find_cached_remote_actor_profile_by_actor_uri, find_conversation_id_by_status_id,
+    find_local_status_by_object_uri, find_remote_status_by_url_or_object_uri, is_blocking_actor,
+    is_public_activitypub_visibility, is_remote_actor_following_local_account,
+    list_conversation_participants, log_json_event,
+    publish_remote_status_interaction_notification_soft, resolve_remote_status_by_url,
+    upsert_remote_actor, upsert_remote_reblog, upsert_remote_reblog_status, upsert_remote_status,
+    visibility_from_activitypub_object,
 };
 use worker::{Env, Result};
 
@@ -91,21 +94,14 @@ pub(crate) async fn handle_inbox_announce(
     config: &AppConfig,
     env: Option<&Env>,
 ) -> Result<()> {
-    let mut actor_upserted = false;
-    if let Some(object) = extract_remote_note_object(activity).filter(|object| {
-        object_attributed_to_remote_actor(object, activity, &remote_actor.actor_uri)
-    }) {
-        upsert_remote_actor(db, remote_actor).await?;
-        actor_upserted = true;
-        upsert_remote_status(db, config, remote_actor, object, None).await?;
-    }
-
     let Some(object_uri) = activity_object_id(activity.get("object")) else {
         return Ok(());
     };
-    if !actor_upserted {
-        upsert_remote_actor(db, remote_actor).await?;
-    }
+
+    upsert_remote_actor(db, remote_actor).await?;
+    // Timeline embedding needs the boosted Note; URI-only Announces previously
+    // left an empty wrapper with reblog=null.
+    ensure_announce_boost_target(db, config, activity, object_uri, env).await?;
     upsert_remote_reblog_status(db, config, remote_actor, activity).await?;
 
     if let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? {
@@ -140,6 +136,139 @@ pub(crate) async fn handle_inbox_announce(
     }
 
     Ok(())
+}
+
+/// Persist the Announce target Note when missing so API wrappers can embed `reblog`.
+async fn ensure_announce_boost_target(
+    db: &D1Database,
+    config: &AppConfig,
+    activity: &serde_json::Value,
+    object_uri: &str,
+    env: Option<&Env>,
+) -> Result<()> {
+    if find_local_status_by_object_uri(db, config, object_uri)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    if find_remote_status_by_url_or_object_uri(db, object_uri)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    if let Some(object) = extract_remote_note_object(activity)
+        && upsert_embedded_announce_target(db, config, object, env).await?
+    {
+        return Ok(());
+    }
+
+    match resolve_remote_status_by_url(db, config, object_uri, None).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => {
+            log_json_event(serde_json::json!({
+                "event": "announce_boost_target_unresolved",
+                "object_uri": object_uri,
+            }));
+            Ok(())
+        }
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "announce_boost_target_fetch_failed",
+                "object_uri": object_uri,
+                "error": error.to_string(),
+            }));
+            Ok(())
+        }
+    }
+}
+
+/// Upsert an embedded Note using its `attributedTo` actor (not the Announcer).
+///
+/// Returns `Ok(true)` when the Note was stored.
+async fn upsert_embedded_announce_target(
+    db: &D1Database,
+    config: &AppConfig,
+    object: &serde_json::Value,
+    env: Option<&Env>,
+) -> Result<bool> {
+    let Some((_object_id, attributed_uri)) = acceptable_embedded_announce_target(object) else {
+        return Ok(false);
+    };
+
+    let profile = if let Some(cached) =
+        find_cached_remote_actor_profile_by_actor_uri(db, attributed_uri).await?
+    {
+        cached
+    } else {
+        match fetch_remote_actor_profile(attributed_uri).await {
+            Ok(profile) => profile,
+            Err(_) => return Ok(false),
+        }
+    };
+    upsert_remote_actor(db, &profile).await?;
+    upsert_remote_status(db, config, &profile, object, env).await?;
+    Ok(true)
+}
+
+/// Embedded Announce targets must be public and same-authority as `attributedTo`.
+fn acceptable_embedded_announce_target(object: &serde_json::Value) -> Option<(&str, &str)> {
+    let object_id = object.get("id").and_then(serde_json::Value::as_str)?;
+    let attributed_uri = activity_object_id(object.get("attributedTo"))?;
+    if cfwdon_domain::remote_status_object_authority_allowed(object_id, object_id, attributed_uri)
+        .is_err()
+    {
+        return None;
+    }
+    if !is_public_activitypub_visibility(&visibility_from_activitypub_object(object)) {
+        return None;
+    }
+    Some((object_id, attributed_uri))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::acceptable_embedded_announce_target;
+
+    #[test]
+    fn embedded_announce_target_accepts_public_same_authority_note() {
+        let object = serde_json::json!({
+            "id": "https://remote.example/users/bob/statuses/1",
+            "type": "Note",
+            "attributedTo": "https://remote.example/users/bob",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "content": "<p>hi</p>"
+        });
+        let accepted = acceptable_embedded_announce_target(&object);
+        assert_eq!(
+            accepted,
+            Some((
+                "https://remote.example/users/bob/statuses/1",
+                "https://remote.example/users/bob"
+            ))
+        );
+    }
+
+    #[test]
+    fn embedded_announce_target_rejects_cross_authority_and_private() {
+        let cross = serde_json::json!({
+            "id": "https://remote.example/users/bob/statuses/1",
+            "type": "Note",
+            "attributedTo": "https://other.example/users/bob",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        });
+        assert!(acceptable_embedded_announce_target(&cross).is_none());
+
+        let private = serde_json::json!({
+            "id": "https://remote.example/users/bob/statuses/1",
+            "type": "Note",
+            "attributedTo": "https://remote.example/users/bob",
+            "to": ["https://remote.example/users/bob/followers"],
+        });
+        assert!(acceptable_embedded_announce_target(&private).is_none());
+    }
 }
 
 pub(crate) async fn handle_inbox_interaction_undo(
