@@ -5,9 +5,9 @@ use super::{
 use crate::root_document;
 use crate::{
     CACHE_TTL_HEALTH, accept_prefers_web_ui_html, cache_public_response, dispatch_admin_route,
-    is_admin_ui_path, is_web_api_path, is_web_ui_path, web_session_response, web_ui_response,
+    is_admin_ui_path, is_web_api_path, is_web_ui_path, load_config_from_env, web_app_url,
+    web_session_response, web_ui_redirect_response, web_ui_response,
 };
-use url::Url;
 use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn dispatch_route(
@@ -29,12 +29,9 @@ pub(crate) async fn dispatch_route(
     }
 
     if method == "GET" && path == "/" && accept_prefers_web_ui_html(&req)? {
-        let redirect_url = Url::parse("/app/").map_err(|error| {
-            worker::Error::RustError(format!("invalid web ui redirect URL: {error}"))
-        })?;
-        let mut redirect = Response::redirect(redirect_url)?;
-        redirect.headers_mut().set("Cache-Control", "no-store")?;
-        return Ok(redirect);
+        let config = load_config_from_env(&env);
+        let redirect_url = web_app_url(&config, &req)?;
+        return web_ui_redirect_response(redirect_url.as_str());
     }
 
     if method == "GET" && path == "/" {

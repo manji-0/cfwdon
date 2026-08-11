@@ -3,11 +3,12 @@ mod assets {
 }
 
 use crate::{
-    auth0_login_redirect_response, auth0_logout_redirect_response, instance_base_url, load_config,
+    auth0_login_redirect_response, auth0_logout_redirect_response, escape_html, instance_base_url,
+    load_config,
 };
 use assets::lookup_web_embedded_asset;
 use url::Url;
-use worker::{Request, Response, Result, RouteContext};
+use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn web_ui_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -65,26 +66,55 @@ fn serve_embedded_asset(path: &str) -> Result<Response> {
 }
 
 fn web_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {
-    let return_url = web_return_url(config, req)?;
+    let return_url = web_app_url(config, req)?;
     auth0_login_redirect_response(config, &return_url, &return_url)
 }
 
-fn web_return_url(config: &crate::AppConfig, req: &Request) -> Result<Url> {
-    let mut return_url = req.url()?;
-    return_url.set_path("/app/");
-    return_url.set_query(None);
-    if return_url.host_str().is_none() {
-        return_url =
-            Url::parse(&format!("{}/app/", instance_base_url(config))).map_err(|error| {
-                worker::Error::RustError(format!("invalid web ui return URL: {error}"))
-            })?;
+pub(crate) fn web_app_url(config: &crate::AppConfig, req: &Request) -> Result<Url> {
+    let request_url = req.url()?;
+    web_app_url_from_request_url(&request_url, &instance_base_url(config))
+}
+
+fn web_app_url_from_request_url(request_url: &Url, instance_base_url: &str) -> Result<Url> {
+    let mut redirect_url = request_url.clone();
+    redirect_url.set_path("/app/");
+    redirect_url.set_query(None);
+    if redirect_url.host_str().is_none() {
+        redirect_url = Url::parse(&format!("{instance_base_url}/app/"))
+            .map_err(|error| worker::Error::RustError(format!("invalid web ui URL: {error}")))?;
     }
-    Ok(return_url)
+    Ok(redirect_url)
+}
+
+pub(crate) fn web_ui_redirect_response(location: &str) -> Result<Response> {
+    let escaped = escape_html(location);
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url={escaped}\"><title>Redirecting</title></head><body><main><p>Redirecting to <a href=\"{escaped}\">{escaped}</a>.</p></main></body></html>"
+    );
+    let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
+    response.headers_mut().set("Location", location)?;
+    response
+        .headers_mut()
+        .set("Content-Type", "text/html; charset=utf-8")?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{accept_header_prefers_web_ui_html, is_public_web_asset_path, is_web_ui_path};
+    use super::{
+        accept_header_prefers_web_ui_html, is_public_web_asset_path, is_web_ui_path,
+        web_app_url_from_request_url,
+    };
+    use url::Url;
+
+    #[test]
+    fn web_app_url_preserves_request_origin() {
+        let request_url = Url::parse("https://social.example/timeline?ref=1").unwrap();
+        let redirect_url =
+            web_app_url_from_request_url(&request_url, "https://example.com").unwrap();
+        assert_eq!(redirect_url.as_str(), "https://social.example/app/");
+    }
 
     #[test]
     fn web_ui_paths_are_detected() {
