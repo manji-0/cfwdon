@@ -1,72 +1,10 @@
-import { scope, type } from "arktype";
+import { type } from "arktype";
 import type { AccountRef } from "@/domain/account/account";
 import type { MediaAttachment, Status, StatusContext } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
+import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
 
-const mastodonStatusScope = scope({
-  VisibilityApi: "'public' | 'unlisted' | 'private' | 'direct'",
-  AccountRefApi: {
-    id: "string>0",
-    username: "string>0",
-    acct: "string>0",
-    display_name: "string",
-    avatar: "string",
-  },
-  MediaAttachmentApi: {
-    id: "string",
-    type: "string",
-    url: "string",
-    "preview_url?": "string",
-    "description?": "string | null",
-  },
-  StatusPayloadApi: {
-    id: "string>0",
-    created_at: "string",
-    content: "string",
-    "spoiler_text?": "string",
-    "sensitive?": "boolean",
-    visibility: "VisibilityApi",
-    "in_reply_to_id?": "string | null",
-    "replies_count?": "number",
-    "reblogs_count?": "number",
-    "favourites_count?": "number",
-    "favourited?": "boolean",
-    "reblogged?": "boolean",
-    account: "AccountRefApi",
-    "media_attachments?": "MediaAttachmentApi[]",
-    "reblog?": "StatusPayloadApi | null",
-  },
-});
-
-const toAccountRef = (account: {
-  id: string;
-  username: string;
-  acct: string;
-  display_name: string;
-  avatar: string;
-}): AccountRef => ({
-  id: account.id,
-  username: account.username,
-  acct: account.acct,
-  displayName: account.display_name,
-  avatar: account.avatar,
-});
-
-const toMediaAttachment = (media: {
-  id: string;
-  type: string;
-  url: string;
-  preview_url?: string;
-  description?: string | null;
-}): MediaAttachment => ({
-  id: media.id,
-  type: media.type,
-  url: media.url,
-  previewUrl: media.preview_url ?? media.url,
-  description: media.description ?? null,
-});
-
-const toStatus = (payload: {
+type StatusPayload = {
   id: string;
   created_at: string;
   content: string;
@@ -93,8 +31,26 @@ const toStatus = (payload: {
     preview_url?: string;
     description?: string | null;
   }>;
-  reblog?: typeof payload | null;
-}): Status => ({
+  reblog?: StatusPayload | null;
+};
+
+const toAccountRef = (account: StatusPayload["account"]): AccountRef => ({
+  id: account.id,
+  username: account.username,
+  acct: account.acct,
+  displayName: account.display_name,
+  avatar: account.avatar,
+});
+
+const toMediaAttachment = (media: NonNullable<StatusPayload["media_attachments"]>[number]): MediaAttachment => ({
+  id: media.id,
+  type: media.type,
+  url: media.url,
+  previewUrl: media.preview_url ?? media.url,
+  description: media.description ?? null,
+});
+
+const toStatus = (payload: StatusPayload): Status => ({
   id: payload.id,
   createdAt: payload.created_at,
   content: payload.content,
@@ -112,7 +68,7 @@ const toStatus = (payload: {
   reblog: payload.reblog ? toStatus(payload.reblog) : null,
 });
 
-const StatusParser = mastodonStatusScope.type("StatusPayloadApi").pipe(toStatus);
+const StatusParser = mastodon.type("StatusPayloadApi").pipe(toStatus);
 const StatusListParser = type(StatusParser, "[]");
 
 const StatusContextParser = type({

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { loadSession } from "@/application/load-session";
 import type { SessionState } from "@/domain/session/session";
@@ -7,12 +7,16 @@ import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { HomePage } from "@/ui/pages/HomePage";
-import { NotificationsPage } from "@/ui/pages/NotificationsPage";
-import { ProfilePage } from "@/ui/pages/ProfilePage";
-import { SearchPage } from "@/ui/pages/SearchPage";
-import { SettingsPage } from "@/ui/pages/SettingsPage";
-import { ThreadPage } from "@/ui/pages/ThreadPage";
+import {
+  NotificationsPage,
+  ProfilePage,
+  SearchPage,
+  SettingsPage,
+  ThreadPage,
+} from "@/ui/pages/lazy-pages";
 import "@/ui/styles/app.css";
+
+const RouteFallback = () => <div className="app-status">読み込み中…</div>;
 
 // TODO(Phase 5): Register BookmarksPage, ListsPage, and MessagesPage routes.
 const AppRoutes = ({
@@ -24,22 +28,24 @@ const AppRoutes = ({
   }
 
   if (session.kind === "Loading") {
-    return <div className="app-status">読み込み中…</div>;
+    return <RouteFallback />;
   }
 
   return (
     <SessionProvider value={createSessionContextValue(session, setSession)}>
       <KeyboardShortcutsHelp />
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/status/:statusId" element={<ThreadPage />} />
-        <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/profile/:accountId" element={<ProfilePage />} />
-        <Route path="/notifications" element={<NotificationsPage />} />
-        <Route path="/search" element={<SearchPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/status/:statusId" element={<ThreadPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/profile/:accountId" element={<ProfilePage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </SessionProvider>
   );
 };

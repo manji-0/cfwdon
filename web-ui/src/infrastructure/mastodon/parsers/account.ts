@@ -1,15 +1,9 @@
-import { type } from "arktype";
 import type { AccountProfile, AccountRef } from "@/domain/account/account";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountSummary } from "@/domain/session/account";
+import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
 
-const AccountRefParser = type({
-  id: "string>0",
-  username: "string>0",
-  acct: "string>0",
-  display_name: "string",
-  avatar: "string",
-}).pipe(
+export const parseAccountRef = mastodon.type("AccountRefApi").pipe(
   (value): AccountRef => ({
     id: value.id,
     username: value.username,
@@ -19,19 +13,7 @@ const AccountRefParser = type({
   }),
 );
 
-const AccountProfileParser = type({
-  id: "string>0",
-  username: "string>0",
-  acct: "string>0",
-  display_name: "string",
-  avatar: "string",
-  header: "string",
-  note: "string",
-  followers_count: "number",
-  following_count: "number",
-  statuses_count: "number",
-  locked: "boolean",
-}).pipe(
+export const parseAccountProfile = mastodon.type("AccountProfileApi").pipe(
   (value): AccountProfile => ({
     id: value.id,
     username: value.username,
@@ -47,20 +29,7 @@ const AccountProfileParser = type({
   }),
 );
 
-const AccountCredentialsParser = type({
-  id: "string>0",
-  display_name: "string",
-  note: "string",
-  avatar: "string",
-  username: "string>0",
-  acct: "string>0",
-  source: {
-    privacy: "string",
-    sensitive: "boolean",
-    language: "string | null",
-    quote_policy: "string",
-  },
-}).pipe(
+export const parseAccountCredentials = mastodon.type("AccountCredentialsApi").pipe(
   (value): AccountCredentials => ({
     id: value.id,
     displayName: value.display_name,
@@ -77,14 +46,7 @@ const AccountCredentialsParser = type({
   }),
 );
 
-const AccountSummaryParser = type({
-  id: "string>0",
-  username: "string>0",
-  display_name: "string",
-  acct: "string>0",
-  avatar: "string",
-  instance_name: "string>0",
-}).pipe(
+export const parseAccountSummary = mastodon.type("AccountSummaryApi").pipe(
   (value): AccountSummary => ({
     id: value.id,
     username: value.username,
@@ -94,8 +56,3 @@ const AccountSummaryParser = type({
     instanceName: value.instance_name,
   }),
 );
-
-export const parseAccountRef = AccountRefParser;
-export const parseAccountProfile = AccountProfileParser;
-export const parseAccountCredentials = AccountCredentialsParser;
-export const parseAccountSummary = AccountSummaryParser;

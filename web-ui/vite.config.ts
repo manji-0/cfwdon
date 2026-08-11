@@ -14,6 +14,26 @@ export default defineConfig(({ mode }) => {
       outDir: "dist",
       emptyOutDir: true,
       assetsDir: "assets",
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) {
+              return undefined;
+            }
+            if (id.includes("arktype")) {
+              return "arktype";
+            }
+            if (
+              id.includes("react-router") ||
+              id.includes("react-dom") ||
+              id.includes("/react/")
+            ) {
+              return "react-vendor";
+            }
+            return undefined;
+          },
+        },
+      },
     },
     resolve: {
       alias: {
