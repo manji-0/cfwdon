@@ -1,15 +1,43 @@
 import { useEffect } from "react";
-import { StreamingHome } from "@/infrastructure/streaming/mastodon-stream";
+import type { Status } from "@/domain/status/status";
+import {
+  StreamingUser,
+  type StreamingUserEvent,
+} from "@/infrastructure/streaming/mastodon-stream";
 
-/** TODO(Phase 4): Merge streaming events into timeline state on the home page. */
-export const useStreamingTimeline = (enabled: boolean, onEvent: (payload: unknown) => void) => {
+export const applyStreamingTimelineEvent = (
+  current: ReadonlyArray<Status>,
+  event: StreamingUserEvent,
+): ReadonlyArray<Status> => {
+  switch (event.kind) {
+    case "update": {
+      if (current.some((status) => status.id === event.status.id)) {
+        return current;
+      }
+      return [event.status, ...current];
+    }
+    case "delete":
+      return current.filter((status) => status.id !== event.statusId);
+    case "notification":
+      return current;
+  }
+};
+
+/** Subscribe to the user stream and merge timeline updates while enabled. */
+export const useStreamingTimeline = (
+  enabled: boolean,
+  onStatusesChange: (updater: (current: ReadonlyArray<Status>) => ReadonlyArray<Status>) => void,
+) => {
   useEffect(() => {
     if (!enabled) {
       return undefined;
     }
-    const subscription = StreamingHome.subscribe((event) => {
-      onEvent(event.payload);
+    const subscription = StreamingUser.subscribe((event) => {
+      if (event.kind === "notification") {
+        return;
+      }
+      onStatusesChange((current) => applyStreamingTimelineEvent(current, event));
     });
     return () => subscription.close();
-  }, [enabled, onEvent]);
+  }, [enabled, onStatusesChange]);
 };

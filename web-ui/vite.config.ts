@@ -49,6 +49,8 @@ export default defineConfig(({ mode }) => {
                 target: devOrigin,
                 changeOrigin: true,
                 secure: devOrigin.startsWith("https://"),
+                // Stream Hub DO path: browser WS → Vite → worker `/api/v1/streaming` upgrade.
+                ws: prefix === "/api",
               },
             ]),
           ),

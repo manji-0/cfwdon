@@ -13,6 +13,7 @@ import { Visibility } from "@/domain/status/visibility";
 import { Composer, type ComposerHandle } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
+import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 
@@ -23,6 +24,8 @@ export const HomePage = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  useStreamingTimeline(!loading, setStatuses);
 
   const loadTimeline = useCallback(async (options?: { maxId?: string; replace?: boolean }) => {
     const result = await fetchHomeTimeline({ maxId: options?.maxId, limit: 20 });

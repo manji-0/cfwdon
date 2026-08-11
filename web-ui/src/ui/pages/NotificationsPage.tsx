@@ -4,12 +4,15 @@ import type { Notification } from "@/domain/notification/notification";
 import { fetchNotifications } from "@/infrastructure/api/notification";
 import { AppShell } from "@/ui/components/AppShell";
 import { NotificationCard } from "@/ui/components/NotificationCard";
+import { useStreamingNotifications } from "@/ui/hooks/useStreamingNotifications";
 
 export const NotificationsPage = () => {
   const [notifications, setNotifications] = useState<ReadonlyArray<Notification>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+
+  useStreamingNotifications(!loading, setNotifications);
 
   const loadNotifications = useCallback(async (options?: { maxId?: string; replace?: boolean }) => {
     const result = await fetchNotifications({ maxId: options?.maxId, limit: 20 });

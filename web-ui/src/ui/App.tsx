@@ -8,6 +8,9 @@ import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { HomePage } from "@/ui/pages/HomePage";
 import {
+  BookmarksPage,
+  ListsPage,
+  MessagesPage,
   NotificationsPage,
   ProfilePage,
   SearchPage,
@@ -18,7 +21,6 @@ import "@/ui/styles/app.css";
 
 const RouteFallback = () => <div className="app-status">読み込み中…</div>;
 
-// TODO(Phase 5): Register BookmarksPage, ListsPage, and MessagesPage routes.
 const AppRoutes = ({
   session,
   setSession,
@@ -43,6 +45,9 @@ const AppRoutes = ({
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/bookmarks" element={<BookmarksPage />} />
+          <Route path="/lists" element={<ListsPage />} />
+          <Route path="/messages" element={<MessagesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

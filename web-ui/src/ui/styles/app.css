@@ -100,6 +100,27 @@ button {
   flex-shrink: 0;
 }
 
+.app-nav-library {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 0 0.5rem;
+}
+
+.app-nav-library-link {
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.app-nav-library-link:hover,
+.app-nav-library-link.is-active {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
 .app-main {
   min-width: 0;
   border-right: 1px solid var(--color-border);
@@ -793,5 +814,93 @@ button {
 }
 
 .trends-tag-uses {
+  font-size: 0.85rem;
+}
+
+.settings-library-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.library-nav-list {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.library-nav-link {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+}
+
+.library-nav-link:hover,
+.library-nav-link.is-active {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}
+
+.library-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.conversation-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: inherit;
+  padding: 0.85rem;
+  cursor: pointer;
+}
+
+.conversation-row.is-unread {
+  border-color: var(--color-accent);
+}
+
+.conversation-avatar-fallback {
+  background: var(--color-surface-hover);
+}
+
+.conversation-meta {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.conversation-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.conversation-preview {
+  margin: 0.15rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-thread-link {
+  color: var(--color-accent);
+  text-decoration: none;
   font-size: 0.85rem;
 }

@@ -3,7 +3,10 @@ export type AppRoute =
   | Readonly<{ kind: "Notifications" }>
   | Readonly<{ kind: "Search" }>
   | Readonly<{ kind: "Profile" }>
-  | Readonly<{ kind: "Settings" }>;
+  | Readonly<{ kind: "Settings" }>
+  | Readonly<{ kind: "Bookmarks" }>
+  | Readonly<{ kind: "Lists" }>
+  | Readonly<{ kind: "Messages" }>;
 
 export const AppRoute = {
   home: (): AppRoute => ({ kind: "Home" }),
@@ -11,9 +14,15 @@ export const AppRoute = {
   search: (): AppRoute => ({ kind: "Search" }),
   profile: (): AppRoute => ({ kind: "Profile" }),
   settings: (): AppRoute => ({ kind: "Settings" }),
+  bookmarks: (): AppRoute => ({ kind: "Bookmarks" }),
+  lists: (): AppRoute => ({ kind: "Lists" }),
+  messages: (): AppRoute => ({ kind: "Messages" }),
 
   fromPathname: (pathname: string): AppRoute => {
-    const normalized = pathname.replace(/^\/app\/?/, "").replace(/\/$/, "");
+    const normalized = pathname
+      .replace(/^\/app\/?/, "")
+      .replace(/^\/+/, "")
+      .replace(/\/$/, "");
     switch (normalized) {
       case "":
         return AppRoute.home();
@@ -25,6 +34,12 @@ export const AppRoute = {
         return AppRoute.profile();
       case "settings":
         return AppRoute.settings();
+      case "bookmarks":
+        return AppRoute.bookmarks();
+      case "lists":
+        return AppRoute.lists();
+      case "messages":
+        return AppRoute.messages();
       default:
         return AppRoute.home();
     }
@@ -33,15 +48,21 @@ export const AppRoute = {
   toPath: (route: AppRoute): string => {
     switch (route.kind) {
       case "Home":
-        return "/app/";
+        return "/";
       case "Notifications":
-        return "/app/notifications";
+        return "/notifications";
       case "Search":
-        return "/app/search";
+        return "/search";
       case "Profile":
-        return "/app/profile";
+        return "/profile";
       case "Settings":
-        return "/app/settings";
+        return "/settings";
+      case "Bookmarks":
+        return "/bookmarks";
+      case "Lists":
+        return "/lists";
+      case "Messages":
+        return "/messages";
     }
   },
 
@@ -57,6 +78,12 @@ export const AppRoute = {
         return "プロフィール";
       case "Settings":
         return "設定";
+      case "Bookmarks":
+        return "ブックマーク";
+      case "Lists":
+        return "リスト";
+      case "Messages":
+        return "メッセージ";
     }
   },
 } as const;

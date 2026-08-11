@@ -7,6 +7,7 @@ import type { NotificationPolicy, NotificationPolicyAction } from "@/domain/sett
 import { NotificationPolicy as NotificationPolicyModel } from "@/domain/settings/notification-policy";
 import { SessionState } from "@/domain/session/session";
 import { Visibility } from "@/domain/status/visibility";
+import { AppRoute } from "@/domain/navigation/route";
 import { fetchAccountCredentials, updateAccountProfile } from "@/infrastructure/api/credentials";
 import { fetchBlockedAccounts, fetchMutedAccounts } from "@/infrastructure/api/moderation";
 import {
@@ -374,6 +375,18 @@ export const SettingsPage = () => {
                   </div>
                 )}
               </div>
+            </div>
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.collections}>
+            <h2>ライブラリ</h2>
+            <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
+            <div className="settings-library-links">
+              {[AppRoute.bookmarks(), AppRoute.lists(), AppRoute.messages()].map((route) => (
+                <Link key={route.kind} className="app-button app-button-secondary" to={AppRoute.toPath(route)}>
+                  {AppRoute.label(route)}
+                </Link>
+              ))}
             </div>
           </section>
 

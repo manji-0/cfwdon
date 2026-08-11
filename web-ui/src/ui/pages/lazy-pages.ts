@@ -24,3 +24,18 @@ export const SettingsPage = lazy(async () => {
   const module = await import("@/ui/pages/SettingsPage");
   return { default: module.SettingsPage };
 });
+
+export const BookmarksPage = lazy(async () => {
+  const module = await import("@/ui/pages/BookmarksPage");
+  return { default: module.BookmarksPage };
+});
+
+export const ListsPage = lazy(async () => {
+  const module = await import("@/ui/pages/ListsPage");
+  return { default: module.ListsPage };
+});
+
+export const MessagesPage = lazy(async () => {
+  const module = await import("@/ui/pages/MessagesPage");
+  return { default: module.MessagesPage };
+});
