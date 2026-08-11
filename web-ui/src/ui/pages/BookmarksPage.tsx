@@ -3,8 +3,10 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { Status } from "@/domain/status/status";
 import { fetchBookmarks } from "@/infrastructure/api/bookmarks";
 import {
+  bookmarkStatus,
   favouriteStatus,
   reblogStatus,
+  unbookmarkStatus,
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -81,6 +83,26 @@ export const BookmarksPage = () => {
     updateStatusInList(result.value);
   };
 
+  const handleBookmark = async (status: Status) => {
+    const result = status.bookmarked
+      ? await unbookmarkStatus(status.id)
+      : await bookmarkStatus(status.id);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    if (!result.value.bookmarked) {
+      setStatuses((current) =>
+        current.filter((item) => {
+          const body = item.reblog ?? item;
+          return body.id !== result.value.id;
+        }),
+      );
+      return;
+    }
+    updateStatusInList(result.value);
+  };
+
   const handleLoadMore = async () => {
     const last = statuses.at(-1);
     if (!last || loadingMore) {
@@ -109,6 +131,7 @@ export const BookmarksPage = () => {
               status={status}
               onFavourite={(body) => void handleFavourite(body)}
               onReblog={(body) => void handleReblog(body)}
+              onBookmark={(body) => void handleBookmark(body)}
             />
           ))}
         </div>

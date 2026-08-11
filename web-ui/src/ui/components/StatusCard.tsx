@@ -9,6 +9,7 @@ type StatusCardProps = Readonly<{
   status: Status;
   onFavourite?: (status: Status) => void;
   onReblog?: (status: Status) => void;
+  onBookmark?: (status: Status) => void;
   onReply?: (status: Status) => void;
   compact?: boolean;
 }>;
@@ -33,6 +34,7 @@ export const StatusCard = ({
   status,
   onFavourite,
   onReblog,
+  onBookmark,
   onReply,
   compact = false,
 }: StatusCardProps) => {
@@ -97,6 +99,16 @@ export const StatusCard = ({
         >
           ♥ {body.favouritesCount > 0 ? body.favouritesCount : ""}
         </button>
+        {onBookmark ? (
+          <button
+            type="button"
+            className={`status-action${body.bookmarked ? " is-active" : ""}`}
+            onClick={() => onBookmark(body)}
+            aria-label="ブックマーク"
+          >
+            {body.bookmarked ? "★" : "☆"}
+          </button>
+        ) : null}
         <Link className="status-action" to={`/status/${body.id}`} aria-label="スレッドを開く">
           ⧉
         </Link>

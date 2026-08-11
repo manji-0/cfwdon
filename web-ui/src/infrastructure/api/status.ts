@@ -88,3 +88,13 @@ export const unreblogStatus = (statusId: string): ResultAsync<Status, MastodonFe
   mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unreblog`, {}).andThen(
     mapStatusResponse,
   );
+
+export const bookmarkStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/bookmark`, {}).andThen(
+    mapStatusResponse,
+  );
+
+export const unbookmarkStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unbookmark`, {}).andThen(
+    mapStatusResponse,
+  );

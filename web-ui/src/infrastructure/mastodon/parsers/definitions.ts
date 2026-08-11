@@ -65,6 +65,7 @@ export const mastodon = scope({
     "favourites_count?": "number",
     "favourited?": "boolean",
     "reblogged?": "boolean",
+    "bookmarked?": "boolean",
     account: "AccountRefApi",
     "media_attachments?": "MediaAttachmentApi[]",
     "reblog?": "StatusPayloadApi | null",

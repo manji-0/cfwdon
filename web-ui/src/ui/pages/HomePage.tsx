@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { Status } from "@/domain/status/status";
 import {
+  bookmarkStatus,
   createStatus,
   favouriteStatus,
   fetchHomeTimeline,
   reblogStatus,
+  unbookmarkStatus,
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -140,6 +142,17 @@ export const HomePage = () => {
     },
   ]);
 
+  const handleBookmark = async (status: Status) => {
+    const result = status.bookmarked
+      ? await unbookmarkStatus(status.id)
+      : await bookmarkStatus(status.id);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    updateStatusInList(result.value);
+  };
+
   const handleReblog = async (status: Status) => {
     const targetId = status.id;
     const result = status.reblogged
@@ -178,6 +191,7 @@ export const HomePage = () => {
             status={status}
             onFavourite={(body) => void handleFavourite(body)}
             onReblog={(body) => void handleReblog(body)}
+            onBookmark={(body) => void handleBookmark(body)}
           />
         ))}
       </div>

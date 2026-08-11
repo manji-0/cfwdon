@@ -5,8 +5,10 @@ import type { AccountProfile } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 import {
+  bookmarkStatus,
   favouriteStatus,
   reblogStatus,
+  unbookmarkStatus,
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -122,6 +124,17 @@ export const ProfilePage = () => {
     replaceStatus(result.value);
   };
 
+  const handleBookmark = async (status: Status) => {
+    const result = status.bookmarked
+      ? await unbookmarkStatus(status.id)
+      : await bookmarkStatus(status.id);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    replaceStatus(result.value);
+  };
+
   if (!accountId) {
     return (
       <AppShell title="プロフィール">
@@ -172,6 +185,7 @@ export const ProfilePage = () => {
             status={status}
             onFavourite={(body) => void handleFavourite(body)}
             onReblog={(body) => void handleReblog(body)}
+            onBookmark={(body) => void handleBookmark(body)}
           />
         ))}
       </div>

@@ -1,7 +1,11 @@
 import { type ResultAsync } from "neverthrow";
 import type { Conversation } from "@/domain/conversations/conversation";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
-import { mastodonFetchJson, mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
+import {
+  mastodonDeleteJson,
+  mastodonFetchJson,
+  mastodonPostJson,
+} from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseConversation, parseConversationList } from "@/infrastructure/mastodon/parsers/conversations";
 
@@ -30,3 +34,8 @@ export const markConversationRead = (
     `/api/v1/conversations/${encodeURIComponent(conversationId)}/read`,
     {},
   ).andThen((raw) => parseMastodon(parseConversation, raw));
+
+export const deleteConversation = (
+  conversationId: string,
+): ResultAsync<null, MastodonFetchError> =>
+  mastodonDeleteJson(`/api/v1/conversations/${encodeURIComponent(conversationId)}`).map(() => null);

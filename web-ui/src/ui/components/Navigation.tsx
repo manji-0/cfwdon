@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { AppRoute } from "@/domain/navigation/route";
 import { IconBell, IconGear, IconHome, IconSearch, IconUser } from "@/ui/components/icons";
+import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 
 const PRIMARY_NAV_ITEMS = [
   { route: AppRoute.home(), icon: IconHome, end: true },
@@ -16,37 +17,53 @@ const LIBRARY_NAV_ITEMS = [
   AppRoute.messages(),
 ] as const;
 
-export const SidebarNav = () => (
-  <nav className="app-nav" aria-label="メイン">
-    <div className="app-brand">
-      <span className="app-brand-mark" aria-hidden="true">
-        C
-      </span>
-    </div>
-    {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => (
-      <NavLink
-        key={route.kind}
-        to={AppRoute.toPath(route)}
-        end={end}
-        className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
-        aria-label={AppRoute.label(route)}
-      >
-        <Icon aria-hidden="true" />
-      </NavLink>
-    ))}
-    <div className="app-nav-library" aria-label="ライブラリ">
-      {LIBRARY_NAV_ITEMS.map((route) => (
+export const SidebarNav = () => {
+  const { unreadCount } = useUnreadMessages();
+
+  return (
+    <nav className="app-nav" aria-label="メイン">
+      <div className="app-brand">
+        <span className="app-brand-mark" aria-hidden="true">
+          C
+        </span>
+      </div>
+      {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => (
         <NavLink
           key={route.kind}
           to={AppRoute.toPath(route)}
-          className={({ isActive }) => `app-nav-library-link${isActive ? " is-active" : ""}`}
+          end={end}
+          className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
+          aria-label={AppRoute.label(route)}
         >
-          {AppRoute.label(route)}
+          <Icon aria-hidden="true" />
         </NavLink>
       ))}
-    </div>
-  </nav>
-);
+      <div className="app-nav-library" aria-label="ライブラリ">
+        {LIBRARY_NAV_ITEMS.map((route) => {
+          const isMessages = route.kind === "Messages";
+          const label = AppRoute.label(route);
+          return (
+            <NavLink
+              key={route.kind}
+              to={AppRoute.toPath(route)}
+              className={({ isActive }) => `app-nav-library-link${isActive ? " is-active" : ""}`}
+              aria-label={
+                isMessages && unreadCount > 0 ? `${label}（未読 ${unreadCount}）` : label
+              }
+            >
+              <span>{label}</span>
+              {isMessages && unreadCount > 0 ? (
+                <span className="nav-unread-badge" aria-hidden="true">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              ) : null}
+            </NavLink>
+          );
+        })}
+      </div>
+    </nav>
+  );
+};
 
 export const BottomNav = () => (
   <nav className="app-bottom-nav" aria-label="モバイルナビ">
