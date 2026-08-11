@@ -64,6 +64,20 @@ Set the application URLs:
 
 Avoid wildcard callback URLs in production. The Worker generates a single callback path and stores PKCE verifier state in an HttpOnly, `SameSite=Lax`, secure cookie scoped to `/oauth/auth0/callback`.
 
+## Local development
+<!-- derived-from ../getting-started/development.md#auth0-on-localhost -->
+
+`wrangler dev` on `http://127.0.0.1:8787` (or `http://localhost:8787`) uses that origin in the Auth0 `redirect_uri`. Register these values on the Auth0 application in addition to the production URLs:
+
+```text
+http://127.0.0.1:8787/oauth/auth0/callback
+http://localhost:8787/oauth/auth0/callback
+```
+
+Also add the matching logout and web-origin URLs (`http://127.0.0.1:8787`, `http://localhost:8787`). When developing the SPA with `devbox run web-ui:dev`, allow the same paths on port `5173`.
+
+You can reuse the production Auth0 application or create a separate local-only application and set `AUTH0_CLIENT_ID` in `.dev.vars` (see `.dev.vars.example`).
+
 Record the application Client ID as `AUTH0_CLIENT_ID`. `cfwdon` does not read or send an Auth0 client secret.
 
 ## Configure the E-mail Claim

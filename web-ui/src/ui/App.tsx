@@ -3,11 +3,14 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { loadSession } from "@/application/load-session";
 import type { SessionState } from "@/domain/session/session";
 import { SessionState as Session } from "@/domain/session/session";
+import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SessionProvider } from "@/ui/context/SessionContext";
 import { HomePage } from "@/ui/pages/HomePage";
+import { NotificationsPage } from "@/ui/pages/NotificationsPage";
 import { PlaceholderPage } from "@/ui/pages/PlaceholderPage";
 import { ProfilePage } from "@/ui/pages/ProfilePage";
+import { SearchPage } from "@/ui/pages/SearchPage";
 import { ThreadPage } from "@/ui/pages/ThreadPage";
 import "@/ui/styles/app.css";
 
@@ -22,19 +25,14 @@ const AppRoutes = ({ session }: Readonly<{ session: SessionState }>) => {
 
   return (
     <SessionProvider value={{ session }}>
+      <KeyboardShortcutsHelp />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/status/:statusId" element={<ThreadPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/profile/:accountId" element={<ProfilePage />} />
-        <Route
-          path="/notifications"
-          element={<PlaceholderPage title="通知" message="通知は Phase 2 で接続します。" />}
-        />
-        <Route
-          path="/search"
-          element={<PlaceholderPage title="検索" message="検索は Phase 2 で接続します。" />}
-        />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/search" element={<SearchPage />} />
         <Route
           path="/settings"
           element={<PlaceholderPage title="設定" message="設定は Phase 3 で接続します。" />}

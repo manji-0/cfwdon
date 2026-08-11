@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { Status } from "@/domain/status/status";
@@ -14,10 +14,12 @@ import {
   unreblogStatus,
 } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
-import { Composer } from "@/ui/components/Composer";
+import { Composer, type ComposerHandle } from "@/ui/components/Composer";
+import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { StatusCard } from "@/ui/components/StatusCard";
 
 export const ThreadPage = () => {
+  const composerRef = useRef<ComposerHandle>(null);
   const { statusId = "" } = useParams();
   const navigate = useNavigate();
   const [focus, setFocus] = useState<Status | null>(null);
@@ -98,6 +100,14 @@ export const ThreadPage = () => {
     replaceStatus(result.value);
   };
 
+  useKeyboardShortcuts([
+    {
+      key: "n",
+      handler: () => composerRef.current?.focus(),
+      when: () => Boolean(focus),
+    },
+  ]);
+
   const handleReply = async (input: {
     text: string;
     visibility: ReturnType<typeof Visibility.public>;
@@ -154,6 +164,7 @@ export const ThreadPage = () => {
             ))}
           </div>
           <Composer
+            ref={composerRef}
             placeholder="返信を投稿"
             submitLabel="返信"
             inReplyToId={statusId}

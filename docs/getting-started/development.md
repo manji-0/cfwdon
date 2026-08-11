@@ -47,8 +47,18 @@ devbox run test
 devbox run ci
 ```
 
+`devbox run ci` runs the full local gate (web UI + server). Split targets are also available:
+
+```sh
+devbox run ci:web-ui
+devbox run ci:server
+```
+
+GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success.
+
 `devbox run ci` currently runs:
 
+- `web-ui`: `pnpm run check`, `pnpm test`, and `pnpm run build`
 - `cargo fmt --all --check`
 - `cargo check --workspace --target wasm32-unknown-unknown`
 - `cargo test --workspace`
@@ -110,7 +120,49 @@ cargo test -p cfwdon-models
 devbox run worker:dev
 ```
 
-This starts `wrangler dev`. Routes that require D1, R2, or secrets need local or remote bindings configured according to the [Configuration Reference](../reference/configuration.md) and [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md).
+This starts `wrangler dev`, rebuilds `web-ui/dist`, and applies pending local D1 migrations before boot.
+
+### Connect to a specific instance
+
+```sh
+# Local worker code + local D1, but Mastodon instance metadata uses this domain.
+devbox run worker:dev -- --instance fedi.manji.app
+
+# Local worker code against remote Cloudflare bindings (D1/KV/R2) for that deployment.
+devbox run worker:dev -- --instance fedi.manji.app --remote
+```
+
+`--instance` accepts a bare domain (`fedi.manji.app`) or full URL (`https://fedi.manji.app`).
+It overrides `INSTANCE_DOMAIN` and the matching Auth0 audience/email-claim vars for the dev process.
+
+### Web UI hot reload against an instance
+
+```sh
+# Proxy API/auth routes to the local worker on :8787 (run worker:dev in another terminal).
+devbox run web-ui:dev
+
+# Proxy API/auth routes to a remote instance (read-only/public flows; Auth0 callback stays remote).
+devbox run web-ui:dev -- --instance https://fedi.manji.app
+```
+
+`web-ui:dev` runs Vite on port `5173` with `/app/` hot reload. API routes under `/api`, `/oauth`, and `/app/login` are proxied to the configured origin.
+
+### Auth0 on localhost
+
+Local login sends Auth0 a callback URL such as `http://127.0.0.1:8787/oauth/auth0/callback`.
+Add the following to the Auth0 application (same app as production, or a separate dev app via `.dev.vars`):
+
+| Auth0 setting | Local values |
+| --- | --- |
+| Allowed Callback URLs | `http://127.0.0.1:8787/oauth/auth0/callback`, `http://localhost:8787/oauth/auth0/callback` |
+| Allowed Logout URLs | `http://127.0.0.1:8787`, `http://localhost:8787` |
+| Allowed Web Origins / CORS | same as logout URLs |
+
+When using `web-ui:dev` against the local worker, also allow port `5173` with the same paths.
+
+`devbox run worker:dev` prints this checklist on startup. See also [Auth0 Configuration Guide](../operations/auth0-configuration.md#local-development).
+
+Routes that require D1, R2, or secrets need local or remote bindings configured according to the [Configuration Reference](../reference/configuration.md) and [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md).
 
 ## Mastodon API Compatibility Docs
 <!-- derived-from ../mastodon-api-compat/README.md -->

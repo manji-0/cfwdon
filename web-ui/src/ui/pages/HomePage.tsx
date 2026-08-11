@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { Status } from "@/domain/status/status";
 import {
@@ -10,11 +10,13 @@ import {
   unreblogStatus,
 } from "@/infrastructure/api/status";
 import { Visibility } from "@/domain/status/visibility";
-import { Composer } from "@/ui/components/Composer";
+import { Composer, type ComposerHandle } from "@/ui/components/Composer";
+import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { AppShell } from "@/ui/components/AppShell";
 
 export const HomePage = () => {
+  const composerRef = useRef<ComposerHandle>(null);
   const [statuses, setStatuses] = useState<ReadonlyArray<Status>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -119,6 +121,19 @@ export const HomePage = () => {
     updateStatusInList(result.value);
   };
 
+  useKeyboardShortcuts([
+    {
+      key: "n",
+      handler: () => composerRef.current?.focus(),
+    },
+    {
+      key: "r",
+      handler: () => {
+        void handleRefresh();
+      },
+    },
+  ]);
+
   const handleReblog = async (status: Status) => {
     const targetId = status.id;
     const result = status.reblogged
@@ -144,7 +159,7 @@ export const HomePage = () => {
         </div>
       }
     >
-      <Composer onSubmit={handlePublish} />
+      <Composer ref={composerRef} onSubmit={handlePublish} />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">

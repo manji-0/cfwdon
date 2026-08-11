@@ -1,0 +1,5 @@
+# Local secrets for `wrangler dev` (copy to `.dev.vars`, never commit).
+#
+# Optional: use a dedicated Auth0 application for local development that allows
+# localhost callback URLs. When unset, wrangler.toml AUTH0_CLIENT_ID is used.
+# AUTH0_CLIENT_ID=your-local-dev-auth0-client-id
