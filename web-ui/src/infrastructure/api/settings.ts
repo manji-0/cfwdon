@@ -1,17 +1,16 @@
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import { AccountCredentials } from "@/domain/account/credentials";
-import { AccountPreferences } from "@/domain/settings/preferences";
+import { type ResultAsync } from "neverthrow";
+import type { AccountPreferences } from "@/domain/settings/preferences";
+import type { AccountCredentials } from "@/domain/account/credentials";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import { mastodonFetchJson, mastodonPatchJson } from "@/infrastructure/http/mastodon-fetch";
+import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import { parseAccountCredentials } from "@/infrastructure/mastodon/parsers/account";
+import { parseAccountPreferences } from "@/infrastructure/mastodon/parsers/preferences";
 
 export const fetchAccountPreferences = (): ResultAsync<AccountPreferences, MastodonFetchError> =>
-  mastodonFetchJson("/api/v1/preferences").andThen((raw) => {
-    const parsed = AccountPreferences.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonFetchJson("/api/v1/preferences").andThen((raw) =>
+    parseMastodon(parseAccountPreferences, raw),
+  );
 
 export type UpdatePostingPreferencesInput = Readonly<{
   defaultVisibility?: string;
@@ -37,11 +36,7 @@ export const updatePostingPreferences = (
   if (input.defaultQuotePolicy !== undefined) {
     source.quote_policy = input.defaultQuotePolicy;
   }
-  return mastodonPatchJson("/api/v1/accounts/update_credentials", { source }).andThen((raw) => {
-    const parsed = AccountCredentials.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  return mastodonPatchJson("/api/v1/accounts/update_credentials", { source }).andThen((raw) =>
+    parseMastodon(parseAccountCredentials, raw),
+  );
 };

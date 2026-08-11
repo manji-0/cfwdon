@@ -1,19 +1,17 @@
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { type ResultAsync } from "neverthrow";
 import {
-  NotificationPolicy,
+  type NotificationPolicy,
   type NotificationPolicyAction,
 } from "@/domain/settings/notification-policy";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import { mastodonFetchJson, mastodonPatchJson } from "@/infrastructure/http/mastodon-fetch";
+import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import { parseNotificationPolicy } from "@/infrastructure/mastodon/parsers/notification-policy";
 
 export const fetchNotificationPolicy = (): ResultAsync<NotificationPolicy, MastodonFetchError> =>
-  mastodonFetchJson("/api/v1/notifications/policy").andThen((raw) => {
-    const parsed = NotificationPolicy.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonFetchJson("/api/v1/notifications/policy").andThen((raw) =>
+    parseMastodon(parseNotificationPolicy, raw),
+  );
 
 export type UpdateNotificationPolicyInput = Readonly<{
   forNotFollowing?: NotificationPolicyAction;
@@ -42,11 +40,7 @@ export const updateNotificationPolicy = (
   if (input.forLimitedAccounts !== undefined) {
     body.for_limited_accounts = input.forLimitedAccounts;
   }
-  return mastodonPatchJson("/api/v1/notifications/policy", body).andThen((raw) => {
-    const parsed = NotificationPolicy.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  return mastodonPatchJson("/api/v1/notifications/policy", body).andThen((raw) =>
+    parseMastodon(parseNotificationPolicy, raw),
+  );
 };

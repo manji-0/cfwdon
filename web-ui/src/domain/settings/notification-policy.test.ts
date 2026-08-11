@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { NotificationPolicy } from "@/domain/settings/notification-policy";
+import { parseNotificationPolicy } from "@/infrastructure/mastodon/parsers/notification-policy";
+import { isArkError } from "@/infrastructure/mastodon/parse";
 
-describe("NotificationPolicy", () => {
+describe("parseNotificationPolicy", () => {
   it("parses worker notification policy payloads", () => {
-    const parsed = NotificationPolicy.schema.parse({
+    const result = parseNotificationPolicy({
       for_not_following: "accept",
       for_not_followers: "filter",
       for_new_accounts: "accept",
@@ -11,7 +12,11 @@ describe("NotificationPolicy", () => {
       for_limited_accounts: "filter",
     });
 
-    expect(parsed.forNotFollowing).toBe("accept");
-    expect(parsed.forPrivateMentions).toBe("drop");
+    if (isArkError(result)) {
+      throw new Error(result.summary);
+    }
+
+    expect(result.forNotFollowing).toBe("accept");
+    expect(result.forPrivateMentions).toBe("drop");
   });
 });

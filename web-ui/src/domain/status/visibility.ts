@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export type Visibility =
   | Readonly<{ kind: "Public" }>
   | Readonly<{ kind: "Unlisted" }>
@@ -53,7 +51,3 @@ export const Visibility = {
     }
   },
 } as const;
-
-export const VisibilitySchema = z
-  .enum(["public", "unlisted", "private", "direct"])
-  .transform((value) => Visibility.fromApi(value));

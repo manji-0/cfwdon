@@ -1,8 +1,13 @@
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { type ResultAsync } from "neverthrow";
 import type { Status, StatusContext } from "@/domain/status/status";
-import { Status as StatusModel, StatusContext as StatusContextModel, StatusListSchema } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import { mastodonFetchJson, mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
+import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import {
+  parseStatus,
+  parseStatusContext,
+  parseStatusList,
+} from "@/infrastructure/mastodon/parsers/status";
 
 export type TimelineQuery = Readonly<{
   maxId?: string;
@@ -17,34 +22,22 @@ export const fetchHomeTimeline = (
   if (query.maxId) {
     params.set("max_id", query.maxId);
   }
-  return mastodonFetchJson(`/api/v1/timelines/home?${params}`).andThen((raw) => {
-    const parsed = StatusListSchema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  return mastodonFetchJson(`/api/v1/timelines/home?${params}`).andThen((raw) =>
+    parseMastodon(parseStatusList, raw),
+  );
 };
 
 export const fetchStatusContext = (
   statusId: string,
 ): ResultAsync<StatusContext, MastodonFetchError> =>
-  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/context`).andThen((raw) => {
-    const parsed = StatusContextModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/context`).andThen((raw) =>
+    parseMastodon(parseStatusContext, raw),
+  );
 
 export const fetchStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
-  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}`).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}`).andThen((raw) =>
+    parseMastodon(parseStatus, raw),
+  );
 
 export type CreateStatusInput = Readonly<{
   text: string;
@@ -68,47 +61,30 @@ export const createStatus = (
   if (input.mediaIds && input.mediaIds.length > 0) {
     body.media_ids = input.mediaIds;
   }
-  return mastodonPostJson("/api/v1/statuses", body).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  return mastodonPostJson("/api/v1/statuses", body).andThen((raw) =>
+    parseMastodon(parseStatus, raw),
+  );
 };
 
+const mapStatusResponse = (raw: unknown): ResultAsync<Status, MastodonFetchError> =>
+  parseMastodon(parseStatus, raw);
+
 export const favouriteStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
-  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/favourite`, {}).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/favourite`, {}).andThen(
+    mapStatusResponse,
+  );
 
 export const unfavouriteStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
-  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unfavourite`, {}).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unfavourite`, {}).andThen(
+    mapStatusResponse,
+  );
 
 export const reblogStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
-  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/reblog`, {}).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/reblog`, {}).andThen(
+    mapStatusResponse,
+  );
 
 export const unreblogStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
-  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unreblog`, {}).andThen((raw) => {
-    const parsed = StatusModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unreblog`, {}).andThen(
+    mapStatusResponse,
+  );

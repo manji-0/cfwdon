@@ -1,27 +1,24 @@
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { type ResultAsync } from "neverthrow";
 import type { AccountProfile } from "@/domain/account/account";
-import { AccountProfile as AccountProfileModel } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
-import { StatusListSchema } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import { mastodonFetchJson } from "@/infrastructure/http/mastodon-fetch";
-
-export const fetchAccountProfile = (
-  accountId: string,
-): ResultAsync<AccountProfile, MastodonFetchError> =>
-  mastodonFetchJson(`/api/v1/accounts/${encodeURIComponent(accountId)}`).andThen((raw) => {
-    const parsed = AccountProfileModel.schema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import { parseAccountProfile } from "@/infrastructure/mastodon/parsers/account";
+import { parseStatusList } from "@/infrastructure/mastodon/parsers/status";
 
 export type AccountStatusesQuery = Readonly<{
   maxId?: string;
   limit?: number;
   excludeReplies?: boolean;
 }>;
+
+export const fetchAccountProfile = (
+  accountId: string,
+): ResultAsync<AccountProfile, MastodonFetchError> =>
+  mastodonFetchJson(`/api/v1/accounts/${encodeURIComponent(accountId)}`).andThen((raw) =>
+    parseMastodon(parseAccountProfile, raw),
+  );
 
 export const fetchAccountStatuses = (
   accountId: string,
@@ -37,11 +34,5 @@ export const fetchAccountStatuses = (
   }
   return mastodonFetchJson(
     `/api/v1/accounts/${encodeURIComponent(accountId)}/statuses?${params}`,
-  ).andThen((raw) => {
-    const parsed = StatusListSchema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  ).andThen((raw) => parseMastodon(parseStatusList, raw));
 };

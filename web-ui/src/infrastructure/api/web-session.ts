@@ -1,6 +1,8 @@
+import { type } from "arktype";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { HttpError } from "@/domain/errors/http-error";
-import { AccountSummary } from "@/domain/session/account";
+import type { AccountSummary } from "@/domain/session/account";
+import { parseAccountSummary } from "@/infrastructure/mastodon/parsers/account";
 
 const SESSION_PATH = "/api/cfwdon/web/session";
 
@@ -26,10 +28,10 @@ export const fetchWebSession = (): ResultAsync<AccountSummary | null, FetchSessi
       ).andThen((error) => errAsync(error));
     }
     return ResultAsync.fromPromise(response.json(), HttpError.fromUnknown).andThen((raw) => {
-      const parsed = AccountSummary.schema.safeParse(raw);
-      if (!parsed.success) {
+      const result = parseAccountSummary(raw);
+      if (result instanceof type.errors) {
         return errAsync({ kind: "ValidationError" } as const);
       }
-      return okAsync(parsed.data);
+      return okAsync(result);
     });
   });

@@ -1,8 +1,9 @@
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { NotificationListSchema } from "@/domain/notification/notification";
+import { type ResultAsync } from "neverthrow";
 import type { Notification } from "@/domain/notification/notification";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import { mastodonFetchJson } from "@/infrastructure/http/mastodon-fetch";
+import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import { parseNotificationList } from "@/infrastructure/mastodon/parsers/notification";
 
 export type NotificationsQuery = Readonly<{
   maxId?: string;
@@ -17,11 +18,7 @@ export const fetchNotifications = (
   if (query.maxId) {
     params.set("max_id", query.maxId);
   }
-  return mastodonFetchJson(`/api/v1/notifications?${params}`).andThen((raw) => {
-    const parsed = NotificationListSchema.safeParse(raw);
-    if (!parsed.success) {
-      return errAsync({ kind: "ValidationError" } as const);
-    }
-    return okAsync(parsed.data);
-  });
+  return mastodonFetchJson(`/api/v1/notifications?${params}`).andThen((raw) =>
+    parseMastodon(parseNotificationList, raw),
+  );
 };

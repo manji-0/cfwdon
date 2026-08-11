@@ -1,6 +1,5 @@
-import { z } from "zod";
-import { AccountRef } from "@/domain/account/account";
-import { Status } from "@/domain/status/status";
+import type { AccountRef } from "@/domain/account/account";
+import type { Status } from "@/domain/status/status";
 
 export type Notification = Readonly<{
   id: string;
@@ -10,28 +9,6 @@ export type Notification = Readonly<{
   account: AccountRef;
   status: Status | null;
 }>;
-
-const NotificationSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.string().min(1),
-    group_key: z.string(),
-    created_at: z.string(),
-    account: AccountRef.schema,
-    status: Status.schema.nullable().optional(),
-  })
-  .transform(
-    (value): Notification => ({
-      id: value.id,
-      type: value.type,
-      groupKey: value.group_key,
-      createdAt: value.created_at,
-      account: value.account,
-      status: value.status ?? null,
-    }),
-  );
-
-export const NotificationListSchema = z.array(NotificationSchema);
 
 export const NotificationModel = {
   label: (notification: Notification): string => {
