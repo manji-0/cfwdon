@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.1/.schema/devbox.schema.json",
   "packages": [
     "rustup@latest",
-    "nodejs@22",
+    "nodejs@24",
     "pnpm@latest",
     "wrangler@latest",
     "worker-build@0.8.5",
