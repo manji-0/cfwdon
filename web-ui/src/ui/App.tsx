@@ -5,16 +5,20 @@ import type { SessionState } from "@/domain/session/session";
 import { SessionState as Session } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
-import { SessionProvider } from "@/ui/context/SessionContext";
+import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { HomePage } from "@/ui/pages/HomePage";
 import { NotificationsPage } from "@/ui/pages/NotificationsPage";
-import { PlaceholderPage } from "@/ui/pages/PlaceholderPage";
 import { ProfilePage } from "@/ui/pages/ProfilePage";
 import { SearchPage } from "@/ui/pages/SearchPage";
+import { SettingsPage } from "@/ui/pages/SettingsPage";
 import { ThreadPage } from "@/ui/pages/ThreadPage";
 import "@/ui/styles/app.css";
 
-const AppRoutes = ({ session }: Readonly<{ session: SessionState }>) => {
+// TODO(Phase 5): Register BookmarksPage, ListsPage, and MessagesPage routes.
+const AppRoutes = ({
+  session,
+  setSession,
+}: Readonly<{ session: SessionState; setSession: (session: SessionState) => void }>) => {
   if (session.kind === "Anonymous" || session.kind === "Failed") {
     return <LoginPanel session={session} />;
   }
@@ -24,7 +28,7 @@ const AppRoutes = ({ session }: Readonly<{ session: SessionState }>) => {
   }
 
   return (
-    <SessionProvider value={{ session }}>
+    <SessionProvider value={createSessionContextValue(session, setSession)}>
       <KeyboardShortcutsHelp />
       <Routes>
         <Route path="/" element={<HomePage />} />
@@ -33,10 +37,7 @@ const AppRoutes = ({ session }: Readonly<{ session: SessionState }>) => {
         <Route path="/profile/:accountId" element={<ProfilePage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/search" element={<SearchPage />} />
-        <Route
-          path="/settings"
-          element={<PlaceholderPage title="設定" message="設定は Phase 3 で接続します。" />}
-        />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </SessionProvider>
@@ -60,7 +61,7 @@ export const App = () => {
 
   return (
     <BrowserRouter basename="/app">
-      <AppRoutes session={session} />
+      <AppRoutes session={session} setSession={setSession} />
     </BrowserRouter>
   );
 };

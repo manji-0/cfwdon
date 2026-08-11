@@ -3,7 +3,12 @@ import { HttpError } from "@/domain/errors/http-error";
 
 export type ValidationError = Readonly<{ kind: "ValidationError" }>;
 
-export type MastodonFetchError = HttpError | ValidationError;
+export type NotImplementedError = Readonly<{ kind: "NotImplemented"; feature: string }>;
+
+export type MastodonFetchError = HttpError | ValidationError | NotImplementedError;
+
+export const notImplemented = (feature: string): ResultAsync<never, NotImplementedError> =>
+  errAsync({ kind: "NotImplemented", feature } as const);
 
 type JsonResult<T> = ResultAsync<T, MastodonFetchError>;
 

@@ -11,9 +11,9 @@ import {
 } from "@/infrastructure/api/status";
 import { Visibility } from "@/domain/status/visibility";
 import { Composer, type ComposerHandle } from "@/ui/components/Composer";
+import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { StatusCard } from "@/ui/components/StatusCard";
-import { AppShell } from "@/ui/components/AppShell";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
