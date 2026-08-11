@@ -42,12 +42,47 @@ export const mastodonFetchJson = (
     return parseJson(response);
   });
 
+export const mastodonUploadFile = (
+  path: string,
+  file: File,
+): JsonResult<unknown> => {
+  const form = new FormData();
+  form.append("file", file);
+  return ResultAsync.fromPromise(
+    fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      body: form,
+    }),
+    HttpError.fromUnknown,
+  ).andThen((response): JsonResult<unknown> => {
+    if (!response.ok) {
+      return ResultAsync.fromPromise(
+        HttpError.fromResponse(response),
+        HttpError.fromUnknown,
+      ).andThen((error) => errAsync(error));
+    }
+    return parseJson(response);
+  });
+};
+
 export const mastodonPostJson = (
   path: string,
   body: unknown,
 ): JsonResult<unknown> =>
   mastodonFetchJson(path, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const mastodonPatchJson = (
+  path: string,
+  body: unknown,
+): JsonResult<unknown> =>
+  mastodonFetchJson(path, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

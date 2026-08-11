@@ -1,13 +1,47 @@
-import { type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { AccountCredentials } from "@/domain/account/credentials";
 import { AccountPreferences } from "@/domain/settings/preferences";
-import { notImplemented, type MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import { mastodonFetchJson, mastodonPatchJson } from "@/infrastructure/http/mastodon-fetch";
 
-/** TODO(Phase 3): Load `/api/v1/preferences` and credential metadata. */
 export const fetchAccountPreferences = (): ResultAsync<AccountPreferences, MastodonFetchError> =>
-  notImplemented("account preferences");
+  mastodonFetchJson("/api/v1/preferences").andThen((raw) => {
+    const parsed = AccountPreferences.schema.safeParse(raw);
+    if (!parsed.success) {
+      return errAsync({ kind: "ValidationError" } as const);
+    }
+    return okAsync(parsed.data);
+  });
 
-/** TODO(Phase 3): PATCH preference fields and notification policy endpoints. */
-export const updateAccountPreferences = (
-  _input: Partial<AccountPreferences>,
-): ResultAsync<AccountPreferences, MastodonFetchError> =>
-  notImplemented("account preferences");
+export type UpdatePostingPreferencesInput = Readonly<{
+  defaultVisibility?: string;
+  defaultSensitive?: boolean;
+  defaultLanguage?: string | null;
+  defaultQuotePolicy?: string;
+}>;
+
+/** Posting defaults are updated via `update_credentials` source fields. */
+export const updatePostingPreferences = (
+  input: UpdatePostingPreferencesInput,
+): ResultAsync<AccountCredentials, MastodonFetchError> => {
+  const source: Record<string, unknown> = {};
+  if (input.defaultVisibility !== undefined) {
+    source.privacy = input.defaultVisibility;
+  }
+  if (input.defaultSensitive !== undefined) {
+    source.sensitive = input.defaultSensitive;
+  }
+  if (input.defaultLanguage !== undefined) {
+    source.language = input.defaultLanguage;
+  }
+  if (input.defaultQuotePolicy !== undefined) {
+    source.quote_policy = input.defaultQuotePolicy;
+  }
+  return mastodonPatchJson("/api/v1/accounts/update_credentials", { source }).andThen((raw) => {
+    const parsed = AccountCredentials.schema.safeParse(raw);
+    if (!parsed.success) {
+      return errAsync({ kind: "ValidationError" } as const);
+    }
+    return okAsync(parsed.data);
+  });
+};

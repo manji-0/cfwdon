@@ -677,6 +677,53 @@ button {
   font-size: 1rem;
 }
 
+.settings-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.settings-field > span {
+  color: var(--color-muted);
+}
+
+.settings-field input,
+.settings-field select,
+.settings-field textarea {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+}
+
+.settings-field-inline {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.settings-moderation {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-moderation h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.settings-account-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
 .composer-media-picker {
   display: grid;
   gap: 0.5rem;
@@ -696,4 +743,55 @@ button {
   height: 4.5rem;
   object-fit: cover;
   border-radius: var(--radius-md);
+}
+
+.composer-media-item {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 8rem;
+}
+
+.composer-media-file {
+  display: grid;
+  gap: 0.2rem;
+  min-height: 4.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.composer-media-meta {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.composer-media-limit {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.trends-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.trends-tag {
+  display: grid;
+  gap: 0.15rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.trends-tag-name {
+  font-weight: 650;
+  color: var(--color-accent);
+}
+
+.trends-tag-uses {
+  font-size: 0.85rem;
 }

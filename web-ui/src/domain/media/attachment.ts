@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** TODO(Phase 1): Attach uploaded media ids when publishing statuses. */
+/** Attach uploaded media ids when publishing statuses. */
 export type UploadedMedia = Readonly<{
   id: string;
   type: string;

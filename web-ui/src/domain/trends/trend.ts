@@ -20,7 +20,7 @@ export type TrendTagHistoryEntry = Readonly<{
   accounts: string;
 }>;
 
-/** TODO(Phase 1): `/api/v1/trends/tags` response schema. */
+/** `/api/v1/trends/tags` response schema. */
 export type TrendTag = Readonly<{
   id: string;
   name: string;

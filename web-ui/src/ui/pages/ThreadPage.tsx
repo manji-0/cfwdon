@@ -114,6 +114,7 @@ export const ThreadPage = () => {
     spoilerText: string;
     sensitive: boolean;
     inReplyToId?: string;
+    mediaIds: ReadonlyArray<string>;
   }) => {
     const result = await createStatus({
       text: input.text,
@@ -121,6 +122,7 @@ export const ThreadPage = () => {
       spoilerText: input.spoilerText,
       sensitive: input.sensitive,
       inReplyToId: statusId,
+      mediaIds: input.mediaIds,
     });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));

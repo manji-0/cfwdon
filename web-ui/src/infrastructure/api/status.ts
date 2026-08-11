@@ -52,24 +52,30 @@ export type CreateStatusInput = Readonly<{
   spoilerText?: string;
   sensitive?: boolean;
   inReplyToId?: string;
+  mediaIds?: ReadonlyArray<string>;
 }>;
 
 export const createStatus = (
   input: CreateStatusInput,
-): ResultAsync<Status, MastodonFetchError> =>
-  mastodonPostJson("/api/v1/statuses", {
+): ResultAsync<Status, MastodonFetchError> => {
+  const body: Record<string, unknown> = {
     status: input.text,
     visibility: input.visibility,
     spoiler_text: input.spoilerText ?? "",
     sensitive: input.sensitive ?? false,
     in_reply_to_id: input.inReplyToId,
-  }).andThen((raw) => {
+  };
+  if (input.mediaIds && input.mediaIds.length > 0) {
+    body.media_ids = input.mediaIds;
+  }
+  return mastodonPostJson("/api/v1/statuses", body).andThen((raw) => {
     const parsed = StatusModel.schema.safeParse(raw);
     if (!parsed.success) {
       return errAsync({ kind: "ValidationError" } as const);
     }
     return okAsync(parsed.data);
   });
+};
 
 export const favouriteStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
   mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/favourite`, {}).andThen((raw) => {

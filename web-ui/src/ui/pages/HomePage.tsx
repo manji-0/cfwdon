@@ -14,6 +14,7 @@ import { Composer, type ComposerHandle } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
@@ -85,12 +86,14 @@ export const HomePage = () => {
     visibility: ReturnType<typeof Visibility.public>;
     spoilerText: string;
     sensitive: boolean;
+    mediaIds: ReadonlyArray<string>;
   }) => {
     const result = await createStatus({
       text: input.text,
       visibility: Visibility.toApi(input.visibility),
       spoilerText: input.spoilerText,
       sensitive: input.sensitive,
+      mediaIds: input.mediaIds,
     });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
@@ -150,13 +153,16 @@ export const HomePage = () => {
     <AppShell
       title="ホーム"
       aside={
-        <div className="app-card">
-          <h2>ホーム</h2>
-          <p className="app-muted">フォロー中のアカウントの投稿が表示されます。</p>
-          <button type="button" className="app-button app-button-secondary" onClick={() => void handleRefresh()}>
-            {refreshing ? "更新中…" : "更新"}
-          </button>
-        </div>
+        <>
+          <div className="app-card">
+            <h2>ホーム</h2>
+            <p className="app-muted">フォロー中のアカウントの投稿が表示されます。</p>
+            <button type="button" className="app-button app-button-secondary" onClick={() => void handleRefresh()}>
+              {refreshing ? "更新中…" : "更新"}
+            </button>
+          </div>
+          <TrendsSidebar />
+        </>
       }
     >
       <Composer ref={composerRef} onSubmit={handlePublish} />

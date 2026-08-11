@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** TODO(Phase 3): Map Mastodon preference payloads for account and notification policy. */
+/** Map Mastodon preference payloads for account and notification policy. */
 export type AccountPreferences = Readonly<{
   defaultVisibility: string;
   defaultSensitive: boolean;
