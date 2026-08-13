@@ -1,7 +1,8 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { Notification } from "@/domain/notification/notification";
 import { NotificationModel } from "@/domain/notification/notification";
 import { Status as StatusModel } from "@/domain/status/status";
+import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type NotificationCardProps = Readonly<{
@@ -9,6 +10,7 @@ type NotificationCardProps = Readonly<{
 }>;
 
 export const NotificationCard = ({ notification }: NotificationCardProps) => {
+  const navigate = useNavigate();
   const status = notification.status;
   const body = status ? StatusModel.displayBody(status) : null;
 
@@ -26,10 +28,30 @@ export const NotificationCard = ({ notification }: NotificationCardProps) => {
         </Link>
       </header>
       {status && body ? (
-        <Link to={`/status/${body.id}`} className="notification-status-preview">
+        <div
+          className="notification-status-preview"
+          role="link"
+          tabIndex={0}
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("a")) {
+              return;
+            }
+            navigate(`/status/${body.id}`);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") {
+              return;
+            }
+            if ((event.target as HTMLElement).closest("a")) {
+              return;
+            }
+            event.preventDefault();
+            navigate(`/status/${body.id}`);
+          }}
+        >
           {body.spoilerText ? <p className="app-muted">CW: {body.spoilerText}</p> : null}
-          <div className="status-content" dangerouslySetInnerHTML={{ __html: body.content }} />
-        </Link>
+          <StatusContent html={body.content} />
+        </div>
       ) : null}
     </article>
   );

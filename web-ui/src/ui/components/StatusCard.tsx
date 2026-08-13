@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
+import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type StatusCardProps = Readonly<{
@@ -58,10 +59,7 @@ export const StatusCard = ({
       ) : null}
       {showContent ? (
         <>
-          <div
-            className="status-content"
-            dangerouslySetInnerHTML={{ __html: body.content }}
-          />
+          <StatusContent html={body.content} />
           {body.mediaAttachments.length > 0 ? (
             <div className="status-media-grid">
               {body.mediaAttachments.map((media) =>

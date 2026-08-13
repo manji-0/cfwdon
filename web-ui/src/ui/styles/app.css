@@ -79,6 +79,7 @@ button {
 }
 
 .app-nav-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.85rem;
@@ -102,39 +103,26 @@ button {
 
 .app-nav-library {
   display: grid;
-  gap: 0.35rem;
-  margin-top: 1rem;
-  padding: 0 0.5rem;
-}
-
-.app-nav-library-link {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.4rem 0.65rem;
-  border-radius: var(--radius-md);
-  color: var(--color-text-muted);
-  text-decoration: none;
-  font-size: 0.85rem;
-}
-
-.app-nav-library-link:hover,
-.app-nav-library-link.is-active {
-  color: var(--color-text);
-  background: var(--color-surface-hover);
+  gap: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .nav-unread-badge {
-  min-width: 1.25rem;
-  padding: 0.05rem 0.35rem;
+  min-width: 1.1rem;
+  padding: 0.05rem 0.3rem;
   border-radius: 999px;
   background: var(--color-accent);
   color: #fff;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 600;
   line-height: 1.2;
   text-align: center;
+}
+
+.app-nav-link .nav-unread-badge {
+  position: absolute;
+  top: 0.35rem;
+  inset-inline-end: 0.35rem;
 }
 
 .app-main {
@@ -195,6 +183,23 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+
+.composer-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.composer-avatar {
+  flex-shrink: 0;
+}
+
+.composer-fields {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.75rem;
 }
 
 .app-composer textarea {
@@ -619,6 +624,7 @@ button {
   border-radius: var(--radius-md);
   color: inherit;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .search-form {

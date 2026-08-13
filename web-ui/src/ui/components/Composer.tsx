@@ -5,6 +5,7 @@ import { Visibility as VisibilityModel } from "@/domain/status/visibility";
 import { uploadMedia } from "@/infrastructure/api/media";
 import { ComposerMediaPicker } from "@/ui/components/ComposerMediaPicker";
 import { ComposerMedia, type ComposerMediaItem } from "@/ui/composer/draft-media";
+import { useSession } from "@/ui/context/SessionContext";
 import { isSubmitShortcut, modKeyLabel } from "@/ui/lib/keyboard";
 
 const VISIBILITY_OPTIONS: ReadonlyArray<Visibility> = [
@@ -52,6 +53,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   },
   ref,
 ) {
+  const { session } = useSession();
+  const account = session.kind === "Authenticated" ? session.account : null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
   const [visibility, setVisibility] = useState<Visibility>(initialVisibility);
@@ -191,68 +194,79 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   return (
     <section className="app-composer" aria-label="新規投稿">
-      <textarea
-        ref={textareaRef}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        disabled={disabled || submitting}
-      />
-      <ComposerMediaPicker
-        attachments={mediaAttachments}
-        disabled={disabled || submitting}
-        onSelectFiles={handleSelectFiles}
-        onRemove={handleRemoveMedia}
-      />
-      <div className="composer-toolbar">
-        {lockVisibility ? null : (
-          <label className="composer-visibility">
-            <span className="app-muted">公開範囲</span>
-            <select
-              value={VisibilityModel.toApi(visibility)}
-              onChange={(event) => setVisibility(VisibilityModel.fromApi(event.target.value))}
-              disabled={disabled || submitting}
-            >
-              {VISIBILITY_OPTIONS.map((option) => (
-                <option key={option.kind} value={VisibilityModel.toApi(option)}>
-                  {VisibilityModel.label(option)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="composer-cw">
-          <input
-            type="checkbox"
-            checked={showCw}
-            onChange={(event) => setShowCw(event.target.checked)}
+      <div className="composer-main">
+        {account ? (
+          <img
+            className="status-avatar composer-avatar"
+            src={account.avatar}
+            alt=""
+          />
+        ) : null}
+        <div className="composer-fields">
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
             disabled={disabled || submitting}
           />
-          CW
-        </label>
-        <span className="composer-shortcut-hint app-muted" aria-hidden="true">
-          {modKeyLabel()}↵ で{submitLabel}
-        </span>
-        <button
-          type="button"
-          className="app-button"
-          onClick={() => void handleSubmit()}
-          disabled={!canSubmit}
-        >
-          {submitting ? "送信中…" : submitLabel}
-        </button>
+          <ComposerMediaPicker
+            attachments={mediaAttachments}
+            disabled={disabled || submitting}
+            onSelectFiles={handleSelectFiles}
+            onRemove={handleRemoveMedia}
+          />
+          <div className="composer-toolbar">
+            {lockVisibility ? null : (
+              <label className="composer-visibility">
+                <span className="app-muted">公開範囲</span>
+                <select
+                  value={VisibilityModel.toApi(visibility)}
+                  onChange={(event) => setVisibility(VisibilityModel.fromApi(event.target.value))}
+                  disabled={disabled || submitting}
+                >
+                  {VISIBILITY_OPTIONS.map((option) => (
+                    <option key={option.kind} value={VisibilityModel.toApi(option)}>
+                      {VisibilityModel.label(option)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="composer-cw">
+              <input
+                type="checkbox"
+                checked={showCw}
+                onChange={(event) => setShowCw(event.target.checked)}
+                disabled={disabled || submitting}
+              />
+              CW
+            </label>
+            <span className="composer-shortcut-hint app-muted" aria-hidden="true">
+              {modKeyLabel()}↵ で{submitLabel}
+            </span>
+            <button
+              type="button"
+              className="app-button"
+              onClick={() => void handleSubmit()}
+              disabled={!canSubmit}
+            >
+              {submitting ? "送信中…" : submitLabel}
+            </button>
+          </div>
+          {showCw ? (
+            <input
+              className="composer-spoiler"
+              value={spoilerText}
+              onChange={(event) => setSpoilerText(event.target.value)}
+              placeholder="コンテンツ警告"
+              disabled={disabled || submitting}
+            />
+          ) : null}
+          {error ? <p className="app-error">{error}</p> : null}
+        </div>
       </div>
-      {showCw ? (
-        <input
-          className="composer-spoiler"
-          value={spoilerText}
-          onChange={(event) => setSpoilerText(event.target.value)}
-          placeholder="コンテンツ警告"
-          disabled={disabled || submitting}
-        />
-      ) : null}
-      {error ? <p className="app-error">{error}</p> : null}
     </section>
   );
 });

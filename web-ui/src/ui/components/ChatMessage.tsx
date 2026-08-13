@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Status } from "@/domain/status/status";
+import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type ChatMessageProps = Readonly<{
@@ -24,7 +25,7 @@ export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => (
         <span className="app-muted">{formatRelativeTime(status.createdAt)}</span>
       </div>
       {status.spoilerText ? <p className="chat-cw">CW: {status.spoilerText}</p> : null}
-      <div className="status-content" dangerouslySetInnerHTML={{ __html: status.content }} />
+      <StatusContent html={status.content} />
     </div>
   </article>
 );
