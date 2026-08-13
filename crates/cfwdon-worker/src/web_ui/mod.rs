@@ -36,6 +36,9 @@ pub(crate) fn is_web_ui_path(path: &str) -> bool {
 
 pub(crate) fn is_public_web_asset_path(path: &str) -> bool {
     path.starts_with("/app/assets/")
+        || path.starts_with("/app/icons/")
+        || path == "/app/manifest.webmanifest"
+        || path == "/app/sw.js"
 }
 
 pub(crate) fn accept_header_prefers_web_ui_html(accept: &str) -> bool {
@@ -56,7 +59,7 @@ fn serve_embedded_asset(path: &str) -> Result<Response> {
     };
     let mut response = Response::from_bytes(bytes.to_vec())?;
     response.headers_mut().set("Content-Type", content_type)?;
-    if path.ends_with(".html") || path == "/app/" {
+    if web_asset_should_revalidate(path) {
         response.headers_mut().set("Cache-Control", "no-cache")?;
     } else {
         response
@@ -64,6 +67,13 @@ fn serve_embedded_asset(path: &str) -> Result<Response> {
             .set("Cache-Control", "public, max-age=3600")?;
     }
     Ok(response)
+}
+
+fn web_asset_should_revalidate(path: &str) -> bool {
+    path.ends_with(".html")
+        || path == "/app/"
+        || path == "/app/sw.js"
+        || path.ends_with(".webmanifest")
 }
 
 fn web_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {
@@ -187,7 +197,11 @@ mod tests {
     #[test]
     fn public_asset_paths_are_detected() {
         assert!(is_public_web_asset_path("/app/assets/index-abc.js"));
+        assert!(is_public_web_asset_path("/app/manifest.webmanifest"));
+        assert!(is_public_web_asset_path("/app/sw.js"));
+        assert!(is_public_web_asset_path("/app/icons/icon-192.png"));
         assert!(!is_public_web_asset_path("/app/"));
+        assert!(!is_public_web_asset_path("/app/notifications"));
     }
 
     #[test]

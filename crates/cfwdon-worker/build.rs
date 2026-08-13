@@ -161,6 +161,7 @@ fn content_type_for_path(path: &str) -> String {
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "json" => "application/json; charset=utf-8",
+        "webmanifest" => "application/manifest+json; charset=utf-8",
         "ico" => "image/x-icon",
         "map" => "application/json; charset=utf-8",
         _ => "application/octet-stream",

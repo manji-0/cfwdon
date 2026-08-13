@@ -19,6 +19,7 @@ import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
+import { usePwaInstall } from "@/ui/hooks/usePwaInstall";
 
 const POLICY_FIELDS = [
   { key: "forNotFollowing", label: "フォローしていないユーザー" },
@@ -57,6 +58,7 @@ const ModerationAccountLink = ({ account }: Readonly<{ account: AccountRef }>) =
 export const SettingsPage = () => {
   const { session, setSession, clearSession } = useSession();
   const { unreadCount } = useUnreadMessages();
+  const { canInstall, installed, install } = usePwaInstall();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -411,6 +413,28 @@ export const SettingsPage = () => {
                 );
               })}
             </div>
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+            <h2>ホーム画面</h2>
+            {installed ? (
+              <p className="app-muted">アプリとして起動しています。</p>
+            ) : (
+              <>
+                <p className="app-muted">
+                  ホーム画面に追加すると、ブラウザの枠なしで cfwdon を使えます。
+                </p>
+                {canInstall ? (
+                  <button type="button" className="app-button" onClick={() => void install()}>
+                    インストール
+                  </button>
+                ) : (
+                  <p className="app-muted">
+                    iPhone / iPad では共有ボタンから「ホーム画面に追加」を選んでください。
+                  </p>
+                )}
+              </>
+            )}
           </section>
 
           <section className="app-card settings-section" data-phase={WebUiPhase.settings}>

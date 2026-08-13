@@ -9,7 +9,8 @@
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
 }
 
 body {
@@ -20,6 +21,9 @@ body {
   color: var(--color-text);
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overscroll-behavior: none;
 }
 
 a {
@@ -39,6 +43,7 @@ button {
   display: grid;
   grid-template-columns: var(--nav-width) minmax(0, 1fr) var(--aside-width);
   min-height: 100%;
+  min-height: 100dvh;
   max-width: 1280px;
   margin: 0 auto;
   border-inline: 1px solid var(--color-border);
@@ -52,6 +57,7 @@ button {
   flex-direction: column;
   gap: 0.25rem;
   height: 100vh;
+  height: 100dvh;
   padding: 1.25rem 0.75rem 1rem;
   border-right: 1px solid var(--color-border);
 }
@@ -134,7 +140,7 @@ button {
   position: sticky;
   top: 0;
   z-index: 2;
-  padding: 1rem 1.25rem;
+  padding: calc(1rem + env(safe-area-inset-top)) 1.25rem 1rem;
   border-bottom: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-bg) 92%, transparent);
   backdrop-filter: blur(12px);
@@ -151,6 +157,7 @@ button {
   top: 0;
   align-self: start;
   height: 100vh;
+  height: 100dvh;
   padding: 1rem;
   overflow: auto;
 }
@@ -633,6 +640,20 @@ button {
     border-right: none;
   }
 
+  .app-main-body {
+    padding: 1rem 1rem calc(5.25rem + env(safe-area-inset-bottom));
+  }
+
+  .app-composer textarea,
+  .composer-visibility select,
+  .composer-spoiler,
+  .settings-field input,
+  .settings-field select,
+  .settings-field textarea,
+  .search-input {
+    font-size: 16px;
+  }
+
   .app-bottom-nav {
     position: fixed;
     inset-inline: 0;
@@ -640,8 +661,8 @@ button {
     z-index: 3;
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 0.25rem;
-    padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
+    gap: 0.15rem;
+    padding: 0.35rem 0.35rem calc(0.45rem + env(safe-area-inset-bottom));
     border-top: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-bg) 94%, transparent);
     backdrop-filter: blur(12px);
@@ -651,18 +672,37 @@ button {
     display: grid;
     place-items: center;
     gap: 0.15rem;
-    padding: 0.35rem;
+    min-height: 2.75rem;
+    padding: 0.35rem 0.15rem;
     border-radius: 0.75rem;
     color: var(--color-text-muted);
-    font-size: 0.7rem;
+    font-size: 0.65rem;
+  }
+
+  .app-bottom-nav a svg {
+    width: 1.35rem;
+    height: 1.35rem;
   }
 
   .app-bottom-nav a.is-active {
     color: var(--color-accent);
   }
 
-  .app-main-body {
-    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  .app-login-panel {
+    margin: 2rem 1rem;
+    padding: 1.5rem;
+  }
+
+  .composer-shortcut-hint {
+    display: none;
+  }
+}
+
+@media (hover: none) {
+  .profile-media-edit-label {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.4);
+    font-size: 0.75rem;
   }
 }
 
