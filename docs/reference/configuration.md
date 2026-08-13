@@ -34,8 +34,9 @@ Keep the `MEDIA_PUBLIC_BASE_URL` domain publicly reachable. Mastodon entity payl
 
 ## Auth0 Authentication Vars
 <!-- derived-from ../../wrangler.toml.example -->
+<!-- constrained-by ../operations/auth0-configuration.md#web-ui-session-lifetime -->
 
-Protected API routes validate Auth0-issued RS256 JWTs. By default, the Worker reads a Bearer token from `Authorization`, validates `iss` against `AUTH0_DOMAIN`, validates `aud` against `AUTH0_AUDIENCE`, fetches signing keys from `/.well-known/jwks.json`, and maps `AUTH0_EMAIL_CLAIM` to a local account e-mail. Browser login redirects use Auth0 Authorization Code with PKCE, return through `/oauth/auth0/callback`, set an HttpOnly local session cookie, and then continue the Mastodon OAuth consent flow.
+Protected API routes validate Auth0-issued RS256 JWTs. By default, the Worker reads a Bearer token from `Authorization`, validates `iss` against `AUTH0_DOMAIN`, validates `aud` against `AUTH0_AUDIENCE`, fetches signing keys from `/.well-known/jwks.json`, and maps `AUTH0_EMAIL_CLAIM` to a local account e-mail. Browser login redirects use Auth0 Authorization Code with PKCE, return through `/oauth/auth0/callback`, set HttpOnly access and refresh cookies, and then continue the Mastodon OAuth consent flow. The Web UI refresh cookie lasts 7 days; see [Auth0 Configuration Guide](../operations/auth0-configuration.md#web-ui-session-lifetime).
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |

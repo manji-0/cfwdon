@@ -1,4 +1,4 @@
-use crate::auth::{AUTH0_SESSION_COOKIE, find_account_by_email};
+use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, find_account_by_email};
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::id_utils::generate_entity_id;
 use crate::runtime_config::load_config;
@@ -17,6 +17,8 @@ use worker::{Request, Response, Result, RouteContext};
 use crate::D1Database;
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
+const AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS: i64 = 3600;
+pub(crate) const AUTH0_WEB_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
 const AUTH0_AUTHORIZE_STATE_COOKIE: &str = "cfwdon_auth0_authorize";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
@@ -78,8 +80,12 @@ struct Auth0CallbackRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct Auth0TokenResponse {
-    access_token: String,
+pub(crate) struct Auth0TokenResponse {
+    pub(crate) access_token: String,
+    #[serde(default)]
+    pub(crate) refresh_token: Option<String>,
+    #[serde(default)]
+    pub(crate) expires_in: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1132,7 +1138,7 @@ pub(crate) fn auth0_login_url(
         .append_pair("client_id", config.auth0_client_id.trim())
         .append_pair("redirect_uri", callback_url.as_str())
         .append_pair("audience", config.auth0_audience.trim())
-        .append_pair("scope", "openid profile email")
+        .append_pair("scope", "openid profile email offline_access")
         .append_pair("state", state)
         .append_pair("code_challenge", code_challenge)
         .append_pair("code_challenge_method", "S256");
@@ -1332,13 +1338,36 @@ fn set_auth0_authorize_state_cookie(
     Ok(())
 }
 
-fn set_auth0_session_cookie(response: &mut Response, access_token: &str) -> Result<()> {
+pub(crate) fn access_token_cookie_max_age(expires_in: Option<i64>) -> i64 {
+    expires_in
+        .filter(|value| *value > 0)
+        .unwrap_or(AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS)
+}
+
+fn auth0_session_cookie(name: &str, value: &str, max_age: i64) -> String {
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age={max_age}")
+}
+
+pub(crate) fn set_auth0_session_cookies(
+    response: &mut Response,
+    access_token: &str,
+    refresh_token: Option<&str>,
+    access_max_age: i64,
+) -> Result<()> {
     response.headers_mut().append(
         "Set-Cookie",
-        &format!(
-            "{AUTH0_SESSION_COOKIE}={access_token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=3600"
-        ),
+        &auth0_session_cookie(AUTH0_SESSION_COOKIE, access_token, access_max_age),
     )?;
+    if let Some(refresh_token) = refresh_token.filter(|value| !value.is_empty()) {
+        response.headers_mut().append(
+            "Set-Cookie",
+            &auth0_session_cookie(
+                AUTH0_REFRESH_COOKIE,
+                refresh_token,
+                AUTH0_WEB_SESSION_TTL_SECONDS,
+            ),
+        )?;
+    }
     response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(())
 }
@@ -1346,7 +1375,11 @@ fn set_auth0_session_cookie(response: &mut Response, access_token: &str) -> Resu
 fn clear_auth0_session_cookie(response: &mut Response) -> Result<()> {
     response.headers_mut().append(
         "Set-Cookie",
-        &format!("{AUTH0_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0"),
+        &auth0_session_cookie(AUTH0_SESSION_COOKIE, "", 0),
+    )?;
+    response.headers_mut().append(
+        "Set-Cookie",
+        &auth0_session_cookie(AUTH0_REFRESH_COOKIE, "", 0),
     )?;
     response.headers_mut().set("Cache-Control", "no-store")?;
     Ok(())
@@ -2129,7 +2162,12 @@ async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> R
     }
 
     let mut response = redirect_response(&session.return_url)?;
-    set_auth0_session_cookie(&mut response, &token.access_token)?;
+    set_auth0_session_cookies(
+        &mut response,
+        &token.access_token,
+        token.refresh_token.as_deref(),
+        access_token_cookie_max_age(token.expires_in),
+    )?;
     clear_auth0_authorize_state_cookie(&mut response)?;
     Ok(response)
 }
@@ -2140,16 +2178,46 @@ async fn exchange_auth0_authorization_code(
     redirect_uri: &str,
     code_verifier: &str,
 ) -> Result<Auth0TokenResponse> {
+    post_auth0_token_form(
+        config,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", config.auth0_client_id.trim()),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", code_verifier),
+        ],
+    )
+    .await
+}
+
+pub(crate) async fn exchange_auth0_refresh_token(
+    config: &cfwdon_core::AppConfig,
+    refresh_token: &str,
+) -> Result<Auth0TokenResponse> {
+    post_auth0_token_form(
+        config,
+        &[
+            ("grant_type", "refresh_token"),
+            ("client_id", config.auth0_client_id.trim()),
+            ("refresh_token", refresh_token),
+        ],
+    )
+    .await
+}
+
+async fn post_auth0_token_form(
+    config: &cfwdon_core::AppConfig,
+    pairs: &[(&str, &str)],
+) -> Result<Auth0TokenResponse> {
     let mut token_url = auth0_domain_url(config).map_err(worker::Error::RustError)?;
     token_url.set_path("/oauth/token");
     token_url.set_query(None);
-    let body = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("grant_type", "authorization_code")
-        .append_pair("client_id", config.auth0_client_id.trim())
-        .append_pair("code", code)
-        .append_pair("redirect_uri", redirect_uri)
-        .append_pair("code_verifier", code_verifier)
-        .finish();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (name, value) in pairs {
+        serializer.append_pair(name, value);
+    }
+    let body = serializer.finish();
     let headers = Headers::new();
     headers.set("Content-Type", "application/x-www-form-urlencoded")?;
     let mut init = RequestInit::new();
@@ -2160,7 +2228,7 @@ async fn exchange_auth0_authorization_code(
     let mut response = Fetch::Request(request).send().await?;
     if response.status_code() / 100 != 2 {
         return Err(worker::Error::RustError(format!(
-            "Auth0 token endpoint rejected authorization code with HTTP {}",
+            "Auth0 token endpoint rejected request with HTTP {}",
             response.status_code()
         )));
     }
@@ -2961,6 +3029,25 @@ mod tests {
         assert_eq!(document["scope"], "read");
         assert_eq!(document["expires_in"], 3600);
         assert_ne!(document["access_token"], "secret");
+    }
+
+    #[test]
+    fn access_token_cookie_ttl_prefers_auth0_expires_in() {
+        assert_eq!(access_token_cookie_max_age(Some(7200)), 7200);
+        assert_eq!(access_token_cookie_max_age(Some(0)), 3600);
+        assert_eq!(access_token_cookie_max_age(None), 3600);
+    }
+
+    #[test]
+    fn web_session_refresh_cookie_lasts_seven_days() {
+        let cookie = auth0_session_cookie(
+            AUTH0_REFRESH_COOKIE,
+            "refresh-1",
+            AUTH0_WEB_SESSION_TTL_SECONDS,
+        );
+        assert!(cookie.contains("Max-Age=604800"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("cfwdon_auth0_refresh_token=refresh-1"));
     }
 
     #[test]

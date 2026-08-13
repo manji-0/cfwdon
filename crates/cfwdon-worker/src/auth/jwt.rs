@@ -246,6 +246,10 @@ pub(crate) fn validate_auth0_time_claims(
     Ok(())
 }
 
+pub(crate) fn auth0_jwt_is_expired_error(error: &Error) -> bool {
+    error.to_string().contains("Auth0 JWT has expired")
+}
+
 pub(crate) fn require_rs256_alg(alg: &str) -> Result<()> {
     if alg == "RS256" {
         Ok(())
@@ -463,9 +467,9 @@ fn current_unix_timestamp() -> u64 {
 mod tests {
     use super::{
         Auth0AudClaim, Auth0Jwk, Auth0JwtClaims, JWT_CLOCK_SKEW_LEEWAY_SECS, auth0_email_verified,
-        auth0_roles_claim_name, auth0_roles_from_claims, jwk_is_usable_rs256_signing_key,
-        normalized_auth0_issuer, require_auth0_email_verified, require_rs256_alg,
-        select_auth0_signing_jwk, validate_auth0_time_claims,
+        auth0_jwt_is_expired_error, auth0_roles_claim_name, auth0_roles_from_claims,
+        jwk_is_usable_rs256_signing_key, normalized_auth0_issuer, require_auth0_email_verified,
+        require_rs256_alg, select_auth0_signing_jwk, validate_auth0_time_claims,
     };
     use cfwdon_core::AppConfig;
     use serde_json::json;
@@ -522,6 +526,7 @@ mod tests {
         )
         .expect_err("expired exp must fail");
         assert!(err.to_string().contains("expired"));
+        assert!(auth0_jwt_is_expired_error(&err));
     }
 
     #[test]

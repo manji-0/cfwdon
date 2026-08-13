@@ -601,6 +601,10 @@ fn auth0_login_url_uses_authorize_endpoint() {
         Some("https://social.example/oauth/auth0/callback")
     );
     assert_eq!(
+        params.get("scope").map(|value| value.as_ref()),
+        Some("openid profile email offline_access")
+    );
+    assert_eq!(
         params.get("state").map(|value| value.as_ref()),
         Some("state-1")
     );

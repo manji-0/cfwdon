@@ -64,6 +64,21 @@ Set the application URLs:
 
 Avoid wildcard callback URLs in production. The Worker generates a single callback path and stores PKCE verifier state in an HttpOnly, `SameSite=Lax`, secure cookie scoped to `/oauth/auth0/callback`.
 
+## Web UI session lifetime
+<!-- derived-from #create-the-auth0-application -->
+<!-- dagayn: implemented-by crates/cfwdon-worker/src/oauth_apps.rs::exchange_auth0_refresh_token -->
+
+The browser session cookie is not a 7-day Auth0 access token. After login, `cfwdon` stores the Auth0 access token and a refresh token in HttpOnly cookies. Access tokens stay short-lived; the refresh cookie lasts **7 days** (`Max-Age=604800`) so the Web UI can mint a new access token without another login.
+
+In the Auth0 Dashboard, enable this on the same application and API used for login:
+
+1. On the **API**, enable **Allow Offline Access**.
+2. On the **Application**, enable **Refresh Token Rotation**.
+3. Set refresh token **Absolute Lifetime** and **Inactivity Lifetime** to at least 7 days (604800 seconds).
+4. Set a refresh-token **Reuse Interval** of about 60 seconds so parallel Web UI requests after expiry do not revoke the token family.
+
+Without those Dashboard settings Auth0 will not return a `refresh_token`, and the Web UI still signs out when the access token expires (often one hour or one day).
+
 ## Local development
 <!-- derived-from ../getting-started/development.md#auth0-on-localhost -->
 
@@ -204,6 +219,7 @@ The token must be signed with `RS256`, have `iss` equal to the Auth0 tenant issu
 | Browser never returns from Auth0 | Allowed Callback URLs must include exactly `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`. |
 | Auth0 logout fails or ignores `returnTo` | Allowed Logout URLs must include `https://<INSTANCE_DOMAIN>`. |
 | Token endpoint rejects the callback code | The Auth0 application must allow Authorization Code with PKCE and must not require a client secret. |
+| Web UI signs out after about an hour | Enable API **Allow Offline Access**, application **Refresh Token Rotation**, and 7-day refresh-token lifetimes. Confirm login requests include `offline_access` and that a `cfwdon_auth0_refresh_token` cookie is set. |
 | Protected routes reject a Bearer token | Confirm `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, token `iss`, token `aud`, and signing algorithm `RS256`. |
 | Login succeeds but `cfwdon` returns 403 | The configured e-mail claim does not match a local `accounts.access_email`, or the local account does not exist. |
 | Error says the e-mail claim is missing | Add or fix the Auth0 Post Login Action, then request a new access token for `AUTH0_AUDIENCE`. |

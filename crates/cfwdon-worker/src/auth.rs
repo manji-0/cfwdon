@@ -12,19 +12,34 @@ pub(crate) use jwt::*;
 pub(crate) use self::account_store::find_account_by_email;
 pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
 use super::oauth_apps::{
-    OAuthAccessTokenRow, app_bearer_token_from_request,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    oauth_access_token_has_any_scope, parse_bearer_authorization_header,
+    OAuthAccessTokenRow, access_token_cookie_max_age, app_bearer_token_from_request,
+    exchange_auth0_refresh_token, find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
+    parse_bearer_authorization_header, set_auth0_session_cookies,
 };
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
-use worker::{Error, Request, Result};
+use std::cell::RefCell;
+use worker::{Error, Request, Response, Result};
 
 pub(crate) use self::account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
 };
 
 pub(crate) const AUTH0_SESSION_COOKIE: &str = "cfwdon_auth0_access_token";
+pub(crate) const AUTH0_REFRESH_COOKIE: &str = "cfwdon_auth0_refresh_token";
+
+#[derive(Clone, Debug)]
+struct PendingAuth0WebSession {
+    user: AuthenticatedUser,
+    access_token: String,
+    refresh_token: Option<String>,
+    access_max_age: i64,
+}
+
+thread_local! {
+    static AUTH0_WEB_SESSION: RefCell<Option<PendingAuth0WebSession>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct OAuthAuthenticatedLocalAccount {
@@ -45,17 +60,52 @@ pub(crate) async fn extract_authenticated_user(
     req: &Request,
     config: &AppConfig,
 ) -> Result<Option<AuthenticatedUser>> {
-    let Some(token) = auth0_token_from_request(req, config)? else {
-        return Ok(None);
-    };
-
-    if config.auth0_domain.is_empty() || config.auth0_audience.is_empty() {
-        return Err(Error::RustError(
-            "missing Auth0 configuration: AUTH0_DOMAIN and AUTH0_AUDIENCE are required".to_owned(),
-        ));
+    if let Some(session) = AUTH0_WEB_SESSION.with(|slot| slot.borrow().clone()) {
+        return Ok(Some(session.user));
     }
 
-    let claims = verify_auth0_jwt(&token, config).await?;
+    if config.auth0_domain.is_empty() || config.auth0_audience.is_empty() {
+        if auth0_token_from_request(req, config)?.is_some() {
+            return Err(Error::RustError(
+                "missing Auth0 configuration: AUTH0_DOMAIN and AUTH0_AUDIENCE are required"
+                    .to_owned(),
+            ));
+        }
+        return Ok(None);
+    }
+
+    if auth0_authorization_header_present(req, config)? {
+        return match user_from_access_token(
+            &auth0_token_from_request(req, config)?.unwrap_or_default(),
+            config,
+        )
+        .await
+        {
+            Ok(user) => Ok(user),
+            Err(error) if auth0_jwt_is_expired_error(&error) => Ok(None),
+            Err(error) => Err(error),
+        };
+    }
+
+    if let Some(token) = request_cookie_value(req, AUTH0_SESSION_COOKIE)? {
+        match user_from_access_token(&token, config).await {
+            Ok(user) => return Ok(user),
+            Err(error) if auth0_jwt_is_expired_error(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    refresh_auth0_cookie_session(req, config).await
+}
+
+async fn user_from_access_token(
+    token: &str,
+    config: &AppConfig,
+) -> Result<Option<AuthenticatedUser>> {
+    if token.trim().is_empty() {
+        return Ok(None);
+    }
+    let claims = verify_auth0_jwt(token, config).await?;
     require_auth0_email_verified(&claims, &config.auth0_email_claim)?;
     let email = claims
         .string_claim(&config.auth0_email_claim)
@@ -69,8 +119,59 @@ pub(crate) async fn extract_authenticated_user(
         })?;
 
     let roles = auth0_roles_from_claims(&claims, config);
-
     Ok(Some(AuthenticatedUser::auth0(email, true, roles)))
+}
+
+async fn refresh_auth0_cookie_session(
+    req: &Request,
+    config: &AppConfig,
+) -> Result<Option<AuthenticatedUser>> {
+    let Some(refresh_token) = request_cookie_value(req, AUTH0_REFRESH_COOKIE)? else {
+        return Ok(None);
+    };
+    let token = match exchange_auth0_refresh_token(config, &refresh_token).await {
+        Ok(token) => token,
+        Err(_) => return Ok(None),
+    };
+    let Some(user) = user_from_access_token(&token.access_token, config).await? else {
+        return Ok(None);
+    };
+    let next_refresh = token
+        .refresh_token
+        .filter(|value| !value.is_empty())
+        .or(Some(refresh_token));
+    AUTH0_WEB_SESSION.with(|slot| {
+        *slot.borrow_mut() = Some(PendingAuth0WebSession {
+            user: user.clone(),
+            access_token: token.access_token,
+            refresh_token: next_refresh,
+            access_max_age: access_token_cookie_max_age(token.expires_in),
+        });
+    });
+    Ok(Some(user))
+}
+
+pub(crate) fn reset_auth0_web_session_state() {
+    AUTH0_WEB_SESSION.with(|slot| slot.borrow_mut().take());
+}
+
+pub(crate) fn apply_auth0_web_session_cookies(response: &mut Response) -> Result<()> {
+    let Some(session) = AUTH0_WEB_SESSION.with(|slot| slot.borrow().clone()) else {
+        return Ok(());
+    };
+    set_auth0_session_cookies(
+        response,
+        &session.access_token,
+        session.refresh_token.as_deref(),
+        session.access_max_age,
+    )
+}
+
+fn auth0_authorization_header_present(req: &Request, config: &AppConfig) -> Result<bool> {
+    Ok(req
+        .headers()
+        .get(&config.auth0_jwt_header)?
+        .is_some_and(|value| !value.trim().is_empty()))
 }
 
 fn auth0_token_from_request(req: &Request, config: &AppConfig) -> Result<Option<String>> {
