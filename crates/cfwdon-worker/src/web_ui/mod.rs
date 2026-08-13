@@ -59,21 +59,10 @@ fn serve_embedded_asset(path: &str) -> Result<Response> {
     };
     let mut response = Response::from_bytes(bytes.to_vec())?;
     response.headers_mut().set("Content-Type", content_type)?;
-    if web_asset_should_revalidate(path) {
-        response.headers_mut().set("Cache-Control", "no-cache")?;
-    } else {
-        response
-            .headers_mut()
-            .set("Cache-Control", "public, max-age=3600")?;
-    }
+    response
+        .headers_mut()
+        .set("Cache-Control", crate::embedded_ui_cache_control(path))?;
     Ok(response)
-}
-
-fn web_asset_should_revalidate(path: &str) -> bool {
-    path.ends_with(".html")
-        || path == "/app/"
-        || path == "/app/sw.js"
-        || path.ends_with(".webmanifest")
 }
 
 fn web_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {

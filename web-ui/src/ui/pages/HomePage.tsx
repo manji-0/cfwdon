@@ -80,7 +80,7 @@ export const HomePage = () => {
     }
 
     let active = true;
-    if (snapshot && ViewCache.isFresh(snapshot.fetchedAt)) {
+    if (snapshot && ViewCache.isRemountSkip(snapshot.fetchedAt)) {
       return () => {
         persist(statusesRef.current, fetchedAtRef.current);
       };

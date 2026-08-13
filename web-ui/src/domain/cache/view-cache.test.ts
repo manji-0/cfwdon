@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountProfile } from "@/domain/account/account";
-import { ViewCache, VIEW_CACHE_FRESH_MS, VIEW_CACHE_MAX_PROFILES } from "@/domain/cache/view-cache";
+import { ViewCache, VIEW_CACHE_PROFILE_FRESH_MS, VIEW_CACHE_MAX_PROFILES, VIEW_CACHE_REMOUNT_SKIP_MS } from "@/domain/cache/view-cache";
 import type { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 
@@ -46,10 +46,16 @@ const profile = (id: string): AccountProfile => ({
 });
 
 describe("ViewCache", () => {
-  it("treats snapshots newer than the freshness window as fresh", () => {
+  it("skips a duplicate streaming-view fetch only on instant remount", () => {
     const now = 1_000_000;
-    expect(ViewCache.isFresh(now - VIEW_CACHE_FRESH_MS + 1, now)).toBe(true);
-    expect(ViewCache.isFresh(now - VIEW_CACHE_FRESH_MS, now)).toBe(false);
+    expect(ViewCache.isRemountSkip(now - VIEW_CACHE_REMOUNT_SKIP_MS + 1, now)).toBe(true);
+    expect(ViewCache.isRemountSkip(now - VIEW_CACHE_REMOUNT_SKIP_MS, now)).toBe(false);
+  });
+
+  it("treats profile snapshots newer than the freshness window as fresh", () => {
+    const now = 1_000_000;
+    expect(ViewCache.isProfileFresh(now - VIEW_CACHE_PROFILE_FRESH_MS + 1, now)).toBe(true);
+    expect(ViewCache.isProfileFresh(now - VIEW_CACHE_PROFILE_FRESH_MS, now)).toBe(false);
   });
 
   it("evicts the oldest profile when over the cap", () => {

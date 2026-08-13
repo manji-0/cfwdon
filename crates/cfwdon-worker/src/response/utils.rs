@@ -11,6 +11,32 @@ pub(crate) const CACHE_TTL_OEMBED: u32 = 3600;
 pub(crate) const CACHE_TTL_STATUS_API: u32 = 30;
 pub(crate) const CACHE_TTL_ACCOUNT_API: u32 = 60;
 
+/// HTML shell, service worker, and web app manifest must revalidate on every load.
+pub(crate) const CACHE_CONTROL_UI_SHELL: &str = "no-cache";
+/// Vite content-hashed files under `/assets/` never reuse a URL after a rebuild.
+pub(crate) const CACHE_CONTROL_HASHED_ASSET: &str = "public, max-age=31536000, immutable";
+/// Unhashed public files (icons) can change in place after deploy.
+pub(crate) const CACHE_CONTROL_UNHASHED_ASSET: &str = "public, max-age=86400";
+
+/// Cache-Control for Worker-embedded `/app` and `/admin` static files.
+pub(crate) fn embedded_ui_cache_control(path: &str) -> &'static str {
+    if ui_shell_must_revalidate(path) {
+        CACHE_CONTROL_UI_SHELL
+    } else if path.contains("/assets/") {
+        CACHE_CONTROL_HASHED_ASSET
+    } else {
+        CACHE_CONTROL_UNHASHED_ASSET
+    }
+}
+
+fn ui_shell_must_revalidate(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    path.ends_with(".html")
+        || path.ends_with('/')
+        || path.ends_with("/sw.js")
+        || path.ends_with(".webmanifest")
+}
+
 pub(crate) fn json_response<T>(
     value: &T,
     content_type: &str,
@@ -97,6 +123,44 @@ mod tests {
         assert_eq!(
             cache_control_header(900, default_stale_while_revalidate(900)),
             "public, max-age=900, stale-while-revalidate=3600"
+        );
+    }
+
+    #[test]
+    fn embedded_ui_shell_revalidates() {
+        assert_eq!(embedded_ui_cache_control("/app/"), CACHE_CONTROL_UI_SHELL);
+        assert_eq!(embedded_ui_cache_control("/admin/"), CACHE_CONTROL_UI_SHELL);
+        assert_eq!(
+            embedded_ui_cache_control("/app/index.html"),
+            CACHE_CONTROL_UI_SHELL
+        );
+        assert_eq!(
+            embedded_ui_cache_control("/app/sw.js"),
+            CACHE_CONTROL_UI_SHELL
+        );
+        assert_eq!(
+            embedded_ui_cache_control("/app/manifest.webmanifest"),
+            CACHE_CONTROL_UI_SHELL
+        );
+    }
+
+    #[test]
+    fn embedded_hashed_assets_are_immutable() {
+        assert_eq!(
+            embedded_ui_cache_control("/app/assets/index-Cq2FpDWP.js"),
+            CACHE_CONTROL_HASHED_ASSET
+        );
+        assert_eq!(
+            embedded_ui_cache_control("/admin/assets/index-abc.css"),
+            CACHE_CONTROL_HASHED_ASSET
+        );
+    }
+
+    #[test]
+    fn embedded_unhashed_icons_use_short_public_ttl() {
+        assert_eq!(
+            embedded_ui_cache_control("/app/icons/icon-192.png"),
+            CACHE_CONTROL_UNHASHED_ASSET
         );
     }
 }

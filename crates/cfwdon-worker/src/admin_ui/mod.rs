@@ -50,7 +50,7 @@ fn serve_embedded_asset(path: &str) -> Result<Response> {
     response.headers_mut().set("Content-Type", content_type)?;
     response
         .headers_mut()
-        .set("Cache-Control", "public, max-age=3600")?;
+        .set("Cache-Control", crate::embedded_ui_cache_control(path))?;
     Ok(response)
 }
 

@@ -3,7 +3,10 @@ import type { Notification } from "@/domain/notification/notification";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 
-export const VIEW_CACHE_FRESH_MS = 30_000;
+/** Skip a duplicate fetch on Strict Mode / instant remount. Streaming views still revalidate after this. */
+export const VIEW_CACHE_REMOUNT_SKIP_MS = 2_000;
+/** Profile pages have no live stream; skip refetch inside this window. */
+export const VIEW_CACHE_PROFILE_FRESH_MS = 30_000;
 export const VIEW_CACHE_MAX_PROFILES = 20;
 
 export type TimelineSnapshot = Readonly<{
@@ -38,7 +41,11 @@ export const ViewCache = {
     profiles: new Map(),
   }),
 
-  isFresh: (fetchedAt: number, now = Date.now()): boolean => now - fetchedAt < VIEW_CACHE_FRESH_MS,
+  isRemountSkip: (fetchedAt: number, now = Date.now()): boolean =>
+    now - fetchedAt < VIEW_CACHE_REMOUNT_SKIP_MS,
+
+  isProfileFresh: (fetchedAt: number, now = Date.now()): boolean =>
+    now - fetchedAt < VIEW_CACHE_PROFILE_FRESH_MS,
 
   writeHome: (state: ViewCacheState, snapshot: TimelineSnapshot): ViewCacheState => ({
     ...state,

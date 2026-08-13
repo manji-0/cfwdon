@@ -64,7 +64,7 @@ export const ProfilePage = () => {
     setError("");
 
     let active = true;
-    const skipFetch = snapshot !== null && ViewCache.isFresh(snapshot.fetchedAt);
+    const skipFetch = snapshot !== null && ViewCache.isProfileFresh(snapshot.fetchedAt);
     if (!skipFetch) {
       void Promise.all([
         fetchAccountProfile(accountId),
