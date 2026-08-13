@@ -1,32 +1,80 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { ViewCache } from "@/domain/cache/view-cache";
 import type { Notification } from "@/domain/notification/notification";
 import { fetchNotifications } from "@/infrastructure/api/notification";
 import { AppShell } from "@/ui/components/AppShell";
 import { NotificationCard } from "@/ui/components/NotificationCard";
+import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useStreamingNotifications } from "@/ui/hooks/useStreamingNotifications";
+import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 
 export const NotificationsPage = () => {
-  const [notifications, setNotifications] = useState<ReadonlyArray<Notification>>([]);
-  const [loading, setLoading] = useState(true);
+  const cache = useViewCache();
+  const cached = cache.getNotifications();
+  const [notifications, setNotifications] = useState<ReadonlyArray<Notification>>(
+    cached?.notifications ?? [],
+  );
+  const [loading, setLoading] = useState(!cached);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const fetchedAtRef = useRef(cached?.fetchedAt ?? 0);
+  const notificationsRef = useRef(notifications);
+  const scrollYRef = useWindowScrollY();
+  notificationsRef.current = notifications;
 
   useStreamingNotifications(!loading, setNotifications);
 
-  const loadNotifications = useCallback(async (options?: { maxId?: string; replace?: boolean }) => {
-    const result = await fetchNotifications({ maxId: options?.maxId, limit: 20 });
-    if (result.isErr()) {
-      throw new Error(mastodonErrorMessage(result.error));
-    }
-    setNotifications((current) =>
-      options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-    );
-  }, []);
+  const persist = useCallback(
+    (next: ReadonlyArray<Notification>, fetchedAt: number) => {
+      if (fetchedAt === 0) {
+        return;
+      }
+      cache.writeNotifications({
+        notifications: next,
+        fetchedAt,
+        scrollY: scrollYRef.current,
+      });
+    },
+    [cache],
+  );
+
+  const loadNotifications = useCallback(
+    async (options?: { maxId?: string; replace?: boolean }) => {
+      const result = await fetchNotifications({ maxId: options?.maxId, limit: 20 });
+      if (result.isErr()) {
+        throw new Error(mastodonErrorMessage(result.error));
+      }
+      const replace = options?.replace || !options?.maxId;
+      const next = replace ? result.value : [...notificationsRef.current, ...result.value];
+      if (replace) {
+        fetchedAtRef.current = Date.now();
+      }
+      setNotifications(next);
+      persist(next, fetchedAtRef.current);
+    },
+    [persist],
+  );
 
   useEffect(() => {
+    const snapshot = cache.getNotifications();
+    if (snapshot) {
+      setNotifications(snapshot.notifications);
+      fetchedAtRef.current = snapshot.fetchedAt;
+      setLoading(false);
+      requestAnimationFrame(() => window.scrollTo(0, snapshot.scrollY));
+    }
+
     let active = true;
-    setLoading(true);
+    if (snapshot && ViewCache.isFresh(snapshot.fetchedAt)) {
+      return () => {
+        persist(notificationsRef.current, fetchedAtRef.current);
+      };
+    }
+
+    if (!snapshot) {
+      setLoading(true);
+    }
     void loadNotifications({ replace: true })
       .catch((loadError) => {
         if (active) {
@@ -40,8 +88,9 @@ export const NotificationsPage = () => {
       });
     return () => {
       active = false;
+      persist(notificationsRef.current, fetchedAtRef.current);
     };
-  }, [loadNotifications]);
+  }, [cache, loadNotifications, persist]);
 
   const handleLoadMore = async () => {
     const last = notifications.at(-1);

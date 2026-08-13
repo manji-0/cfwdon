@@ -28,9 +28,11 @@ export const mastodon = scope({
     display_name: "string",
     note: "string",
     avatar: "string",
+    "header?": "string",
     username: "string>0",
     acct: "string>0",
     source: {
+      "note?": "string",
       privacy: "string",
       sensitive: "boolean",
       language: "string | null",

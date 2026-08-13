@@ -33,6 +33,15 @@ export const Status = {
 
   boostedBy: (status: Status): AccountRefType | null =>
     status.reblog ? status.account : null,
+
+  replaceInList: (statuses: ReadonlyArray<Status>, updated: Status): ReadonlyArray<Status> =>
+    statuses.map((item) => {
+      const body = item.reblog ?? item;
+      if (body.id === updated.id) {
+        return item.reblog ? { ...item, reblog: updated } : updated;
+      }
+      return item;
+    }),
 } as const;
 
 export type StatusContext = Readonly<{

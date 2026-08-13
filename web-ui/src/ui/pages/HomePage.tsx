@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { ViewCache } from "@/domain/cache/view-cache";
 import type { Status } from "@/domain/status/status";
+import { Status as StatusModel } from "@/domain/status/status";
 import {
   bookmarkStatus,
   createStatus,
@@ -16,32 +18,79 @@ import { Composer, type ComposerHandle } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
+import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
+import { useViewCache } from "@/ui/context/ViewCacheContext";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
-  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>([]);
-  const [loading, setLoading] = useState(true);
+  const cache = useViewCache();
+  const cached = cache.getHome();
+  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(cached?.statuses ?? []);
+  const [loading, setLoading] = useState(!cached);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const fetchedAtRef = useRef(cached?.fetchedAt ?? 0);
+  const statusesRef = useRef(statuses);
+  const scrollYRef = useWindowScrollY();
+  statusesRef.current = statuses;
 
   useStreamingTimeline(!loading, setStatuses);
 
-  const loadTimeline = useCallback(async (options?: { maxId?: string; replace?: boolean }) => {
-    const result = await fetchHomeTimeline({ maxId: options?.maxId, limit: 20 });
-    if (result.isErr()) {
-      throw new Error(mastodonErrorMessage(result.error));
-    }
-    setStatuses((current) =>
-      options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-    );
-  }, []);
+  const persist = useCallback(
+    (nextStatuses: ReadonlyArray<Status>, fetchedAt: number) => {
+      if (fetchedAt === 0) {
+        return;
+      }
+      cache.writeHome({
+        statuses: nextStatuses,
+        fetchedAt,
+        scrollY: scrollYRef.current,
+      });
+    },
+    [cache],
+  );
+
+  const loadTimeline = useCallback(
+    async (options?: { maxId?: string; replace?: boolean }) => {
+      const result = await fetchHomeTimeline({ maxId: options?.maxId, limit: 20 });
+      if (result.isErr()) {
+        throw new Error(mastodonErrorMessage(result.error));
+      }
+      const replace = options?.replace || !options?.maxId;
+      const next = replace ? result.value : [...statusesRef.current, ...result.value];
+      if (replace) {
+        fetchedAtRef.current = Date.now();
+      }
+      setStatuses(next);
+      persist(next, fetchedAtRef.current);
+    },
+    [persist],
+  );
 
   useEffect(() => {
+    const snapshot = cache.getHome();
+    if (snapshot) {
+      setStatuses(snapshot.statuses);
+      fetchedAtRef.current = snapshot.fetchedAt;
+      setLoading(false);
+      requestAnimationFrame(() => window.scrollTo(0, snapshot.scrollY));
+    }
+
     let active = true;
-    setLoading(true);
+    if (snapshot && ViewCache.isFresh(snapshot.fetchedAt)) {
+      return () => {
+        persist(statusesRef.current, fetchedAtRef.current);
+      };
+    }
+
+    if (!snapshot) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     void loadTimeline({ replace: true })
       .catch((loadError) => {
         if (active) {
@@ -51,12 +100,14 @@ export const HomePage = () => {
       .finally(() => {
         if (active) {
           setLoading(false);
+          setRefreshing(false);
         }
       });
     return () => {
       active = false;
+      persist(statusesRef.current, fetchedAtRef.current);
     };
-  }, [loadTimeline]);
+  }, [cache, loadTimeline, persist]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -103,19 +154,14 @@ export const HomePage = () => {
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    setStatuses((current) => [result.value, ...current]);
+    const next = [result.value, ...statusesRef.current];
+    setStatuses(next);
+    persist(next, fetchedAtRef.current);
   };
 
   const updateStatusInList = (updated: Status) => {
-    setStatuses((current) =>
-      current.map((item) => {
-        const body = item.reblog ?? item;
-        if (body.id === updated.id) {
-          return item.reblog ? { ...item, reblog: updated } : updated;
-        }
-        return item;
-      }),
-    );
+    setStatuses((current) => StatusModel.replaceInList(current, updated));
+    cache.patchStatus(updated);
   };
 
   const handleFavourite = async (status: Status) => {

@@ -87,6 +87,12 @@ export const mastodonPatchJson = (
     body: JSON.stringify(body),
   });
 
+export const mastodonPatchForm = (path: string, form: FormData): JsonResult<unknown> =>
+  mastodonFetchJson(path, {
+    method: "PATCH",
+    body: form,
+  });
+
 export const mastodonPutJson = (
   path: string,
   body: unknown,

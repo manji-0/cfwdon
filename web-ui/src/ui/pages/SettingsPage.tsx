@@ -110,7 +110,7 @@ export const SettingsPage = () => {
     setBlocks(blocksResult.value);
 
     setDisplayName(credentialsResult.value.displayName);
-    setNote(credentialsResult.value.note);
+    setNote(credentialsResult.value.source.note);
     setDefaultVisibility(preferencesResult.value.defaultVisibility);
     setDefaultSensitive(preferencesResult.value.defaultSensitive);
     setDefaultLanguage(preferencesResult.value.defaultLanguage ?? "");
@@ -253,6 +253,11 @@ export const SettingsPage = () => {
                   disabled={savingProfile}
                 />
               </label>
+              <p className="app-muted">
+                アイコンと背景画像は{" "}
+                <Link to="/profile">プロフィールページ</Link>
+                から変更できます。
+              </p>
               <button
                 type="button"
                 className="app-button"

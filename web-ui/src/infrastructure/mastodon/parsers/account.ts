@@ -38,9 +38,11 @@ export const parseAccountCredentials = mastodon.type("AccountCredentialsApi").pi
     displayName: value.display_name,
     note: value.note,
     avatar: value.avatar,
+    header: value.header ?? "",
     username: value.username,
     acct: value.acct,
     source: {
+      note: value.source.note ?? "",
       privacy: value.source.privacy,
       sensitive: value.source.sensitive,
       language: value.source.language,
