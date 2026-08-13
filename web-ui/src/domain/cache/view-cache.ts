@@ -34,6 +34,11 @@ export type ViewCacheState = Readonly<{
   profiles: ReadonlyMap<string, ProfileSnapshot>;
 }>;
 
+export type ViewCacheStreamEvent =
+  | { readonly kind: "update"; readonly status: Status }
+  | { readonly kind: "delete"; readonly statusId: string }
+  | { readonly kind: "notification"; readonly notification: Notification };
+
 export const ViewCache = {
   empty: (): ViewCacheState => ({
     home: null,
@@ -75,6 +80,38 @@ export const ViewCache = {
     return { ...state, profiles };
   },
 
+  applyStreamEvent: (state: ViewCacheState, event: ViewCacheStreamEvent): ViewCacheState => {
+    switch (event.kind) {
+      case "update":
+        if (!state.home) {
+          return state;
+        }
+        return {
+          ...state,
+          home: {
+            ...state.home,
+            statuses: StatusModel.prependUnique(state.home.statuses, event.status),
+          },
+        };
+      case "notification":
+        if (!state.notifications) {
+          return state;
+        }
+        if (state.notifications.notifications.some((item) => item.id === event.notification.id)) {
+          return state;
+        }
+        return {
+          ...state,
+          notifications: {
+            ...state.notifications,
+            notifications: [event.notification, ...state.notifications.notifications],
+          },
+        };
+      case "delete":
+        return removeStatus(state, event.statusId);
+    }
+  },
+
   patchStatus: (state: ViewCacheState, updated: Status): ViewCacheState => {
     const profiles = new Map<string, ProfileSnapshot>();
     for (const [accountId, snapshot] of state.profiles) {
@@ -103,3 +140,34 @@ export const ViewCache = {
     };
   },
 } as const;
+
+const removeStatus = (state: ViewCacheState, statusId: string): ViewCacheState => {
+  const profiles = new Map<string, ProfileSnapshot>();
+  for (const [accountId, snapshot] of state.profiles) {
+    profiles.set(accountId, {
+      ...snapshot,
+      statuses: snapshot.statuses.filter(
+        (item) => item.id !== statusId && item.reblog?.id !== statusId,
+      ),
+    });
+  }
+  return {
+    home: state.home
+      ? {
+          ...state.home,
+          statuses: state.home.statuses.filter(
+            (item) => item.id !== statusId && item.reblog?.id !== statusId,
+          ),
+        }
+      : null,
+    notifications: state.notifications
+      ? {
+          ...state.notifications,
+          notifications: state.notifications.notifications.filter(
+            (item) => item.status?.id !== statusId,
+          ),
+        }
+      : null,
+    profiles,
+  };
+};

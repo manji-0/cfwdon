@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ViewCache,
   type NotificationsSnapshot,
@@ -7,6 +16,7 @@ import {
   type ViewCacheState,
 } from "@/domain/cache/view-cache";
 import type { Status } from "@/domain/status/status";
+import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
 type ViewCacheContextValue = Readonly<{
   getHome: () => TimelineSnapshot | null;
@@ -46,6 +56,16 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
 
   const patchStatus = useCallback((updated: Status) => {
     setState((current) => ViewCache.patchStatus(current, updated));
+  }, []);
+
+  useEffect(() => {
+    const subscription = StreamingUser.subscribe((event) => {
+      if (event.kind === "conversation") {
+        return;
+      }
+      setState((current) => ViewCache.applyStreamEvent(current, event));
+    });
+    return () => subscription.close();
   }, []);
 
   const value = useMemo(

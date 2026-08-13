@@ -92,4 +92,43 @@ describe("ViewCache", () => {
     expect(state.home?.statuses[0]?.favourited).toBe(true);
     expect(state.profiles.get("1")?.statuses[0]?.favourited).toBe(true);
   });
+
+  it("applies live stream events to existing home and notification snapshots", () => {
+    let state = ViewCache.writeHome(ViewCache.empty(), {
+      statuses: [status("s1")],
+      fetchedAt: 1,
+      scrollY: 0,
+    });
+    state = ViewCache.writeNotifications(state, {
+      notifications: [],
+      fetchedAt: 1,
+      scrollY: 0,
+    });
+
+    state = ViewCache.applyStreamEvent(state, { kind: "update", status: status("s2") });
+    expect(state.home?.statuses.map((item) => item.id)).toEqual(["s2", "s1"]);
+
+    const mention = {
+      id: "n1",
+      type: "mention",
+      groupKey: "n1",
+      createdAt: "2026-08-13T00:00:00.000Z",
+      account,
+      status: status("s2"),
+    };
+    state = ViewCache.applyStreamEvent(state, { kind: "notification", notification: mention });
+    expect(state.notifications?.notifications).toEqual([mention]);
+
+    state = ViewCache.applyStreamEvent(state, { kind: "delete", statusId: "s2" });
+    expect(state.home?.statuses.map((item) => item.id)).toEqual(["s1"]);
+    expect(state.notifications?.notifications).toEqual([]);
+  });
+
+  it("does not invent snapshots from stream events before the first fetch", () => {
+    const next = ViewCache.applyStreamEvent(ViewCache.empty(), {
+      kind: "update",
+      status: status("s1"),
+    });
+    expect(next.home).toBeNull();
+  });
 });
