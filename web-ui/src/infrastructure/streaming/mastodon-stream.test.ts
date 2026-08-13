@@ -68,6 +68,24 @@ describe("parseStreamingPayload", () => {
     }
   });
 
+  it("parses conversation events", () => {
+    const event = parseStreamingPayload(
+      "conversation",
+      JSON.stringify({
+        id: "conv-1",
+        unread: true,
+        accounts: [sampleStatus.account],
+        last_status: sampleStatus,
+      }),
+    );
+    expect(event?.kind).toBe("conversation");
+    if (event?.kind === "conversation") {
+      expect(event.conversation.id).toBe("conv-1");
+      expect(event.conversation.unread).toBe(true);
+      expect(event.conversation.lastStatus?.id).toBe("status-1");
+    }
+  });
+
   it("ignores unknown or invalid payloads", () => {
     expect(parseStreamingPayload("filters_changed", "{}")).toBeNull();
     expect(parseStreamingPayload("update", "not-json")).toBeNull();

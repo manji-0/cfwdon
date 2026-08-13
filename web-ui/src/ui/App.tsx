@@ -10,8 +10,10 @@ import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
 import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
+  ConversationPage,
   ListsPage,
   MessagesPage,
+  NewMessagePage,
   NotificationsPage,
   ProfilePage,
   SearchPage,
@@ -50,6 +52,8 @@ const AppRoutes = ({
             <Route path="/bookmarks" element={<BookmarksPage />} />
             <Route path="/lists" element={<ListsPage />} />
             <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/messages/new" element={<NewMessagePage />} />
+            <Route path="/messages/:conversationId" element={<ConversationPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

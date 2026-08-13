@@ -20,6 +20,9 @@ export default defineConfig(({ mode }) => {
             if (!id.includes("node_modules")) {
               return undefined;
             }
+            if (id.includes("neverthrow")) {
+              return "neverthrow";
+            }
             if (id.includes("arktype")) {
               return "arktype";
             }

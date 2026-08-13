@@ -1,4 +1,4 @@
-import { type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { Conversation } from "@/domain/conversations/conversation";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import {
@@ -39,3 +39,33 @@ export const deleteConversation = (
   conversationId: string,
 ): ResultAsync<null, MastodonFetchError> =>
   mastodonDeleteJson(`/api/v1/conversations/${encodeURIComponent(conversationId)}`).map(() => null);
+
+export const findConversationById = (
+  conversationId: string,
+): ResultAsync<Conversation, MastodonFetchError> =>
+  fetchConversations({ limit: 80 }).andThen((conversations) => {
+    const found = conversations.find((item) => item.id === conversationId);
+    if (!found) {
+      return errAsync({
+        kind: "HttpStatus",
+        status: 404,
+        body: "会話が見つかりません",
+      } as const);
+    }
+    return okAsync(found);
+  });
+
+export const findConversationByStatusId = (
+  statusId: string,
+): ResultAsync<Conversation, MastodonFetchError> =>
+  fetchConversations({ limit: 80 }).andThen((conversations) => {
+    const found = conversations.find((item) => item.lastStatus?.id === statusId);
+    if (!found) {
+      return errAsync({
+        kind: "HttpStatus",
+        status: 404,
+        body: "会話が見つかりません",
+      } as const);
+    }
+    return okAsync(found);
+  });

@@ -10,6 +10,11 @@ describe("AppRoute", () => {
     expect(AppRoute.fromPathname("/bookmarks")).toEqual({ kind: "Bookmarks" });
     expect(AppRoute.fromPathname("/lists")).toEqual({ kind: "Lists" });
     expect(AppRoute.fromPathname("/messages")).toEqual({ kind: "Messages" });
+    expect(AppRoute.fromPathname("/messages/new")).toEqual({ kind: "NewMessage" });
+    expect(AppRoute.fromPathname("/messages/conv-1")).toEqual({
+      kind: "Conversation",
+      conversationId: "conv-1",
+    });
   });
 
   it("round-trips through toPath", () => {
@@ -18,6 +23,8 @@ describe("AppRoute", () => {
       AppRoute.bookmarks(),
       AppRoute.lists(),
       AppRoute.messages(),
+      AppRoute.newMessage(),
+      AppRoute.conversation("conv-1"),
     ]) {
       expect(AppRoute.fromPathname(AppRoute.toPath(route))).toEqual(route);
     }

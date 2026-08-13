@@ -39,3 +39,13 @@ export const MessagesPage = lazy(async () => {
   const module = await import("@/ui/pages/MessagesPage");
   return { default: module.MessagesPage };
 });
+
+export const NewMessagePage = lazy(async () => {
+  const module = await import("@/ui/pages/NewMessagePage");
+  return { default: module.NewMessagePage };
+});
+
+export const ConversationPage = lazy(async () => {
+  const module = await import("@/ui/pages/ConversationPage");
+  return { default: module.ConversationPage };
+});

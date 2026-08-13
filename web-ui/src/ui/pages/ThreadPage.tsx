@@ -158,7 +158,10 @@ export const ThreadPage = () => {
       {!loading && focus ? (
         <>
           {isDirectThread ? (
-            <p className="app-muted thread-dm-hint">ダイレクト返信は相手にのみ届きます。</p>
+            <p className="app-muted thread-dm-hint">
+              ダイレクト返信は相手にのみ届きます。会話画面は{" "}
+              <Link to="/messages">メッセージ</Link> から開けます。
+            </p>
           ) : null}
           <div className="timeline">
             {ancestors.map((status) => (
@@ -195,6 +198,7 @@ export const ThreadPage = () => {
             placeholder={isDirectThread ? "ダイレクトメッセージを送信" : "返信を投稿"}
             submitLabel={isDirectThread ? "送信" : "返信"}
             initialVisibility={isDirectThread ? Visibility.direct() : Visibility.public()}
+            lockVisibility={isDirectThread}
             inReplyToId={statusId}
             onSubmit={handleReply}
           />

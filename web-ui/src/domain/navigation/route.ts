@@ -6,7 +6,9 @@ export type AppRoute =
   | Readonly<{ kind: "Settings" }>
   | Readonly<{ kind: "Bookmarks" }>
   | Readonly<{ kind: "Lists" }>
-  | Readonly<{ kind: "Messages" }>;
+  | Readonly<{ kind: "Messages" }>
+  | Readonly<{ kind: "NewMessage" }>
+  | Readonly<{ kind: "Conversation"; conversationId: string }>;
 
 export const AppRoute = {
   home: (): AppRoute => ({ kind: "Home" }),
@@ -17,13 +19,16 @@ export const AppRoute = {
   bookmarks: (): AppRoute => ({ kind: "Bookmarks" }),
   lists: (): AppRoute => ({ kind: "Lists" }),
   messages: (): AppRoute => ({ kind: "Messages" }),
+  newMessage: (): AppRoute => ({ kind: "NewMessage" }),
+  conversation: (conversationId: string): AppRoute => ({ kind: "Conversation", conversationId }),
 
   fromPathname: (pathname: string): AppRoute => {
     const normalized = pathname
       .replace(/^\/app\/?/, "")
       .replace(/^\/+/, "")
       .replace(/\/$/, "");
-    switch (normalized) {
+    const [head, ...rest] = normalized.split("/");
+    switch (head) {
       case "":
         return AppRoute.home();
       case "notifications":
@@ -38,8 +43,18 @@ export const AppRoute = {
         return AppRoute.bookmarks();
       case "lists":
         return AppRoute.lists();
-      case "messages":
+      case "messages": {
+        if (rest.length === 0) {
+          return AppRoute.messages();
+        }
+        if (rest[0] === "new" && rest.length === 1) {
+          return AppRoute.newMessage();
+        }
+        if (rest.length === 1 && rest[0]) {
+          return AppRoute.conversation(rest[0]);
+        }
         return AppRoute.messages();
+      }
       default:
         return AppRoute.home();
     }
@@ -63,6 +78,10 @@ export const AppRoute = {
         return "/lists";
       case "Messages":
         return "/messages";
+      case "NewMessage":
+        return "/messages/new";
+      case "Conversation":
+        return `/messages/${route.conversationId}`;
     }
   },
 
@@ -83,6 +102,8 @@ export const AppRoute = {
       case "Lists":
         return "リスト";
       case "Messages":
+      case "NewMessage":
+      case "Conversation":
         return "メッセージ";
     }
   },

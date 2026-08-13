@@ -1,11 +1,14 @@
+import type { Conversation } from "@/domain/conversations/conversation";
 import type { Notification } from "@/domain/notification/notification";
 import type { Status } from "@/domain/status/status";
 import { isArkError } from "@/infrastructure/mastodon/parse";
+import { parseConversation } from "@/infrastructure/mastodon/parsers/conversations";
 import { parseNotification } from "@/infrastructure/mastodon/parsers/notification";
 import { parseStatus } from "@/infrastructure/mastodon/parsers/status";
-
-/** Keepalive / reconnect when the socket closes unexpectedly. */
-const RECONNECT_MS = 3_000;
+import {
+  reconnectDelayMs,
+  streamingSubscribeMessage,
+} from "@/infrastructure/streaming/reconnect";
 
 export type StreamingSubscription = {
   readonly close: () => void;
@@ -14,7 +17,8 @@ export type StreamingSubscription = {
 export type StreamingUserEvent =
   | { readonly kind: "update"; readonly status: Status }
   | { readonly kind: "delete"; readonly statusId: string }
-  | { readonly kind: "notification"; readonly notification: Notification };
+  | { readonly kind: "notification"; readonly notification: Notification }
+  | { readonly kind: "conversation"; readonly conversation: Conversation };
 
 /**
  * Mastodon WS event shape from Stream Hub DO / worker poll fallback:
@@ -26,6 +30,8 @@ export type StreamingWebSocketMessage = {
   readonly error?: string;
   readonly stream?: ReadonlyArray<string>;
 };
+
+export type StreamingListener = (event: StreamingUserEvent) => void;
 
 export const streamingWebSocketUrl = (
   stream: string,
@@ -63,6 +69,15 @@ export const parseStreamingPayload = (
     }
   }
 
+  if (eventName === "conversation") {
+    try {
+      const conversation = parseConversation(JSON.parse(data) as unknown);
+      return isArkError(conversation) ? null : { kind: "conversation", conversation };
+    } catch {
+      return null;
+    }
+  }
+
   return null;
 };
 
@@ -89,84 +104,160 @@ export const parseStreamingWebSocketMessage = (
   return parseStreamingPayload(eventName, payload);
 };
 
-/**
- * Subscribe to the authenticated `user` stream via WebSocket.
- *
- * The worker upgrades this socket to the Stream Hub Durable Object
- * (`upgrade_stream_hub_websocket` → session hub for the viewer), so events
- * are pushed from DO rather than relying on the SSE D1-poll path.
- *
- * Soft-fail: connection errors and parse failures are ignored; callers keep
- * REST-loaded data. Reconnects after unexpected close until `close()`.
- */
-export const StreamingUser = {
-  subscribe: (onEvent: (event: StreamingUserEvent) => void): StreamingSubscription => {
-    let closed = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+const isDocumentHidden = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
 
-    const clearReconnect = () => {
-      if (reconnectTimer !== null) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-    };
+const createStreamingHub = () => {
+  const listeners = new Set<StreamingListener>();
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+  let waitingWhileHidden = false;
+  let visibilityBound = false;
 
-    const scheduleReconnect = () => {
-      if (closed || reconnectTimer !== null) {
-        return;
-      }
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, RECONNECT_MS);
-    };
+  const emit = (event: StreamingUserEvent) => {
+    for (const listener of listeners) {
+      listener(event);
+    }
+  };
 
-    const connect = () => {
-      if (closed) {
-        return;
-      }
+  const clearReconnect = () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
 
+  const disconnectSocket = () => {
+    clearReconnect();
+    waitingWhileHidden = false;
+    if (socket) {
+      const current = socket;
+      socket = null;
+      current.close();
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (listeners.size === 0 || reconnectTimer !== null) {
+      return;
+    }
+    if (isDocumentHidden()) {
+      waitingWhileHidden = true;
+      return;
+    }
+    const delay = reconnectDelayMs(attempt);
+    attempt += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
+    if (listeners.size === 0 || socket) {
+      return;
+    }
+    if (isDocumentHidden()) {
+      waitingWhileHidden = true;
+      return;
+    }
+
+    try {
+      socket = new WebSocket(streamingWebSocketUrl("user"));
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+
+    socket.addEventListener("open", () => {
+      attempt = 0;
+      waitingWhileHidden = false;
       try {
-        socket = new WebSocket(streamingWebSocketUrl("user"));
+        socket?.send(streamingSubscribeMessage("direct"));
       } catch {
-        scheduleReconnect();
+        // Subscribe is best-effort; user stream is already on the upgrade URL.
+      }
+    });
+
+    socket.addEventListener("message", (messageEvent) => {
+      if (typeof messageEvent.data !== "string") {
         return;
       }
+      const event = parseStreamingWebSocketMessage(messageEvent.data);
+      if (event) {
+        emit(event);
+      }
+    });
 
-      socket.addEventListener("message", (messageEvent) => {
-        if (closed || typeof messageEvent.data !== "string") {
-          return;
-        }
-        const event = parseStreamingWebSocketMessage(messageEvent.data);
-        if (event) {
-          onEvent(event);
-        }
-      });
+    socket.addEventListener("close", () => {
+      socket = null;
+      if (listeners.size > 0) {
+        scheduleReconnect();
+      }
+    });
 
-      socket.addEventListener("close", () => {
-        socket = null;
-        if (!closed) {
-          scheduleReconnect();
-        }
-      });
+    socket.addEventListener("error", () => {
+      // Browser fires error then close; reconnect is handled on close.
+    });
+  };
 
-      socket.addEventListener("error", () => {
-        // Browser fires error then close; reconnect is handled on close.
-      });
-    };
+  const onVisibilityChange = () => {
+    if (isDocumentHidden()) {
+      clearReconnect();
+      if (listeners.size > 0 && !socket) {
+        waitingWhileHidden = true;
+      }
+      return;
+    }
+    if (waitingWhileHidden && listeners.size > 0 && !socket) {
+      waitingWhileHidden = false;
+      connect();
+    }
+  };
 
-    connect();
+  const bindVisibility = () => {
+    if (visibilityBound || typeof document === "undefined") {
+      return;
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    visibilityBound = true;
+  };
 
-    return {
-      close: () => {
-        closed = true;
-        clearReconnect();
-        if (socket) {
-          socket.close();
-          socket = null;
-        }
-      },
-    };
-  },
+  const unbindVisibility = () => {
+    if (!visibilityBound || typeof document === "undefined") {
+      return;
+    }
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    visibilityBound = false;
+  };
+
+  return {
+    subscribe: (onEvent: StreamingListener): StreamingSubscription => {
+      listeners.add(onEvent);
+      bindVisibility();
+      if (listeners.size === 1) {
+        connect();
+      }
+      return {
+        close: () => {
+          listeners.delete(onEvent);
+          if (listeners.size === 0) {
+            unbindVisibility();
+            attempt = 0;
+            disconnectSocket();
+          }
+        },
+      };
+    },
+  };
 };
+
+/**
+ * Shared authenticated stream hub.
+ *
+ * One WebSocket to `/api/v1/streaming?stream=user`, then a `direct` subscribe
+ * so the session Stream Hub DO fans out both channels. Listeners share the
+ * socket via refcount; the last `close()` tears it down.
+ */
+export const StreamingUser = createStreamingHub();

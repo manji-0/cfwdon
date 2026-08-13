@@ -19,6 +19,7 @@ export const applyStreamingTimelineEvent = (
     case "delete":
       return current.filter((status) => status.id !== event.statusId);
     case "notification":
+    case "conversation":
       return current;
   }
 };
@@ -33,7 +34,7 @@ export const useStreamingTimeline = (
       return undefined;
     }
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "notification") {
+      if (event.kind === "notification" || event.kind === "conversation") {
         return;
       }
       onStatusesChange((current) => applyStreamingTimelineEvent(current, event));

@@ -18,6 +18,7 @@ type ComposerProps = Readonly<{
   placeholder?: string;
   submitLabel?: string;
   initialVisibility?: Visibility;
+  lockVisibility?: boolean;
   inReplyToId?: string;
   disabled?: boolean;
   onSubmit: (input: {
@@ -44,6 +45,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     placeholder = "いまどうしてる？",
     submitLabel = "投稿",
     initialVisibility = VisibilityModel.public(),
+    lockVisibility = false,
     inReplyToId,
     disabled = false,
     onSubmit,
@@ -204,20 +206,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         onRemove={handleRemoveMedia}
       />
       <div className="composer-toolbar">
-        <label className="composer-visibility">
-          <span className="app-muted">公開範囲</span>
-          <select
-            value={VisibilityModel.toApi(visibility)}
-            onChange={(event) => setVisibility(VisibilityModel.fromApi(event.target.value))}
-            disabled={disabled || submitting}
-          >
-            {VISIBILITY_OPTIONS.map((option) => (
-              <option key={option.kind} value={VisibilityModel.toApi(option)}>
-                {VisibilityModel.label(option)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {lockVisibility ? null : (
+          <label className="composer-visibility">
+            <span className="app-muted">公開範囲</span>
+            <select
+              value={VisibilityModel.toApi(visibility)}
+              onChange={(event) => setVisibility(VisibilityModel.fromApi(event.target.value))}
+              disabled={disabled || submitting}
+            >
+              {VISIBILITY_OPTIONS.map((option) => (
+                <option key={option.kind} value={VisibilityModel.toApi(option)}>
+                  {VisibilityModel.label(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="composer-cw">
           <input
             type="checkbox"
