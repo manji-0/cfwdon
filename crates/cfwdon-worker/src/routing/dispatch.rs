@@ -3,8 +3,12 @@ use super::{
     selection::fast_router_kind,
 };
 use crate::root_document;
-use crate::{CACHE_TTL_HEALTH, cache_public_response, dispatch_admin_route, is_admin_ui_path};
-use worker::{Env, Request, Response, Result};
+use crate::{
+    CACHE_TTL_HEALTH, accept_prefers_web_ui_html, cache_public_response, dispatch_admin_route,
+    is_admin_ui_path, is_web_api_path, is_web_ui_path, load_config_from_env, web_app_url,
+    web_session_response, web_ui_redirect_response, web_ui_response,
+};
+use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn dispatch_route(
     req: Request,
@@ -14,6 +18,20 @@ pub(crate) async fn dispatch_route(
 ) -> Result<Response> {
     if path.starts_with("/api/cfwdon/admin/") || is_admin_ui_path(path) {
         return dispatch_admin_route(req, env, method, path).await;
+    }
+
+    if is_web_api_path(path) {
+        return web_api_router().run(req, env).await;
+    }
+
+    if is_web_ui_path(path) {
+        return web_ui_router().run(req, env).await;
+    }
+
+    if method == "GET" && path == "/" && accept_prefers_web_ui_html(&req)? {
+        let config = load_config_from_env(&env);
+        let redirect_url = web_app_url(&config, &req)?;
+        return web_ui_redirect_response(redirect_url.as_str());
     }
 
     if method == "GET" && path == "/" {
@@ -34,4 +52,30 @@ pub(crate) async fn dispatch_route(
     }
 
     run_fallback_router(req, env).await
+}
+
+fn web_api_router() -> Router<'static, ()> {
+    Router::new().get_async("/api/cfwdon/web/session", |req, ctx| async move {
+        web_session_response(req, ctx).await
+    })
+}
+
+fn web_ui_router() -> Router<'static, ()> {
+    Router::new()
+        .get_async(
+            "/app",
+            |req, ctx| async move { web_ui_response(req, ctx).await },
+        )
+        .get_async("/app/", |req, ctx| async move {
+            web_ui_response(req, ctx).await
+        })
+        .get_async("/app/login", |req, ctx| async move {
+            web_ui_response(req, ctx).await
+        })
+        .get_async("/app/logout", |req, ctx| async move {
+            web_ui_response(req, ctx).await
+        })
+        .get_async("/app/*rest", |req, ctx| async move {
+            web_ui_response(req, ctx).await
+        })
 }

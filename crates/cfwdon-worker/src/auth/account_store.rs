@@ -294,3 +294,28 @@ pub(crate) async fn find_account_by_username(
 
     Ok(row.map(LocalAccount::from_record))
 }
+
+/// Prefer a stable human account for signed ActivityPub GETs when no viewer is
+/// available (inbox Announce hydration, background `remote_context_fetch`, etc.).
+/// Test/smoke usernames are deprioritized so we do not advertise disposable keyIds.
+pub(crate) async fn find_any_local_account(db: &D1Database) -> Result<Option<LocalAccount>> {
+    let row = db
+        .prepare(
+            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
+             FROM accounts
+             ORDER BY
+               CASE
+                 WHEN username LIKE 'codex_smoke_%' THEN 2
+                 WHEN username LIKE 'cfclient%' THEN 2
+                 WHEN username LIKE 'phanpy%' THEN 2
+                 WHEN username LIKE 'accessflow%' THEN 2
+                 ELSE 0
+               END ASC,
+               created_at ASC
+             LIMIT 1",
+        )
+        .first::<AccountRow>(None)
+        .await?;
+
+    Ok(row.map(LocalAccount::from_record))
+}

@@ -155,7 +155,9 @@ pub(crate) fn parse_remote_actor_profile_document(
         public_key_id,
         public_key_pem,
         display_name: remote_actor_optional_string(actor, "name"),
-        summary_html: remote_actor_optional_string(actor, "summary"),
+        summary_html: sanitize_remote_actor_summary_html(&remote_actor_optional_string(
+            actor, "summary",
+        )),
         profile_url: media.profile_url,
         avatar_url: media.avatar_url,
         header_url: media.header_url,
@@ -276,6 +278,13 @@ fn remote_actor_optional_string(actor: &serde_json::Value, field: &str) -> Strin
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+fn sanitize_remote_actor_summary_html(summary: &str) -> String {
+    if summary.trim().is_empty() {
+        return String::new();
+    }
+    crate::sanitize_remote_status_html(summary)
 }
 
 fn required_remote_actor_string(
@@ -507,5 +516,27 @@ mod tests {
         };
         assert!(ensure_remote_actor_username_matches_handle(&profile, "Alice").is_ok());
         assert!(ensure_remote_actor_username_matches_handle(&profile, "bob").is_err());
+    }
+
+    #[test]
+    fn parse_remote_actor_profile_document_sanitizes_summary_html() {
+        let actor = serde_json::json!({
+            "id": "https://remote.example/users/alice",
+            "inbox": "https://remote.example/users/alice/inbox",
+            "publicKey": {
+                "id": "https://remote.example/users/alice#main-key",
+                "owner": "https://remote.example/users/alice",
+                "publicKeyPem": "pem"
+            },
+            "summary": "<p onclick=\"alert(1)\">hi <script>alert(2)</script><img src=x onerror=alert(3)></p>"
+        });
+        let profile =
+            parse_remote_actor_profile_document(&actor, "https://remote.example/users/alice")
+                .unwrap();
+        let summary = profile.summary_html.to_ascii_lowercase();
+        assert!(summary.contains("hi"));
+        assert!(!summary.contains("<script"));
+        assert!(!summary.contains("onclick"));
+        assert!(!summary.contains("onerror"));
     }
 }

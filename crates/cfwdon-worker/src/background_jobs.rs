@@ -423,9 +423,16 @@ async fn handle_remote_context_fetch(
         return Ok(());
     }
 
-    // Best-effort: use the existing resolve path which handles auth checks.
-    let _ = resolve_remote_status_by_url(db, config, &payload.uri, None).await;
-    Ok(())
+    // Signed resolve path (authorized_fetch) via viewer or any local account.
+    // Propagate fetch errors into job last_error for operability.
+    match resolve_remote_status_by_url(db, config, &payload.uri, None).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(Error::RustError(format!(
+            "remote_context_fetch unresolved: {}",
+            payload.uri
+        ))),
+        Err(error) => Err(error),
+    }
 }
 
 // ─── remote_status_notify ────────────────────────────────────────────────────

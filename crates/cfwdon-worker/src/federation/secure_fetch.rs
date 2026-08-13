@@ -43,6 +43,7 @@ pub(crate) async fn fetch_remote_http_json(url: &str, accept: &str) -> Result<se
     for redirect_count in 0..=MAX_REMOTE_FETCH_REDIRECTS {
         let headers = Headers::new();
         headers.set("Accept", accept)?;
+        headers.set("User-Agent", "cfwdon (https://github.com/manji-0/cfwdon)")?;
         let mut init = RequestInit::new();
         init.with_method(Method::Get)
             .with_headers(headers)

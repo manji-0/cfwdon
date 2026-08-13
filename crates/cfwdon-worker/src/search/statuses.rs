@@ -522,8 +522,8 @@ pub(crate) async fn resolve_search_status(
         ));
     }
 
-    if let Some((status, actor)) =
-        resolve_remote_status_by_url(db, config, query, Some(viewer)).await?
+    if let Ok(Some((status, actor))) =
+        resolve_remote_status_by_url(db, config, query, Some(viewer)).await
     {
         if !is_public_activitypub_visibility(status.visibility.as_str()) {
             return Ok(None);

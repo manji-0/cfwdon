@@ -69,6 +69,18 @@ pub(crate) async fn fetch_signed_activitypub_document(
 
         let headers = Headers::new();
         headers.set("Accept", ACTIVITYPUB_ACCEPT)?;
+        headers.set(
+            "User-Agent",
+            &format!(
+                "cfwdon (+https://{}/)",
+                config
+                    .instance_domain
+                    .trim()
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .trim_end_matches('/')
+            ),
+        )?;
         headers.set("Date", &date)?;
         headers.set(
             "Signature",

@@ -91,8 +91,8 @@ async fn collect_ancestors_for_remote_root(
         let status = match find_remote_status_by_object_uri(db, &object_uri).await? {
             Some(status) => status,
             None if viewer.is_some() => {
-                let Some((status, _actor)) =
-                    resolve_remote_status_by_url(db, config, &object_uri, viewer).await?
+                let Ok(Some((status, _actor))) =
+                    resolve_remote_status_by_url(db, config, &object_uri, viewer).await
                 else {
                     break;
                 };

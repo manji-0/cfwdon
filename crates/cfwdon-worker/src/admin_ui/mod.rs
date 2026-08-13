@@ -7,7 +7,7 @@ use crate::{
     escape_html, find_authenticated_local_account_with_roles, instance_base_url,
     is_admin_authorized, load_config,
 };
-use assets::lookup_embedded_asset;
+use assets::lookup_admin_embedded_asset;
 use url::Url;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -44,7 +44,7 @@ fn is_public_admin_asset_path(path: &str) -> bool {
 }
 
 fn serve_embedded_asset(path: &str) -> Result<Response> {
-    let (bytes, content_type) = lookup_embedded_asset(path)
+    let (bytes, content_type) = lookup_admin_embedded_asset(path)
         .ok_or_else(|| worker::Error::RustError(format!("admin ui asset not found: {path}")))?;
     let mut response = Response::from_bytes(bytes.to_vec())?;
     response.headers_mut().set("Content-Type", content_type)?;

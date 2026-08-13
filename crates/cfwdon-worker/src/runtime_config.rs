@@ -216,7 +216,12 @@ pub(crate) fn load_config<D>(ctx: &RouteContext<D>) -> AppConfig {
 }
 
 pub(crate) fn load_config_from_env(env: &Env) -> AppConfig {
-    config_from_vars(|key| env.var(key).ok().map(|value| value.to_string()))
+    config_from_vars(|key| {
+        env.var(key)
+            .ok()
+            .map(|value| value.to_string())
+            .or_else(|| env.secret(key).ok().map(|value| value.to_string()))
+    })
 }
 
 fn config_from_vars<F>(vars: F) -> AppConfig
@@ -475,7 +480,10 @@ pub(crate) const fn build_metadata() -> BuildMetadata {
 }
 
 fn optional_var<D>(ctx: &RouteContext<D>, key: &str) -> Option<String> {
-    ctx.var(key).ok().map(|value| value.to_string())
+    ctx.var(key)
+        .ok()
+        .map(|value| value.to_string())
+        .or_else(|| ctx.secret(key).ok().map(|value| value.to_string()))
 }
 
 #[cfg(test)]

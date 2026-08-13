@@ -73,6 +73,8 @@ mod tags;
 mod time_html;
 mod timelines;
 mod tracked_d1;
+mod web_api;
+mod web_ui;
 pub(crate) use accounts::*;
 pub(crate) use activitypub::*;
 pub(crate) use admin_api::*;
@@ -138,6 +140,8 @@ pub(crate) use tags::*;
 pub(crate) use time_html::*;
 pub(crate) use timelines::*;
 pub(crate) use tracked_d1::{D1Database, D1PreparedStatement};
+pub(crate) use web_api::*;
+pub(crate) use web_ui::*;
 
 #[event(fetch, respond_with_errors)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
