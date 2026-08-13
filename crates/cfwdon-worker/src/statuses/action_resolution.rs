@@ -183,7 +183,8 @@ async fn resolve_action_uri_reference(
         return Ok(Some(ResolvedActionStatus::Remote(status, actor)));
     }
 
-    if let Some((status, actor)) = resolve_remote_status_by_url(db, config, value, viewer).await? {
+    if let Ok(Some((status, actor))) = resolve_remote_status_by_url(db, config, value, viewer).await
+    {
         return Ok(Some(ResolvedActionStatus::Remote(status, actor)));
     }
 

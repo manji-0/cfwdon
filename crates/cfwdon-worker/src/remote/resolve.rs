@@ -2,12 +2,13 @@ use crate::{
     AppConfig, D1Database, LocalAccount, MastodonAccountResponse, RemoteActorRow,
     RemoteCollectionFetchContext, RemoteStatusRow, account_search_is_complete_handle,
     enrich_remote_account_response, ensure_remote_actor_username_matches_handle,
-    extract_remote_note_object, fetch_activitypub_document_with_context,
-    fetch_remote_actor_profile_with_context, find_account_by_id, find_account_by_username,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
-    find_remote_actor_by_username_domain, find_remote_status_by_object_uri,
-    find_remote_status_by_url_or_object_uri, is_public_activitypub_visibility, load_account_stats,
-    local_username_from_actor_uri, log_json_event, parse_lookup_handle, parse_remote_http_url,
+    extract_remote_note_object, fetch_remote_activitypub_document,
+    fetch_remote_actor_profile_with_context, fetch_signed_activitypub_document, find_account_by_id,
+    find_account_by_username, find_any_local_account, find_remote_actor_by_actor_uri,
+    find_remote_actor_by_profile_url_or_actor_uri, find_remote_actor_by_username_domain,
+    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri,
+    is_public_activitypub_visibility, load_account_stats, local_username_from_actor_uri,
+    log_json_event, parse_lookup_handle, parse_remote_http_url,
     reconcile_remote_account_status_summary, remote_actor_uri_from_rest_id,
     resolve_webfinger_actor_uri, upsert_remote_actor, upsert_remote_status,
     visibility_from_activitypub_object,
@@ -257,18 +258,63 @@ pub(crate) async fn resolve_remote_status_by_url(
     }
 
     let fetch_url = parse_remote_http_url(url)?;
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
-    let document =
-        match fetch_activitypub_document_with_context(fetch_url.as_str(), Some(&fetch_context))
-            .await
-        {
+    // Prefer signed GET without unsigned fallback: authorized_fetch hosts reject
+    // unsigned Note GETs with 401, and falling back only hides the signed error.
+    let fallback_signer = if viewer.is_some() {
+        None
+    } else {
+        find_any_local_account(db).await?
+    };
+    let signer = viewer.or(fallback_signer.as_ref());
+    let document = match signer {
+        Some(account) => {
+            match fetch_signed_activitypub_document(config, db, account, fetch_url.as_str()).await {
+                Ok(document) => document,
+                Err(error) => {
+                    let message = error.to_string();
+                    log_json_event(serde_json::json!({
+                        "event": "resolve_remote_status_fetch_failed",
+                        "url": url,
+                        "signer": account.username(),
+                        "mode": "signed",
+                        "error": message,
+                    }));
+                    return Err(Error::RustError(format!(
+                        "resolve_remote_status signed fetch failed for {url}: {message}"
+                    )));
+                }
+            }
+        }
+        None => match fetch_remote_activitypub_document(fetch_url.as_str()).await {
             Ok(document) => document,
-            Err(_) => return Ok(None),
-        };
+            Err(error) => {
+                let message = error.to_string();
+                log_json_event(serde_json::json!({
+                    "event": "resolve_remote_status_fetch_failed",
+                    "url": url,
+                    "signer": serde_json::Value::Null,
+                    "mode": "unsigned",
+                    "error": message,
+                }));
+                return Err(Error::RustError(format!(
+                    "resolve_remote_status fetch failed for {url}: {message}"
+                )));
+            }
+        },
+    };
+    let fetch_context = RemoteCollectionFetchContext::authorized(config, db, signer);
     let Some(object) = extract_remote_note_object(&document) else {
+        log_json_event(serde_json::json!({
+            "event": "resolve_remote_status_no_note",
+            "url": url,
+        }));
         return Ok(None);
     };
     if !is_public_activitypub_visibility(&visibility_from_activitypub_object(object)) {
+        log_json_event(serde_json::json!({
+            "event": "resolve_remote_status_not_public",
+            "url": url,
+        }));
         return Ok(None);
     }
 

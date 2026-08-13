@@ -216,7 +216,12 @@ pub(crate) fn load_config<D>(ctx: &RouteContext<D>) -> AppConfig {
 }
 
 pub(crate) fn load_config_from_env(env: &Env) -> AppConfig {
-    config_from_vars(|key| env.var(key).ok().map(|value| value.to_string()))
+    config_from_vars(|key| {
+        env.var(key)
+            .ok()
+            .map(|value| value.to_string())
+            .or_else(|| env.secret(key).ok().map(|value| value.to_string()))
+    })
 }
 
 fn config_from_vars<F>(vars: F) -> AppConfig

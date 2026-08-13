@@ -138,6 +138,7 @@ pub(crate) async fn admin_retry_background_job_response(
 struct AdminBackgroundJobReclaimResponse {
     requeued: u32,
     failed: u32,
+    processed: u32,
 }
 
 pub(crate) async fn admin_reclaim_background_jobs_response(
@@ -152,8 +153,10 @@ pub(crate) async fn admin_reclaim_background_jobs_response(
     let config = crate::load_config(&ctx);
     let db = crate::bind_request_d1(&ctx, &config)?;
     let report = reclaim_stale_background_jobs(&db, 100).await?;
+    let processed = crate::process_due_background_jobs(&db, &config, Some(&ctx.env), 32).await?;
     Response::from_json(&AdminBackgroundJobReclaimResponse {
         requeued: report.requeued,
         failed: report.failed,
+        processed,
     })
 }

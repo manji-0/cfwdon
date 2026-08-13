@@ -301,6 +301,8 @@ pub(crate) async fn mark_federation_relay_rejected(
 pub(crate) async fn purge_stale_public_remote_content(db: &D1Database) -> Result<u32> {
     let cutoff_modifier = format!("-{PUBLIC_REMOTE_RETENTION_DAYS} days");
     let limit = i32::try_from(PUBLIC_REMOTE_PURGE_BATCH_SIZE).unwrap_or(500);
+    // Keep statuses still needed as boost/quote/reply targets even when the
+    // author is not followed — otherwise timeline reblogs render empty bodies.
     let status_result = db
         .prepare(
             "DELETE FROM remote_statuses
@@ -319,6 +321,19 @@ pub(crate) async fn purge_stale_public_remote_content(db: &D1Database) -> Result
                     SELECT 1
                     FROM followers fl
                     WHERE fl.actor_uri = rs.actor_uri
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM remote_statuses ref
+                    WHERE ref.id != rs.id
+                      AND (
+                        ref.boost_of_uri = rs.object_uri
+                        OR ref.boost_of_uri = rs.url
+                        OR ref.quote_of_uri = rs.object_uri
+                        OR ref.quote_of_uri = rs.url
+                        OR ref.in_reply_to_uri = rs.object_uri
+                        OR ref.in_reply_to_uri = rs.url
+                      )
                   )
                 ORDER BY rs.published_at ASC
                 LIMIT ?2
