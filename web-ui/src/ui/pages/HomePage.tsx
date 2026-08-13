@@ -154,9 +154,11 @@ export const HomePage = () => {
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    const next = [result.value, ...statusesRef.current];
-    setStatuses(next);
-    persist(next, fetchedAtRef.current);
+    setStatuses((current) => {
+      const next = StatusModel.prependUnique(current, result.value);
+      persist(next, fetchedAtRef.current);
+      return next;
+    });
   };
 
   const updateStatusInList = (updated: Status) => {

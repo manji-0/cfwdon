@@ -42,6 +42,12 @@ export const Status = {
       }
       return item;
     }),
+
+  containsId: (statuses: ReadonlyArray<Status>, statusId: string): boolean =>
+    statuses.some((item) => item.id === statusId || item.reblog?.id === statusId),
+
+  prependUnique: (statuses: ReadonlyArray<Status>, incoming: Status): ReadonlyArray<Status> =>
+    Status.containsId(statuses, incoming.id) ? statuses : [incoming, ...statuses],
 } as const;
 
 export type StatusContext = Readonly<{
