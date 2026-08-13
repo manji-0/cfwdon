@@ -102,8 +102,15 @@ fn web_app_host_is_trusted(host: &str, instance_base_url: &str) -> bool {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    let host = host.to_ascii_lowercase();
-    host == "localhost" || host == "::1" || host.starts_with("127.")
+    let host = host
+        .trim()
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    if host == "localhost" {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 pub(crate) fn web_ui_redirect_response(location: &str) -> Result<Response> {
@@ -150,6 +157,22 @@ mod tests {
         let redirect_url =
             web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
         assert_eq!(redirect_url.as_str(), "http://127.0.0.1:8787/app/");
+    }
+
+    #[test]
+    fn web_app_url_rejects_loopback_prefix_lookalike_host() {
+        let request_url = Url::parse("https://127.attacker.example/timeline").unwrap();
+        let redirect_url =
+            web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
+        assert_eq!(redirect_url.as_str(), "https://social.example/app/");
+    }
+
+    #[test]
+    fn web_app_url_preserves_ipv6_loopback_origin() {
+        let request_url = Url::parse("http://[::1]:8787/timeline").unwrap();
+        let redirect_url =
+            web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
+        assert_eq!(redirect_url.as_str(), "http://[::1]:8787/app/");
     }
 
     #[test]

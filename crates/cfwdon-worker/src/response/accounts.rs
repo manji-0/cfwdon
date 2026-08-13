@@ -668,7 +668,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at,
-            note: actor.summary_html.clone(),
+            note: crate::sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -714,7 +714,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at: "1970-01-01T00:00:00.000Z".to_owned(),
-            note: actor.summary_html.clone(),
+            note: crate::sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -867,6 +867,35 @@ mod tests {
         assert_eq!(response.followers_count, 11);
         assert_eq!(response.following_count, 22);
         assert_eq!(response.statuses_count, 33);
+    }
+
+    #[test]
+    fn from_remote_actor_sanitizes_stored_summary_html() {
+        let actor = RemoteActorRow {
+            actor_uri: "https://remote.example/users/alice".to_owned(),
+            username: "alice".to_owned(),
+            domain: "remote.example".to_owned(),
+            created_at: String::new(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            display_name: "Alice".to_owned(),
+            summary_html: "<p onclick=\"alert(1)\">hi <script>alert(2)</script></p>".to_owned(),
+            profile_url: None,
+            avatar_url: None,
+            header_url: None,
+            followers_count: 0,
+            following_count: 0,
+            statuses_count: 0,
+            social_counts_updated_at: None,
+        };
+        let note = MastodonAccountResponse::from_remote_actor(&actor)
+            .note
+            .to_ascii_lowercase();
+        assert!(note.contains("hi"));
+        assert!(!note.contains("<script"));
+        assert!(!note.contains("onclick"));
     }
 
     #[test]
