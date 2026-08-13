@@ -86,3 +86,23 @@ export const mastodonPatchJson = (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+export const mastodonPutJson = (
+  path: string,
+  body: unknown,
+): JsonResult<unknown> =>
+  mastodonFetchJson(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const mastodonDeleteJson = (
+  path: string,
+  body?: unknown,
+): JsonResult<unknown> =>
+  mastodonFetchJson(path, {
+    method: "DELETE",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });

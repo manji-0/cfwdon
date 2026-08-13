@@ -17,6 +17,7 @@ type StatusPayload = {
   favourites_count?: number;
   favourited?: boolean;
   reblogged?: boolean;
+  bookmarked?: boolean;
   account: {
     id: string;
     username: string;
@@ -63,6 +64,7 @@ const toStatus = (payload: StatusPayload): Status => ({
   favouritesCount: payload.favourites_count ?? 0,
   favourited: payload.favourited ?? false,
   reblogged: payload.reblogged ?? false,
+  bookmarked: payload.bookmarked ?? false,
   account: toAccountRef(payload.account),
   mediaAttachments: (payload.media_attachments ?? []).map(toMediaAttachment),
   reblog: payload.reblog ? toStatus(payload.reblog) : null,

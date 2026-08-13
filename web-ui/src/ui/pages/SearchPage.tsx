@@ -4,8 +4,10 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { SearchResults } from "@/domain/search/search";
 import { search } from "@/infrastructure/api/search";
 import {
+  bookmarkStatus,
   favouriteStatus,
   reblogStatus,
+  unbookmarkStatus,
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -95,6 +97,22 @@ export const SearchPage = () => {
     await runSearch(queryFromUrl || query);
   };
 
+  const handleBookmark = async (statusId: string) => {
+    const status = results.statuses.find((item) => (item.reblog ?? item).id === statusId);
+    if (!status) {
+      return;
+    }
+    const body = status.reblog ?? status;
+    const result = body.bookmarked
+      ? await unbookmarkStatus(body.id)
+      : await bookmarkStatus(body.id);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    await runSearch(queryFromUrl || query);
+  };
+
   const hasResults =
     results.accounts.length > 0 || results.statuses.length > 0 || results.hashtags.length > 0;
 
@@ -145,6 +163,7 @@ export const SearchPage = () => {
                 status={status}
                 onFavourite={(body) => void handleFavourite(body.id)}
                 onReblog={(body) => void handleReblog(body.id)}
+                onBookmark={(body) => void handleBookmark(body.id)}
               />
             ))}
           </div>

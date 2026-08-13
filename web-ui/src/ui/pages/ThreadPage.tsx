@@ -5,11 +5,13 @@ import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 import {
+  bookmarkStatus,
   createStatus,
   favouriteStatus,
   fetchStatus,
   fetchStatusContext,
   reblogStatus,
+  unbookmarkStatus,
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -100,6 +102,17 @@ export const ThreadPage = () => {
     replaceStatus(result.value);
   };
 
+  const handleBookmark = async (status: Status) => {
+    const result = status.bookmarked
+      ? await unbookmarkStatus(status.id)
+      : await bookmarkStatus(status.id);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    replaceStatus(result.value);
+  };
+
   useKeyboardShortcuts([
     {
       key: "n",
@@ -130,15 +143,23 @@ export const ThreadPage = () => {
     setDescendants((current) => [...current, result.value]);
   };
 
+  const focusBody = focus ? StatusModel.displayBody(focus) : null;
+  const isDirectThread = focusBody?.visibility.kind === "Direct";
+
   return (
-    <AppShell title="スレッド">
+    <AppShell title={isDirectThread ? "ダイレクトメッセージ" : "スレッド"}>
       <p className="thread-back">
-        <Link to="/">← ホームに戻る</Link>
+        <Link to={isDirectThread ? "/messages" : "/"}>
+          ← {isDirectThread ? "メッセージに戻る" : "ホームに戻る"}
+        </Link>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       {!loading && focus ? (
         <>
+          {isDirectThread ? (
+            <p className="app-muted thread-dm-hint">ダイレクト返信は相手にのみ届きます。</p>
+          ) : null}
           <div className="timeline">
             {ancestors.map((status) => (
               <StatusCard
@@ -147,6 +168,7 @@ export const ThreadPage = () => {
                 compact
                 onFavourite={(body) => void handleFavourite(body)}
                 onReblog={(body) => void handleReblog(body)}
+                onBookmark={(body) => void handleBookmark(body)}
                 onReply={() => navigate(`/status/${StatusModel.displayBody(status).id}`)}
               />
             ))}
@@ -154,6 +176,7 @@ export const ThreadPage = () => {
               status={focus}
               onFavourite={(body) => void handleFavourite(body)}
               onReblog={(body) => void handleReblog(body)}
+              onBookmark={(body) => void handleBookmark(body)}
             />
             {descendants.map((status) => (
               <StatusCard
@@ -161,14 +184,17 @@ export const ThreadPage = () => {
                 status={status}
                 onFavourite={(body) => void handleFavourite(body)}
                 onReblog={(body) => void handleReblog(body)}
+                onBookmark={(body) => void handleBookmark(body)}
                 onReply={() => navigate(`/status/${StatusModel.displayBody(status).id}`)}
               />
             ))}
           </div>
           <Composer
+            key={`${statusId}-${focusBody?.visibility.kind ?? "public"}`}
             ref={composerRef}
-            placeholder="返信を投稿"
-            submitLabel="返信"
+            placeholder={isDirectThread ? "ダイレクトメッセージを送信" : "返信を投稿"}
+            submitLabel={isDirectThread ? "送信" : "返信"}
+            initialVisibility={isDirectThread ? Visibility.direct() : Visibility.public()}
             inReplyToId={statusId}
             onSubmit={handleReply}
           />

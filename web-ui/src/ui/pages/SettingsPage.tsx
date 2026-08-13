@@ -18,6 +18,7 @@ import { fetchAccountPreferences, updatePostingPreferences } from "@/infrastruct
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { useSession } from "@/ui/context/SessionContext";
+import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 
 const POLICY_FIELDS = [
   { key: "forNotFollowing", label: "フォローしていないユーザー" },
@@ -55,6 +56,7 @@ const ModerationAccountLink = ({ account }: Readonly<{ account: AccountRef }>) =
 
 export const SettingsPage = () => {
   const { session, setSession, clearSession } = useSession();
+  const { unreadCount } = useUnreadMessages();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -382,11 +384,27 @@ export const SettingsPage = () => {
             <h2>ライブラリ</h2>
             <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
             <div className="settings-library-links">
-              {[AppRoute.bookmarks(), AppRoute.lists(), AppRoute.messages()].map((route) => (
-                <Link key={route.kind} className="app-button app-button-secondary" to={AppRoute.toPath(route)}>
-                  {AppRoute.label(route)}
-                </Link>
-              ))}
+              {[AppRoute.bookmarks(), AppRoute.lists(), AppRoute.messages()].map((route) => {
+                const isMessages = route.kind === "Messages";
+                const label = AppRoute.label(route);
+                return (
+                  <Link
+                    key={route.kind}
+                    className="app-button app-button-secondary settings-library-link"
+                    to={AppRoute.toPath(route)}
+                    aria-label={
+                      isMessages && unreadCount > 0 ? `${label}（未読 ${unreadCount}）` : label
+                    }
+                  >
+                    <span>{label}</span>
+                    {isMessages && unreadCount > 0 ? (
+                      <span className="nav-unread-badge" aria-hidden="true">
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    ) : null}
+                  </Link>
+                );
+              })}
             </div>
           </section>
 

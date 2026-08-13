@@ -6,6 +6,7 @@ import { SessionState as Session } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
+import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
 import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
@@ -35,22 +36,24 @@ const AppRoutes = ({
 
   return (
     <SessionProvider value={createSessionContextValue(session, setSession)}>
-      <KeyboardShortcutsHelp />
-      <Suspense fallback={<RouteFallback />}>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/status/:statusId" element={<ThreadPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/profile/:accountId" element={<ProfilePage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/bookmarks" element={<BookmarksPage />} />
-          <Route path="/lists" element={<ListsPage />} />
-          <Route path="/messages" element={<MessagesPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
+      <UnreadMessagesProvider>
+        <KeyboardShortcutsHelp />
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/status/:statusId" element={<ThreadPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/profile/:accountId" element={<ProfilePage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/bookmarks" element={<BookmarksPage />} />
+            <Route path="/lists" element={<ListsPage />} />
+            <Route path="/messages" element={<MessagesPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </UnreadMessagesProvider>
     </SessionProvider>
   );
 };

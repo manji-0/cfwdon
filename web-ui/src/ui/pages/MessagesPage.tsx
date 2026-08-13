@@ -2,16 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { Conversation } from "@/domain/conversations/conversation";
+import { countUnreadConversations } from "@/domain/conversations/unread";
 import {
   fetchConversations,
   markConversationRead,
 } from "@/infrastructure/api/conversations";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
+import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 export const MessagesPage = () => {
   const navigate = useNavigate();
+  const { setUnreadCount, refreshUnreadCount } = useUnreadMessages();
   const [conversations, setConversations] = useState<ReadonlyArray<Conversation>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -22,10 +25,15 @@ export const MessagesPage = () => {
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    setConversations((current) =>
-      options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-    );
-  }, []);
+    setConversations((current) => {
+      const next =
+        options?.replace || !options?.maxId ? result.value : [...current, ...result.value];
+      if (options?.replace || !options?.maxId) {
+        setUnreadCount(countUnreadConversations(next));
+      }
+      return next;
+    });
+  }, [setUnreadCount]);
 
   useEffect(() => {
     let active = true;
@@ -46,13 +54,21 @@ export const MessagesPage = () => {
     };
   }, [loadConversations]);
 
+  useEffect(() => {
+    refreshUnreadCount();
+  }, [refreshUnreadCount]);
+
   const openConversation = async (conversation: Conversation) => {
     if (conversation.unread) {
       const result = await markConversationRead(conversation.id);
       if (result.isOk()) {
-        setConversations((current) =>
-          current.map((item) => (item.id === conversation.id ? result.value : item)),
-        );
+        setConversations((current) => {
+          const next = current.map((item) =>
+            item.id === conversation.id ? result.value : item,
+          );
+          setUnreadCount(countUnreadConversations(next));
+          return next;
+        });
       }
     }
     if (conversation.lastStatus) {

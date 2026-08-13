@@ -1,6 +1,7 @@
 import type { AccountProfile, AccountRef } from "@/domain/account/account";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountSummary } from "@/domain/session/account";
+import { type } from "arktype";
 import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
 
 export const parseAccountRef = mastodon.type("AccountRefApi").pipe(
@@ -12,6 +13,8 @@ export const parseAccountRef = mastodon.type("AccountRefApi").pipe(
     avatar: value.avatar,
   }),
 );
+
+export const parseAccountRefList = type(parseAccountRef, "[]");
 
 export const parseAccountProfile = mastodon.type("AccountProfileApi").pipe(
   (value): AccountProfile => ({

@@ -22,6 +22,7 @@ export type Status = Readonly<{
   favouritesCount: number;
   favourited: boolean;
   reblogged: boolean;
+  bookmarked: boolean;
   account: AccountRefType;
   mediaAttachments: ReadonlyArray<MediaAttachment>;
   reblog: Status | null;
