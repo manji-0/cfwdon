@@ -51,8 +51,9 @@ pub(crate) fn accept_prefers_web_ui_html(req: &Request) -> Result<bool> {
 }
 
 fn serve_embedded_asset(path: &str) -> Result<Response> {
-    let (bytes, content_type) = lookup_web_embedded_asset(path)
-        .ok_or_else(|| worker::Error::RustError(format!("web ui asset not found: {path}")))?;
+    let Some((bytes, content_type)) = lookup_web_embedded_asset(path) else {
+        return Response::error("Not Found", 404);
+    };
     let mut response = Response::from_bytes(bytes.to_vec())?;
     response.headers_mut().set("Content-Type", content_type)?;
     if path.ends_with(".html") || path == "/app/" {
@@ -79,11 +80,30 @@ fn web_app_url_from_request_url(request_url: &Url, instance_base_url: &str) -> R
     let mut redirect_url = request_url.clone();
     redirect_url.set_path("/app/");
     redirect_url.set_query(None);
-    if redirect_url.host_str().is_none() {
+    if !redirect_url
+        .host_str()
+        .is_some_and(|host| web_app_host_is_trusted(host, instance_base_url))
+    {
         redirect_url = Url::parse(&format!("{instance_base_url}/app/"))
-            .map_err(|error| worker::Error::RustError(format!("invalid web ui URL: {error}")))?;
+            .map_err(|error| worker::Error::RustError(format!("invalid web UI URL: {error}")))?;
     }
     Ok(redirect_url)
+}
+
+fn web_app_host_is_trusted(host: &str, instance_base_url: &str) -> bool {
+    let instance_host = Url::parse(instance_base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_default();
+    if !instance_host.is_empty() && host.eq_ignore_ascii_case(&instance_host) {
+        return true;
+    }
+    is_loopback_host(host)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "localhost" || host == "::1" || host.starts_with("127.")
 }
 
 pub(crate) fn web_ui_redirect_response(location: &str) -> Result<Response> {
@@ -109,11 +129,27 @@ mod tests {
     use url::Url;
 
     #[test]
-    fn web_app_url_preserves_request_origin() {
+    fn web_app_url_preserves_matching_instance_origin() {
         let request_url = Url::parse("https://social.example/timeline?ref=1").unwrap();
         let redirect_url =
-            web_app_url_from_request_url(&request_url, "https://example.com").unwrap();
+            web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
         assert_eq!(redirect_url.as_str(), "https://social.example/app/");
+    }
+
+    #[test]
+    fn web_app_url_falls_back_to_configured_base_for_foreign_host() {
+        let request_url = Url::parse("https://evil.example/timeline?ref=1").unwrap();
+        let redirect_url =
+            web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
+        assert_eq!(redirect_url.as_str(), "https://social.example/app/");
+    }
+
+    #[test]
+    fn web_app_url_preserves_loopback_origin_for_local_dev() {
+        let request_url = Url::parse("http://127.0.0.1:8787/timeline").unwrap();
+        let redirect_url =
+            web_app_url_from_request_url(&request_url, "https://social.example").unwrap();
+        assert_eq!(redirect_url.as_str(), "http://127.0.0.1:8787/app/");
     }
 
     #[test]
