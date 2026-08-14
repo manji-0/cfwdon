@@ -8,6 +8,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { CachedView as CachedSlot } from "@/domain/cache/cached-view";
+import { ProfileSet } from "@/domain/cache/profile-set";
 import {
   ViewCache,
   type NotificationsSnapshot,
@@ -19,12 +21,13 @@ import type { Status } from "@/domain/status/status";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
 type ViewCacheContextValue = Readonly<{
-  getHome: () => TimelineSnapshot | null;
-  getNotifications: () => NotificationsSnapshot | null;
-  getProfile: (accountId: string) => ProfileSnapshot | null;
+  getHome: () => CachedSlot<TimelineSnapshot>;
+  getNotifications: () => CachedSlot<NotificationsSnapshot>;
+  getProfile: (accountId: string) => CachedSlot<ProfileSnapshot>;
   writeHome: (snapshot: TimelineSnapshot) => void;
   writeNotifications: (snapshot: NotificationsSnapshot) => void;
   writeProfile: (accountId: string, snapshot: ProfileSnapshot) => void;
+  receivePreloadedProfile: (accountId: string, snapshot: ProfileSnapshot) => void;
   patchStatus: (updated: Status) => void;
 }>;
 
@@ -38,7 +41,7 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
   const getHome = useCallback(() => stateRef.current.home, []);
   const getNotifications = useCallback(() => stateRef.current.notifications, []);
   const getProfile = useCallback(
-    (accountId: string) => stateRef.current.profiles.get(accountId) ?? null,
+    (accountId: string) => ProfileSet.lookup(stateRef.current.profiles, accountId),
     [],
   );
 
@@ -52,6 +55,10 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
 
   const writeProfile = useCallback((accountId: string, snapshot: ProfileSnapshot) => {
     setState((current) => ViewCache.writeProfile(current, accountId, snapshot));
+  }, []);
+
+  const receivePreloadedProfile = useCallback((accountId: string, snapshot: ProfileSnapshot) => {
+    setState((current) => ViewCache.receivePreloadedProfile(current, accountId, snapshot));
   }, []);
 
   const patchStatus = useCallback((updated: Status) => {
@@ -76,9 +83,19 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
       writeHome,
       writeNotifications,
       writeProfile,
+      receivePreloadedProfile,
       patchStatus,
     }),
-    [getHome, getNotifications, getProfile, writeHome, writeNotifications, writeProfile, patchStatus],
+    [
+      getHome,
+      getNotifications,
+      getProfile,
+      writeHome,
+      writeNotifications,
+      writeProfile,
+      receivePreloadedProfile,
+      patchStatus,
+    ],
   );
 
   return <ViewCacheContext.Provider value={value}>{children}</ViewCacheContext.Provider>;

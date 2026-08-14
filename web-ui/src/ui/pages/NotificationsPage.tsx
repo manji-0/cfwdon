@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import { ViewCache } from "@/domain/cache/view-cache";
+import { CachedView } from "@/domain/cache/cached-view";
+import { ViewReadiness } from "@/domain/cache/view-readiness";
 import type { Notification } from "@/domain/notification/notification";
 import { fetchNotifications } from "@/infrastructure/api/notification";
 import { AppShell } from "@/ui/components/AppShell";
@@ -13,12 +14,12 @@ export const NotificationsPage = () => {
   const cache = useViewCache();
   const cached = cache.getNotifications();
   const [notifications, setNotifications] = useState<ReadonlyArray<Notification>>(
-    cached?.notifications ?? [],
+    cached.kind === "Present" ? cached.value.notifications : [],
   );
-  const [loading, setLoading] = useState(!cached);
+  const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const fetchedAtRef = useRef(cached?.fetchedAt ?? 0);
+  const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const notificationsRef = useRef(notifications);
   const scrollYRef = useWindowScrollY();
   notificationsRef.current = notifications;
@@ -58,22 +59,25 @@ export const NotificationsPage = () => {
 
   useEffect(() => {
     const snapshot = cache.getNotifications();
-    if (snapshot) {
-      setNotifications(snapshot.notifications);
-      fetchedAtRef.current = snapshot.fetchedAt;
+    if (snapshot.kind === "Present") {
+      setNotifications(snapshot.value.notifications);
+      fetchedAtRef.current = snapshot.value.fetchedAt;
       setLoading(false);
-      requestAnimationFrame(() => window.scrollTo(0, snapshot.scrollY));
+      requestAnimationFrame(() => window.scrollTo(0, snapshot.value.scrollY));
     }
 
     let active = true;
-    if (snapshot && ViewCache.isRemountSkip(snapshot.fetchedAt)) {
-      return () => {
-        persist(notificationsRef.current, fetchedAtRef.current);
-      };
-    }
-
-    if (!snapshot) {
-      setLoading(true);
+    const readiness = ViewReadiness.forStreaming(snapshot, Date.now());
+    switch (readiness.kind) {
+      case "Skip":
+        return () => {
+          persist(notificationsRef.current, fetchedAtRef.current);
+        };
+      case "Load":
+        setLoading(true);
+        break;
+      case "Revalidate":
+        break;
     }
     void loadNotifications({ replace: true })
       .catch((loadError) => {

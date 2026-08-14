@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
-import { ViewCache } from "@/domain/cache/view-cache";
+import { CachedView } from "@/domain/cache/cached-view";
+import { ViewReadiness } from "@/domain/cache/view-readiness";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 import {
@@ -13,7 +15,7 @@ import {
   unfavouriteStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
-import { fetchAccountProfile, fetchAccountStatuses } from "@/infrastructure/api/account";
+import { fetchAccountStatuses } from "@/infrastructure/api/account";
 import { AppShell } from "@/ui/components/AppShell";
 import { ProfileEditor } from "@/ui/components/ProfileEditor";
 import { StatusCard } from "@/ui/components/StatusCard";
@@ -28,15 +30,19 @@ export const ProfilePage = () => {
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const accountId = routeAccountId ?? selfAccountId;
   const isSelf = Boolean(accountId && selfAccountId && accountId === selfAccountId);
-  const cached = accountId ? cache.getProfile(accountId) : null;
+  const cached = accountId ? cache.getProfile(accountId) : CachedView.absent();
 
-  const [profile, setProfile] = useState<AccountProfile | null>(cached?.profile ?? null);
-  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(cached?.statuses ?? []);
-  const [loading, setLoading] = useState(!cached);
+  const [profile, setProfile] = useState<AccountProfile | null>(
+    cached.kind === "Present" ? cached.value.profile : null,
+  );
+  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(
+    cached.kind === "Present" ? cached.value.statuses : [],
+  );
+  const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
-  const fetchedAtRef = useRef(cached?.fetchedAt ?? 0);
+  const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const profileRef = useRef(profile);
   const statusesRef = useRef(statuses);
   const scrollYRef = useWindowScrollY();
@@ -48,12 +54,12 @@ export const ProfilePage = () => {
       return undefined;
     }
     const snapshot = cache.getProfile(accountId);
-    if (snapshot) {
-      setProfile(snapshot.profile);
-      setStatuses(snapshot.statuses);
-      fetchedAtRef.current = snapshot.fetchedAt;
+    if (snapshot.kind === "Present") {
+      setProfile(snapshot.value.profile);
+      setStatuses(snapshot.value.statuses);
+      fetchedAtRef.current = snapshot.value.fetchedAt;
       setLoading(false);
-      requestAnimationFrame(() => window.scrollTo(0, snapshot.scrollY));
+      requestAnimationFrame(() => window.scrollTo(0, snapshot.value.scrollY));
     } else {
       setProfile(null);
       setStatuses([]);
@@ -64,47 +70,44 @@ export const ProfilePage = () => {
     setError("");
 
     let active = true;
-    const skipFetch = snapshot !== null && ViewCache.isProfileFresh(snapshot.fetchedAt);
-    if (!skipFetch) {
-      void Promise.all([
-        fetchAccountProfile(accountId),
-        fetchAccountStatuses(accountId, { excludeReplies: true }),
-      ])
-        .then(([profileResult, statusesResult]) => {
-          if (!active) {
-            return;
-          }
-          if (profileResult.isErr()) {
-            throw new Error(mastodonErrorMessage(profileResult.error));
-          }
-          if (statusesResult.isErr()) {
-            throw new Error(mastodonErrorMessage(statusesResult.error));
-          }
-          fetchedAtRef.current = Date.now();
-          setProfile(profileResult.value);
-          setStatuses(statusesResult.value);
-          cache.writeProfile(accountId, {
-            profile: profileResult.value,
-            statuses: statusesResult.value,
-            fetchedAt: fetchedAtRef.current,
-            scrollY: scrollYRef.current,
+    switch (ViewReadiness.forProfile(snapshot, Date.now()).kind) {
+      case "Skip":
+        break;
+      case "Load":
+      case "Revalidate":
+        void Promise.resolve(loadProfileSnapshot(accountId))
+          .then((result) => {
+            if (!active) {
+              return;
+            }
+            if (result.isErr()) {
+              throw new Error(mastodonErrorMessage(result.error));
+            }
+            fetchedAtRef.current = result.value.fetchedAt;
+            setProfile(result.value.profile);
+            setStatuses(result.value.statuses);
+            cache.writeProfile(accountId, {
+              ...result.value,
+              scrollY: scrollYRef.current,
+            });
+          })
+          .catch((loadError) => {
+            if (active) {
+              setError(loadError instanceof Error ? loadError.message : "プロフィールの読み込みに失敗しました");
+            }
+          })
+          .finally(() => {
+            if (active) {
+              setLoading(false);
+            }
           });
-        })
-        .catch((loadError) => {
-          if (active) {
-            setError(loadError instanceof Error ? loadError.message : "プロフィールの読み込みに失敗しました");
-          }
-        })
-        .finally(() => {
-          if (active) {
-            setLoading(false);
-          }
-        });
+        break;
     }
 
     return () => {
       active = false;
-      const currentProfile = profileRef.current ?? snapshot?.profile;
+      const currentProfile =
+        profileRef.current ?? (snapshot.kind === "Present" ? snapshot.value.profile : null);
       if (!currentProfile || fetchedAtRef.current === 0) {
         return;
       }

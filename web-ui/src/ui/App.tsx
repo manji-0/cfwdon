@@ -5,6 +5,7 @@ import type { SessionState } from "@/domain/session/session";
 import { SessionState as Session } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
+import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
 import { ViewCacheProvider } from "@/ui/context/ViewCacheContext";
@@ -40,6 +41,7 @@ const AppRoutes = ({
   return (
     <SessionProvider value={createSessionContextValue(session, setSession)}>
       <ViewCacheProvider>
+        <SelfProfilePreloader />
         <UnreadMessagesProvider>
           <KeyboardShortcutsHelp />
           <Suspense fallback={<RouteFallback />}>

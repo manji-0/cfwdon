@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import { ViewCache } from "@/domain/cache/view-cache";
+import { CachedView } from "@/domain/cache/cached-view";
+import { ViewReadiness } from "@/domain/cache/view-readiness";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 import {
@@ -27,12 +28,14 @@ export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
   const cache = useViewCache();
   const cached = cache.getHome();
-  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(cached?.statuses ?? []);
-  const [loading, setLoading] = useState(!cached);
+  const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(
+    cached.kind === "Present" ? cached.value.statuses : [],
+  );
+  const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const fetchedAtRef = useRef(cached?.fetchedAt ?? 0);
+  const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const statusesRef = useRef(statuses);
   const scrollYRef = useWindowScrollY();
   statusesRef.current = statuses;
@@ -72,24 +75,26 @@ export const HomePage = () => {
 
   useEffect(() => {
     const snapshot = cache.getHome();
-    if (snapshot) {
-      setStatuses(snapshot.statuses);
-      fetchedAtRef.current = snapshot.fetchedAt;
+    if (snapshot.kind === "Present") {
+      setStatuses(snapshot.value.statuses);
+      fetchedAtRef.current = snapshot.value.fetchedAt;
       setLoading(false);
-      requestAnimationFrame(() => window.scrollTo(0, snapshot.scrollY));
+      requestAnimationFrame(() => window.scrollTo(0, snapshot.value.scrollY));
     }
 
     let active = true;
-    if (snapshot && ViewCache.isRemountSkip(snapshot.fetchedAt)) {
-      return () => {
-        persist(statusesRef.current, fetchedAtRef.current);
-      };
-    }
-
-    if (!snapshot) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
+    const readiness = ViewReadiness.forStreaming(snapshot, Date.now());
+    switch (readiness.kind) {
+      case "Skip":
+        return () => {
+          persist(statusesRef.current, fetchedAtRef.current);
+        };
+      case "Load":
+        setLoading(true);
+        break;
+      case "Revalidate":
+        setRefreshing(true);
+        break;
     }
     void loadTimeline({ replace: true })
       .catch((loadError) => {
