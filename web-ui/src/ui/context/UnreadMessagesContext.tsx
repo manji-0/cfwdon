@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { countUnreadConversations } from "@/domain/conversations/unread";
+import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
@@ -18,7 +18,7 @@ export const UnreadMessagesProvider = ({ children }: Readonly<{ children: ReactN
   const refreshUnreadCount = useCallback(() => {
     void fetchConversations({ limit: 40 }).then((result) => {
       if (result.isOk()) {
-        setUnreadCount(countUnreadConversations(result.value));
+        setUnreadCount(ConversationSet.unreadCount(result.value));
       }
     });
   }, []);

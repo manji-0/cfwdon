@@ -1,24 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import type { Conversation } from "@/domain/conversations/conversation";
+import { Conversation } from "@/domain/conversations/conversation";
+import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { conversationTitle } from "@/domain/conversations/participants";
-import { countUnreadConversations } from "@/domain/conversations/unread";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { formatRelativeTime } from "@/ui/lib/time";
 
-const upsertConversation = (
-  current: ReadonlyArray<Conversation>,
-  next: Conversation,
-): ReadonlyArray<Conversation> => [next, ...current.filter((item) => item.id !== next.id)];
-
 export const MessagesPage = () => {
   const navigate = useNavigate();
   const { setUnreadCount, refreshUnreadCount } = useUnreadMessages();
-  const [conversations, setConversations] = useState<ReadonlyArray<Conversation>>([]);
+  const [conversations, setConversations] = useState(ConversationSet.empty);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -30,9 +25,11 @@ export const MessagesPage = () => {
     }
     setConversations((current) => {
       const next =
-        options?.replace || !options?.maxId ? result.value : [...current, ...result.value];
+        options?.replace || !options?.maxId
+          ? ConversationSet.replace(result.value)
+          : ConversationSet.appendPage(current, result.value);
       if (options?.replace || !options?.maxId) {
-        setUnreadCount(countUnreadConversations(next));
+        setUnreadCount(ConversationSet.unreadCount(next));
       }
       return next;
     });
@@ -65,8 +62,8 @@ export const MessagesPage = () => {
     const subscription = StreamingUser.subscribe((event) => {
       if (event.kind === "conversation") {
         setConversations((current) => {
-          const next = upsertConversation(current, event.conversation);
-          setUnreadCount(countUnreadConversations(next));
+          const next = ConversationSet.upsert(current, event.conversation);
+          setUnreadCount(ConversationSet.unreadCount(next));
           return next;
         });
       }
@@ -110,7 +107,7 @@ export const MessagesPage = () => {
             <button
               key={conversation.id}
               type="button"
-              className={`conversation-row${conversation.unread ? " is-unread" : ""}`}
+              className={`conversation-row${Conversation.isUnread(conversation) ? " is-unread" : ""}`}
               onClick={() => openConversation(conversation)}
             >
               {conversation.accounts[0] ? (

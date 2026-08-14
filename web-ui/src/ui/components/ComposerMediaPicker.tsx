@@ -60,17 +60,17 @@ export const ComposerMediaPicker = ({
                 </div>
               )}
               <div className="composer-media-meta">
-                {attachment.status === "uploading" ? (
+                {attachment.kind === "Uploading" ? (
                   <span className="app-muted">アップロード中…</span>
                 ) : null}
-                {attachment.status === "failed" ? (
-                  <span className="app-error">{attachment.errorMessage ?? "アップロード失敗"}</span>
+                {attachment.kind === "Failed" ? (
+                  <span className="app-error">{attachment.message}</span>
                 ) : null}
                 <button
                   type="button"
                   className="app-button app-button-secondary"
                   onClick={() => onRemove(attachment.localId)}
-                  disabled={disabled || attachment.status === "uploading"}
+                  disabled={disabled || attachment.kind === "Uploading"}
                 >
                   削除
                 </button>

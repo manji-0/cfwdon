@@ -1,4 +1,4 @@
-import type { Notification } from "@/domain/notification/notification";
+import { Notification } from "@/domain/notification/notification";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
 import { CachedView, type CachedView as CachedSlot, type PresentView } from "./cached-view";
@@ -118,11 +118,12 @@ export const ViewCache = {
     notifications: CachedView.map(state.notifications, (snapshot) => ({
       ...snapshot,
       notifications: snapshot.notifications.map((notification) => {
-        if (!notification.status) {
+        const current = Notification.status(notification);
+        if (!current) {
           return notification;
         }
-        const [next] = StatusModel.replaceInList([notification.status], updated);
-        return next === notification.status ? notification : { ...notification, status: next };
+        const [next] = StatusModel.replaceInList([current], updated);
+        return next === current ? notification : Notification.withStatus(notification, next);
       }),
     })),
     profiles: ProfileSet.map(state.profiles, (snapshot) => ({
@@ -139,7 +140,9 @@ const removeStatus = (state: ViewCacheState, statusId: string): ViewCacheState =
   })),
   notifications: CachedView.map(state.notifications, (snapshot) => ({
     ...snapshot,
-    notifications: snapshot.notifications.filter((item) => item.status?.id !== statusId),
+    notifications: snapshot.notifications.filter(
+      (item) => Notification.status(item)?.id !== statusId,
+    ),
   })),
   profiles: ProfileSet.map(state.profiles, (snapshot) => ({
     ...snapshot,

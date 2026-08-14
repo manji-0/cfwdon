@@ -1,33 +1,53 @@
 import { describe, expect, it } from "vitest";
-import { NotificationModel } from "@/domain/notification/notification";
-import { parseAccountRef } from "@/infrastructure/mastodon/parsers/account";
-import { isArkError } from "@/infrastructure/mastodon/parse";
+import type { AccountRef } from "@/domain/account/account";
+import { Notification } from "@/domain/notification/notification";
+import type { Status } from "@/domain/status/status";
+import { Visibility } from "@/domain/status/visibility";
 
-const accountResult = parseAccountRef({
+const account = {
   id: "1",
   username: "alice",
   acct: "alice@example.com",
-  display_name: "Alice",
+  displayName: "Alice",
   avatar: "https://example.com/a.png",
-});
+} as const satisfies AccountRef;
 
-if (isArkError(accountResult)) {
-  throw new Error(accountResult.summary);
-}
+const status = {
+  id: "s1",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  content: "<p>hi</p>",
+  spoilerText: "",
+  sensitive: false,
+  visibility: Visibility.public(),
+  inReplyToId: null,
+  repliesCount: 0,
+  reblogsCount: 0,
+  favouritesCount: 0,
+  favourited: false,
+  reblogged: false,
+  bookmarked: false,
+  account,
+  mediaAttachments: [],
+  reblog: null,
+} as const satisfies Status;
 
-const account = accountResult;
+const meta = {
+  id: "n1",
+  groupKey: "g1",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  account,
+} as const;
 
-describe("NotificationModel", () => {
-  it("labels follow notifications", () => {
-    expect(
-      NotificationModel.label({
-        id: "n1",
-        type: "follow",
-        groupKey: "g1",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        account,
-        status: null,
-      }),
-    ).toBe("Alice がフォローしました");
+describe("Notification", () => {
+  it("labels follow notifications without a status", () => {
+    const notification = Notification.follow(meta);
+    expect(Notification.label(notification)).toBe("Alice がフォローしました");
+    expect(Notification.status(notification)).toBeNull();
+  });
+
+  it("requires a status on mention notifications", () => {
+    const notification = Notification.mention({ ...meta, status });
+    expect(Notification.label(notification)).toBe("Alice が返信しました");
+    expect(Notification.status(notification)).toBe(status);
   });
 });

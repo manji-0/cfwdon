@@ -1,5 +1,5 @@
-import type { Conversation } from "@/domain/conversations/conversation";
+import { ConversationSet } from "./conversation-set";
+import type { Conversation } from "./conversation";
 
-export const countUnreadConversations = (
-  conversations: ReadonlyArray<Pick<Conversation, "unread">>,
-): number => conversations.reduce((total, conversation) => total + (conversation.unread ? 1 : 0), 0);
+export const countUnreadConversations = (conversations: ReadonlyArray<Conversation>): number =>
+  ConversationSet.unreadCount(conversations);

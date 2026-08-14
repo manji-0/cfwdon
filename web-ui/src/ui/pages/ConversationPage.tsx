@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import type { Conversation } from "@/domain/conversations/conversation";
+import { Conversation } from "@/domain/conversations/conversation";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
 import { conversationAcctsLabel, conversationTitle } from "@/domain/conversations/participants";
 import {
@@ -51,7 +51,7 @@ export const ConversationPage = () => {
         throw new Error(mastodonErrorMessage(found.error));
       }
       setConversation(found.value);
-      if (found.value.unread) {
+      if (Conversation.isUnread(found.value)) {
         const read = await markConversationRead(conversationId);
         if (read.isOk() && active) {
           setConversation(read.value);

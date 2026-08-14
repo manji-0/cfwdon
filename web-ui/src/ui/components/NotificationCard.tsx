@@ -1,17 +1,17 @@
 import { Link, useNavigate } from "react-router-dom";
-import type { Notification } from "@/domain/notification/notification";
-import { NotificationModel } from "@/domain/notification/notification";
+import type { Notification as NotificationState } from "@/domain/notification/notification";
+import { Notification } from "@/domain/notification/notification";
 import { Status as StatusModel } from "@/domain/status/status";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type NotificationCardProps = Readonly<{
-  notification: Notification;
+  notification: NotificationState;
 }>;
 
 export const NotificationCard = ({ notification }: NotificationCardProps) => {
   const navigate = useNavigate();
-  const status = notification.status;
+  const status = Notification.status(notification);
   const body = status ? StatusModel.displayBody(status) : null;
 
   return (
@@ -20,7 +20,7 @@ export const NotificationCard = ({ notification }: NotificationCardProps) => {
         <Link to={`/profile/${notification.account.id}`} className="notification-actor">
           <img className="status-avatar" src={notification.account.avatar} alt="" loading="lazy" />
           <div>
-            <p className="notification-summary">{NotificationModel.label(notification)}</p>
+            <p className="notification-summary">{Notification.label(notification)}</p>
             <time className="app-muted" dateTime={notification.createdAt}>
               {formatRelativeTime(notification.createdAt)}
             </time>

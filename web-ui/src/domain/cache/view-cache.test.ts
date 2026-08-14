@@ -15,7 +15,7 @@ import {
   VIEW_CACHE_REMOUNT_SKIP_MS,
   ViewReadiness,
 } from "@/domain/cache/view-readiness";
-import type { Notification } from "@/domain/notification/notification";
+import { Notification } from "@/domain/notification/notification";
 import { SessionState } from "@/domain/session/session";
 import type { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
@@ -83,14 +83,13 @@ const profileSnapshot = (id: string, fetchedAt = 1): ProfileSnapshot => ({
   scrollY: 0,
 });
 
-const mention = {
+const mention = Notification.mention({
   id: "n1",
-  type: "mention",
   groupKey: "n1",
   createdAt: "2026-08-13T00:00:00.000Z",
   account,
   status: status("s2"),
-} as const satisfies Notification;
+});
 
 describe("ViewReadiness", () => {
   it("loads streaming views that are still absent", () => {

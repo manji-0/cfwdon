@@ -64,7 +64,7 @@ describe("parseStreamingPayload", () => {
     expect(event?.kind).toBe("notification");
     if (event?.kind === "notification") {
       expect(event.notification.id).toBe("notif-1");
-      expect(event.notification.type).toBe("favourite");
+      expect(event.notification.kind).toBe("Favourite");
     }
   });
 
@@ -81,7 +81,7 @@ describe("parseStreamingPayload", () => {
     expect(event?.kind).toBe("conversation");
     if (event?.kind === "conversation") {
       expect(event.conversation.id).toBe("conv-1");
-      expect(event.conversation.unread).toBe(true);
+      expect(event.conversation.kind).toBe("Unread");
       expect(event.conversation.lastStatus?.id).toBe("status-1");
     }
   });

@@ -36,11 +36,6 @@ export type ComposerHandle = Readonly<{
   focus: () => void;
 }>;
 
-const createLocalId = (): string =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     placeholder = "いまどうしてる？",
@@ -85,64 +80,45 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [],
   );
 
-  const readyMediaIds = mediaAttachments
-    .filter((attachment) => attachment.status === "ready" && attachment.mediaId)
-    .map((attachment) => attachment.mediaId as string);
-  const hasUploadingMedia = mediaAttachments.some((attachment) => attachment.status === "uploading");
+  const readyMediaIds = ComposerMedia.readyIds(mediaAttachments);
   const canSubmit =
-    (text.trim().length > 0 || readyMediaIds.length > 0) && !hasUploadingMedia && !submitting && !disabled;
+    (text.trim().length > 0 || readyMediaIds.length > 0) &&
+    !ComposerMedia.hasUploading(mediaAttachments) &&
+    !submitting &&
+    !disabled;
 
   const queueUpload = (file: File, localId: string) => {
     void uploadMedia(file).then((result) => {
       setMediaAttachments((current) =>
-        current.map((attachment) => {
-          if (attachment.localId !== localId) {
-            return attachment;
-          }
-          if (result.isErr()) {
-            return {
-              ...attachment,
-              status: "failed",
-              errorMessage: mastodonErrorMessage(result.error),
-            };
-          }
-          return {
-            ...attachment,
-            status: "ready",
-            mediaId: result.value.id,
-          };
-        }),
+        ComposerMedia.complete(
+          current,
+          localId,
+          result.map((media) => media.id).mapErr(mastodonErrorMessage),
+        ),
       );
     });
   };
 
   const handleSelectFiles = (files: ReadonlyArray<File>) => {
-    const remaining = ComposerMedia.maxAttachments - mediaAttachments.length;
-    if (remaining <= 0) {
-      return;
-    }
-    const selected = files.slice(0, remaining);
-    const nextItems = selected.map((file) => {
-      const localId = createLocalId();
-      const previewUrl = URL.createObjectURL(file);
-      queueUpload(file, localId);
-      return {
-        localId,
+    const created = files.map((file) => {
+      const item = ComposerMedia.uploading(
+        ComposerMedia.createLocalId(),
         file,
-        previewUrl,
-        status: "uploading" as const,
-      };
+        URL.createObjectURL(file),
+      );
+      queueUpload(file, item.localId);
+      return item;
     });
-    setMediaAttachments((current) => [...current, ...nextItems]);
+    setMediaAttachments((current) => ComposerMedia.append(current, created));
   };
 
   const handleRemoveMedia = (localId: string) => {
     setMediaAttachments((current) => {
-      const target = current.find((attachment) => attachment.localId === localId);
+      const target = ComposerMedia.member(current, localId);
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
       }
-      return current.filter((attachment) => attachment.localId !== localId);
+      return ComposerMedia.remove(current, localId);
     });
   };
 
