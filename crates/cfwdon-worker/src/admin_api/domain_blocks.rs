@@ -70,7 +70,7 @@ pub(crate) async fn admin_domain_blocks_delete_response(
         AdminAuthorization::Denied(response) => return Ok(response),
     }
     let domain = ctx
-        .param("domain")
+        .param("id")
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing domain route parameter".to_owned()))?;

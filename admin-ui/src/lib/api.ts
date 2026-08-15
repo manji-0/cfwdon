@@ -164,6 +164,31 @@ export function deleteRelay(relayId: string): Promise<void> {
   });
 }
 
+export type AdminDomainBlock = {
+  id: number;
+  domain: string;
+  created_at: string;
+};
+
+export function fetchDomainBlocks(): Promise<AdminDomainBlock[]> {
+  return apiFetch<AdminDomainBlock[]>("/api/cfwdon/admin/domain-blocks");
+}
+
+export function createDomainBlock(domain: string): Promise<AdminDomainBlock> {
+  return apiFetch<AdminDomainBlock>("/api/cfwdon/admin/domain-blocks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain }),
+  });
+}
+
+export function deleteDomainBlock(domain: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/cfwdon/admin/domain-blocks/${encodeURIComponent(domain)}`,
+    { method: "DELETE", parseJson: false },
+  );
+}
+
 export type AdminDashboard = {
   pending_reports: number;
   failed_deliveries: number;
