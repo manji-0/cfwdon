@@ -3,6 +3,7 @@ import { AppRoute } from "@/domain/navigation/route";
 import {
   IconBell,
   IconBookmark,
+  IconBrand,
   IconGear,
   IconHome,
   IconList,
@@ -31,11 +32,16 @@ export const SidebarNav = () => {
 
   return (
     <nav className="app-nav" aria-label="メイン">
-      <div className="app-brand">
+      <NavLink
+        to={AppRoute.toPath(AppRoute.home())}
+        end
+        className="app-brand"
+        aria-label="cfwdon ホーム"
+      >
         <span className="app-brand-mark" aria-hidden="true">
-          C
+          <IconBrand />
         </span>
-      </div>
+      </NavLink>
       {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => (
         <NavLink
           key={route.kind}

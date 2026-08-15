@@ -55,6 +55,7 @@ button {
   align-self: start;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.25rem;
   height: 100vh;
   height: 100dvh;
@@ -65,11 +66,14 @@ button {
 .app-brand {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.35rem 0.75rem 1.25rem;
-  font-size: 1.35rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  justify-content: center;
+  padding: 0.35rem 0 1.25rem;
+  border-radius: 0.55rem;
+  transition: opacity 120ms ease;
+}
+
+.app-brand:hover {
+  opacity: 0.88;
 }
 
 .app-brand-mark {
@@ -80,16 +84,21 @@ button {
   border-radius: 0.55rem;
   background: linear-gradient(135deg, var(--color-accent), #6ea8ff);
   color: #081018;
-  font-size: 1rem;
-  font-weight: 900;
+}
+
+.app-brand-mark svg {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .app-nav-link {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.85rem;
-  padding: 0.8rem 1rem;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
   border-radius: 999px;
   color: var(--color-text-muted);
   transition: background 120ms ease, color 120ms ease;
@@ -111,6 +120,7 @@ button {
   display: grid;
   gap: 0.25rem;
   margin-top: 0.5rem;
+  justify-items: center;
 }
 
 .nav-unread-badge {
