@@ -752,10 +752,8 @@ pub(crate) async fn trending_statuses_response(
     let offset = query.offset.unwrap_or(0);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
 
-    let statuses = if let Some(cached) =
-        crate::load_public_endpoint_cache(&db, crate::PUBLIC_CACHE_TRENDING_STATUSES).await?
-    {
-        crate::slice_json_array_cache(cached, offset, limit)
+    let statuses = if let Some(cached) = crate::load_trending_statuses_cache().await {
+        crate::slice_trending_cache(cached, offset, limit)
     } else {
         let live = trending_status_documents(
             &db,
@@ -765,14 +763,7 @@ pub(crate) async fn trending_statuses_response(
             crate::TRENDING_STATUSES_CACHE_SIZE,
         )
         .await?;
-        let payload = serde_json::Value::Array(live.clone());
-        if let Err(error) =
-            crate::store_public_endpoint_cache(&db, crate::PUBLIC_CACHE_TRENDING_STATUSES, &payload)
-                .await
-        {
-            worker::console_error!("trending statuses cache store failed: {error}");
-        }
-        crate::slice_json_array_cache(payload, offset, limit)
+        crate::slice_trending_cache(live, offset, limit)
     };
 
     with_d1_bookmark(
@@ -793,8 +784,7 @@ pub(crate) async fn refresh_trending_statuses_cache(
         crate::TRENDING_STATUSES_CACHE_SIZE,
     )
     .await?;
-    let payload = serde_json::Value::Array(statuses);
-    crate::store_public_endpoint_cache(db, crate::PUBLIC_CACHE_TRENDING_STATUSES, &payload).await
+    crate::store_trending_statuses_cache(&statuses).await
 }
 
 pub(crate) async fn trending_links_response(
@@ -831,8 +821,8 @@ pub(crate) async fn trending_tags_response(
     let offset = query.offset.unwrap_or(0);
     let db = crate::bind_request_d1(&ctx, &config)?;
 
-    let documents = if let Some(cached) = load_trending_tags_cache(&db).await? {
-        slice_trending_tags_cache(cached, offset, limit)
+    let documents = if let Some(cached) = crate::load_trending_tags_cache().await {
+        crate::slice_trending_cache(cached, offset, limit)
     } else {
         let live = trending_tags_documents(&db, &config, offset, limit).await?;
         live.into_iter()

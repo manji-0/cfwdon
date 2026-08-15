@@ -73,6 +73,7 @@ mod tags;
 mod time_html;
 mod timelines;
 mod tracked_d1;
+mod trends_cache;
 mod ui_assets;
 mod web_api;
 mod web_ui;
@@ -141,6 +142,7 @@ pub(crate) use tags::*;
 pub(crate) use time_html::*;
 pub(crate) use timelines::*;
 pub(crate) use tracked_d1::{D1Database, D1PreparedStatement};
+pub(crate) use trends_cache::*;
 pub(crate) use ui_assets::*;
 pub(crate) use web_api::*;
 pub(crate) use web_ui::*;
@@ -166,103 +168,142 @@ fn scheduled_config(env: &Env) -> AppConfig {
     )
 }
 
+const SCHEDULED_CRON_HOURLY: &str = "17 * * * *";
+const SCHEDULED_CRON_TRENDS: &str = "17 */6 * * *";
+
+fn scheduled_runs_hourly_maintenance(cron: &str) -> bool {
+    cron == SCHEDULED_CRON_HOURLY
+}
+
+fn scheduled_runs_trend_refresh(cron: &str) -> bool {
+    cron == SCHEDULED_CRON_TRENDS
+}
+
 #[event(scheduled)]
-async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let cron = event.cron();
+    let run_hourly = scheduled_runs_hourly_maintenance(&cron);
+    let run_trends = scheduled_runs_trend_refresh(&cron);
+    if !run_hourly && !run_trends {
+        console_error!("scheduled: unknown cron trigger {cron}");
+        return;
+    }
+
     let config = scheduled_config(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
     let result = async {
         let db = D1Database::new(env.d1(&config.database_binding)?);
-        match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
-            Ok(true) => log_federation_event(
-                "outbox_queue_kick",
-                "ok",
-                "outbox queue kick enqueued from scheduled trigger",
-                serde_json::json!({ "reason": "scheduled", "queued": true }),
-            ),
-            Ok(false) => {}
-            Err(error) => log_federation_event(
-                "outbox_queue_kick_failed",
-                "failed",
-                format!("outbox delivery queue kick failed: {error}"),
-                serde_json::json!({
-                    "reason": "scheduled",
-                    "error": error.to_string(),
-                }),
-            ),
-        }
-        if let Err(error) =
-            revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
-        {
-            console_error!("remote collection approval revalidation failed: {error}");
-        }
-        if let Err(error) = process_expired_polls_for_config(&db, &config, Some(&env)).await {
-            console_error!("expired poll processing failed: {error}");
-        }
-        if let Err(error) =
-            process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
-        {
-            console_error!("due scheduled status processing failed: {error}");
-        }
-        match reclaim_stale_background_jobs(&db, 50).await {
-            Ok(report) if report.requeued > 0 || report.failed > 0 => {
-                log_federation_event(
-                    "background_job_stale_reclaim",
+        if run_hourly {
+            match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
+                Ok(true) => log_federation_event(
+                    "outbox_queue_kick",
                     "ok",
-                    format!(
-                        "reclaimed stale background jobs: requeued={} failed={}",
-                        report.requeued, report.failed
-                    ),
+                    "outbox queue kick enqueued from scheduled trigger",
+                    serde_json::json!({ "reason": "scheduled", "queued": true }),
+                ),
+                Ok(false) => {}
+                Err(error) => log_federation_event(
+                    "outbox_queue_kick_failed",
+                    "failed",
+                    format!("outbox delivery queue kick failed: {error}"),
                     serde_json::json!({
-                        "requeued": report.requeued,
-                        "failed": report.failed,
+                        "reason": "scheduled",
+                        "error": error.to_string(),
                     }),
-                );
+                ),
             }
-            Ok(_) => {}
-            Err(error) => console_error!("background job stale reclaim failed: {error}"),
-        }
-        if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
-            console_error!("background job processing failed: {error}");
-        }
-        match reclaim_stale_inbox_activities(&db, 50).await {
-            Ok(report) if report.marked_processed > 0 || report.released > 0 => {
-                log_federation_event(
-                    "inbox_stale_reclaim",
-                    "ok",
-                    format!(
-                        "reclaimed stale inbox activities: marked={} released={}",
-                        report.marked_processed, report.released
-                    ),
-                    serde_json::json!({
-                        "marked_processed": report.marked_processed,
-                        "released": report.released,
-                    }),
-                );
+            if let Err(error) =
+                revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
+            {
+                console_error!("remote collection approval revalidation failed: {error}");
             }
-            Ok(_) => {}
-            Err(error) => console_error!("inbox stale reclaim failed: {error}"),
+            if let Err(error) = process_expired_polls_for_config(&db, &config, Some(&env)).await {
+                console_error!("expired poll processing failed: {error}");
+            }
+            if let Err(error) =
+                process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
+            {
+                console_error!("due scheduled status processing failed: {error}");
+            }
+            match reclaim_stale_background_jobs(&db, 50).await {
+                Ok(report) if report.requeued > 0 || report.failed > 0 => {
+                    log_federation_event(
+                        "background_job_stale_reclaim",
+                        "ok",
+                        format!(
+                            "reclaimed stale background jobs: requeued={} failed={}",
+                            report.requeued, report.failed
+                        ),
+                        serde_json::json!({
+                            "requeued": report.requeued,
+                            "failed": report.failed,
+                        }),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => console_error!("background job stale reclaim failed: {error}"),
+            }
+            if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
+                console_error!("background job processing failed: {error}");
+            }
+            match reclaim_stale_inbox_activities(&db, 50).await {
+                Ok(report) if report.marked_processed > 0 || report.released > 0 => {
+                    log_federation_event(
+                        "inbox_stale_reclaim",
+                        "ok",
+                        format!(
+                            "reclaimed stale inbox activities: marked={} released={}",
+                            report.marked_processed, report.released
+                        ),
+                        serde_json::json!({
+                            "marked_processed": report.marked_processed,
+                            "released": report.released,
+                        }),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => console_error!("inbox stale reclaim failed: {error}"),
+            }
+            if let Err(error) = purge_stale_public_remote_content(&db).await {
+                console_error!("public remote retention purge failed: {error}");
+            }
+            if let Err(error) = refresh_instance_activity_cache(&db).await {
+                console_error!("instance activity cache refresh failed: {error}");
+            }
+            if let Err(error) = refresh_public_timeline_cache(&db, &config).await {
+                console_error!("public timeline cache refresh failed: {error}");
+            }
         }
-        if let Err(error) = purge_stale_public_remote_content(&db).await {
-            console_error!("public remote retention purge failed: {error}");
-        }
-        if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
-            console_error!("trending tags cache refresh failed: {error}");
-        }
-        if let Err(error) = refresh_instance_activity_cache(&db).await {
-            console_error!("instance activity cache refresh failed: {error}");
-        }
-        if let Err(error) = refresh_trending_statuses_cache(&db, &config).await {
-            console_error!("trending statuses cache refresh failed: {error}");
-        }
-        if let Err(error) = refresh_public_timeline_cache(&db, &config).await {
-            console_error!("public timeline cache refresh failed: {error}");
+        if run_trends {
+            if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
+                console_error!("trending tags cache refresh failed: {error}");
+            }
+            if let Err(error) = refresh_trending_statuses_cache(&db, &config).await {
+                console_error!("trending statuses cache refresh failed: {error}");
+            }
         }
         Ok::<(), Error>(())
     }
     .await;
     if let Err(error) = result {
         console_error!("scheduled maintenance failed: {error}");
+    }
+}
+
+#[cfg(test)]
+mod scheduled_tests {
+    use super::{
+        SCHEDULED_CRON_HOURLY, SCHEDULED_CRON_TRENDS, scheduled_runs_hourly_maintenance,
+        scheduled_runs_trend_refresh,
+    };
+
+    #[test]
+    fn scheduled_cron_triggers_are_partitioned() {
+        assert!(scheduled_runs_hourly_maintenance(SCHEDULED_CRON_HOURLY));
+        assert!(!scheduled_runs_hourly_maintenance(SCHEDULED_CRON_TRENDS));
+        assert!(scheduled_runs_trend_refresh(SCHEDULED_CRON_TRENDS));
+        assert!(!scheduled_runs_trend_refresh(SCHEDULED_CRON_HOURLY));
     }
 }
 

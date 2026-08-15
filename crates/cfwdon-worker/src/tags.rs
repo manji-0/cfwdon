@@ -12,6 +12,7 @@ use crate::statuses::{
 };
 use cfwdon_core::AppConfig;
 use serde::Deserialize;
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 use worker::Result;
 use worker::d1::D1Type;
@@ -496,8 +497,20 @@ async fn load_indexed_tag_search_metrics(db: &D1Database, tag: &str) -> Result<T
         .unwrap_or_default())
 }
 
-const TRENDING_TAGS_CACHE_ID: &str = "default";
-const TRENDING_TAGS_CACHE_SIZE: u32 = 200;
+const TRENDING_TAGS_WINDOW_DAYS: i64 = 3;
+const TRENDING_TAGS_MIN_USES: u64 = 10;
+
+fn trending_tags_cutoff_iso() -> Result<String> {
+    let now =
+        OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp()).map_err(|error| {
+            worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
+        })?;
+    (now - Duration::days(TRENDING_TAGS_WINDOW_DAYS))
+        .format(&Rfc3339)
+        .map_err(|error| {
+            worker::Error::RustError(format!("failed to format trending tags cutoff: {error}"))
+        })
+}
 
 fn trending_tags_metrics_sql() -> &'static str {
     "SELECT tag,
@@ -512,6 +525,7 @@ fn trending_tags_metrics_sql() -> &'static str {
          FROM status_hashtags h
          JOIN statuses s ON s.id = h.status_id
          WHERE s.visibility = 'public'
+           AND h.created_at >= ?1
          GROUP BY h.tag
          UNION ALL
          SELECT h.tag AS tag,
@@ -521,23 +535,28 @@ fn trending_tags_metrics_sql() -> &'static str {
          FROM remote_status_hashtags h
          JOIN remote_statuses rs ON rs.id = h.status_id
          WHERE rs.visibility = 'public'
+           AND h.published_at >= ?1
          GROUP BY h.tag
      )
      GROUP BY tag
+     HAVING SUM(statuses_count) >= ?2
      ORDER BY statuses_count DESC,
               accounts_count DESC,
               last_status_at DESC,
               tag ASC
-     LIMIT ?1"
+     LIMIT ?3"
 }
 
 pub(crate) async fn list_trending_tag_metrics(
     db: &D1Database,
     fetch_limit: u32,
 ) -> Result<Vec<(String, TagSearchMetrics)>> {
-    let bindings = [D1Type::Integer(
-        i32::try_from(fetch_limit).unwrap_or(i32::MAX),
-    )];
+    let cutoff = trending_tags_cutoff_iso()?;
+    let bindings = [
+        D1Type::Text(cutoff.as_str()),
+        D1Type::Integer(i32::try_from(TRENDING_TAGS_MIN_USES).unwrap_or(i32::MAX)),
+        D1Type::Integer(i32::try_from(fetch_limit).unwrap_or(i32::MAX)),
+    ];
     let result = db
         .prepare(trending_tags_metrics_sql())
         .bind_refs(bindings.iter())?
@@ -567,7 +586,7 @@ pub(crate) async fn trending_tags_documents(
 ) -> Result<Vec<MastodonTagResponse>> {
     let fetch_limit = offset
         .saturating_add(limit)
-        .clamp(limit, TRENDING_TAGS_CACHE_SIZE);
+        .clamp(limit, crate::TRENDING_TAGS_CACHE_SIZE);
     let metrics = list_trending_tag_metrics(db, fetch_limit).await?;
     Ok(metrics
         .into_iter()
@@ -577,67 +596,13 @@ pub(crate) async fn trending_tags_documents(
         .collect())
 }
 
-#[derive(Debug, Deserialize)]
-struct TrendingTagsCacheRow {
-    payload_json: String,
-}
-
-pub(crate) async fn load_trending_tags_cache(
-    db: &D1Database,
-) -> Result<Option<Vec<serde_json::Value>>> {
-    let bindings = [D1Type::Text(TRENDING_TAGS_CACHE_ID)];
-    let Some(row) = db
-        .prepare(
-            "SELECT payload_json
-             FROM trending_tags_cache
-             WHERE id = ?1
-             LIMIT 1",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<TrendingTagsCacheRow>(None)
-        .await?
-    else {
-        return Ok(None);
-    };
-
-    serde_json::from_str(&row.payload_json)
-        .map(Some)
-        .map_err(|error| worker::Error::RustError(format!("invalid trending tags cache: {error}")))
-}
-
-pub(crate) fn slice_trending_tags_cache(
-    documents: Vec<serde_json::Value>,
-    offset: u32,
-    limit: u32,
-) -> Vec<serde_json::Value> {
-    documents
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .collect()
-}
-
 pub(crate) async fn refresh_trending_tags_cache(db: &D1Database, config: &AppConfig) -> Result<()> {
-    let documents = trending_tags_documents(db, config, 0, TRENDING_TAGS_CACHE_SIZE).await?;
-    let payload_json = serde_json::to_string(&documents)
-        .map_err(|error| worker::Error::RustError(error.to_string()))?;
-    let now = crate::now_iso_string()?;
-    let bindings = [
-        D1Type::Text(TRENDING_TAGS_CACHE_ID),
-        D1Type::Text(&payload_json),
-        D1Type::Text(&now),
-    ];
-    db.prepare(
-        "INSERT INTO trending_tags_cache (id, payload_json, computed_at)
-         VALUES (?1, ?2, ?3)
-         ON CONFLICT(id) DO UPDATE SET
-             payload_json = excluded.payload_json,
-             computed_at = excluded.computed_at",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(())
+    let documents = trending_tags_documents(db, config, 0, crate::TRENDING_TAGS_CACHE_SIZE).await?;
+    let values = documents
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::store_trending_tags_cache(&values).await
 }
 
 async fn load_scanned_local_tag_search_metrics(
@@ -691,19 +656,10 @@ mod trending_tags_tests {
         let sql = trending_tags_metrics_sql();
         assert!(sql.contains("FROM status_hashtags"));
         assert!(sql.contains("FROM remote_status_hashtags"));
+        assert!(sql.contains("h.created_at >= ?1"));
+        assert!(sql.contains("h.published_at >= ?1"));
+        assert!(sql.contains("HAVING SUM(statuses_count) >= ?2"));
         assert!(sql.contains("ORDER BY statuses_count DESC"));
         assert!(!sql.contains("text_content"));
-    }
-
-    #[test]
-    fn slice_trending_tags_cache_applies_offset_and_limit() {
-        let documents = vec![
-            serde_json::json!({"name": "a"}),
-            serde_json::json!({"name": "b"}),
-            serde_json::json!({"name": "c"}),
-        ];
-        let sliced = super::slice_trending_tags_cache(documents, 1, 1);
-        assert_eq!(sliced.len(), 1);
-        assert_eq!(sliced[0]["name"], "b");
     }
 }

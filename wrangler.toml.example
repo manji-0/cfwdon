@@ -33,7 +33,7 @@ run_worker_first = [
 ]
 
 [triggers]
-crons = ["17 * * * *"]
+crons = ["17 * * * *", "17 */6 * * *"]
 
 [vars]
 # Replace these before deploying a real instance.

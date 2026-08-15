@@ -37,7 +37,7 @@ pub(crate) fn reset_app_cache_request_state() {
     ACCOUNT_CAPABILITIES_L1.with(|cache| cache.borrow_mut().clear());
 }
 
-fn app_cache_kv() -> Option<KvStore> {
+pub(crate) fn app_cache_kv() -> Option<KvStore> {
     APP_CACHE_KV.with(|slot| slot.borrow().clone())
 }
 
