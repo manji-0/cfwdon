@@ -34,7 +34,6 @@ export const HomePage = () => {
   const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const statusesRef = useRef(statuses);
   const scrollYRef = useWindowScrollY();
@@ -93,7 +92,6 @@ export const HomePage = () => {
         setLoading(true);
         break;
       case "Revalidate":
-        setRefreshing(true);
         break;
     }
     void loadTimeline({ replace: true })
@@ -105,7 +103,6 @@ export const HomePage = () => {
       .finally(() => {
         if (active) {
           setLoading(false);
-          setRefreshing(false);
         }
       });
     return () => {
@@ -115,14 +112,11 @@ export const HomePage = () => {
   }, [cache, loadTimeline, persist]);
 
   const handleRefresh = async () => {
-    setRefreshing(true);
     setError("");
     try {
       await loadTimeline({ replace: true });
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "更新に失敗しました");
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -219,21 +213,7 @@ export const HomePage = () => {
   };
 
   return (
-    <AppShell
-      title="ホーム"
-      aside={
-        <>
-          <div className="app-card">
-            <h2>ホーム</h2>
-            <p className="app-muted">フォロー中のアカウントの投稿が表示されます。</p>
-            <button type="button" className="app-button app-button-secondary" onClick={() => void handleRefresh()}>
-              {refreshing ? "更新中…" : "更新"}
-            </button>
-          </div>
-          <TrendsSidebar />
-        </>
-      }
-    >
+    <AppShell title="ホーム" aside={<TrendsSidebar />}>
       <Composer ref={composerRef} onSubmit={handlePublish} />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
