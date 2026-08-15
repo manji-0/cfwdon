@@ -1,6 +1,6 @@
 # Cloudflare Deploy Checklist
 
-This repository is configured to run as a single Cloudflare Worker backed by D1 and R2.
+This repository is configured to run as a single Cloudflare Worker backed by D1 and R2, with Web and admin UI files attached as Workers static assets.
 
 For local commands and CI gates, see [Development Workflow](../getting-started/development.md).
 For Worker bindings, environment variables, and secrets, see [Configuration Reference](../reference/configuration.md).
@@ -106,22 +106,32 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
 11. Run the full local gate.
 
-   ```sh
-   devbox run ci
-   ```
+    ```sh
+    devbox run ci
+    ```
 
-12. Deploy the Worker.
+12. Build the UI bundles so deploy does not upload the fallback HTML shells.
 
-   ```sh
-   wrangler deploy
-   ```
+    ```sh
+    (cd web-ui && pnpm install && pnpm run build)
+    (cd admin-ui && npm install && npm run build)
+    ```
+
+    `wrangler deploy` stages `web-ui/dist` into `assets/app` and `admin-ui/dist` into `assets/admin`. Missing dist directories fall back to placeholder HTML.
+
+13. Deploy the Worker.
+
+    ```sh
+    wrangler deploy
+    ```
 
 ## Verification Gates
 
 - `devbox run ci`
-- `wrangler.toml` contains active `[[d1_databases]]` and `[[r2_buckets]]` bindings
+- `wrangler.toml` contains active `[[d1_databases]]`, `[[r2_buckets]]`, and `[assets]` bindings
 - production vars do not contain placeholder values from the sample `wrangler.toml`
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, and `APP_CACHE`
+- `wrangler.toml` `[assets] binding` is `ASSETS`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `migrations/` contains the schema required by the Worker code
 

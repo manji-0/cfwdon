@@ -1,12 +1,7 @@
-mod assets {
-    include!(concat!(env!("OUT_DIR"), "/web_ui_assets.rs"));
-}
-
 use crate::{
-    auth0_login_redirect_response, auth0_logout_redirect_response, escape_html, instance_base_url,
-    load_config,
+    WEB_UI_INDEX_PATH, auth0_login_redirect_response, auth0_logout_redirect_response, escape_html,
+    instance_base_url, load_config, serve_ui_asset,
 };
-use assets::lookup_web_embedded_asset;
 use url::Url;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -21,10 +16,10 @@ pub(crate) async fn web_ui_response(req: Request, ctx: RouteContext<()>) -> Resu
         return auth0_logout_redirect_response(&config);
     }
     if is_public_web_asset_path(&path) {
-        return serve_embedded_asset(&path);
+        return serve_ui_asset(&ctx.env, &path).await;
     }
     if is_web_ui_path(&path) {
-        return serve_embedded_asset("/app/");
+        return serve_ui_asset(&ctx.env, WEB_UI_INDEX_PATH).await;
     }
 
     Response::error("Not Found", 404)
@@ -51,18 +46,6 @@ pub(crate) fn accept_header_prefers_web_ui_html(accept: &str) -> bool {
 pub(crate) fn accept_prefers_web_ui_html(req: &Request) -> Result<bool> {
     let accept = req.headers().get("Accept")?.unwrap_or_default();
     Ok(accept_header_prefers_web_ui_html(&accept))
-}
-
-fn serve_embedded_asset(path: &str) -> Result<Response> {
-    let Some((bytes, content_type)) = lookup_web_embedded_asset(path) else {
-        return Response::error("Not Found", 404);
-    };
-    let mut response = Response::from_bytes(bytes.to_vec())?;
-    response.headers_mut().set("Content-Type", content_type)?;
-    response
-        .headers_mut()
-        .set("Cache-Control", crate::embedded_ui_cache_control(path))?;
-    Ok(response)
 }
 
 fn web_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {

@@ -1,10 +1,12 @@
 # Configuration Reference
 
-`cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
+`cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, Web and admin UI files through a Workers static assets binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
 
 For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.example) to `wrangler.toml` and replace the placeholder values before deploying.
 
 ## Cloudflare Bindings
+<!-- derived-from ../../wrangler.toml.example -->
+<!-- dagayn: implemented-by crates/cfwdon-worker/src/ui_assets.rs::serve_ui_asset -->
 
 | Binding | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -13,8 +15,11 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
 | `APP_CACHE` | KV namespace | Yes | Caches short-lived app data such as account capability bits used to skip empty D1 probes. |
 | `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
+| `ASSETS` | Workers static assets | Yes | Staged `web-ui` and `admin-ui` files under `/app` and `/admin`. Configured by `[assets]` in `wrangler.toml`, not by `AppConfig`. |
 
-If a binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync.
+If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync. The static assets binding name is `ASSETS` in `wrangler.toml` and `crates/cfwdon-worker/src/ui_assets.rs`.
+
+Do not set `[assets] not_found_handling` to `single-page-application`. Unmatched `/app` routes fall through to the Worker so ActivityPub and Mastodon API paths are not captured as HTML.
 
 ## Public Instance Vars
 

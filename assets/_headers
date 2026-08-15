@@ -1,0 +1,10 @@
+# Vite content-hashed files never reuse a URL after a rebuild.
+/app/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/admin/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Unhashed icons can change in place after deploy.
+/app/icons/*
+  Cache-Control: public, max-age=86400

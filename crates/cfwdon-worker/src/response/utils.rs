@@ -18,8 +18,8 @@ pub(crate) const CACHE_CONTROL_HASHED_ASSET: &str = "public, max-age=31536000, i
 /// Unhashed public files (icons) can change in place after deploy.
 pub(crate) const CACHE_CONTROL_UNHASHED_ASSET: &str = "public, max-age=86400";
 
-/// Cache-Control for Worker-embedded `/app` and `/admin` static files.
-pub(crate) fn embedded_ui_cache_control(path: &str) -> &'static str {
+/// Cache-Control for `/app` and `/admin` static files served from Workers assets.
+pub(crate) fn ui_asset_cache_control(path: &str) -> &'static str {
     if ui_shell_must_revalidate(path) {
         CACHE_CONTROL_UI_SHELL
     } else if path.contains("/assets/") {
@@ -127,39 +127,36 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ui_shell_revalidates() {
-        assert_eq!(embedded_ui_cache_control("/app/"), CACHE_CONTROL_UI_SHELL);
-        assert_eq!(embedded_ui_cache_control("/admin/"), CACHE_CONTROL_UI_SHELL);
+    fn ui_shell_revalidates() {
+        assert_eq!(ui_asset_cache_control("/app/"), CACHE_CONTROL_UI_SHELL);
+        assert_eq!(ui_asset_cache_control("/admin/"), CACHE_CONTROL_UI_SHELL);
         assert_eq!(
-            embedded_ui_cache_control("/app/index.html"),
+            ui_asset_cache_control("/app/index.html"),
             CACHE_CONTROL_UI_SHELL
         );
+        assert_eq!(ui_asset_cache_control("/app/sw.js"), CACHE_CONTROL_UI_SHELL);
         assert_eq!(
-            embedded_ui_cache_control("/app/sw.js"),
-            CACHE_CONTROL_UI_SHELL
-        );
-        assert_eq!(
-            embedded_ui_cache_control("/app/manifest.webmanifest"),
+            ui_asset_cache_control("/app/manifest.webmanifest"),
             CACHE_CONTROL_UI_SHELL
         );
     }
 
     #[test]
-    fn embedded_hashed_assets_are_immutable() {
+    fn hashed_assets_are_immutable() {
         assert_eq!(
-            embedded_ui_cache_control("/app/assets/index-Cq2FpDWP.js"),
+            ui_asset_cache_control("/app/assets/index-Cq2FpDWP.js"),
             CACHE_CONTROL_HASHED_ASSET
         );
         assert_eq!(
-            embedded_ui_cache_control("/admin/assets/index-abc.css"),
+            ui_asset_cache_control("/admin/assets/index-abc.css"),
             CACHE_CONTROL_HASHED_ASSET
         );
     }
 
     #[test]
-    fn embedded_unhashed_icons_use_short_public_ttl() {
+    fn unhashed_icons_use_short_public_ttl() {
         assert_eq!(
-            embedded_ui_cache_control("/app/icons/icon-192.png"),
+            ui_asset_cache_control("/app/icons/icon-192.png"),
             CACHE_CONTROL_UNHASHED_ASSET
         );
     }

@@ -95,8 +95,10 @@ Route-level Mastodon coverage is tracked in `docs/mastodon-api-compat/`. That in
 ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound work. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
 
 ## Operational Plan
+<!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 
 - Deploy as a single Cloudflare Worker.
+- Attach Vite `web-ui` and `admin-ui` builds as Workers static assets under `/app` and `/admin`.
 - Configure D1 and R2 bindings in `wrangler.toml`.
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.

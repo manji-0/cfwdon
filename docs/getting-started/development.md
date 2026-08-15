@@ -120,7 +120,7 @@ cargo test -p cfwdon-models
 devbox run worker:dev
 ```
 
-This starts `wrangler dev`, rebuilds `web-ui/dist`, and applies pending local D1 migrations before boot.
+This starts `wrangler dev`, rebuilds `web-ui/dist`, stages UI files into `assets/`, and applies pending local D1 migrations before boot. The Worker build copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
 
 ### Connect to a specific instance
 

@@ -130,6 +130,7 @@ python3 scripts/generate_mastodon_api_compat.py
 <!-- derived-from ../reference/configuration.md -->
 
 - `wrangler deploy --dry-run` fails with D1 or R2 binding errors: confirm `wrangler.toml` has `[[d1_databases]]` binding `DB` and `[[r2_buckets]]` binding `MEDIA`.
+- `/app` or `/admin` shows the placeholder “assets are not built yet” page: build the matching UI (`web-ui` or `admin-ui`) before `wrangler deploy` or `worker:dev`.
 - Protected API routes reject requests: confirm the request sends `Authorization: Bearer <Auth0 access token>`, and that `AUTH0_DOMAIN` plus `AUTH0_AUDIENCE` match the token `iss` and `aud` claims.
 - Browser login does not return from Auth0: confirm the Auth0 application allows `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`.
 - Media URLs point at the wrong host: set `MEDIA_PUBLIC_BASE_URL` to the public R2 custom domain.

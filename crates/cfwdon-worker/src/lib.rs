@@ -73,6 +73,7 @@ mod tags;
 mod time_html;
 mod timelines;
 mod tracked_d1;
+mod ui_assets;
 mod web_api;
 mod web_ui;
 pub(crate) use accounts::*;
@@ -140,6 +141,7 @@ pub(crate) use tags::*;
 pub(crate) use time_html::*;
 pub(crate) use timelines::*;
 pub(crate) use tracked_d1::{D1Database, D1PreparedStatement};
+pub(crate) use ui_assets::*;
 pub(crate) use web_api::*;
 pub(crate) use web_ui::*;
 

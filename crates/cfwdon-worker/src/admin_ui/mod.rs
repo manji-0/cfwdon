@@ -1,13 +1,8 @@
-mod assets {
-    include!(concat!(env!("OUT_DIR"), "/admin_ui_assets.rs"));
-}
-
 use crate::{
-    auth0_login_redirect_response, auth0_logout_redirect_response, auth0_relogin_redirect_response,
-    escape_html, find_authenticated_local_account_with_roles, instance_base_url,
-    is_admin_authorized, load_config,
+    ADMIN_UI_INDEX_PATH, auth0_login_redirect_response, auth0_logout_redirect_response,
+    auth0_relogin_redirect_response, escape_html, find_authenticated_local_account_with_roles,
+    instance_base_url, is_admin_authorized, load_config, serve_ui_asset,
 };
-use assets::lookup_admin_embedded_asset;
 use url::Url;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -15,7 +10,7 @@ pub(crate) async fn admin_ui_response(req: Request, ctx: RouteContext<()>) -> Re
     let config = load_config(&ctx);
     let path = req.path();
     if is_public_admin_asset_path(&path) {
-        return serve_embedded_asset(&path);
+        return serve_ui_asset(&ctx.env, &path).await;
     }
     if path == "/admin/logout" {
         return auth0_logout_redirect_response(&config);
@@ -32,7 +27,7 @@ pub(crate) async fn admin_ui_response(req: Request, ctx: RouteContext<()>) -> Re
     };
 
     let _ = account;
-    serve_embedded_asset("/admin/")
+    serve_ui_asset(&ctx.env, ADMIN_UI_INDEX_PATH).await
 }
 
 pub(crate) fn is_admin_ui_path(path: &str) -> bool {
@@ -41,17 +36,6 @@ pub(crate) fn is_admin_ui_path(path: &str) -> bool {
 
 fn is_public_admin_asset_path(path: &str) -> bool {
     path.starts_with("/admin/assets/")
-}
-
-fn serve_embedded_asset(path: &str) -> Result<Response> {
-    let (bytes, content_type) = lookup_admin_embedded_asset(path)
-        .ok_or_else(|| worker::Error::RustError(format!("admin ui asset not found: {path}")))?;
-    let mut response = Response::from_bytes(bytes.to_vec())?;
-    response.headers_mut().set("Content-Type", content_type)?;
-    response
-        .headers_mut()
-        .set("Cache-Control", crate::embedded_ui_cache_control(path))?;
-    Ok(response)
 }
 
 fn admin_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {

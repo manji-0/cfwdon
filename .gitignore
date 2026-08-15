@@ -7,6 +7,8 @@
 /admin-ui/dist
 /web-ui/node_modules
 /web-ui/dist
+/assets/app/
+/assets/admin/
 /.devbox
 /.direnv
 /.dev.vars

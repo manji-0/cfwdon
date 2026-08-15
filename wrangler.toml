@@ -17,7 +17,19 @@ enabled = true
 head_sampling_rate = 1
 
 [build]
-command = "worker-build --release crates/cfwdon-worker"
+command = "node scripts/build_worker.mjs"
+
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+not_found_handling = "none"
+run_worker_first = [
+  "/app/login",
+  "/app/logout",
+  "/admin",
+  "/admin/*",
+  "!/admin/assets/*",
+]
 
 [triggers]
 crons = ["17 * * * *"]
