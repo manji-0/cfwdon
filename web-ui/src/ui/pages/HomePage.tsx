@@ -20,6 +20,7 @@ import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
+import { SearchSidebar } from "@/ui/components/SearchSidebar";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
@@ -213,7 +214,15 @@ export const HomePage = () => {
   };
 
   return (
-    <AppShell title="ホーム" aside={<TrendsSidebar />}>
+    <AppShell
+      title="ホーム"
+      aside={
+        <>
+          <SearchSidebar />
+          <TrendsSidebar />
+        </>
+      }
+    >
       <Composer ref={composerRef} onSubmit={handlePublish} />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
