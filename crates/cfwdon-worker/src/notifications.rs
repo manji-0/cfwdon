@@ -22,6 +22,7 @@ mod response_builders;
 mod routes;
 mod state;
 mod status_entries;
+mod status_preload;
 mod status_store;
 mod stream_publish;
 mod types;
