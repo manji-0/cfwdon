@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import type { Status } from "@/domain/status/status";
+import { PreviewCard } from "@/domain/status/preview-card";
+import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
@@ -26,6 +28,7 @@ export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => (
       </div>
       {status.spoilerText ? <p className="chat-cw">CW: {status.spoilerText}</p> : null}
       <StatusContent html={status.content} />
+      {PreviewCard.isVisible(status) ? <LinkPreviewCard card={status.card!} /> : null}
     </div>
   </article>
 );

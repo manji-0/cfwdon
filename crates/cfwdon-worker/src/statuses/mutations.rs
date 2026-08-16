@@ -1,11 +1,11 @@
 use super::{
     StatusRecord, StatusRow, actor_url, add_seconds_to_iso_string, build_status_card_value,
-    enqueue_addressed_create_activity, enqueue_addressed_delete_activity,
+    card_unfurl_payload, enqueue_addressed_create_activity, enqueue_addressed_delete_activity,
     enqueue_direct_create_activity, enqueue_direct_delete_activity,
     find_local_status_by_object_uri, generate_entity_id, now_iso_string,
     outbox_create_insert_statement, outbox_delete_insert_statement, render_status_html,
     replace_local_status_hashtags, replace_local_status_mentions, require_status_by_id,
-    status_from_record,
+    soft_enqueue_background_job, status_from_record, JOB_CARD_UNFURL,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
@@ -102,6 +102,16 @@ pub(crate) async fn insert_status(
 
     if let Some(poll) = draft.poll() {
         insert_status_poll(db, &stored.status_id, poll, &stored.created_at).await?;
+    }
+
+    if stored.card_json.is_some() {
+        let _ = soft_enqueue_background_job(
+            db,
+            JOB_CARD_UNFURL,
+            &card_unfurl_payload("local", &stored.status_id),
+            &stored.created_at,
+        )
+        .await;
     }
 
     require_status_by_id(db, &stored.status_id).await
@@ -528,15 +538,17 @@ fn local_status_update_bindings<'a>(
     spoiler_text: &'a str,
     sensitive: bool,
     language: Option<&'a str>,
+    card_json: Option<&'a str>,
     updated_at: &'a str,
     status_id: &'a str,
-) -> [D1Type<'a>; 7] {
+) -> [D1Type<'a>; 8] {
     [
         D1Type::Text(content_html),
         D1Type::Text(text),
         D1Type::Text(spoiler_text),
         D1Type::Integer(if sensitive { 1 } else { 0 }),
         language.map_or(D1Type::Null, D1Type::Text),
+        card_json.map_or(D1Type::Null, D1Type::Text),
         D1Type::Text(updated_at),
         D1Type::Text(status_id),
     ]
@@ -610,12 +622,15 @@ pub(crate) async fn update_local_status(
     updated_at: &str,
 ) -> Result<StatusRow> {
     let content_html = render_status_html(text);
+    let card_json =
+        build_status_card_value(text).and_then(|value| serde_json::to_string(&value).ok());
     let bindings = local_status_update_bindings(
         &content_html,
         text,
         spoiler_text,
         sensitive,
         language,
+        card_json.as_deref(),
         updated_at,
         &status.id,
     );
@@ -626,8 +641,9 @@ pub(crate) async fn update_local_status(
              spoiler_text = ?3,
              sensitive = ?4,
              language = ?5,
-             updated_at = ?6
-         WHERE id = ?7",
+             card_json = ?6,
+             updated_at = ?7
+         WHERE id = ?8",
     )
     .bind_refs(bindings.iter())?
     .run()
@@ -637,6 +653,16 @@ pub(crate) async fn update_local_status(
         .await?;
 
     replace_local_status_mentions(db, config, &status.id, &status.created_at, text).await?;
+
+    if card_json.is_some() {
+        let _ = soft_enqueue_background_job(
+            db,
+            JOB_CARD_UNFURL,
+            &card_unfurl_payload("local", &status.id),
+            updated_at,
+        )
+        .await;
+    }
 
     require_status_by_id(db, &status.id).await
 }
@@ -952,6 +978,7 @@ mod tests {
             "cw",
             true,
             Some("ja"),
+            Some("{\"url\":\"https://example.com\"}"),
             "2026-01-02T03:04:05.000Z",
             "status-1",
         );
@@ -963,9 +990,13 @@ mod tests {
         assert!(matches!(bindings[4], D1Type::Text("ja")));
         assert!(matches!(
             bindings[5],
+            D1Type::Text("{\"url\":\"https://example.com\"}")
+        ));
+        assert!(matches!(
+            bindings[6],
             D1Type::Text("2026-01-02T03:04:05.000Z")
         ));
-        assert!(matches!(bindings[6], D1Type::Text("status-1")));
+        assert!(matches!(bindings[7], D1Type::Text("status-1")));
     }
 
     #[test]
@@ -976,12 +1007,14 @@ mod tests {
             "",
             false,
             None,
+            None,
             "2026-01-02T03:04:05.000Z",
             "status-1",
         );
 
         assert!(matches!(bindings[3], D1Type::Integer(0)));
         assert!(matches!(bindings[4], D1Type::Null));
+        assert!(matches!(bindings[5], D1Type::Null));
     }
 
     #[test]

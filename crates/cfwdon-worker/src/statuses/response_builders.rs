@@ -998,6 +998,9 @@ async fn build_local_status_response_inner(
     )
     .await?;
     response.apply_local_details(details);
+    if !response.media_attachments.is_empty() {
+        response.card = None;
+    }
     Ok(response)
 }
 
@@ -1376,6 +1379,9 @@ async fn build_remote_status_response_inner(
     )
     .await?;
     response.apply_remote_details(details);
+    if !response.media_attachments.is_empty() {
+        response.card = None;
+    }
     Ok(response)
 }
 

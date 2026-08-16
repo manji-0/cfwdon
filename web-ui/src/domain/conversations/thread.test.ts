@@ -25,6 +25,7 @@ const status = (id: string, inReplyToId: string | null, visibility = Visibility.
     avatar: "https://example.test/a.png",
   },
   mediaAttachments: [],
+  card: null,
   reblog: null,
 });
 

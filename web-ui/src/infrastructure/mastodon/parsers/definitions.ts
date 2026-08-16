@@ -54,6 +54,16 @@ export const mastodon = scope({
     "preview_url?": "string",
     "description?": "string | null",
   },
+  PreviewCardApi: {
+    url: "string",
+    title: "string",
+    description: "string",
+    type: "string",
+    provider_name: "string",
+    provider_url: "string",
+    "image?": "string | null",
+    "blurhash?": "string | null",
+  },
   StatusPayloadApi: {
     id: "string>0",
     created_at: "string",
@@ -70,6 +80,7 @@ export const mastodon = scope({
     "bookmarked?": "boolean",
     account: "AccountRefApi",
     "media_attachments?": "MediaAttachmentApi[]",
+    "card?": "PreviewCardApi | null",
     "reblog?": "StatusPayloadApi | null",
   },
 });

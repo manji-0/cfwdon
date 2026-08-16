@@ -28,6 +28,7 @@ const status = {
   bookmarked: false,
   account,
   mediaAttachments: [],
+  card: null,
   reblog: null,
 } as const satisfies Status;
 

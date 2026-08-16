@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "react-router-dom";
 import type { Notification as NotificationState } from "@/domain/notification/notification";
 import { Notification } from "@/domain/notification/notification";
+import { PreviewCard } from "@/domain/status/preview-card";
 import { Status as StatusModel } from "@/domain/status/status";
+import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
@@ -51,6 +53,7 @@ export const NotificationCard = ({ notification }: NotificationCardProps) => {
         >
           {body.spoilerText ? <p className="app-muted">CW: {body.spoilerText}</p> : null}
           <StatusContent html={body.content} />
+          {PreviewCard.isVisible(body) ? <LinkPreviewCard card={body.card!} /> : null}
         </div>
       ) : null}
     </article>

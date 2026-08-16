@@ -1,4 +1,5 @@
 import type { AccountRef as AccountRefType } from "@/domain/account/account";
+import type { PreviewCard } from "@/domain/status/preview-card";
 import type { Visibility } from "@/domain/status/visibility";
 
 export type MediaAttachment = Readonly<{
@@ -25,6 +26,7 @@ export type Status = Readonly<{
   bookmarked: boolean;
   account: AccountRefType;
   mediaAttachments: ReadonlyArray<MediaAttachment>;
+  card: PreviewCard | null;
   reblog: Status | null;
 }>;
 

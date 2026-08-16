@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
 import { Status as StatusModel } from "@/domain/status/status";
+import { PreviewCard } from "@/domain/status/preview-card";
+import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
@@ -75,6 +77,7 @@ export const StatusCard = ({
               )}
             </div>
           ) : null}
+          {PreviewCard.isVisible(body) ? <LinkPreviewCard card={body.card!} /> : null}
         </>
       ) : null}
       <footer className="status-actions">

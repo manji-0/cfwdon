@@ -44,6 +44,7 @@ const status = (id: string, favourited = false): Status => ({
   bookmarked: false,
   account,
   mediaAttachments: [],
+  card: null,
   reblog: null,
 });
 

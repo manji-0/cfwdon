@@ -25,6 +25,7 @@ const status = (id: string): Status => ({
     avatar: "https://example.test/a.png",
   },
   mediaAttachments: [],
+  card: null,
   reblog: null,
 });
 
