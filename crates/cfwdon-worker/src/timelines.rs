@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 pub(crate) use crate::*;
 
+mod candidate_render;
 mod cursor_sql;
 mod request_parsing;
 mod search;
@@ -619,250 +620,7 @@ async fn preload_muted_timeline_actor_uris(
     list_active_muted_actor_uris(db, viewer.id(), &actor_uris).await
 }
 
-/// Boost and quote target URIs referenced by a page, for [`crate::preload_boost_targets`].
-fn embedded_status_uris(candidates: &[PublicTimelineCandidateEntry]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut uris = Vec::new();
-    for entry in candidates {
-        let (boost_of_uri, quote_of_uri) = match &entry.candidate {
-            PublicTimelineCandidate::Local { status, .. } => {
-                (status.boost_of_uri.as_ref(), status.quote_of_uri.as_ref())
-            }
-            PublicTimelineCandidate::Remote { status, .. } => {
-                (status.boost_of_uri.as_ref(), status.quote_of_uri.as_ref())
-            }
-        };
-        for uri in [boost_of_uri, quote_of_uri].into_iter().flatten() {
-            if seen.insert(uri.as_str()) {
-                uris.push(uri.clone());
-            }
-        }
-    }
-    uris
-}
 
-async fn timeline_entries_from_candidates(
-    db: &D1Database,
-    config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
-    filter_matcher: Option<&crate::AccountFilterMatcher>,
-    local_accounts_by_id: &HashMap<String, crate::LocalAccount>,
-    candidates: Vec<PublicTimelineCandidateEntry>,
-    enrich_cards: bool,
-    known_viewer_has_thread_mutes: Option<bool>,
-) -> Result<Vec<TimelineEntry>> {
-    let mut mention_texts = Vec::with_capacity(candidates.len());
-    let mut remote_text_owned = Vec::new();
-    for candidate in &candidates {
-        match &candidate.candidate {
-            PublicTimelineCandidate::Local { status, .. } => {
-                mention_texts.push(status.text.as_str());
-            }
-            PublicTimelineCandidate::Remote { status, .. } => {
-                remote_text_owned.push(status.plain_text());
-            }
-        }
-    }
-    for text in &remote_text_owned {
-        mention_texts.push(text.as_str());
-    }
-    let boost_of_uris = embedded_status_uris(&candidates);
-
-    let (
-        mut counts_preload,
-        mut quote_counts_preload,
-        local_poll_preload,
-        local_viewer_state_preload,
-        remote_viewer_state_preload,
-        mut remote_poll_preload,
-        mut remote_edit_updated_at_preload,
-        mut remote_federated_emojis_preload,
-        in_reply_to_account_ids,
-        application_preload,
-        mut remote_attachments_by_status_id,
-        mention_preload,
-        emoji_resolved_config,
-        boost_target_preload,
-    ) = futures_util::try_join!(
-        preload_public_timeline_candidate_counts(db, &candidates),
-        preload_public_timeline_quote_counts(db, config, &candidates, local_accounts_by_id),
-        preload_public_timeline_local_polls(db, &candidates, viewer),
-        preload_public_timeline_local_viewer_state(
-            db,
-            &candidates,
-            viewer,
-            known_viewer_has_thread_mutes,
-        ),
-        preload_public_timeline_remote_viewer_state(db, &candidates, viewer),
-        preload_public_timeline_remote_polls(db, &candidates, viewer),
-        preload_public_timeline_remote_edits(db, &candidates),
-        preload_public_timeline_remote_federated_emojis(db, &candidates),
-        preload_timeline_candidate_reply_account_ids(db, &candidates),
-        preload_public_timeline_status_applications(db, config, &candidates),
-        preload_public_timeline_remote_attachments(db, &candidates),
-        crate::preload_mention_accounts_from_texts(db, config, &mention_texts),
-        crate::config_with_resolved_custom_emojis(db, config),
-        crate::preload_boost_targets(db, config, &boost_of_uris),
-    )?;
-
-    // Boost targets are resolved in the first wave; enrich their embedded
-    // status rendering with a second fixed-cost wave so each boost does not
-    // re-query actors/attachments/counts/emojis/polls/replies.
-    let boost_ids = collect_boost_target_preload_ids(&boost_target_preload);
-    let boost_remote_status_refs = boost_ids.remote_statuses.iter().collect::<Vec<_>>();
-    let (
-        boost_counts,
-        boost_quote_counts,
-        boost_remote_polls,
-        boost_remote_edits,
-        boost_remote_emojis,
-        boost_remote_attachments,
-        boost_remote_actors,
-        remote_in_reply_to_preload,
-    ) = futures_util::try_join!(
-        preload_status_counts(db, &boost_ids.local_ids, &boost_ids.remote_ids),
-        preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
-        preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
-        preload_remote_status_edit_updated_at(db, &boost_ids.remote_ids),
-        preload_remote_status_federated_emojis(db, &boost_ids.remote_ids),
-        find_remote_status_attachments_by_status_ids(db, &boost_ids.remote_ids),
-        find_remote_actors_by_actor_uris(db, &boost_ids.remote_actor_uris),
-        preload_remote_in_reply_to_status_ids(db, config, &candidates, &boost_remote_status_refs),
-    )?;
-    counts_preload.extend(boost_counts);
-    quote_counts_preload.extend(boost_quote_counts);
-    remote_poll_preload.extend(boost_remote_polls);
-    remote_edit_updated_at_preload.extend(boost_remote_edits);
-    remote_federated_emojis_preload.extend(boost_remote_emojis);
-    for (status_id, attachments) in boost_remote_attachments {
-        remote_attachments_by_status_id
-            .entry(status_id)
-            .or_insert(attachments);
-    }
-    let remote_actors_preload = boost_remote_actors;
-
-    // Take everything each candidate owns up front so the renders below only
-    // hold shared borrows and can therefore run concurrently.
-    let mut prepared = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        match candidate.candidate {
-            PublicTimelineCandidate::Local { status, media } => {
-                let Some(account) = local_accounts_by_id.get(&status.account_id) else {
-                    continue;
-                };
-                prepared.push((
-                    candidate.timestamp,
-                    candidate.id,
-                    PreparedTimelineCandidate::Local {
-                        status,
-                        media,
-                        account,
-                    },
-                ));
-            }
-            PublicTimelineCandidate::Remote { status, actor } => {
-                let attachments = remote_attachments_by_status_id
-                    .remove(&status.id)
-                    .unwrap_or_default();
-                prepared.push((
-                    candidate.timestamp,
-                    candidate.id,
-                    PreparedTimelineCandidate::Remote {
-                        status,
-                        actor,
-                        attachments,
-                    },
-                ));
-            }
-        }
-    }
-
-    // Rendering a single status still costs several round trips -- boosts pull
-    // in their target, quotes their quoted status -- and those chains are
-    // independent per candidate. Awaiting them one candidate at a time made a
-    // page cost the sum of every chain instead of the longest one.
-    futures_util::future::try_join_all(prepared.into_iter().map(
-        |(timestamp, id, prepared)| async {
-            let mut value = match prepared {
-                PreparedTimelineCandidate::Local {
-                    status,
-                    media,
-                    account,
-                } => serde_json::to_value(
-                    build_local_status_response_with_timeline_preloads(
-                        db,
-                        config,
-                        Some(&emoji_resolved_config),
-                        viewer,
-                        &status,
-                        account,
-                        in_reply_to_account_ids.get(&status.id).cloned(),
-                        media,
-                        filter_matcher,
-                        Some(&counts_preload),
-                        Some(&quote_counts_preload),
-                        Some(&local_poll_preload),
-                        Some(&local_viewer_state_preload),
-                        Some(&application_preload),
-                        Some(&mention_preload),
-                        Some(&boost_target_preload),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-                PreparedTimelineCandidate::Remote {
-                    status,
-                    actor,
-                    attachments,
-                } => serde_json::to_value(
-                    build_remote_status_response_with_timeline_preloads(
-                        db,
-                        config,
-                        viewer,
-                        &status,
-                        &actor,
-                        filter_matcher,
-                        Some(&counts_preload),
-                        Some(&quote_counts_preload),
-                        Some(&remote_viewer_state_preload),
-                        Some(&remote_poll_preload),
-                        Some(&remote_edit_updated_at_preload),
-                        Some(&remote_federated_emojis_preload),
-                        attachments,
-                        Some(&mention_preload),
-                        Some(&boost_target_preload),
-                        Some(&remote_in_reply_to_preload),
-                        Some(&remote_actors_preload),
-                        Some(&remote_attachments_by_status_id),
-                    )
-                    .await?,
-                )
-                .unwrap_or(serde_json::Value::Null),
-            };
-            if enrich_cards && let Some(card) = value.get_mut("card") {
-                let _ = enrich_card_with_remote_preview(card).await;
-            }
-            Ok::<TimelineEntry, Error>((timestamp, id, value))
-        },
-    ))
-    .await
-}
-
-async fn preload_public_timeline_status_applications(
-    db: &D1Database,
-    config: &cfwdon_core::AppConfig,
-    candidates: &[PublicTimelineCandidateEntry],
-) -> Result<crate::StatusApplicationPreload> {
-    let statuses = candidates
-        .iter()
-        .filter_map(|entry| match &entry.candidate {
-            PublicTimelineCandidate::Local { status, .. } => Some(status),
-            PublicTimelineCandidate::Remote { .. } => None,
-        })
-        .collect::<Vec<_>>();
-
-    preload_status_applications(db, config, &statuses).await
-}
 
 async fn remote_media_status_ids_for_filter(
     db: &D1Database,
@@ -1146,7 +904,7 @@ pub(crate) async fn home_timeline_response(
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = timeline_entries_from_candidates(
+    let entries = candidate_render::timeline_entries_from_candidates(
         &db,
         &config,
         Some(&viewer),
@@ -1372,7 +1130,7 @@ async fn build_public_timeline_entries(
     }
 
     let candidates = select_public_timeline_candidates(candidates, select_limit);
-    timeline_entries_from_candidates(
+    candidate_render::timeline_entries_from_candidates(
         db,
         config,
         viewer,
@@ -1471,7 +1229,7 @@ pub(crate) async fn trending_status_documents(
         .skip(offset as usize)
         .take(limit as usize)
         .collect::<Vec<_>>();
-    let entries = timeline_entries_from_candidates(
+    let entries = candidate_render::timeline_entries_from_candidates(
         db,
         config,
         None,
@@ -1606,7 +1364,7 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = timeline_entries_from_candidates(
+    let entries = candidate_render::timeline_entries_from_candidates(
         &db,
         &config,
         viewer,
@@ -1727,7 +1485,7 @@ pub(crate) async fn link_timeline_response(
     if candidates.is_empty() && !timeline_cursor_requested(&pagination) {
         return Response::error("Record not found", 404);
     }
-    let entries = timeline_entries_from_candidates(
+    let entries = candidate_render::timeline_entries_from_candidates(
         &db,
         &config,
         viewer,
@@ -1832,7 +1590,7 @@ pub(crate) async fn direct_timeline_response(
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = timeline_entries_from_candidates(
+    let entries = candidate_render::timeline_entries_from_candidates(
         &db,
         &config,
         Some(&viewer),
