@@ -1,4 +1,4 @@
-use super::local::local_account_statuses_response;
+use super::local_response::local_account_statuses_response;
 use super::pagination::account_statuses_request_options;
 use super::remote::remote_account_statuses_response;
 use super::request::{required_account_status_route_param, required_account_status_username_param};
