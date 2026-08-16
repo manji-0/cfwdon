@@ -209,7 +209,7 @@ pub(super) async fn build_local_status_response_inner(
 ) -> Result<MastodonStatusResponse> {
     let config = status_response_config(db, config, resolved_config).await?;
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
-        return super::build_local_reblog_wrapper_response(
+        return super::reblog::build_local_reblog_wrapper_response(
             db,
             &config,
             viewer,
@@ -307,7 +307,7 @@ async fn load_local_status_response_details(
     };
     let quote_approval = Some(build_local_quote_approval(db, status, viewer, account).await?);
     let quote = if include_quote {
-        super::build_quoted_status_value(
+        super::quote_embed::build_quoted_status_value(
             db,
             config,
             viewer,
@@ -437,7 +437,7 @@ pub(super) async fn local_status_filtered_for_viewer(
     let Some(viewer) = viewer else {
         return Ok(Vec::new());
     };
-    super::filtered_status_for_viewer(
+    super::filtered::filtered_status_for_viewer(
         db,
         filter_matcher,
         viewer.id(),

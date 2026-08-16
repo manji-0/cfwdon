@@ -189,7 +189,7 @@ pub(super) async fn build_remote_status_response_inner(
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
     if let Some(boost_of_uri) = status.boost_of_uri.as_deref() {
-        return super::build_remote_reblog_wrapper_response(
+        return super::reblog::build_remote_reblog_wrapper_response(
             db,
             config,
             viewer,
@@ -317,7 +317,7 @@ async fn load_remote_status_response_details(
     };
     let quote_approval = Some(build_remote_quote_approval(status));
     let quote = if include_quote {
-        super::build_quoted_status_value(
+        super::quote_embed::build_quoted_status_value(
             db,
             config,
             viewer,
@@ -426,7 +426,7 @@ pub(super) async fn remote_status_filtered_for_viewer(
     let Some(viewer) = viewer else {
         return Ok(Vec::new());
     };
-    super::filtered_status_for_viewer(
+    super::filtered::filtered_status_for_viewer(
         db,
         filter_matcher,
         viewer.id(),
