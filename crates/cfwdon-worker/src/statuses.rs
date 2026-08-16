@@ -9,6 +9,7 @@ mod bookmarks;
 mod boost_targets;
 mod counts;
 mod create_published;
+mod delete_local_status;
 mod detail_routes;
 mod edits;
 mod favourite_store;
@@ -39,7 +40,6 @@ mod store_local;
 mod store_remote;
 mod thread_mutes;
 mod update_route;
-mod usecases;
 pub(crate) use action_resolution::*;
 pub(crate) use apply_local_update::*;
 pub(crate) use bookmark_store::*;
@@ -49,6 +49,7 @@ pub(crate) use counts::*;
 pub(crate) use create_published::{
     CreatePublishedStatusInput, create_published_status_and_response,
 };
+pub(crate) use delete_local_status::*;
 pub(crate) use detail_routes::*;
 pub(crate) use edits::*;
 pub(crate) use favourite_store::*;
@@ -78,7 +79,6 @@ pub(crate) use store_local::*;
 pub(crate) use store_remote::*;
 pub(crate) use thread_mutes::*;
 pub(crate) use update_route::update_status;
-pub(crate) use usecases::*;
 
 use cfwdon_domain::{LocalAccount, QuoteApprovalPolicy, StatusDraft, Visibility};
 
