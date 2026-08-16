@@ -3,6 +3,7 @@ use crate::D1Database;
 pub(crate) use crate::*;
 
 mod action_resolution;
+mod apply_local_update;
 mod bookmark_store;
 mod bookmarks;
 mod boost_targets;
@@ -40,6 +41,7 @@ mod thread_mutes;
 mod update_route;
 mod usecases;
 pub(crate) use action_resolution::*;
+pub(crate) use apply_local_update::*;
 pub(crate) use bookmark_store::*;
 pub(crate) use bookmarks::*;
 pub(crate) use boost_targets::*;
