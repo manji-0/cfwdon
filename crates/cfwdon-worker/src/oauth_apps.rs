@@ -1,9 +1,7 @@
-use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, find_account_by_email};
-use crate::auth::{find_account_by_id, find_account_by_username};
+use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
 use crate::id_utils::generate_entity_id;
 use crate::runtime_config::load_config;
 use crate::time_html::{escape_html, now_unix_timestamp};
-use crate::verify_auth0_jwt;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use cfwdon_domain::LocalAccount;
@@ -11,15 +9,29 @@ use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use worker::{Fetch, FormData, Headers, Method, RequestInit, ResponseBody, d1::D1Type};
+use worker::{FormData, ResponseBody, d1::D1Type};
 use worker::{Request, Response, Result, RouteContext};
 
 use crate::D1Database;
+mod auth0_callback;
+mod authorize_route;
+mod authorize_validation;
+mod token_routes;
+
+pub(crate) use auth0_callback::{auth0_callback_response, exchange_auth0_refresh_token};
+pub(crate) use authorize_route::oauth_authorize_response;
+pub(in crate::oauth_apps) use authorize_route::{
+    access_authenticated_without_account_response, oauth_authorize_error_response,
+};
+pub(in crate::oauth_apps) use token_routes::requested_oauth_token_scopes;
+pub(crate) use token_routes::{oauth_revoke_response, oauth_token_response};
+
+use authorize_validation::code_challenge_method_is_supported;
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
 const AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS: i64 = 3600;
 pub(crate) const AUTH0_WEB_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
-const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
+pub(in crate::oauth_apps) const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
 const AUTH0_AUTHORIZE_STATE_COOKIE: &str = "cfwdon_auth0_authorize";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
 const PASSWORD_HASH_ITERATIONS: u32 = 210_000;
@@ -40,17 +52,6 @@ struct CreateAppRequest {
     website: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct OAuthTokenRequest {
-    grant_type: Option<String>,
-    client_id: Option<String>,
-    client_secret: Option<String>,
-    redirect_uri: Option<String>,
-    scope: Option<String>,
-    code: Option<String>,
-    code_verifier: Option<String>,
-}
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct OAuthAuthorizeRequest {
     pub(crate) response_type: Option<String>,
@@ -62,24 +63,7 @@ pub(crate) struct OAuthAuthorizeRequest {
     pub(crate) code_challenge_method: Option<String>,
 }
 
-#[derive(Debug, Default)]
-struct OAuthAuthorizeLoginRequest {
-    username: Option<String>,
-    password: Option<String>,
-    approve: bool,
-    csrf_token: Option<String>,
-    authorize: OAuthAuthorizeRequest,
-}
-
-#[derive(Debug, Deserialize)]
-struct Auth0CallbackRequest {
-    code: Option<String>,
-    state: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Auth0TokenResponse {
     pub(crate) access_token: String,
     #[serde(default)]
@@ -95,20 +79,6 @@ struct Auth0AuthorizeStateCookie {
     return_url: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Auth0AuthorizeGetAction {
-    RedirectToLogin,
-    MissingLinkedAccount,
-    ShowConsent,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Auth0AuthorizePostAction {
-    RedirectToLogin,
-    ShowConsent,
-    IssueCode,
-}
-
 #[derive(Debug)]
 struct ParsedCreateAppRequest {
     client_name: String,
@@ -116,172 +86,6 @@ struct ParsedCreateAppRequest {
     scopes: Vec<String>,
     redirect_uris: Vec<String>,
 }
-
-const AUTHORIZE_PAGE_STYLE: &str = r#"
-:root {
-    color-scheme: light;
-    --bg: #f6f8fb;
-    --panel: #ffffff;
-    --text: #172033;
-    --muted: #5f6b7a;
-    --border: #d9e0ea;
-    --accent: #2f6fed;
-    --accent-hover: #1f5fd4;
-    --danger-bg: #fff1f2;
-    --danger-text: #9f1239;
-    --danger-border: #fecdd3;
-}
-* { box-sizing: border-box; }
-body {
-    margin: 0;
-    min-height: 100vh;
-    background: var(--bg);
-    color: var(--text);
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-main {
-    width: min(100%, 560px);
-    margin: 0 auto;
-    padding: 56px 20px;
-}
-.authorize-panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 18px 48px rgba(23, 32, 51, 0.10);
-    overflow: hidden;
-}
-.authorize-header {
-    padding: 32px 32px 24px;
-    border-bottom: 1px solid var(--border);
-}
-.eyebrow {
-    margin: 0 0 10px;
-    color: var(--muted);
-    font-size: 0.82rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-h1 {
-    margin: 0;
-    font-size: clamp(1.55rem, 4vw, 2.15rem);
-    line-height: 1.12;
-}
-.summary {
-    margin: 12px 0 0;
-    color: var(--muted);
-    line-height: 1.55;
-}
-form { padding: 28px 32px 32px; }
-.error {
-    margin: 0 0 18px;
-    padding: 12px 14px;
-    border: 1px solid var(--danger-border);
-    border-radius: 8px;
-    background: var(--danger-bg);
-    color: var(--danger-text);
-}
-dl {
-    display: grid;
-    grid-template-columns: 120px minmax(0, 1fr);
-    gap: 14px 18px;
-    margin: 0 0 24px;
-}
-dt {
-    color: var(--muted);
-    font-size: 0.86rem;
-    font-weight: 700;
-}
-dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-.scope-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-.scope-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: #eef4ff;
-    color: #1f4e9d;
-    font-size: 0.88rem;
-    font-weight: 700;
-}
-.redirect-uri {
-    display: block;
-    padding: 9px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #f8fafc;
-    color: #25324a;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    font-size: 0.88rem;
-}
-.field-stack {
-    display: grid;
-    gap: 16px;
-    margin-bottom: 22px;
-}
-label {
-    display: grid;
-    gap: 7px;
-    color: var(--muted);
-    font-size: 0.9rem;
-    font-weight: 700;
-}
-input:not([type="hidden"]) {
-    width: 100%;
-    min-height: 42px;
-    padding: 9px 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font: inherit;
-}
-input:not([type="hidden"]):focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.16);
-    outline: none;
-}
-.actions {
-    display: flex;
-    justify-content: flex-end;
-}
-button {
-    min-height: 44px;
-    padding: 0 18px;
-    border: 0;
-    border-radius: 8px;
-    background: var(--accent);
-    color: white;
-    cursor: pointer;
-    font: inherit;
-    font-weight: 800;
-}
-button:hover { background: var(--accent-hover); }
-@media (max-width: 560px) {
-    main { padding: 20px 12px; }
-    .authorize-header,
-    form {
-        padding-left: 20px;
-        padding-right: 20px;
-    }
-    dl {
-        grid-template-columns: 1fr;
-        gap: 6px;
-    }
-    dt { margin-top: 8px; }
-    .actions,
-    button { width: 100%; }
-}
-"#;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OAuthAppRow {
@@ -331,16 +135,6 @@ pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> ser
     })
 }
 
-fn build_oauth_token_document_with_expires_in(
-    access_token: &str,
-    scope: &str,
-    expires_in: i64,
-) -> serde_json::Value {
-    let mut document = build_oauth_token_document(access_token, scope);
-    document["expires_in"] = serde_json::json!(expires_in);
-    document
-}
-
 pub(crate) fn hash_account_password(password: &str, salt: &str) -> String {
     let digest = pbkdf2_hmac_array::<Sha256, 32>(
         password.as_bytes(),
@@ -379,7 +173,7 @@ pub(crate) fn verify_account_password_hash(password: &str, hash: &str) -> bool {
         .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected.as_bytes()))
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(in crate::oauth_apps) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
@@ -417,7 +211,10 @@ pub(crate) async fn store_account_password(
     Ok(())
 }
 
-async fn load_account_password_hash(db: &D1Database, account_id: &str) -> Result<Option<String>> {
+pub(in crate::oauth_apps) async fn load_account_password_hash(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Option<String>> {
     #[derive(Debug, Deserialize)]
     struct PasswordHashRow {
         password_hash: String,
@@ -937,7 +734,7 @@ async fn issue_oauth_app_access_token(
     Ok(access_token)
 }
 
-async fn issue_oauth_authorization_code(
+pub(in crate::oauth_apps) async fn issue_oauth_authorization_code(
     db: &D1Database,
     oauth_app_id: i64,
     account_id: &str,
@@ -1086,7 +883,7 @@ fn normalize_redirect_uris(values: Vec<String>) -> std::result::Result<Vec<Strin
     Ok(redirect_uris)
 }
 
-fn authorization_redirect_with_params(
+pub(in crate::oauth_apps) fn authorization_redirect_with_params(
     redirect_uri: &str,
     params: &[(&str, String)],
 ) -> Result<Response> {
@@ -1195,16 +992,6 @@ pub(crate) fn oauth_authorize_url_from_form(
     Ok(authorize_url)
 }
 
-fn access_login_redirect_from_authorize_request(
-    config: &cfwdon_core::AppConfig,
-    base_url: &Url,
-    authorize: &OAuthAuthorizeRequest,
-) -> Result<Response> {
-    let return_url =
-        oauth_authorize_url_from_form(base_url, authorize).map_err(worker::Error::RustError)?;
-    auth0_login_redirect_response(config, base_url, &return_url)
-}
-
 pub(crate) fn auth0_login_redirect_response(
     config: &cfwdon_core::AppConfig,
     base_url: &Url,
@@ -1229,7 +1016,7 @@ pub(crate) fn auth0_login_redirect_response(
     Ok(response)
 }
 
-fn redirect_response(location: &str) -> Result<Response> {
+pub(in crate::oauth_apps) fn redirect_response(location: &str) -> Result<Response> {
     let body = redirect_fallback_body(location);
     let mut response = Response::from_body(ResponseBody::Body(body.into_bytes()))?.with_status(302);
     response.headers_mut().set("Location", location)?;
@@ -1247,30 +1034,12 @@ fn redirect_fallback_body(location: &str) -> String {
     )
 }
 
-fn access_authenticated_without_account_response(
-    config: &cfwdon_core::AppConfig,
-) -> Result<Response> {
-    let logout_url = auth0_logout_url(config)
-        .map(|url| url.to_string())
-        .unwrap_or_default();
-    Ok(Response::from_json(&serde_json::json!({
-        "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
-        "registration_url": format!("{}/auth/sign_up", crate::instance_base_url(config)),
-        "logout_url": logout_url,
-    }))?
-    .with_status(403))
-}
-
-fn html_response(body: &str, status: u16) -> Result<Response> {
+pub(in crate::oauth_apps) fn html_response(body: &str, status: u16) -> Result<Response> {
     let mut response = Response::from_body(ResponseBody::Body(body.as_bytes().to_vec()))?;
     response
         .headers_mut()
         .set("Content-Type", "text/html; charset=utf-8")?;
     Ok(response.with_status(status))
-}
-
-fn oauth_authorize_csrf_cookie(req: &Request) -> Result<Option<String>> {
-    request_cookie_value(req, OAUTH_AUTHORIZE_CSRF_COOKIE)
 }
 
 fn auth0_authorize_state_cookie(req: &Request) -> Result<Option<Auth0AuthorizeStateCookie>> {
@@ -1285,7 +1054,10 @@ fn auth0_authorize_state_cookie(req: &Request) -> Result<Option<Auth0AuthorizeSt
     })
 }
 
-fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
+pub(in crate::oauth_apps) fn request_cookie_value(
+    req: &Request,
+    name: &str,
+) -> Result<Option<String>> {
     let Some(cookie_header) = req.headers().get("Cookie")? else {
         return Ok(None);
     };
@@ -1293,31 +1065,6 @@ fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
         let (cookie_name, value) = part.trim().split_once('=')?;
         (cookie_name == name && !value.trim().is_empty()).then(|| value.trim().to_owned())
     }))
-}
-
-fn oauth_authorize_csrf_matches(req: &Request, submitted_token: Option<&str>) -> Result<bool> {
-    let Some(submitted_token) = submitted_token
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(false);
-    };
-    Ok(oauth_authorize_csrf_cookie(req)?
-        .as_deref()
-        .is_some_and(|cookie_token| {
-            constant_time_eq(cookie_token.as_bytes(), submitted_token.as_bytes())
-        }))
-}
-
-fn set_oauth_authorize_csrf_cookie(response: &mut Response, token: &str) -> Result<()> {
-    response.headers_mut().append(
-        "Set-Cookie",
-        &format!(
-            "{OAUTH_AUTHORIZE_CSRF_COOKIE}={token}; Path=/oauth/authorize; HttpOnly; SameSite=Lax; Secure"
-        ),
-    )?;
-    response.headers_mut().set("Cache-Control", "no-store")?;
-    Ok(())
 }
 
 fn set_auth0_authorize_state_cookie(
@@ -1412,31 +1159,6 @@ fn clear_auth0_authorize_state_cookie(response: &mut Response) -> Result<()> {
     Ok(())
 }
 
-fn oauth_authorize_consent_response(
-    request: &OAuthAuthorizeRequest,
-    app: &OAuthAppRow,
-    error: Option<&str>,
-    require_login_credentials: bool,
-    status: u16,
-) -> Result<Response> {
-    let csrf_token = generate_entity_id(32)?;
-    let body =
-        oauth_authorize_page_body(request, app, error, require_login_credentials, &csrf_token);
-    let mut response = html_response(&body, status)?;
-    set_oauth_authorize_csrf_cookie(&mut response, &csrf_token)?;
-    Ok(response)
-}
-
-fn oauth_authorize_error_response(message: &str, status: u16) -> Result<Response> {
-    html_response(
-        &format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorization error</title></head><body><main><h1>Authorization error</h1><p>{}</p></main></body></html>",
-            escape_html(message)
-        ),
-        status,
-    )
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OAuthAuthorizeFailure {
     Html {
@@ -1450,372 +1172,9 @@ enum OAuthAuthorizeFailure {
     },
 }
 
-fn oauth_authorize_failure_response(failure: OAuthAuthorizeFailure) -> Result<Response> {
-    match failure {
-        OAuthAuthorizeFailure::Html { message } => oauth_authorize_error_response(&message, 400),
-        OAuthAuthorizeFailure::Redirect {
-            redirect_uri,
-            state,
-            error,
-            description,
-        } => oauth_authorize_error_redirect(&redirect_uri, state.as_deref(), error, &description),
-    }
-}
-
-fn oauth_authorize_error_redirect(
-    redirect_uri: &str,
-    state: Option<&str>,
-    error: &str,
-    description: &str,
-) -> Result<Response> {
-    if redirect_uri == "urn:ietf:wg:oauth:2.0:oob" {
-        return oauth_authorize_error_response(description, 400);
-    }
-    let location =
-        build_oauth_authorize_error_redirect_url(redirect_uri, state, error, description)?;
-    redirect_response(&location)
-}
-
-fn build_oauth_authorize_error_redirect_url(
-    redirect_uri: &str,
-    state: Option<&str>,
-    error: &str,
-    description: &str,
-) -> Result<String> {
-    let mut url = Url::parse(redirect_uri)
-        .map_err(|err| worker::Error::RustError(format!("invalid redirect URI: {err}")))?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("error", error);
-        if !description.is_empty() {
-            query.append_pair("error_description", description);
-        }
-        if let Some(state) = state.filter(|value| !value.is_empty()) {
-            query.append_pair("state", state);
-        }
-    }
-    Ok(url.to_string())
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn authorize_failure_should_use_html_page(failure: &OAuthAuthorizeFailure) -> bool {
-    matches!(failure, OAuthAuthorizeFailure::Html { .. })
-}
-
 #[cfg_attr(not(test), allow(dead_code))]
 fn oauth_access_token_is_unexpired(expires_at: Option<i64>, now: i64) -> bool {
     expires_at.is_none_or(|expires_at| expires_at > now)
-}
-
-fn access_authorize_get_action(
-    has_authenticated_local_account: bool,
-    has_authenticated_access_user_without_account: bool,
-) -> Auth0AuthorizeGetAction {
-    if has_authenticated_local_account {
-        Auth0AuthorizeGetAction::ShowConsent
-    } else if has_authenticated_access_user_without_account {
-        Auth0AuthorizeGetAction::MissingLinkedAccount
-    } else {
-        Auth0AuthorizeGetAction::RedirectToLogin
-    }
-}
-
-fn access_authorize_post_action(
-    has_authenticated_local_account: bool,
-    approved: bool,
-    has_valid_credentials: bool,
-) -> Auth0AuthorizePostAction {
-    if !has_authenticated_local_account {
-        Auth0AuthorizePostAction::RedirectToLogin
-    } else if approved || has_valid_credentials {
-        Auth0AuthorizePostAction::IssueCode
-    } else {
-        Auth0AuthorizePostAction::ShowConsent
-    }
-}
-
-fn oauth_authorize_page_body(
-    request: &OAuthAuthorizeRequest,
-    app: &OAuthAppRow,
-    error: Option<&str>,
-    require_login_credentials: bool,
-    csrf_token: &str,
-) -> String {
-    let hidden = [
-        ("response_type", request.response_type.as_deref()),
-        ("client_id", request.client_id.as_deref()),
-        ("redirect_uri", request.redirect_uri.as_deref()),
-        ("scope", request.scope.as_deref()),
-        ("state", request.state.as_deref()),
-        ("code_challenge", request.code_challenge.as_deref()),
-        (
-            "code_challenge_method",
-            request.code_challenge_method.as_deref(),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(name, value)| {
-        value.map(|value| {
-            format!(
-                "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
-                escape_html(name),
-                escape_html(value)
-            )
-        })
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-    let csrf_input = format!(
-        "<input type=\"hidden\" name=\"csrf_token\" value=\"{}\">",
-        escape_html(csrf_token)
-    );
-    let error_html = error
-        .map(|message| {
-            format!(
-                "<p class=\"error\" role=\"alert\">{}</p>",
-                escape_html(message)
-            )
-        })
-        .unwrap_or_default();
-    let scope_text = request
-        .scope
-        .as_deref()
-        .map(escape_html)
-        .unwrap_or_else(|| "read".to_owned());
-    let scope_pills = scope_text
-        .split_whitespace()
-        .map(|scope| format!("<span class=\"scope-pill\">{scope}</span>"))
-        .collect::<Vec<_>>()
-        .join("");
-    let scope_html = if scope_pills.is_empty() {
-        scope_text
-    } else {
-        format!("<span class=\"scope-list\">{scope_pills}</span>")
-    };
-    let redirect_uri_html = request
-        .redirect_uri
-        .as_deref()
-        .map(escape_html)
-        .unwrap_or_default();
-    let app_details = format!(
-        "<dl><dt>Application</dt><dd>{}</dd><dt>Scopes</dt><dd>{scope_html}</dd><dt>Redirect URI</dt><dd><span class=\"redirect-uri\">{redirect_uri_html}</span></dd></dl>",
-        escape_html(&app.name)
-    );
-    let form_body = if require_login_credentials {
-        format!(
-            "{app_details}{hidden}{csrf_input}<div class=\"field-stack\"><label>Username or email <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label></div><div class=\"actions\"><button type=\"submit\">Authorize</button></div>"
-        )
-    } else {
-        format!(
-            "{app_details}<p class=\"summary\">Approve access for this application.</p>{hidden}{csrf_input}<input type=\"hidden\" name=\"approve\" value=\"true\"><div class=\"actions\"><button type=\"submit\">Authorize</button></div>"
-        )
-    };
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Authorize {app}</title><style>{style}</style></head><body><main><section class=\"authorize-panel\"><header class=\"authorize-header\"><p class=\"eyebrow\">cfwdon authorization</p><h1>Authorize {app}</h1><p class=\"summary\">Review the permissions requested by this application before continuing.</p></header><form method=\"post\" action=\"/oauth/authorize\">{error}{form_body}</form></section></main></body></html>",
-        app = escape_html(&app.name),
-        style = AUTHORIZE_PAGE_STYLE,
-        error = error_html,
-        form_body = form_body,
-    )
-}
-
-fn oauth_login_page(
-    request: &OAuthAuthorizeRequest,
-    app: &OAuthAppRow,
-    error: Option<&str>,
-) -> Result<Response> {
-    oauth_authorize_consent_response(request, app, error, true, error.map(|_| 401).unwrap_or(200))
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn normalize_authorize_request(
-    request: OAuthAuthorizeRequest,
-) -> std::result::Result<OAuthAuthorizeRequest, String> {
-    let response_type = request
-        .response_type
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "code".to_owned());
-    if response_type != "code" {
-        return Err("Only response_type=code is supported".to_owned());
-    }
-    let client_id = request
-        .client_id
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "client_id is required".to_owned())?;
-    let redirect_uri = request
-        .redirect_uri
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "redirect_uri is required".to_owned())?;
-    let code_challenge_method = request
-        .code_challenge_method
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let code_challenge = request
-        .code_challenge
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    if code_challenge.is_some()
-        && !code_challenge_method_is_supported(code_challenge_method.as_deref())
-    {
-        return Err("unsupported code_challenge_method".to_owned());
-    }
-    Ok(OAuthAuthorizeRequest {
-        response_type: Some(response_type),
-        client_id: Some(client_id),
-        redirect_uri: Some(redirect_uri),
-        scope: request.scope.map(|value| value.trim().to_owned()),
-        state: request.state.map(|value| value.trim().to_owned()),
-        code_challenge,
-        code_challenge_method,
-    })
-}
-
-fn code_challenge_method_is_supported(method: Option<&str>) -> bool {
-    matches!(method, Some("S256"))
-}
-
-async fn validate_authorize_request(
-    db: &D1Database,
-    request: OAuthAuthorizeRequest,
-) -> std::result::Result<(OAuthAuthorizeRequest, OAuthAppRow, Vec<String>), OAuthAuthorizeFailure> {
-    let client_id = request
-        .client_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| OAuthAuthorizeFailure::Html {
-            message: "client_id is required".to_owned(),
-        })?;
-    let redirect_uri = request
-        .redirect_uri
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| OAuthAuthorizeFailure::Html {
-            message: "redirect_uri is required".to_owned(),
-        })?;
-    let state = request
-        .state
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let Some(app) = find_oauth_app_by_client_id(db, &client_id)
-        .await
-        .map_err(|error| OAuthAuthorizeFailure::Html {
-            message: format!("failed to load OAuth app: {error}"),
-        })?
-    else {
-        return Err(OAuthAuthorizeFailure::Html {
-            message: "Unknown OAuth client".to_owned(),
-        });
-    };
-    if !oauth_app_redirect_uris(&app)
-        .iter()
-        .any(|value| redirect_uri_matches_registered(value, &redirect_uri))
-    {
-        return Err(OAuthAuthorizeFailure::Html {
-            message: "Redirect URI is not registered for this OAuth client".to_owned(),
-        });
-    }
-
-    let response_type = request
-        .response_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("code");
-    if response_type != "code" {
-        return Err(OAuthAuthorizeFailure::Redirect {
-            redirect_uri: redirect_uri.clone(),
-            state: state.clone(),
-            error: "unsupported_response_type",
-            description: "Only response_type=code is supported".to_owned(),
-        });
-    }
-
-    let code_challenge_method = request
-        .code_challenge_method
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let code_challenge = request
-        .code_challenge
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    if code_challenge.is_some()
-        && !code_challenge_method_is_supported(code_challenge_method.as_deref())
-    {
-        return Err(OAuthAuthorizeFailure::Redirect {
-            redirect_uri: redirect_uri.clone(),
-            state: state.clone(),
-            error: "invalid_request",
-            description: "unsupported code_challenge_method".to_owned(),
-        });
-    }
-
-    let requested_scopes = requested_oauth_token_scopes(request.scope.clone());
-    let registered_scopes = oauth_app_scopes(&app);
-    if requested_scopes
-        .iter()
-        .any(|scope| !registered_scopes.contains(scope))
-    {
-        return Err(OAuthAuthorizeFailure::Redirect {
-            redirect_uri: redirect_uri.clone(),
-            state: state.clone(),
-            error: "invalid_scope",
-            description: "Requested scope is outside the registered app scopes".to_owned(),
-        });
-    }
-
-    Ok((
-        OAuthAuthorizeRequest {
-            response_type: Some(response_type.to_owned()),
-            client_id: Some(client_id),
-            redirect_uri: Some(redirect_uri),
-            scope: request.scope.map(|value| value.trim().to_owned()),
-            state,
-            code_challenge,
-            code_challenge_method,
-        },
-        app,
-        requested_scopes,
-    ))
-}
-
-async fn parse_oauth_authorize_login_request(
-    req: &mut Request,
-) -> std::result::Result<OAuthAuthorizeLoginRequest, String> {
-    let form = req
-        .form_data()
-        .await
-        .map_err(|error| format!("invalid authorization form payload: {error}"))?;
-    Ok(OAuthAuthorizeLoginRequest {
-        username: form.get_field("username"),
-        password: form.get_field("password"),
-        approve: form
-            .get_field("approve")
-            .map(|value| value.trim().eq_ignore_ascii_case("true"))
-            .unwrap_or(false),
-        csrf_token: form.get_field("csrf_token"),
-        authorize: OAuthAuthorizeRequest {
-            response_type: form.get_field("response_type"),
-            client_id: form.get_field("client_id"),
-            redirect_uri: form.get_field("redirect_uri"),
-            scope: form.get_field("scope"),
-            state: form.get_field("state"),
-            code_challenge: form.get_field("code_challenge"),
-            code_challenge_method: form.get_field("code_challenge_method"),
-        },
-    })
 }
 
 async fn parse_create_app_request(
@@ -2002,609 +1361,6 @@ fn pkce_verifier_matches(verifier: &str, challenge: &str, method: Option<&str>) 
     )
 }
 
-async fn authorize_account_by_password(
-    db: &D1Database,
-    username_or_email: Option<String>,
-    password: Option<String>,
-) -> Result<Option<cfwdon_domain::LocalAccount>> {
-    let Some(username_or_email) = username_or_email
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(password) = password.filter(|value| !value.is_empty()) else {
-        return Ok(None);
-    };
-
-    let account = if username_or_email.contains('@') {
-        find_account_by_email(db, &username_or_email).await?
-    } else {
-        find_account_by_username(db, &username_or_email.to_ascii_lowercase()).await?
-    };
-    let Some(account) = account else {
-        return Ok(None);
-    };
-    let Some(password_hash) = load_account_password_hash(db, account.id()).await? else {
-        return Ok(None);
-    };
-    if verify_account_password_hash(&password, &password_hash) {
-        Ok(Some(account))
-    } else {
-        Ok(None)
-    }
-}
-
-async fn redirect_with_authorization_code(
-    db: &D1Database,
-    request: &OAuthAuthorizeRequest,
-    app: &OAuthAppRow,
-    account_id: &str,
-    scopes: &[String],
-) -> Result<Response> {
-    let redirect_uri = request.redirect_uri.as_deref().ok_or_else(|| {
-        worker::Error::RustError("validated authorization request missing redirect_uri".to_owned())
-    })?;
-    let code = issue_oauth_authorization_code(
-        db,
-        app.id,
-        account_id,
-        redirect_uri,
-        scopes,
-        request.code_challenge.as_deref(),
-        request.code_challenge_method.as_deref(),
-    )
-    .await?;
-    let mut params = vec![("code", code)];
-    if let Some(state) = request.state.as_ref() {
-        params.push(("state", state.clone()));
-    }
-    authorization_redirect_with_params(redirect_uri, &params)
-}
-
-pub(crate) async fn auth0_callback_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    match auth0_callback_response_inner(req, ctx).await {
-        Ok(response) => Ok(response),
-        Err(error) => {
-            worker::console_error!("Auth0 callback failed: {error}");
-            let (message, status) = auth0_callback_failure(&error);
-            oauth_authorize_error_response(&message, status)
-        }
-    }
-}
-
-fn auth0_callback_failure(error: &worker::Error) -> (String, u16) {
-    let detail = error.to_string();
-    if detail.contains("Auth0 JWT email is not verified") {
-        (
-            "Please verify your email address in Auth0 before signing in".to_owned(),
-            403,
-        )
-    } else {
-        (auth0_callback_failure_message(error), 500)
-    }
-}
-
-fn auth0_callback_failure_message(error: &worker::Error) -> String {
-    format!("Auth0 login failed: {error}")
-}
-
-async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let callback = match req.query::<Auth0CallbackRequest>() {
-        Ok(query) => query,
-        Err(_) => return oauth_authorize_error_response("Invalid Auth0 callback request", 400),
-    };
-    if let Some(error) = callback.error.as_deref() {
-        let description = callback
-            .error_description
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(error);
-        return oauth_authorize_error_response(description, 400);
-    }
-    let code = match callback
-        .code
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(code) => code,
-        None => {
-            return oauth_authorize_error_response("Auth0 callback did not include a code", 400);
-        }
-    };
-    let state = match callback
-        .state
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(state) => state,
-        None => return oauth_authorize_error_response("Auth0 callback did not include state", 400),
-    };
-    let Some(session) = auth0_authorize_state_cookie(&req)? else {
-        return oauth_authorize_error_response("Missing Auth0 authorization state cookie", 400);
-    };
-    if !constant_time_eq(session.state.as_bytes(), state.as_bytes()) {
-        return oauth_authorize_error_response("Auth0 authorization state mismatch", 400);
-    }
-
-    let mut callback_url = req.url()?;
-    callback_url.set_path("/oauth/auth0/callback");
-    callback_url.set_query(None);
-    let token = exchange_auth0_authorization_code(
-        &config,
-        code,
-        callback_url.as_str(),
-        &session.code_verifier,
-    )
-    .await?;
-    let claims = verify_auth0_jwt(&token.access_token, &config).await?;
-    let email = claims
-        .string_claim(&config.auth0_email_claim)
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            worker::Error::RustError(format!(
-                "validated Auth0 JWT did not include a string {} claim",
-                config.auth0_email_claim
-            ))
-        })?;
-    if find_account_by_email(&db, &email).await?.is_none() {
-        let mut response = access_authenticated_without_account_response(&config)?;
-        clear_auth0_authorize_state_cookie(&mut response)?;
-        return Ok(response);
-    }
-
-    let mut response = redirect_response(&session.return_url)?;
-    set_auth0_session_cookies(
-        &mut response,
-        &token.access_token,
-        token.refresh_token.as_deref(),
-        access_token_cookie_max_age(token.expires_in),
-    )?;
-    clear_auth0_authorize_state_cookie(&mut response)?;
-    Ok(response)
-}
-
-async fn exchange_auth0_authorization_code(
-    config: &cfwdon_core::AppConfig,
-    code: &str,
-    redirect_uri: &str,
-    code_verifier: &str,
-) -> Result<Auth0TokenResponse> {
-    post_auth0_token_form(
-        config,
-        &[
-            ("grant_type", "authorization_code"),
-            ("client_id", config.auth0_client_id.trim()),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", code_verifier),
-        ],
-    )
-    .await
-}
-
-pub(crate) async fn exchange_auth0_refresh_token(
-    config: &cfwdon_core::AppConfig,
-    refresh_token: &str,
-) -> Result<Auth0TokenResponse> {
-    post_auth0_token_form(
-        config,
-        &[
-            ("grant_type", "refresh_token"),
-            ("client_id", config.auth0_client_id.trim()),
-            ("refresh_token", refresh_token),
-        ],
-    )
-    .await
-}
-
-async fn post_auth0_token_form(
-    config: &cfwdon_core::AppConfig,
-    pairs: &[(&str, &str)],
-) -> Result<Auth0TokenResponse> {
-    let mut token_url = auth0_domain_url(config).map_err(worker::Error::RustError)?;
-    token_url.set_path("/oauth/token");
-    token_url.set_query(None);
-    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-    for (name, value) in pairs {
-        serializer.append_pair(name, value);
-    }
-    let body = serializer.finish();
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/x-www-form-urlencoded")?;
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(wasm_bindgen::JsValue::from_str(&body)));
-    let request = Request::new_with_init(token_url.as_str(), &init)?;
-    let mut response = Fetch::Request(request).send().await?;
-    if response.status_code() / 100 != 2 {
-        return Err(worker::Error::RustError(format!(
-            "Auth0 token endpoint rejected request with HTTP {}",
-            response.status_code()
-        )));
-    }
-    response.json::<Auth0TokenResponse>().await
-}
-
-pub(crate) async fn oauth_authorize_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    if req.method().as_ref() == "POST" {
-        let login = match parse_oauth_authorize_login_request(&mut req).await {
-            Ok(login) => login,
-            Err(message) => return Response::error(&message, 422),
-        };
-        let (authorize, app, scopes) = match validate_authorize_request(&db, login.authorize).await
-        {
-            Ok(value) => value,
-            Err(failure) => return oauth_authorize_failure_response(failure),
-        };
-        if auth0_login_configured(&config) {
-            let base_url = req.url()?;
-            let authenticated_account =
-                crate::find_authenticated_local_account(&req, &db, &config).await?;
-            let password_account =
-                authorize_account_by_password(&db, login.username, login.password).await?;
-            let csrf_valid = oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())?;
-            return match access_authorize_post_action(
-                authenticated_account.is_some(),
-                login.approve,
-                password_account.is_some(),
-            ) {
-                Auth0AuthorizePostAction::RedirectToLogin => {
-                    access_login_redirect_from_authorize_request(&config, &base_url, &authorize)
-                }
-                Auth0AuthorizePostAction::ShowConsent => {
-                    oauth_authorize_consent_response(&authorize, &app, None, false, 200)
-                }
-                Auth0AuthorizePostAction::IssueCode => {
-                    if !csrf_valid {
-                        return Response::error("Invalid OAuth authorization CSRF token.", 403);
-                    }
-                    let Some(account) = password_account.or(authenticated_account) else {
-                        return Response::error("Authenticated account is required.", 401);
-                    };
-                    redirect_with_authorization_code(&db, &authorize, &app, account.id(), &scopes)
-                        .await
-                }
-            };
-        }
-        if !oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())? {
-            return Response::error("Invalid OAuth authorization CSRF token.", 403);
-        }
-        let authenticated_account =
-            crate::find_authenticated_local_account(&req, &db, &config).await?;
-        let account = if login.approve {
-            authenticated_account
-        } else {
-            None
-        }
-        .or(authorize_account_by_password(&db, login.username, login.password).await?);
-        let Some(account) = account else {
-            return oauth_login_page(&authorize, &app, Some("Invalid username or password."));
-        };
-        return redirect_with_authorization_code(&db, &authorize, &app, account.id(), &scopes)
-            .await;
-    }
-
-    let authorize = match req.query::<OAuthAuthorizeRequest>() {
-        Ok(query) => query,
-        Err(_) => return oauth_authorize_error_response("Invalid authorization request", 400),
-    };
-    let (authorize, app, _scopes) = match validate_authorize_request(&db, authorize).await {
-        Ok(value) => value,
-        Err(failure) => return oauth_authorize_failure_response(failure),
-    };
-    let authenticated_account = crate::find_authenticated_local_account(&req, &db, &config).await?;
-    if auth0_login_configured(&config) {
-        let action = access_authorize_get_action(
-            authenticated_account.is_some(),
-            crate::extract_authenticated_user(&req, &config)
-                .await?
-                .is_some(),
-        );
-        return match action {
-            Auth0AuthorizeGetAction::RedirectToLogin => {
-                access_login_redirect_from_authorize_request(&config, &req.url()?, &authorize)
-            }
-            Auth0AuthorizeGetAction::MissingLinkedAccount => {
-                access_authenticated_without_account_response(&config)
-            }
-            Auth0AuthorizeGetAction::ShowConsent => {
-                oauth_authorize_consent_response(&authorize, &app, None, false, 200)
-            }
-        };
-    }
-    if let Some(account) = authenticated_account {
-        let _ = account;
-        return oauth_authorize_consent_response(&authorize, &app, None, false, 200);
-    }
-    oauth_login_page(&authorize, &app, None)
-}
-
-fn oauth_invalid_client_response() -> Result<Response> {
-    with_oauth_token_cache_headers(
-        Response::from_json(&serde_json::json!({
-            "error": "invalid_client",
-            "error_description": "Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method.",
-        }))?
-        .with_status(oauth_invalid_client_status()),
-    )
-}
-
-fn oauth_invalid_client_status() -> u16 {
-    401
-}
-
-fn oauth_invalid_grant_response(description: &str) -> Result<Response> {
-    with_oauth_token_cache_headers(
-        Response::from_json(&serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": description,
-        }))?
-        .with_status(oauth_invalid_grant_status()),
-    )
-}
-
-fn oauth_invalid_grant_status() -> u16 {
-    400
-}
-
-fn oauth_invalid_scope_response() -> Result<Response> {
-    with_oauth_token_cache_headers(
-        Response::from_json(&serde_json::json!({
-            "error": "invalid_scope",
-            "error_description": "The requested scope is invalid, unknown, or malformed.",
-        }))?
-        .with_status(400),
-    )
-}
-
-fn oauth_unsupported_grant_type_response() -> Result<Response> {
-    with_oauth_token_cache_headers(
-        Response::from_json(&serde_json::json!({
-            "error": "unsupported_grant_type",
-            "error_description": "The authorization grant type is not supported by the authorization server.",
-        }))?
-        .with_status(400),
-    )
-}
-
-fn oauth_invalid_request_response(description: &str) -> Result<Response> {
-    with_oauth_token_cache_headers(
-        Response::from_json(&serde_json::json!({
-            "error": "invalid_request",
-            "error_description": description,
-        }))?
-        .with_status(400),
-    )
-}
-
-fn with_oauth_token_cache_headers(mut response: Response) -> Result<Response> {
-    response.headers_mut().set("Cache-Control", "no-store")?;
-    response.headers_mut().set("Pragma", "no-cache")?;
-    Ok(response)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn oauth_token_error_code(status: u16, error: &str) -> &'static str {
-    match (status, error) {
-        (401, "invalid_client") => "invalid_client",
-        (400, "invalid_grant") => "invalid_grant",
-        (400, "invalid_scope") => "invalid_scope",
-        (400, "unsupported_grant_type") => "unsupported_grant_type",
-        (400, "invalid_request") => "invalid_request",
-        _ => "invalid_request",
-    }
-}
-
-#[derive(Clone, Debug)]
-struct OAuthAuthorizationCodeTokenInput {
-    client_id: String,
-    client_secret: Option<String>,
-    code: String,
-    redirect_uri: String,
-    code_verifier: Option<String>,
-}
-
-impl OAuthAuthorizationCodeTokenInput {
-    fn from_request(
-        request: &OAuthTokenRequest,
-        header_credentials: Option<(String, String)>,
-    ) -> Option<Self> {
-        let client_id = header_credentials
-            .as_ref()
-            .map(|(client_id, _)| client_id.clone())
-            .or_else(|| trimmed_non_empty(request.client_id.as_deref()))?;
-        let client_secret = header_credentials
-            .map(|(_, client_secret)| client_secret)
-            .or_else(|| trimmed_non_empty(request.client_secret.as_deref()));
-        let code = trimmed_non_empty(request.code.as_deref())?;
-        let redirect_uri = trimmed_non_empty(request.redirect_uri.as_deref())?;
-        let code_verifier = trimmed_non_empty(request.code_verifier.as_deref());
-        Some(Self {
-            client_id,
-            client_secret,
-            code,
-            redirect_uri,
-            code_verifier,
-        })
-    }
-}
-
-fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn client_secret_matches_app(app: &OAuthAppRow, client_secret: Option<&str>) -> bool {
-    client_secret.is_none_or(|client_secret| app.client_secret == client_secret)
-}
-
-fn authorization_code_matches_request(
-    code_row: &OAuthAuthorizationCodeRow,
-    app: &OAuthAppRow,
-    redirect_uri: &str,
-) -> bool {
-    code_row.oauth_app_id == app.id && code_row.redirect_uri == redirect_uri
-}
-
-fn authorization_code_allows_client(
-    code_row: &OAuthAuthorizationCodeRow,
-    input: &OAuthAuthorizationCodeTokenInput,
-) -> bool {
-    if let Some(challenge) = code_row.code_challenge.as_deref() {
-        return input.code_verifier.as_deref().is_some_and(|verifier| {
-            pkce_verifier_matches(
-                verifier,
-                challenge,
-                code_row.code_challenge_method.as_deref(),
-            )
-        });
-    }
-    input.client_secret.is_some()
-}
-
-async fn oauth_authorization_code_token_response(
-    db: &D1Database,
-    request: OAuthTokenRequest,
-    header_credentials: Option<(String, String)>,
-) -> Result<Response> {
-    let Some(input) = OAuthAuthorizationCodeTokenInput::from_request(&request, header_credentials)
-    else {
-        return oauth_invalid_client_response();
-    };
-    let Some(app) = find_oauth_app_by_client_id(db, &input.client_id).await? else {
-        return oauth_invalid_client_response();
-    };
-    if !client_secret_matches_app(&app, input.client_secret.as_deref()) {
-        return oauth_invalid_client_response();
-    }
-    let Some(code_row) = load_oauth_authorization_code(db, &input.code).await? else {
-        return oauth_invalid_grant_response(
-            "The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI.",
-        );
-    };
-    if !authorization_code_matches_request(&code_row, &app, &input.redirect_uri) {
-        return oauth_invalid_grant_response(
-            "The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI.",
-        );
-    }
-    if code_row.expires_at < now_unix_timestamp() {
-        delete_oauth_authorization_code(db, &code_row.code).await?;
-        return oauth_invalid_grant_response(
-            "The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI.",
-        );
-    }
-    if !authorization_code_allows_client(&code_row, &input) {
-        return oauth_invalid_grant_response(
-            "The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI.",
-        );
-    }
-
-    let scopes = serde_json::from_str::<Vec<String>>(&code_row.scopes_json).unwrap_or_default();
-    let access_token = issue_oauth_access_token(db, app.id, &code_row.account_id, &scopes).await?;
-    crate::link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
-    delete_oauth_authorization_code(db, &code_row.code).await?;
-    if find_account_by_id(db, &code_row.account_id)
-        .await?
-        .is_none()
-    {
-        return oauth_invalid_grant_response(
-            "The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI.",
-        );
-    }
-    with_oauth_token_cache_headers(Response::from_json(&build_oauth_token_document(
-        &access_token.access_token,
-        &scopes.join(" "),
-    ))?)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OAuthPostBodyKind {
-    FormUrlencoded,
-    Json,
-}
-
-fn classify_oauth_post_content_type(
-    content_type: &str,
-) -> std::result::Result<OAuthPostBodyKind, &'static str> {
-    let content_type = content_type.trim().to_ascii_lowercase();
-    if content_type.is_empty() {
-        return Err("Content-Type header is required.");
-    }
-    if content_type.starts_with("application/json") {
-        return Ok(OAuthPostBodyKind::Json);
-    }
-    if content_type.starts_with("application/x-www-form-urlencoded") {
-        return Ok(OAuthPostBodyKind::FormUrlencoded);
-    }
-    Err("Content-Type must be application/x-www-form-urlencoded.")
-}
-
-async fn parse_oauth_token_request(
-    req: &mut Request,
-) -> std::result::Result<OAuthTokenRequest, String> {
-    let content_type = req
-        .headers()
-        .get("Content-Type")
-        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default();
-
-    match classify_oauth_post_content_type(&content_type) {
-        Ok(OAuthPostBodyKind::Json) => req
-            .json::<OAuthTokenRequest>()
-            .await
-            .map_err(|error| format!("invalid JSON token payload: {error}")),
-        Ok(OAuthPostBodyKind::FormUrlencoded) => {
-            let form = req
-                .form_data()
-                .await
-                .map_err(|error| format!("invalid form token payload: {error}"))?;
-            Ok(OAuthTokenRequest {
-                grant_type: form.get_field("grant_type"),
-                client_id: form.get_field("client_id"),
-                client_secret: form.get_field("client_secret"),
-                redirect_uri: form.get_field("redirect_uri"),
-                scope: form.get_field("scope"),
-                code: form.get_field("code"),
-                code_verifier: form.get_field("code_verifier"),
-            })
-        }
-        Err(message) => Err(message.to_owned()),
-    }
-}
-
-fn requested_oauth_token_scopes(value: Option<String>) -> Vec<String> {
-    let raw = value.unwrap_or_else(|| "read".to_owned());
-    let mut scopes = Vec::new();
-    for scope in raw.split_whitespace() {
-        let normalized = scope.trim().to_owned();
-        if !normalized.is_empty() && !scopes.contains(&normalized) {
-            scopes.push(normalized);
-        }
-    }
-    if scopes.is_empty() {
-        vec!["read".to_owned()]
-    } else {
-        scopes
-    }
-}
-
 pub(crate) async fn create_app_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -2617,200 +1373,6 @@ pub(crate) async fn create_app_response(
     };
     let app = insert_oauth_app(&db, &request).await?;
     Response::from_json(&app_document(&app, &config))
-}
-
-pub(crate) async fn oauth_token_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let request = match parse_oauth_token_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return oauth_invalid_request_response(&message),
-    };
-    let grant_type = request
-        .grant_type
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default();
-    let header_credentials = req
-        .headers()
-        .get("Authorization")?
-        .as_deref()
-        .and_then(parse_basic_authorization_header);
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
-    if grant_type == "authorization_code" {
-        return oauth_authorization_code_token_response(&db, request, header_credentials).await;
-    }
-    if grant_type != "client_credentials" {
-        return oauth_unsupported_grant_type_response();
-    }
-    let client_id = header_credentials
-        .as_ref()
-        .map(|(client_id, _)| client_id.clone())
-        .or_else(|| {
-            request
-                .client_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        });
-    let client_secret = header_credentials
-        .as_ref()
-        .map(|(_, client_secret)| client_secret.clone())
-        .or_else(|| {
-            request
-                .client_secret
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        });
-    let redirect_uri = request
-        .redirect_uri
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let (Some(client_id), Some(client_secret), Some(redirect_uri)) =
-        (client_id, client_secret, redirect_uri)
-    else {
-        return oauth_invalid_client_response();
-    };
-
-    let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
-        return oauth_invalid_client_response();
-    };
-    if app.client_secret != client_secret {
-        return oauth_invalid_client_response();
-    }
-    if !oauth_app_redirect_uris(&app)
-        .iter()
-        .any(|value| redirect_uri_matches_registered(value, redirect_uri))
-    {
-        return oauth_invalid_client_response();
-    }
-
-    let requested_scopes = requested_oauth_token_scopes(request.scope);
-    let registered_scopes = oauth_app_scopes(&app);
-    if requested_scopes
-        .iter()
-        .any(|scope| !registered_scopes.contains(scope))
-    {
-        return oauth_invalid_scope_response();
-    }
-
-    let access_token = issue_oauth_app_access_token(&db, app.id, &requested_scopes).await?;
-    with_oauth_token_cache_headers(Response::from_json(
-        &build_oauth_token_document_with_expires_in(
-            &access_token,
-            &requested_scopes.join(" "),
-            APP_ACCESS_TOKEN_TTL_SECONDS,
-        ),
-    )?)
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct OAuthRevokeRequest {
-    token: Option<String>,
-    token_type_hint: Option<String>,
-    client_id: Option<String>,
-    client_secret: Option<String>,
-}
-
-pub(crate) async fn oauth_revoke_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let request = match parse_oauth_revoke_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return oauth_invalid_request_response(&message),
-    };
-    let Some(token) = trimmed_non_empty(request.token.as_deref()) else {
-        return oauth_invalid_request_response("token is required");
-    };
-    let header_credentials = req
-        .headers()
-        .get("Authorization")?
-        .as_deref()
-        .and_then(parse_basic_authorization_header);
-    let client_id = header_credentials
-        .as_ref()
-        .map(|(client_id, _)| client_id.clone())
-        .or_else(|| trimmed_non_empty(request.client_id.as_deref()));
-    let client_secret = header_credentials
-        .map(|(_, client_secret)| client_secret)
-        .or_else(|| trimmed_non_empty(request.client_secret.as_deref()));
-    let (Some(client_id), Some(client_secret)) = (client_id, client_secret) else {
-        return oauth_invalid_client_response();
-    };
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
-    let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
-        return oauth_invalid_client_response();
-    };
-    if app.client_secret != client_secret {
-        return oauth_invalid_client_response();
-    }
-    let _ = request.token_type_hint;
-    revoke_oauth_access_token(&db, app.id, &token).await?;
-    oauth_revoke_success_response()
-}
-
-fn oauth_revoke_success_response() -> Result<Response> {
-    Ok(Response::empty()?.with_status(oauth_revoke_success_status()))
-}
-
-fn oauth_revoke_success_status() -> u16 {
-    200
-}
-
-async fn parse_oauth_revoke_request(
-    req: &mut Request,
-) -> std::result::Result<OAuthRevokeRequest, String> {
-    let content_type = req
-        .headers()
-        .get("Content-Type")
-        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default();
-
-    match classify_oauth_post_content_type(&content_type) {
-        Ok(OAuthPostBodyKind::Json) => req
-            .json::<OAuthRevokeRequest>()
-            .await
-            .map_err(|error| format!("invalid JSON revoke payload: {error}")),
-        Ok(OAuthPostBodyKind::FormUrlencoded) => {
-            let form = req
-                .form_data()
-                .await
-                .map_err(|error| format!("invalid form revoke payload: {error}"))?;
-            Ok(OAuthRevokeRequest {
-                token: form.get_field("token"),
-                token_type_hint: form.get_field("token_type_hint"),
-                client_id: form.get_field("client_id"),
-                client_secret: form.get_field("client_secret"),
-            })
-        }
-        Err(message) => Err(message.to_owned()),
-    }
-}
-
-async fn revoke_oauth_access_token(db: &D1Database, oauth_app_id: i64, token: &str) -> Result<()> {
-    let token_hash = oauth_bearer_token_hash(token);
-    for sql in [
-        "DELETE FROM oauth_access_tokens
-         WHERE oauth_app_id = ?1
-           AND (access_token_hash = ?2 OR access_token = ?3)",
-        "DELETE FROM oauth_app_access_tokens
-         WHERE oauth_app_id = ?1
-           AND (access_token_hash = ?2 OR access_token = ?3)",
-    ] {
-        let bindings = [
-            D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
-            D1Type::Text(token_hash.as_str()),
-            D1Type::Text(token),
-        ];
-        db.prepare(sql).bind_refs(bindings.iter())?.run().await?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -2904,104 +1466,6 @@ mod tests {
     }
 
     #[test]
-    fn authorization_code_token_input_prefers_header_credentials() {
-        let request = OAuthTokenRequest {
-            client_id: Some(" body-client ".to_owned()),
-            client_secret: Some(" body-secret ".to_owned()),
-            code: Some(" code-1 ".to_owned()),
-            redirect_uri: Some(" https://client.example/callback ".to_owned()),
-            code_verifier: Some(" verifier ".to_owned()),
-            ..OAuthTokenRequest::default()
-        };
-
-        let input = OAuthAuthorizationCodeTokenInput::from_request(
-            &request,
-            Some(("header-client".to_owned(), "header-secret".to_owned())),
-        )
-        .expect("token input");
-
-        assert_eq!(input.client_id, "header-client");
-        assert_eq!(input.client_secret.as_deref(), Some("header-secret"));
-        assert_eq!(input.code, "code-1");
-        assert_eq!(input.redirect_uri, "https://client.example/callback");
-        assert_eq!(input.code_verifier.as_deref(), Some("verifier"));
-    }
-
-    #[test]
-    fn authorization_code_token_input_requires_core_fields() {
-        let request = OAuthTokenRequest {
-            client_id: Some("client".to_owned()),
-            redirect_uri: Some("https://client.example/callback".to_owned()),
-            ..OAuthTokenRequest::default()
-        };
-
-        assert!(OAuthAuthorizationCodeTokenInput::from_request(&request, None).is_none());
-    }
-
-    #[test]
-    fn authorization_code_allows_secret_or_valid_pkce() {
-        let code_row = OAuthAuthorizationCodeRow {
-            code: "code-1".to_owned(),
-            oauth_app_id: 1,
-            account_id: "acct-1".to_owned(),
-            redirect_uri: "https://client.example/callback".to_owned(),
-            scopes_json: "[\"read\"]".to_owned(),
-            code_challenge: Some(pkce_code_challenge("verifier", Some("S256"))),
-            code_challenge_method: Some("S256".to_owned()),
-            expires_at: i64::MAX,
-        };
-        let pkce_input = OAuthAuthorizationCodeTokenInput {
-            client_id: "client".to_owned(),
-            client_secret: None,
-            code: "code-1".to_owned(),
-            redirect_uri: "https://client.example/callback".to_owned(),
-            code_verifier: Some("verifier".to_owned()),
-        };
-        let bad_pkce_input = OAuthAuthorizationCodeTokenInput {
-            code_verifier: Some("wrong".to_owned()),
-            ..pkce_input.clone()
-        };
-        let secret_only_code = OAuthAuthorizationCodeRow {
-            code_challenge: None,
-            code_challenge_method: None,
-            ..code_row.clone()
-        };
-        let secret_input = OAuthAuthorizationCodeTokenInput {
-            client_secret: Some("secret".to_owned()),
-            code_verifier: None,
-            ..pkce_input.clone()
-        };
-
-        assert!(authorization_code_allows_client(&code_row, &pkce_input));
-        assert!(!authorization_code_allows_client(
-            &code_row,
-            &bad_pkce_input
-        ));
-        assert!(authorization_code_allows_client(
-            &secret_only_code,
-            &secret_input
-        ));
-        assert!(!authorization_code_allows_client(
-            &secret_only_code,
-            &pkce_input
-        ));
-    }
-
-    fn oauth_app_fixture() -> OAuthAppRow {
-        OAuthAppRow {
-            id: 7,
-            name: "Client".to_owned(),
-            website: None,
-            scopes_json: "[\"read\"]".to_owned(),
-            redirect_uri_legacy: "https://client.example/callback".to_owned(),
-            redirect_uris_json: "[\"https://client.example/callback\"]".to_owned(),
-            client_id: "client".to_owned(),
-            client_secret: "secret".to_owned(),
-            client_secret_expires_at: 0,
-        }
-    }
-
-    #[test]
     fn app_bearer_token_lookup_sql_uses_app_access_tokens_only() {
         assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("oauth_app_access_tokens"));
         assert!(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL.contains("t.access_token_hash = ?1"));
@@ -3019,16 +1483,6 @@ mod tests {
             "sha256:23fb79e20d37abf2418d78115eb0cc8c74b52f4ed8b91dda7fc03a1d41fc15e3"
         );
         assert!(!hash.contains("plain-token"));
-    }
-
-    #[test]
-    fn app_token_document_can_include_expiry_without_exposing_client_secret() {
-        let document = build_oauth_token_document_with_expires_in("issued-token", "read", 3600);
-
-        assert_eq!(document["access_token"], "issued-token");
-        assert_eq!(document["scope"], "read");
-        assert_eq!(document["expires_in"], 3600);
-        assert_ne!(document["access_token"], "secret");
     }
 
     #[test]
@@ -3051,145 +1505,6 @@ mod tests {
     }
 
     #[test]
-    fn client_secret_and_code_binding_match_expected_app() {
-        let app = oauth_app_fixture();
-        let code_row = OAuthAuthorizationCodeRow {
-            code: "code-1".to_owned(),
-            oauth_app_id: 7,
-            account_id: "acct-1".to_owned(),
-            redirect_uri: "https://client.example/callback".to_owned(),
-            scopes_json: "[\"read\"]".to_owned(),
-            code_challenge: None,
-            code_challenge_method: None,
-            expires_at: i64::MAX,
-        };
-
-        assert!(client_secret_matches_app(&app, Some("secret")));
-        assert!(client_secret_matches_app(&app, None));
-        assert!(!client_secret_matches_app(&app, Some("wrong")));
-        assert!(authorization_code_matches_request(
-            &code_row,
-            &app,
-            "https://client.example/callback"
-        ));
-        assert!(!authorization_code_matches_request(
-            &code_row,
-            &app,
-            "https://other.example/callback"
-        ));
-    }
-
-    #[test]
-    fn access_authorize_actions_match_expected_flow() {
-        assert_eq!(
-            access_authorize_get_action(false, false),
-            Auth0AuthorizeGetAction::RedirectToLogin
-        );
-        assert_eq!(
-            access_authorize_get_action(false, true),
-            Auth0AuthorizeGetAction::MissingLinkedAccount
-        );
-        assert_eq!(
-            access_authorize_get_action(true, false),
-            Auth0AuthorizeGetAction::ShowConsent
-        );
-
-        assert_eq!(
-            access_authorize_post_action(false, false, false),
-            Auth0AuthorizePostAction::RedirectToLogin
-        );
-        assert_eq!(
-            access_authorize_post_action(true, false, false),
-            Auth0AuthorizePostAction::ShowConsent
-        );
-        assert_eq!(
-            access_authorize_post_action(true, true, false),
-            Auth0AuthorizePostAction::IssueCode
-        );
-        assert_eq!(
-            access_authorize_post_action(true, false, true),
-            Auth0AuthorizePostAction::IssueCode
-        );
-    }
-
-    #[test]
-    fn oauth_authorize_page_body_requires_credentials_for_login_flow() {
-        let body = oauth_authorize_page_body(
-            &OAuthAuthorizeRequest {
-                response_type: Some("code".to_owned()),
-                client_id: Some("client".to_owned()),
-                redirect_uri: Some("https://client.example/callback".to_owned()),
-                scope: Some("read".to_owned()),
-                state: Some("state-1".to_owned()),
-                code_challenge: None,
-                code_challenge_method: None,
-            },
-            &oauth_app_fixture(),
-            None,
-            true,
-            "csrf-1",
-        );
-
-        assert!(body.contains("name=\"username\""));
-        assert!(body.contains("type=\"password\""));
-        assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
-        assert!(body.contains("<dt>Redirect URI</dt>"));
-        assert!(
-            body.contains("<span class=\"redirect-uri\">https://client.example/callback</span>")
-        );
-        assert!(body.contains("<button type=\"submit\">Authorize</button>"));
-    }
-
-    #[test]
-    fn oauth_authorize_page_body_shows_authenticated_consent_without_credentials() {
-        let body = oauth_authorize_page_body(
-            &OAuthAuthorizeRequest {
-                response_type: Some("code".to_owned()),
-                client_id: Some("client".to_owned()),
-                redirect_uri: Some("https://client.example/callback".to_owned()),
-                scope: Some("read write".to_owned()),
-                state: Some("state-1".to_owned()),
-                code_challenge: Some("challenge-1".to_owned()),
-                code_challenge_method: Some("S256".to_owned()),
-            },
-            &oauth_app_fixture(),
-            None,
-            false,
-            "csrf-1",
-        );
-
-        assert!(!body.contains("name=\"username\""));
-        assert!(!body.contains("type=\"password\""));
-        assert!(body.contains("Authorize Client"));
-        assert!(body.contains("name=\"client_id\" value=\"client\""));
-        assert!(body.contains("name=\"scope\" value=\"read write\""));
-        assert!(body.contains("name=\"code_challenge_method\" value=\"S256\""));
-        assert!(body.contains("name=\"approve\" value=\"true\""));
-        assert!(body.contains("name=\"csrf_token\" value=\"csrf-1\""));
-        assert!(body.contains("<dt>Scopes</dt>"));
-        assert!(body.contains("<span class=\"scope-pill\">read</span>"));
-        assert!(body.contains("<span class=\"scope-pill\">write</span>"));
-        assert!(body.contains("Approve access for this application"));
-    }
-
-    #[test]
-    fn normalize_authorize_request_rejects_plain_pkce() {
-        let error = normalize_authorize_request(OAuthAuthorizeRequest {
-            response_type: Some("code".to_owned()),
-            client_id: Some("client".to_owned()),
-            redirect_uri: Some("https://client.example/callback".to_owned()),
-            code_challenge: Some("challenge".to_owned()),
-            code_challenge_method: Some("plain".to_owned()),
-            ..OAuthAuthorizeRequest::default()
-        })
-        .expect_err("plain pkce");
-
-        assert_eq!(error, "unsupported code_challenge_method");
-        assert!(!code_challenge_method_is_supported(Some("plain")));
-        assert!(code_challenge_method_is_supported(Some("S256")));
-    }
-
-    #[test]
     fn pkce_verifier_rejects_stored_plain_method() {
         let challenge = "verifier-value";
         assert!(!pkce_verifier_matches(
@@ -3202,96 +1517,6 @@ mod tests {
             &pkce_code_challenge("verifier", Some("S256")),
             Some("S256")
         ));
-    }
-
-    #[test]
-    fn oauth_revoke_success_is_empty_200() {
-        assert_eq!(oauth_revoke_success_status(), 200);
-    }
-
-    #[test]
-    fn classify_oauth_post_content_type_requires_form_or_json() {
-        assert_eq!(
-            classify_oauth_post_content_type("application/x-www-form-urlencoded"),
-            Ok(OAuthPostBodyKind::FormUrlencoded)
-        );
-        assert_eq!(
-            classify_oauth_post_content_type("application/x-www-form-urlencoded; charset=UTF-8"),
-            Ok(OAuthPostBodyKind::FormUrlencoded)
-        );
-        assert_eq!(
-            classify_oauth_post_content_type("application/json"),
-            Ok(OAuthPostBodyKind::Json)
-        );
-        assert_eq!(
-            classify_oauth_post_content_type(""),
-            Err("Content-Type header is required.")
-        );
-        assert_eq!(
-            classify_oauth_post_content_type("text/plain"),
-            Err("Content-Type must be application/x-www-form-urlencoded.")
-        );
-    }
-
-    #[test]
-    fn authorize_error_redirect_includes_state() {
-        let location = build_oauth_authorize_error_redirect_url(
-            "https://client.example/callback",
-            Some("state-123"),
-            "invalid_scope",
-            "Requested scope is outside the registered app scopes",
-        )
-        .expect("redirect url");
-
-        assert!(location.starts_with("https://client.example/callback?"));
-        assert!(location.contains("error=invalid_scope"));
-        assert!(location.contains("state=state-123"));
-        assert!(location.contains("error_description="));
-    }
-
-    #[test]
-    fn authorize_failure_keeps_html_for_invalid_redirect() {
-        let failure = OAuthAuthorizeFailure::Html {
-            message: "Redirect URI is not registered for this OAuth client".to_owned(),
-        };
-        assert!(authorize_failure_should_use_html_page(&failure));
-
-        let redirect_failure = OAuthAuthorizeFailure::Redirect {
-            redirect_uri: "https://client.example/callback".to_owned(),
-            state: Some("abc".to_owned()),
-            error: "invalid_request",
-            description: "unsupported code_challenge_method".to_owned(),
-        };
-        assert!(!authorize_failure_should_use_html_page(&redirect_failure));
-    }
-
-    #[test]
-    fn auth0_callback_unverified_email_maps_to_http_403() {
-        let (message, status) = auth0_callback_failure(&worker::Error::RustError(
-            "Auth0 JWT email is not verified".to_owned(),
-        ));
-        assert_eq!(status, 403);
-        assert!(message.contains("verify your email"));
-        assert!(!message.contains("Auth0 JWT email is not verified"));
-    }
-
-    #[test]
-    fn auth0_callback_other_errors_still_map_to_http_500() {
-        let (message, status) = auth0_callback_failure(&worker::Error::RustError(
-            "Auth0 JWT audience mismatch".to_owned(),
-        ));
-        assert_eq!(status, 500);
-        assert!(message.starts_with("Auth0 login failed: "));
-        assert!(message.contains("Auth0 JWT audience mismatch"));
-    }
-
-    #[test]
-    fn auth0_callback_failure_message_is_browser_safe_html_source() {
-        let message = auth0_callback_failure_message(&worker::Error::RustError(
-            "Auth0 JWT audience mismatch".to_owned(),
-        ));
-        assert!(message.starts_with("Auth0 login failed: "));
-        assert!(message.contains("Auth0 JWT audience mismatch"));
     }
 
     #[test]
@@ -3313,20 +1538,6 @@ mod tests {
             Some("tok-1")
         );
         assert_eq!(parse_bearer_authorization_header("Basic abc"), None);
-    }
-
-    #[test]
-    fn invalid_grant_maps_to_http_400() {
-        assert_eq!(
-            oauth_token_error_code(400, "invalid_grant"),
-            "invalid_grant"
-        );
-        assert_eq!(
-            oauth_token_error_code(401, "invalid_client"),
-            "invalid_client"
-        );
-        assert_eq!(oauth_invalid_grant_status(), 400);
-        assert_eq!(oauth_invalid_client_status(), 401);
     }
 
     #[test]

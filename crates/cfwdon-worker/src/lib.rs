@@ -111,6 +111,11 @@ pub(crate) use lists::*;
 pub(crate) use local_polls::*;
 pub(crate) use markers::*;
 pub(crate) use media::*;
+#[allow(unused_imports)]
+pub(crate) use meta_placeholder_routes::streaming::{
+    StreamingChannelValidationError, streaming_channel_requires_auth,
+    validate_streaming_channel_request,
+};
 pub(crate) use meta_placeholder_routes::*;
 pub(crate) use notifications::*;
 pub(crate) use oauth_apps::*;

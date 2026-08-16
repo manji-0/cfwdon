@@ -1,27 +1,18 @@
 use super::{
-    AppConfig, Env, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
-    MediaAttachmentRow, Result, StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest,
-    apply_media_update, build_local_status_response, delete_local_status_with_outbox,
-    enqueue_status_update_activity, find_media_attachments_by_status_id, find_owned_local_status,
-    insert_status_edit_snapshot, load_local_status_response_preload, load_mastodon_poll_response,
+    AppConfig, Env, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, Result,
+    StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest, apply_media_update,
+    build_loaded_local_status_response, build_local_status_response,
+    enqueue_status_update_activity, find_media_attachments_by_status_id,
+    insert_status_edit_snapshot, load_local_status_response_preload,
     normalize_status_history_entry, now_iso_string, preload_status_counts,
-    preload_status_quote_counts, publish_local_status_delete_stream_fanout_soft,
-    publish_local_status_update_stream_fanout_soft, publish_user_stream_hub_event_soft,
-    replace_status_media, replace_status_poll, send_status_update_notifications,
-    update_local_status,
+    preload_status_quote_counts, publish_local_status_update_stream_fanout_soft,
+    publish_user_stream_hub_event_soft, replace_status_media, replace_status_poll,
+    send_status_update_notifications, update_local_status,
 };
 use cfwdon_domain::PollDraft;
 use worker::console_error;
 
 use crate::D1Database;
-
-pub(crate) use super::create_published::viewer_agnostic_local_status_stream_payload;
-
-pub(crate) struct DeleteLocalStatusResult {
-    pub(crate) response: MastodonStatusResponse,
-    pub(crate) media: Vec<MediaAttachmentRow>,
-    pub(crate) status_id: String,
-}
 
 pub(crate) struct UpdateLocalStatusInput<'a> {
     pub(crate) account: &'a LocalAccount,
@@ -40,61 +31,6 @@ pub(crate) struct UpdateLocalStatusInput<'a> {
 pub(crate) struct UpdateLocalStatusResult {
     pub(crate) response: MastodonStatusResponse,
     pub(crate) status_id: String,
-}
-
-pub(crate) async fn delete_owned_local_status(
-    db: &D1Database,
-    config: &AppConfig,
-    env: Option<&Env>,
-    requester: &LocalAccount,
-    status_id: &str,
-) -> Result<Option<DeleteLocalStatusResult>> {
-    let Some(status) = find_owned_local_status(db, status_id, requester.id()).await? else {
-        return Ok(None);
-    };
-
-    let LocalStatusResponsePreload {
-        media,
-        in_reply_to_account_id,
-    } = load_local_status_response_preload(db, &status).await?;
-    let mut response = MastodonStatusResponse::from_deleted_row(
-        &status,
-        requester,
-        config,
-        in_reply_to_account_id,
-        media.clone(),
-    );
-    response.poll = load_mastodon_poll_response(db, &status.id, Some(requester)).await?;
-
-    delete_local_status_with_outbox(db, config, requester, &status).await?;
-
-    if let Some(env) = env {
-        publish_user_stream_hub_event_soft(
-            env,
-            &config.stream_hub_binding,
-            requester.id(),
-            "delete",
-            &status.id,
-            Some(&status.id),
-        )
-        .await;
-
-        publish_local_status_delete_stream_fanout_soft(
-            env,
-            db,
-            config,
-            requester,
-            &status,
-            !media.is_empty(),
-        )
-        .await;
-    }
-
-    Ok(Some(DeleteLocalStatusResult {
-        response,
-        media,
-        status_id: status.id,
-    }))
 }
 
 pub(crate) async fn apply_local_status_update(
@@ -172,14 +108,9 @@ pub(crate) async fn apply_local_status_update(
     enqueue_status_update_activity(db, config, input.account, &status).await?;
     let _ = send_status_update_notifications(db, config, env, &status).await;
 
-    let response = super::build_loaded_local_status_response(
-        db,
-        config,
-        Some(input.account),
-        &status,
-        input.account,
-    )
-    .await?;
+    let response =
+        build_loaded_local_status_response(db, config, Some(input.account), &status, input.account)
+            .await?;
 
     if let Some(env) = env {
         let payload = match serde_json::to_string(&response) {
@@ -214,16 +145,17 @@ pub(crate) async fn apply_local_status_update(
             preload_status_counts(db, &status_ids, &[]),
             preload_status_quote_counts(db, &quote_count_uris),
         )?;
-        if let Some(fanout_payload) = viewer_agnostic_local_status_stream_payload(
-            db,
-            config,
-            &status,
-            input.account,
-            &response_preload,
-            &counts_preload,
-            &quote_counts_preload,
-        )
-        .await
+        if let Some(fanout_payload) =
+            super::create_published::viewer_agnostic_local_status_stream_payload(
+                db,
+                config,
+                &status,
+                input.account,
+                &response_preload,
+                &counts_preload,
+                &quote_counts_preload,
+            )
+            .await
         {
             publish_local_status_update_stream_fanout_soft(
                 env,
