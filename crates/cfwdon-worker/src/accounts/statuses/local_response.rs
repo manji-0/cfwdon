@@ -161,7 +161,7 @@ async fn preload_local_account_status_json_context(
         poll_preload,
         viewer_state_preload,
         application_preload,
-        mut media_by_status_id,
+        media_by_status_id,
         in_reply_to_account_ids,
         filter_matcher,
     ) = futures_util::try_join!(

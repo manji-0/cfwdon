@@ -1,26 +1,24 @@
 use crate::timelines::{
-    ResolvedTimelineCursor, TimelinePaginationQuery, resolve_timeline_cursor,
-    timeline_fetch_limit,
+    ResolvedTimelineCursor, TimelinePaginationQuery, resolve_timeline_cursor, timeline_fetch_limit,
 };
 use crate::{
-    BoostTargetPreload, D1Database, LocalAccount, MastodonPollResponsePreload,
-    MentionAccountsPreload, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusFederatedEmojisPreload, RemoteStatusViewerStatePreload, Result, StreamingBatch,
-    StreamingEntry, StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload,
-    LocalStatusViewerStatePreload, account_has_thread_mutes, actor_url,
+    BoostTargetPreload, D1Database, LocalAccount, LocalStatusViewerStatePreload,
+    MastodonPollResponsePreload, MentionAccountsPreload, RemoteMastodonPollResponsePreload,
+    RemoteStatusEditUpdatedAtPreload, RemoteStatusFederatedEmojisPreload,
+    RemoteStatusViewerStatePreload, Result, StatusApplicationPreload, StatusCountsPreload,
+    StatusQuoteCountsPreload, StreamingBatch, StreamingEntry, account_has_thread_mutes, actor_url,
     build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, config_with_resolved_custom_emojis,
     find_accounts_by_ids, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_ids, list_active_muted_actor_uris_for_account,
-    list_followed_tag_names, list_local_home_timeline_statuses,
-    list_local_public_statuses_by_tag, list_remote_home_timeline_statuses,
-    list_remote_public_statuses_by_tag, load_in_reply_to_account_ids,
-    local_status_ids_thread_muted_by, preload_boost_targets, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_mention_accounts_from_texts,
-    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
-    preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    streaming_batch_from_entries,
+    list_followed_tag_names, list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
+    list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
+    load_in_reply_to_account_ids, local_status_ids_thread_muted_by, preload_boost_targets,
+    preload_local_status_viewer_state, preload_mastodon_poll_responses,
+    preload_mention_accounts_from_texts, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, preload_remote_status_federated_emojis,
+    preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
+    preload_status_quote_counts, streaming_batch_from_entries,
 };
 use cfwdon_core::AppConfig;
 use std::collections::{HashMap, HashSet};
@@ -343,10 +341,7 @@ async fn render_streaming_home_entries(
                         Some(viewer),
                         &status,
                         account,
-                        preloads
-                            .in_reply_to_account_ids
-                            .get(&status.id)
-                            .cloned(),
+                        preloads.in_reply_to_account_ids.get(&status.id).cloned(),
                         media,
                         None,
                         Some(&preloads.counts_preload),
@@ -451,23 +446,21 @@ pub(crate) async fn streaming_home_batch(
         .iter()
         .map(|status| status.id.clone())
         .collect::<Vec<_>>();
-    let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) =
-        futures_util::try_join!(
-            async {
-                futures_util::try_join!(
-                    find_accounts_by_ids(db, &source_local_account_ids),
-                    find_media_attachments_by_status_ids(db, &source_local_status_ids),
-                )
-            },
-            async {
-                if viewer_has_thread_mutes {
-                    local_status_ids_thread_muted_by(db, viewer.id(), &source_local_status_refs)
-                        .await
-                } else {
-                    Ok::<HashSet<String>, worker::Error>(HashSet::new())
-                }
-            },
-        )?;
+    let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) = futures_util::try_join!(
+        async {
+            futures_util::try_join!(
+                find_accounts_by_ids(db, &source_local_account_ids),
+                find_media_attachments_by_status_ids(db, &source_local_status_ids),
+            )
+        },
+        async {
+            if viewer_has_thread_mutes {
+                local_status_ids_thread_muted_by(db, viewer.id(), &source_local_status_refs).await
+            } else {
+                Ok::<HashSet<String>, worker::Error>(HashSet::new())
+            }
+        },
+    )?;
 
     let mut candidates = Vec::with_capacity(candidate_rows.len());
     for candidate in candidate_rows {

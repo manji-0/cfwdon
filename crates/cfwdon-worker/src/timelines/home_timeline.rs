@@ -1,19 +1,20 @@
 use super::{
-    candidate_render, empty_timeline_response, local_status_actor_uri,
-    muted_local_timeline_status_ids, preload_local_timeline_rows_from_status_refs,
-    resolve_timeline_cursor, select_public_timeline_candidates, timeline_cursor_is_unresolved,
-    timeline_fetch_limit, timeline_invalid_access_token_response,
-    timeline_outside_authorized_scopes_response, timeline_limit, timeline_response_from_entries,
-    HomeTimelineQuery, PublicTimelineCandidate, PublicTimelineCandidateEntry,
+    HomeTimelineQuery, PublicTimelineCandidate, PublicTimelineCandidateEntry, candidate_render,
+    empty_timeline_response, local_status_actor_uri, muted_local_timeline_status_ids,
+    preload_local_timeline_rows_from_status_refs, resolve_timeline_cursor,
+    select_public_timeline_candidates, timeline_cursor_is_unresolved, timeline_fetch_limit,
+    timeline_invalid_access_token_response, timeline_limit,
+    timeline_outside_authorized_scopes_response, timeline_response_from_entries,
 };
-use crate::auth::{authenticate_local_api_request, LocalApiAuthentication};
+use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::oauth_apps::oauth_access_token_has_any_scope;
 use crate::relationship::list_active_muted_actor_uris_for_account;
 use crate::runtime_config::load_config;
 use crate::{
+    HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
     find_remote_statuses_with_actors_by_ids, find_statuses_by_ids,
     list_home_timeline_candidate_ids, load_account_filter_matcher, open_bound_request_session,
-    with_d1_bookmark, HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
+    with_d1_bookmark,
 };
 use std::collections::{HashMap, HashSet};
 use worker::{Request, Response, Result, RouteContext};

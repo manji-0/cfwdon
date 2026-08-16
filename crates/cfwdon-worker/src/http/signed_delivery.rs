@@ -1,6 +1,4 @@
-use super::signatures::{
-    signed_post_signing_string, ACTIVITYPUB_ACCEPT, ACTIVITYPUB_CONTENT_TYPE,
-};
+use super::signatures::{ACTIVITYPUB_ACCEPT, ACTIVITYPUB_CONTENT_TYPE, signed_post_signing_string};
 use crate::auth::load_account_private_key_jwk;
 use crate::federation::{parse_http_url_parts, parse_remote_http_url, validate_remote_fetch_url};
 use crate::instance::public_key_id;
@@ -169,7 +167,6 @@ pub(crate) async fn send_signed_activity(
     inbox_url: &str,
     payload_json: &str,
 ) -> std::result::Result<(), SignedDeliveryFailure> {
-    let request =
-        build_signed_post_request(config, db, account, inbox_url, payload_json).await?;
+    let request = build_signed_post_request(config, db, account, inbox_url, payload_json).await?;
     dispatch_signed_post(request).await
 }

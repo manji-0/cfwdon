@@ -346,13 +346,10 @@ pub(crate) async fn create_published_status_and_response(
         input.in_reply_to_account_id.as_deref(),
     )
     .await;
-    let artifacts =
-        build_published_status_artifacts(db, config, input.account, &status).await?;
+    let artifacts = build_published_status_artifacts(db, config, input.account, &status).await?;
 
     if let Some(env) = env {
-        return Ok(
-            publish_created_status_stream_events(env, db, config, &input, &artifacts).await,
-        );
+        return Ok(publish_created_status_stream_events(env, db, config, &input, &artifacts).await);
     }
 
     Ok(artifacts.response)

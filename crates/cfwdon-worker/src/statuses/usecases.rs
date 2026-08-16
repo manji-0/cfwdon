@@ -1,13 +1,14 @@
 use super::{
     AppConfig, Env, LocalAccount, LocalStatusResponsePreload, MastodonStatusResponse,
-    MediaAttachmentRow, Result, StatusRow, StatusMediaAttributeRequest, UpdateMediaRequest,
+    MediaAttachmentRow, Result, StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest,
     apply_media_update, build_local_status_response, delete_local_status_with_outbox,
     enqueue_status_update_activity, find_media_attachments_by_status_id, find_owned_local_status,
     insert_status_edit_snapshot, load_local_status_response_preload, load_mastodon_poll_response,
     normalize_status_history_entry, now_iso_string, preload_status_counts,
     preload_status_quote_counts, publish_local_status_delete_stream_fanout_soft,
     publish_local_status_update_stream_fanout_soft, publish_user_stream_hub_event_soft,
-    replace_status_media, replace_status_poll, send_status_update_notifications, update_local_status,
+    replace_status_media, replace_status_poll, send_status_update_notifications,
+    update_local_status,
 };
 use cfwdon_domain::PollDraft;
 use worker::console_error;
@@ -242,5 +243,3 @@ pub(crate) async fn apply_local_status_update(
         status_id: status.id,
     })
 }
-
-

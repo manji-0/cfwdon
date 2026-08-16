@@ -44,7 +44,9 @@ pub(crate) use bookmark_store::*;
 pub(crate) use bookmarks::*;
 pub(crate) use boost_targets::*;
 pub(crate) use counts::*;
-pub(crate) use create_published::{CreatePublishedStatusInput, create_published_status_and_response};
+pub(crate) use create_published::{
+    CreatePublishedStatusInput, create_published_status_and_response,
+};
 pub(crate) use detail_routes::*;
 pub(crate) use edits::*;
 pub(crate) use favourite_store::*;

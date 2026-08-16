@@ -615,8 +615,6 @@ async fn preload_muted_timeline_actor_uris(
     list_active_muted_actor_uris(db, viewer.id(), &actor_uris).await
 }
 
-
-
 async fn remote_media_status_ids_for_filter(
     db: &D1Database,
     only_media: bool,
@@ -980,15 +978,12 @@ fn timeline_response_from_cached_statuses(
     limit: u32,
     payload: serde_json::Value,
 ) -> Result<Response> {
-    let statuses = match payload {
-        serde_json::Value::Array(items) => items,
-        other => vec![other],
+    let full_len = match &payload {
+        serde_json::Value::Array(items) => items.len(),
+        _ => 1,
     };
-    let has_next_page = statuses.len() > limit as usize;
-    let page = statuses
-        .into_iter()
-        .take(limit as usize)
-        .collect::<Vec<_>>();
+    let page = crate::slice_json_array_cache(payload, 0, limit);
+    let has_next_page = full_len > limit as usize;
     let first_id = page
         .first()
         .and_then(|value| value.get("id"))
