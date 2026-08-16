@@ -1,4 +1,10 @@
-use super::MastodonStatusResponse;
+use super::{
+    AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow, RemoteStatusRow, StatusRow,
+    actor_url, is_blocking_actor, is_local_follower_authorized, is_muted_actor,
+};
+use worker::{Result, d1::D1Type};
+
+use crate::D1Database;
 
 pub(crate) fn quote_document_with_state(
     state: &str,
@@ -57,6 +63,154 @@ pub(crate) fn remote_quote_visibility_is_embeddable(visibility: &str) -> bool {
 
 pub(crate) fn accepted_quote_document_state() -> &'static str {
     "accepted"
+}
+
+async fn viewer_blocks_domain(db: &D1Database, account_id: &str, domain: &str) -> Result<bool> {
+    let bindings = [D1Type::Text(account_id), D1Type::Text(domain)];
+    let row = db
+        .prepare(
+            "SELECT 1 AS found
+             FROM account_domain_blocks
+             WHERE account_id = ?1
+               AND domain = ?2
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    Ok(row.is_some())
+}
+
+async fn quote_state_for_local_quoted_status(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    quoted_account: &LocalAccount,
+) -> Result<Option<&'static str>> {
+    let quoted_actor_uri = actor_url(config, quoted_account.username());
+    if is_blocking_actor(db, viewer.id(), &quoted_actor_uri).await? {
+        return Ok(Some("blocked_account"));
+    }
+    if is_muted_actor(db, viewer.id(), &quoted_actor_uri).await? {
+        return Ok(Some("muted_account"));
+    }
+    Ok(None)
+}
+
+async fn quote_state_for_remote_quoted_status(
+    db: &D1Database,
+    viewer: &LocalAccount,
+    actor: &RemoteActorRow,
+) -> Result<Option<&'static str>> {
+    if is_blocking_actor(db, viewer.id(), &actor.actor_uri).await? {
+        return Ok(Some("blocked_account"));
+    }
+    if viewer_blocks_domain(db, viewer.id(), &actor.domain).await? {
+        return Ok(Some("blocked_domain"));
+    }
+    if is_muted_actor(db, viewer.id(), &actor.actor_uri).await? {
+        return Ok(Some("muted_account"));
+    }
+    Ok(None)
+}
+
+pub(crate) async fn local_quoted_status_document_state(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    local_account: &LocalAccount,
+) -> Result<&'static str> {
+    let Some(viewer) = viewer else {
+        return Ok(accepted_quote_document_state());
+    };
+    Ok(
+        quote_state_for_local_quoted_status(db, config, viewer, local_account)
+            .await?
+            .unwrap_or(accepted_quote_document_state()),
+    )
+}
+
+pub(crate) async fn remote_quoted_status_document_state(
+    db: &D1Database,
+    viewer: Option<&LocalAccount>,
+    actor: &RemoteActorRow,
+) -> Result<&'static str> {
+    let Some(viewer) = viewer else {
+        return Ok(accepted_quote_document_state());
+    };
+    Ok(quote_state_for_remote_quoted_status(db, viewer, actor)
+        .await?
+        .unwrap_or(accepted_quote_document_state()))
+}
+
+pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &'static str {
+    status.effective_quote_approval_policy().as_str()
+}
+
+pub(crate) async fn build_local_quote_approval(
+    db: &D1Database,
+    status: &StatusRow,
+    viewer: Option<&LocalAccount>,
+    owner: &LocalAccount,
+) -> Result<serde_json::Value> {
+    let policy = effective_local_quote_approval_policy(status);
+    let automatic = match policy {
+        "public" => vec![serde_json::json!("public")],
+        "followers" => vec![serde_json::json!("followers")],
+        _ => Vec::new(),
+    };
+    let current_user = match policy {
+        "public" => "automatic",
+        "followers" => {
+            if viewer
+                .map(|viewer| viewer.id() == owner.id())
+                .unwrap_or(false)
+            {
+                "automatic"
+            } else if let Some(viewer) = viewer {
+                if is_local_follower_authorized(db, viewer.id(), owner.id()).await? {
+                    "automatic"
+                } else {
+                    "denied"
+                }
+            } else {
+                "denied"
+            }
+        }
+        _ => {
+            if viewer
+                .map(|viewer| viewer.id() == owner.id())
+                .unwrap_or(false)
+            {
+                "automatic"
+            } else {
+                "denied"
+            }
+        }
+    };
+
+    Ok(serde_json::json!({
+        "automatic": automatic,
+        "manual": [],
+        "current_user": current_user,
+    }))
+}
+
+pub(crate) fn build_remote_quote_approval(status: &RemoteStatusRow) -> serde_json::Value {
+    if !matches!(status.visibility.as_str(), "public" | "unlisted") {
+        return serde_json::json!({
+            "automatic": [],
+            "manual": [],
+            "current_user": "denied",
+        });
+    }
+
+    serde_json::json!({
+        "automatic": [],
+        "manual": ["unsupported_policy"],
+        "current_user": "manual",
+    })
 }
 
 #[cfg(test)]

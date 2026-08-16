@@ -21,7 +21,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "quote",
         domain_module: "cfwdon_domain::quote",
         implementation_sites: &[
-            "crates/cfwdon-worker/src/statuses/mutations.rs::insert_status",
+            "crates/cfwdon-worker/src/statuses/status_insert.rs::insert_status",
             "crates/cfwdon-domain/src/status/draft.rs::PublishIntent",
         ],
         abstraction: "quote_state + visibility + policy + quote-target facts",
@@ -114,7 +114,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         domain_module: "cfwdon_domain::status::draft",
         implementation_sites: &[
             "crates/cfwdon-worker/src/statuses/request_parsing.rs",
-            "crates/cfwdon-worker/src/statuses/mutations.rs::insert_status",
+            "crates/cfwdon-worker/src/statuses/status_insert.rs::insert_status",
         ],
         abstraction: "composition payload shape + pipeline stage",
         operations: &[
@@ -311,7 +311,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         domain_module: "cfwdon_domain::status::draft",
         implementation_sites: &[
             "crates/cfwdon-worker/src/statuses/request_parsing.rs",
-            "crates/cfwdon-worker/src/statuses/mutations.rs",
+            "crates/cfwdon-worker/src/statuses/status_insert.rs",
         ],
         abstraction: "composition facts + publish stage",
         operations: &[
