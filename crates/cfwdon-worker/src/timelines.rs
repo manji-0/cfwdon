@@ -3,6 +3,7 @@ pub(crate) use crate::*;
 
 mod candidate_render;
 mod cursor_sql;
+mod home_timeline;
 mod request_parsing;
 mod search;
 pub(crate) use cursor_sql::{
@@ -15,6 +16,8 @@ pub(crate) use request_parsing::*;
 #[allow(unused_imports)]
 pub(crate) use search::*;
 
+pub(crate) use home_timeline::home_timeline_response;
+
 pub(crate) use self::request_parsing::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
     TimelinePaginationQuery, build_timeline_link_header, canonicalize_link_timeline_url,
@@ -22,25 +25,18 @@ pub(crate) use self::request_parsing::{
     matches_tag_timeline_filters, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };
 use crate::actor_url;
-use crate::auth::{
-    LocalApiAuthentication, authenticate_local_api_request, find_authenticated_local_account,
-};
+use crate::auth::find_authenticated_local_account;
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::find_remote_status_ids_with_media;
 use crate::local_status_ids_thread_muted_by;
 use crate::oauth_apps::{
-    app_bearer_token_from_request, find_oauth_app_by_bearer_token,
-    oauth_access_token_has_any_scope, oauth_app_has_any_scope,
+    app_bearer_token_from_request, find_oauth_app_by_bearer_token, oauth_app_has_any_scope,
 };
 use crate::runtime_config::load_config;
 use crate::{
-    D1Database, HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
-    account_has_thread_mutes, build_local_status_response_with_timeline_preloads,
-    build_remote_status_response_with_timeline_preloads, build_status_card_value,
-    enrich_card_with_remote_preview, find_accounts_by_ids, find_remote_actors_by_actor_uris,
+    D1Database, account_has_thread_mutes, build_status_card_value, find_accounts_by_ids,
     find_remote_status_attachments_by_status_ids, find_remote_statuses_by_url_or_object_uris,
-    find_remote_statuses_with_actors_by_ids, find_statuses_by_ap_ids, find_statuses_by_ids,
-    list_active_muted_actor_uris, list_home_timeline_candidate_ids,
+    find_statuses_by_ap_ids, find_statuses_by_ids, list_active_muted_actor_uris,
     list_local_direct_timeline_statuses, list_local_public_statuses_by_link,
     list_local_public_statuses_by_tag, list_local_public_timeline_statuses,
     list_remote_direct_statuses_mentioning_viewer, list_remote_public_statuses_by_link,
@@ -49,8 +45,7 @@ use crate::{
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    require_authenticated_local_account,
+    preload_status_counts, preload_status_quote_counts, require_authenticated_local_account,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -757,169 +752,6 @@ fn status_card_url_matches_targets(text: &str, targets: &HashSet<String>) -> boo
         })
         .map(|url| targets.contains(&url))
         .unwrap_or(false)
-}
-
-pub(crate) async fn home_timeline_response(
-    req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
-    let query: HomeTimelineQuery = req.query().unwrap_or_default();
-    let pagination = query.pagination();
-    let limit = timeline_limit(&pagination);
-    let query_limit = timeline_fetch_limit(limit);
-    let (auth, cursor) = futures_util::try_join!(
-        authenticate_local_api_request(&req, &db, &config),
-        resolve_timeline_cursor(&db, &pagination),
-    )?;
-    let viewer = match auth {
-        LocalApiAuthentication::OAuthToken(auth) => {
-            if !oauth_access_token_has_any_scope(&auth.token, &["read:statuses", "read"]) {
-                return timeline_outside_authorized_scopes_response();
-            }
-            auth.account
-        }
-        LocalApiAuthentication::Auth0(viewer) => viewer,
-        LocalApiAuthentication::AppToken
-        | LocalApiAuthentication::InvalidBearer
-        | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
-    };
-    if timeline_cursor_is_unresolved(&pagination, &cursor) {
-        return with_d1_bookmark(empty_timeline_response()?, &session);
-    }
-    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = {
-        let caps = crate::load_account_capabilities(&db, viewer.id()).await?;
-        let (filter_matcher, muted_actor_uris) = futures_util::try_join!(
-            async {
-                if caps.has_filters {
-                    load_account_filter_matcher(&db, viewer.id()).await
-                } else {
-                    Ok(crate::AccountFilterMatcher::default())
-                }
-            },
-            list_active_muted_actor_uris_for_account(&db, viewer.id()),
-        )?;
-        (
-            filter_matcher,
-            caps.has_thread_mutes,
-            caps.has_followed_tags,
-            muted_actor_uris,
-        )
-    };
-    let candidate_rows = list_home_timeline_candidate_ids(
-        &db,
-        viewer.id(),
-        &cursor,
-        query_limit,
-        include_followed_tags,
-    )
-    .await?;
-
-    let mut local_candidate_ids = Vec::new();
-    let mut remote_candidate_ids = Vec::new();
-    for row in &candidate_rows {
-        match row.source.as_str() {
-            HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL => {
-                local_candidate_ids.push(row.status_id.clone());
-            }
-            HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE => {
-                remote_candidate_ids.push(row.status_id.clone());
-            }
-            _ => {}
-        }
-    }
-
-    let (local_statuses, remote_statuses) = futures_util::try_join!(
-        find_statuses_by_ids(&db, &local_candidate_ids),
-        find_remote_statuses_with_actors_by_ids(&db, &remote_candidate_ids),
-    )?;
-    let mut local_statuses_by_id = local_statuses
-        .into_iter()
-        .map(|status| (status.id.clone(), status))
-        .collect::<HashMap<_, _>>();
-    let mut remote_statuses_by_id = remote_statuses
-        .into_iter()
-        .map(|(status, actor)| (status.id.clone(), (status, actor)))
-        .collect::<HashMap<_, _>>();
-    // Thread mutes key off the candidate statuses, not their authors, so they no
-    // longer have to wait for the account lookup.
-    let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) = {
-        let local_status_refs = local_statuses_by_id.values().collect::<Vec<_>>();
-        futures_util::try_join!(
-            preload_local_timeline_rows_from_status_refs(&db, &local_status_refs),
-            muted_local_timeline_status_ids(
-                &db,
-                viewer.id(),
-                viewer_has_thread_mutes,
-                &local_status_refs,
-            ),
-        )?
-    };
-    let mut candidates = Vec::new();
-    let mut seen_status_ids = HashSet::new();
-
-    for row in candidate_rows {
-        if !seen_status_ids.insert(row.status_id.clone()) {
-            continue;
-        }
-        match row.source.as_str() {
-            HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL => {
-                let Some(status) = local_statuses_by_id.remove(&row.status_id) else {
-                    continue;
-                };
-                let Some(actor_uri) =
-                    local_status_actor_uri(&config, &local_accounts_by_id, &status)
-                else {
-                    continue;
-                };
-                if muted_actor_uris.contains(&actor_uri) {
-                    continue;
-                }
-                if muted_local_status_ids.contains(&status.id) {
-                    continue;
-                }
-                let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-                candidates.push(PublicTimelineCandidateEntry {
-                    timestamp: row.timestamp,
-                    id: status.id.clone(),
-                    candidate: PublicTimelineCandidate::Local { status, media },
-                });
-            }
-            HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE => {
-                let Some((status, actor)) = remote_statuses_by_id.remove(&row.status_id) else {
-                    continue;
-                };
-                if muted_actor_uris.contains(&actor.actor_uri) {
-                    continue;
-                }
-                candidates.push(PublicTimelineCandidateEntry {
-                    timestamp: row.timestamp,
-                    id: status.id.clone(),
-                    candidate: PublicTimelineCandidate::Remote { status, actor },
-                });
-            }
-            _ => {}
-        }
-    }
-
-    let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = candidate_render::timeline_entries_from_candidates(
-        &db,
-        &config,
-        Some(&viewer),
-        Some(&filter_matcher),
-        &local_accounts_by_id,
-        candidates,
-        false,
-        Some(viewer_has_thread_mutes),
-    )
-    .await?;
-
-    with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
-        &session,
-    )
 }
 
 pub(crate) async fn public_timeline_response(
