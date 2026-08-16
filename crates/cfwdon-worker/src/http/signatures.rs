@@ -14,13 +14,12 @@ use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
-use wasm_bindgen::JsValue;
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 
 use crate::D1Database;
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
-const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
-const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
+pub(super) const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
+pub(super) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
 const SIGNED_POST_HEADERS: &[&str] =
     &["(request-target)", "host", "date", "digest", "content-type"];
 
@@ -127,142 +126,6 @@ pub(crate) async fn fetch_signed_activitypub_document(
     Err(Error::RustError(format!(
         "signed remote fetch exceeded redirect limit for {url}"
     )))
-}
-
-#[derive(Debug)]
-pub(crate) struct SignedDeliveryFailure {
-    pub(crate) outcome: cfwdon_domain::DeliveryAttemptOutcome,
-    pub(crate) detail: String,
-}
-
-impl SignedDeliveryFailure {
-    pub(crate) fn retryable(detail: impl Into<String>) -> Self {
-        Self {
-            outcome: cfwdon_domain::DeliveryAttemptOutcome::Failure,
-            detail: detail.into(),
-        }
-    }
-
-    pub(crate) fn permanent(detail: impl Into<String>) -> Self {
-        Self {
-            outcome: cfwdon_domain::DeliveryAttemptOutcome::PermanentFailure,
-            detail: detail.into(),
-        }
-    }
-
-    pub(crate) fn is_permanent(&self) -> bool {
-        matches!(
-            self.outcome,
-            cfwdon_domain::DeliveryAttemptOutcome::PermanentFailure
-        )
-    }
-}
-
-pub(crate) async fn send_signed_activity(
-    config: &AppConfig,
-    db: &D1Database,
-    account: &LocalAccount,
-    inbox_url: &str,
-    payload_json: &str,
-) -> std::result::Result<(), SignedDeliveryFailure> {
-    let inbox = parse_remote_http_url(inbox_url).map_err(|error| {
-        SignedDeliveryFailure::permanent(format!("invalid remote inbox URL: {error}"))
-    })?;
-    validate_remote_fetch_url(&inbox).await.map_err(|error| {
-        SignedDeliveryFailure::permanent(format!("remote inbox URL rejected: {error}"))
-    })?;
-    let (host, path_and_query) = parse_http_url_parts(inbox.as_str()).map_err(|error| {
-        SignedDeliveryFailure::permanent(format!("failed to parse inbox URL parts: {error}"))
-    })?;
-    let date = now_http_date_string().map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to build Date header: {error}"))
-    })?;
-    let digest = sha256_http_digest(payload_json.as_bytes())
-        .await
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to build Digest header: {error}"))
-        })?;
-    let signing_string = signed_post_signing_string(
-        &path_and_query,
-        &host,
-        &date,
-        &digest,
-        ACTIVITYPUB_CONTENT_TYPE,
-    )
-    .map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to build signing string: {error}"))
-    })?;
-    let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
-        .await
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to load signing key: {error}"))
-        })?
-        .ok_or_else(|| {
-            SignedDeliveryFailure::permanent("account private signing key is missing")
-        })?;
-    let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes())
-        .await
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to sign delivery request: {error}"))
-        })?;
-
-    let headers = Headers::new();
-    headers.set("Accept", ACTIVITYPUB_ACCEPT).map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to set Accept header: {error}"))
-    })?;
-    headers
-        .set("Content-Type", ACTIVITYPUB_CONTENT_TYPE)
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to set Content-Type header: {error}"))
-        })?;
-    headers.set("Date", &date).map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to set Date header: {error}"))
-    })?;
-    headers.set("Digest", &digest).map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to set Digest header: {error}"))
-    })?;
-    headers
-        .set(
-            "Signature",
-            &format!(
-                "keyId=\"{}\",algorithm=\"rsa-sha256\",headers=\"(request-target) host date digest content-type\",signature=\"{}\"",
-                public_key_id(config, account.username()),
-                signature
-            ),
-        )
-        .map_err(|error| {
-            SignedDeliveryFailure::retryable(format!("failed to set Signature header: {error}"))
-        })?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(JsValue::from_str(payload_json)))
-        .with_redirect(RequestRedirect::Manual);
-
-    let request = Request::new_with_init(inbox.as_str(), &init).map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("failed to build delivery request: {error}"))
-    })?;
-    let response = Fetch::Request(request).send().await.map_err(|error| {
-        SignedDeliveryFailure::retryable(format!("remote inbox delivery fetch failed: {error}"))
-    })?;
-    let status = response.status_code();
-    match cfwdon_domain::delivery_disposition_for_http_status(status) {
-        cfwdon_domain::DeliveryAttemptOutcome::Success => Ok(()),
-        cfwdon_domain::DeliveryAttemptOutcome::PermanentFailure => {
-            Err(SignedDeliveryFailure::permanent(format!(
-                "remote inbox rejected activity with HTTP {status}"
-            )))
-        }
-        cfwdon_domain::DeliveryAttemptOutcome::Failure => {
-            let detail = if (300..400).contains(&status) {
-                format!("remote inbox redirected signed delivery with HTTP {status}")
-            } else {
-                format!("remote inbox rejected activity with HTTP {status}")
-            };
-            Err(SignedDeliveryFailure::retryable(detail))
-        }
-    }
 }
 
 pub(crate) async fn verify_incoming_activitypub_request(

@@ -5,19 +5,17 @@ pub(crate) use crate::*;
 mod outbound;
 mod outbound_state;
 mod outbox_enqueue;
+mod process_batch;
 mod store;
 mod store_state;
 pub(crate) use outbound::*;
 pub(crate) use outbound_state::*;
 pub(crate) use outbox_enqueue::*;
+pub(crate) use process_batch::process_outbox_deliveries_for_config;
 pub(crate) use store::*;
 pub(crate) use store_state::*;
 
-use cfwdon_domain::{
-    OUTBOX_DELIVERY_CONCURRENCY, generic_outbox_has_follower_targets, is_delivery_terminal,
-    next_delivery_attempt_count,
-};
-use futures_util::StreamExt;
+use cfwdon_domain::generic_outbox_has_follower_targets;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -151,379 +149,13 @@ pub(crate) fn outbox_batch_made_progress(summary: &OutboxProcessResponse) -> boo
         || summary.completed_without_targets > 0
 }
 
-pub(crate) async fn process_outbox_deliveries_for_config(
-    db: &D1Database,
-    config: &AppConfig,
-) -> Result<OutboxProcessResponse> {
-    let mut summary = OutboxProcessResponse::default();
-
-    requeue_stale_in_flight_deliveries(db).await?;
-
-    process_generic_outbox_deliveries(db, &mut summary).await?;
-
-    let (target_deliveries, outbound_deliveries) = futures_util::try_join!(
-        claim_pending_target_outbox_deliveries(db, 32),
-        claim_pending_outbound_activities(db, 32),
-    )?;
-    log_federation_event(
-        "outbox_batch_candidates",
-        "ok",
-        format!(
-            "outbox queue delivery candidates: target_deliveries={} outbound_deliveries={}",
-            target_deliveries.len(),
-            outbound_deliveries.len()
-        ),
-        serde_json::json!({
-            "target_deliveries": target_deliveries.len(),
-            "outbound_deliveries": outbound_deliveries.len(),
-        }),
-    );
-    let mut account_cache = HashMap::new();
-    let mut blocked_domains_cache = HashMap::<String, Vec<String>>::new();
-    preload_outbox_delivery_accounts(db, config, &target_deliveries, &mut account_cache).await?;
-    preload_outbound_activity_accounts(db, config, &outbound_deliveries, &mut account_cache)
-        .await?;
-
-    let mut target_send_jobs = Vec::new();
-    for delivery in target_deliveries {
-        let Some(target_inbox) = delivery.target_inbox.clone() else {
-            continue;
-        };
-        let Some(account) = account_cache.get(&delivery.account_id) else {
-            log_federation_event(
-                "outbox_delivery_failed",
-                "failed",
-                format!(
-                    "outbox delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
-                    delivery.id,
-                    target_inbox,
-                    delivery.attempt_count.saturating_add(1),
-                    delivery.account_id
-                ),
-                serde_json::json!({
-                    "channel": "outbox_deliveries",
-                    "delivery_id": delivery.id,
-                    "account_id": delivery.account_id,
-                    "activity_id": delivery.activity_id,
-                    "activity_type": delivery.activity_type,
-                    "target_inbox": target_inbox,
-                    "attempt": delivery.attempt_count.saturating_add(1),
-                    "terminal": true,
-                    "permanent": true,
-                    "error": format!("missing account {}", delivery.account_id),
-                }),
-            );
-            mark_outbox_delivery_terminal_failure(
-                db,
-                &delivery.id,
-                delivery.attempt_count.saturating_add(1) as u32,
-            )
-            .await?;
-            summary.failed += 1;
-            continue;
-        };
-        if !blocked_domains_cache.contains_key(&delivery.account_id) {
-            let blocked = list_all_account_domain_blocks(db, &delivery.account_id).await?;
-            blocked_domains_cache.insert(delivery.account_id.clone(), blocked);
-        }
-        let blocked_domains = blocked_domains_cache
-            .get(&delivery.account_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if delivery_inbox_blocked_by_domains(&target_inbox, blocked_domains) {
-            log_federation_event(
-                "outbox_delivery_skipped",
-                "skipped",
-                format!(
-                    "outbox delivery skipped domain block: id={} target={}",
-                    delivery.id, target_inbox
-                ),
-                serde_json::json!({
-                    "channel": "outbox_deliveries",
-                    "delivery_id": delivery.id,
-                    "account_id": delivery.account_id,
-                    "activity_id": delivery.activity_id,
-                    "activity_type": delivery.activity_type,
-                    "target_inbox": target_inbox,
-                    "reason": "domain_block",
-                }),
-            );
-            if mark_outbox_delivery_terminal_failure(
-                db,
-                &delivery.id,
-                delivery.attempt_count.saturating_add(1) as u32,
-            )
-            .await?
-            {
-                summary.failed += 1;
-            }
-            continue;
-        }
-        target_send_jobs.push((delivery, target_inbox, account.clone()));
-    }
-
-    let mut target_results = futures_util::stream::iter(target_send_jobs)
-        .map(|(delivery, target_inbox, account)| async move {
-            let result =
-                send_signed_activity(config, db, &account, &target_inbox, &delivery.payload_json)
-                    .await;
-            (delivery, target_inbox, result)
-        })
-        .buffer_unordered(OUTBOX_DELIVERY_CONCURRENCY);
-    while let Some((delivery, target_inbox, result)) = target_results.next().await {
-        match result {
-            Ok(()) => {
-                if mark_outbox_delivery_delivered(db, &delivery.id).await? {
-                    summary.delivered += 1;
-                    log_federation_event(
-                        "outbox_delivery_delivered",
-                        "delivered",
-                        format!(
-                            "outbox delivery delivered: id={} target={} activity_type={}",
-                            delivery.id, target_inbox, delivery.activity_type
-                        ),
-                        serde_json::json!({
-                            "channel": "outbox_deliveries",
-                            "delivery_id": delivery.id,
-                            "account_id": delivery.account_id,
-                            "activity_id": delivery.activity_id,
-                            "activity_type": delivery.activity_type,
-                            "target_inbox": target_inbox,
-                            "attempt": delivery.attempt_count,
-                        }),
-                    );
-                } else {
-                    log_federation_event(
-                        "outbox_delivery_mark_noop",
-                        "failed",
-                        format!(
-                            "outbox delivery mark delivered no-op: id={} target={}",
-                            delivery.id, target_inbox
-                        ),
-                        serde_json::json!({
-                            "channel": "outbox_deliveries",
-                            "delivery_id": delivery.id,
-                            "target_inbox": target_inbox,
-                            "error": "mark_delivered_noop",
-                        }),
-                    );
-                }
-            }
-            Err(error) => {
-                let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
-                let permanent = error.is_permanent();
-                let terminal = permanent || is_delivery_terminal(next_attempt);
-                log_federation_event(
-                    "outbox_delivery_failed",
-                    "failed",
-                    format!(
-                        "outbox delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
-                        delivery.id, target_inbox, next_attempt, terminal, permanent, error.detail
-                    ),
-                    serde_json::json!({
-                        "channel": "outbox_deliveries",
-                        "delivery_id": delivery.id,
-                        "account_id": delivery.account_id,
-                        "activity_id": delivery.activity_id,
-                        "activity_type": delivery.activity_type,
-                        "target_inbox": target_inbox,
-                        "attempt": next_attempt,
-                        "terminal": terminal,
-                        "permanent": permanent,
-                        "error": error.detail,
-                    }),
-                );
-                if terminal {
-                    if mark_outbox_delivery_terminal_failure(db, &delivery.id, next_attempt).await?
-                    {
-                        summary.failed += 1;
-                    }
-                } else if reschedule_outbox_delivery(db, &delivery.id, next_attempt).await? {
-                    summary.failed += 1;
-                }
-            }
-        }
-    }
-
-    let mut outbound_send_jobs = Vec::new();
-    for delivery in outbound_deliveries {
-        let Some(account) = account_cache.get(&delivery.account_id) else {
-            log_federation_event(
-                "outbox_delivery_failed",
-                "failed",
-                format!(
-                    "outbound delivery failed: id={} target={} attempt={} terminal=true error=missing account {}",
-                    delivery.id,
-                    delivery.target_inbox,
-                    delivery.attempt_count.saturating_add(1),
-                    delivery.account_id
-                ),
-                serde_json::json!({
-                    "channel": "outbound_activities",
-                    "delivery_id": delivery.id,
-                    "account_id": delivery.account_id,
-                    "activity_id": delivery.activity_id,
-                    "activity_type": delivery.activity_type,
-                    "target_inbox": delivery.target_inbox,
-                    "target_actor_uri": delivery.target_actor_uri,
-                    "attempt": delivery.attempt_count.saturating_add(1),
-                    "terminal": true,
-                    "permanent": true,
-                    "error": format!("missing account {}", delivery.account_id),
-                }),
-            );
-            reconcile_outbound_activity_terminal_failure(
-                db,
-                &delivery,
-                delivery.attempt_count.saturating_add(1) as u32,
-            )
-            .await?;
-            summary.failed += 1;
-            continue;
-        };
-        if !blocked_domains_cache.contains_key(&delivery.account_id) {
-            let blocked = list_all_account_domain_blocks(db, &delivery.account_id).await?;
-            blocked_domains_cache.insert(delivery.account_id.clone(), blocked);
-        }
-        let blocked_domains = blocked_domains_cache
-            .get(&delivery.account_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if delivery_inbox_blocked_by_domains(&delivery.target_inbox, blocked_domains) {
-            log_federation_event(
-                "outbox_delivery_skipped",
-                "skipped",
-                format!(
-                    "outbound delivery skipped domain block: id={} target={}",
-                    delivery.id, delivery.target_inbox
-                ),
-                serde_json::json!({
-                    "channel": "outbound_activities",
-                    "delivery_id": delivery.id,
-                    "account_id": delivery.account_id,
-                    "activity_id": delivery.activity_id,
-                    "activity_type": delivery.activity_type,
-                    "target_inbox": delivery.target_inbox,
-                    "target_actor_uri": delivery.target_actor_uri,
-                    "reason": "domain_block",
-                }),
-            );
-            reconcile_outbound_activity_terminal_failure(
-                db,
-                &delivery,
-                delivery.attempt_count.saturating_add(1) as u32,
-            )
-            .await?;
-            summary.failed += 1;
-            continue;
-        }
-        outbound_send_jobs.push((delivery, account.clone()));
-    }
-
-    let mut outbound_results = futures_util::stream::iter(outbound_send_jobs)
-        .map(|(delivery, account)| async move {
-            let result = send_signed_activity(
-                config,
-                db,
-                &account,
-                &delivery.target_inbox,
-                &delivery.payload_json,
-            )
-            .await;
-            (delivery, result)
-        })
-        .buffer_unordered(OUTBOX_DELIVERY_CONCURRENCY);
-    while let Some((delivery, result)) = outbound_results.next().await {
-        match result {
-            Ok(()) => {
-                if mark_outbound_activity_delivered(db, &delivery.id).await? {
-                    summary.delivered += 1;
-                    log_federation_event(
-                        "outbox_delivery_delivered",
-                        "delivered",
-                        format!(
-                            "outbound delivery delivered: id={} target={} activity_type={}",
-                            delivery.id, delivery.target_inbox, delivery.activity_type
-                        ),
-                        serde_json::json!({
-                            "channel": "outbound_activities",
-                            "delivery_id": delivery.id,
-                            "account_id": delivery.account_id,
-                            "activity_id": delivery.activity_id,
-                            "activity_type": delivery.activity_type,
-                            "target_inbox": delivery.target_inbox,
-                            "target_actor_uri": delivery.target_actor_uri,
-                            "attempt": delivery.attempt_count,
-                        }),
-                    );
-                } else {
-                    log_federation_event(
-                        "outbox_delivery_mark_noop",
-                        "failed",
-                        format!(
-                            "outbound delivery mark delivered no-op: id={} target={}",
-                            delivery.id, delivery.target_inbox
-                        ),
-                        serde_json::json!({
-                            "channel": "outbound_activities",
-                            "delivery_id": delivery.id,
-                            "target_inbox": delivery.target_inbox,
-                            "error": "mark_delivered_noop",
-                        }),
-                    );
-                }
-            }
-            Err(error) => {
-                let next_attempt = next_delivery_attempt_count(delivery.attempt_count);
-                let permanent = error.is_permanent();
-                let terminal = permanent || is_delivery_terminal(next_attempt);
-                log_federation_event(
-                    "outbox_delivery_failed",
-                    "failed",
-                    format!(
-                        "outbound delivery failed: id={} target={} attempt={} terminal={} permanent={} error={}",
-                        delivery.id,
-                        delivery.target_inbox,
-                        next_attempt,
-                        terminal,
-                        permanent,
-                        error.detail
-                    ),
-                    serde_json::json!({
-                        "channel": "outbound_activities",
-                        "delivery_id": delivery.id,
-                        "account_id": delivery.account_id,
-                        "activity_id": delivery.activity_id,
-                        "activity_type": delivery.activity_type,
-                        "target_inbox": delivery.target_inbox,
-                        "target_actor_uri": delivery.target_actor_uri,
-                        "attempt": next_attempt,
-                        "terminal": terminal,
-                        "permanent": permanent,
-                        "error": error.detail,
-                    }),
-                );
-                if terminal {
-                    reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
-                        .await?;
-                    summary.failed += 1;
-                } else if reschedule_outbound_activity(db, &delivery.id, next_attempt).await? {
-                    summary.failed += 1;
-                }
-            }
-        }
-    }
-
-    Ok(summary)
-}
-
-async fn requeue_stale_in_flight_deliveries(db: &D1Database) -> Result<()> {
+pub(super) async fn requeue_stale_in_flight_deliveries(db: &D1Database) -> Result<()> {
     requeue_stale_in_flight_outbox_deliveries(db).await?;
     requeue_stale_in_flight_outbound_activities(db).await?;
     Ok(())
 }
 
-async fn process_generic_outbox_deliveries(
+pub(super) async fn process_generic_outbox_deliveries(
     db: &D1Database,
     summary: &mut OutboxProcessResponse,
 ) -> Result<()> {
@@ -641,7 +273,7 @@ fn partition_generic_outbox_deliveries_by_targets<'a>(
     (deliveries_with_targets, completed_without_targets)
 }
 
-async fn preload_outbox_delivery_accounts(
+pub(super) async fn preload_outbox_delivery_accounts(
     db: &D1Database,
     config: &AppConfig,
     deliveries: &[OutboxDeliveryRow],
@@ -655,7 +287,7 @@ async fn preload_outbox_delivery_accounts(
     preload_delivery_accounts(db, config, &missing_account_ids, account_cache).await
 }
 
-async fn preload_outbound_activity_accounts(
+pub(super) async fn preload_outbound_activity_accounts(
     db: &D1Database,
     config: &AppConfig,
     deliveries: &[OutboundActivityRow],

@@ -1,6 +1,6 @@
 mod filters;
 mod html;
-mod local;
+mod local_response;
 mod pagination;
 mod remote;
 mod request;
