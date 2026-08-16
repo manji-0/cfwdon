@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ListRepliesPolicy } from "@/domain/lists/replies-policy";
+import { Status } from "@/domain/status/status";
 import { isArkError } from "@/infrastructure/mastodon/parse";
 import { parseAccountList } from "@/infrastructure/mastodon/parsers/lists";
 import { parseStatus } from "@/infrastructure/mastodon/parsers/status";
@@ -55,7 +56,7 @@ describe("parseStatus bookmarked", () => {
     if (isArkError(result)) {
       return;
     }
-    expect(result.bookmarked).toBe(false);
+    expect(Status.displayBody(result).bookmarked).toBe(false);
   });
 
   it("parses bookmarked true", () => {
@@ -64,6 +65,6 @@ describe("parseStatus bookmarked", () => {
     if (isArkError(result)) {
       return;
     }
-    expect(result.bookmarked).toBe(true);
+    expect(Status.displayBody(result).bookmarked).toBe(true);
   });
 });

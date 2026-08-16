@@ -1,6 +1,5 @@
 import { createContext, useContext } from "react";
-import type { SessionState } from "@/domain/session/session";
-import { SessionState as Session } from "@/domain/session/session";
+import { SessionState } from "@/domain/session/session";
 
 export type SessionContextValue = Readonly<{
   session: SessionState;
@@ -26,5 +25,9 @@ export const createSessionContextValue = (
 ): SessionContextValue => ({
   session,
   setSession,
-  clearSession: () => setSession(Session.anonymous()),
+  clearSession: () => {
+    setSession(
+      session.kind === "Authenticated" ? SessionState.logout(session) : SessionState.anonymous(),
+    );
+  },
 });

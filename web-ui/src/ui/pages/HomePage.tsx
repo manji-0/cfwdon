@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import {
   bookmarkStatus,
   createStatus,
@@ -155,18 +154,18 @@ export const HomePage = () => {
       throw new Error(mastodonErrorMessage(result.error));
     }
     setStatuses((current) => {
-      const next = StatusModel.prependUnique(current, result.value);
+      const next = Status.prependUnique(current, result.value);
       persist(next, fetchedAtRef.current);
       return next;
     });
   };
 
   const updateStatusInList = (updated: Status) => {
-    setStatuses((current) => StatusModel.replaceInList(current, updated));
+    setStatuses((current) => Status.replaceInList(current, updated));
     cache.patchStatus(updated);
   };
 
-  const handleFavourite = async (status: Status) => {
+  const handleFavourite = async (status: OriginalStatus) => {
     const result = status.favourited
       ? await unfavouriteStatus(status.id)
       : await favouriteStatus(status.id);
@@ -190,7 +189,7 @@ export const HomePage = () => {
     },
   ]);
 
-  const handleBookmark = async (status: Status) => {
+  const handleBookmark = async (status: OriginalStatus) => {
     const result = status.bookmarked
       ? await unbookmarkStatus(status.id)
       : await bookmarkStatus(status.id);
@@ -201,7 +200,7 @@ export const HomePage = () => {
     updateStatusInList(result.value);
   };
 
-  const handleReblog = async (status: Status) => {
+  const handleReblog = async (status: OriginalStatus) => {
     const targetId = status.id;
     const result = status.reblogged
       ? await unreblogStatus(targetId)

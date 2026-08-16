@@ -98,7 +98,7 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
     const updated = result.value;
     if (session.kind === "Authenticated") {
       setSession(
-        SessionState.authenticated({
+        SessionState.updateAccount(session, {
           ...session.account,
           displayName: updated.displayName,
           avatar: updated.avatar,

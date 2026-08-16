@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { UploadedMedia } from "@/domain/media/attachment";
+import { MediaAttachment, type UploadedMedia } from "@/domain/media/attachment";
 
 export const parseUploadedMedia = type({
   id: "string>0",
@@ -8,8 +8,8 @@ export const parseUploadedMedia = type({
   "preview_url?": "string",
 }).pipe(
   (value): UploadedMedia => ({
+    kind: MediaAttachment.fromApi(value.type),
     id: value.id,
-    type: value.type,
     url: value.url,
     previewUrl: value.preview_url ?? value.url,
   }),

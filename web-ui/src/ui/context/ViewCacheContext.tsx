@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { CachedView as CachedSlot } from "@/domain/cache/cached-view";
+import { CachedView } from "@/domain/cache/cached-view";
 import { ProfileSet } from "@/domain/cache/profile-set";
 import {
   ViewCache,
@@ -21,9 +21,9 @@ import type { Status } from "@/domain/status/status";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
 type ViewCacheContextValue = Readonly<{
-  getHome: () => CachedSlot<TimelineSnapshot>;
-  getNotifications: () => CachedSlot<NotificationsSnapshot>;
-  getProfile: (accountId: string) => CachedSlot<ProfileSnapshot>;
+  getHome: () => CachedView<TimelineSnapshot>;
+  getNotifications: () => CachedView<NotificationsSnapshot>;
+  getProfile: (accountId: string) => CachedView<ProfileSnapshot>;
   writeHome: (snapshot: TimelineSnapshot) => void;
   writeNotifications: (snapshot: NotificationsSnapshot) => void;
   writeProfile: (accountId: string, snapshot: ProfileSnapshot) => void;
@@ -67,7 +67,7 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "conversation") {
+      if (event.kind === "Conversation") {
         return;
       }
       setState((current) => ViewCache.applyStreamEvent(current, event));

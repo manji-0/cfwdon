@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AccountRef } from "@/domain/account/account";
 import { Notification } from "@/domain/notification/notification";
-import type { Status } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 
 const account = {
@@ -12,7 +12,7 @@ const account = {
   avatar: "https://example.com/a.png",
 } as const satisfies AccountRef;
 
-const status = {
+const status = Status.original({
   id: "s1",
   createdAt: "2026-01-01T00:00:00.000Z",
   content: "<p>hi</p>",
@@ -29,8 +29,7 @@ const status = {
   account,
   mediaAttachments: [],
   card: null,
-  reblog: null,
-} as const satisfies Status;
+});
 
 const meta = {
   id: "n1",

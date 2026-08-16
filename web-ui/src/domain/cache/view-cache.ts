@@ -1,8 +1,7 @@
 import { Notification } from "@/domain/notification/notification";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
-import { CachedView, type CachedView as CachedSlot, type PresentView } from "./cached-view";
-import { ProfileSet, type ProfileSet as ProfileSetState, type ProfileSnapshot } from "./profile-set";
+import { Status } from "@/domain/status/status";
+import { CachedView, type PresentView } from "./cached-view";
+import { ProfileSet, type ProfileSnapshot } from "./profile-set";
 
 export type { ProfileSnapshot } from "./profile-set";
 
@@ -19,15 +18,76 @@ export type NotificationsSnapshot = Readonly<{
 }>;
 
 export type ViewCacheState = Readonly<{
-  home: CachedSlot<TimelineSnapshot>;
-  notifications: CachedSlot<NotificationsSnapshot>;
-  profiles: ProfileSetState;
+  home: CachedView<TimelineSnapshot>;
+  notifications: CachedView<NotificationsSnapshot>;
+  profiles: ProfileSet;
 }>;
 
 export type ViewCacheStreamEvent =
-  | { readonly kind: "update"; readonly status: Status }
-  | { readonly kind: "delete"; readonly statusId: string }
-  | { readonly kind: "notification"; readonly notification: Notification };
+  | { readonly kind: "Update"; readonly status: Status }
+  | { readonly kind: "Delete"; readonly statusId: string }
+  | { readonly kind: "Notification"; readonly notification: Notification };
+
+const patchTimeline = (
+  snapshot: TimelineSnapshot,
+  updated: Status,
+): TimelineSnapshot => {
+  const statuses = Status.replaceInList(snapshot.statuses, updated);
+  return Object.is(statuses, snapshot.statuses) ? snapshot : { ...snapshot, statuses };
+};
+
+const patchNotifications = (
+  snapshot: NotificationsSnapshot,
+  updated: Status,
+): NotificationsSnapshot => {
+  let changed = false;
+  const notifications = snapshot.notifications.map((notification) => {
+    const current = Notification.status(notification);
+    if (!current) {
+      return notification;
+    }
+    const [next] = Status.replaceInList([current], updated);
+    if (Object.is(next, current)) {
+      return notification;
+    }
+    changed = true;
+    return Notification.withStatus(notification, next);
+  });
+  return changed ? { ...snapshot, notifications } : snapshot;
+};
+
+const patchProfile = (snapshot: ProfileSnapshot, updated: Status): ProfileSnapshot => {
+  const statuses = Status.replaceInList(snapshot.statuses, updated);
+  return Object.is(statuses, snapshot.statuses) ? snapshot : { ...snapshot, statuses };
+};
+
+const removeStatus = (state: ViewCacheState, statusId: string): ViewCacheState => {
+  const home = CachedView.map(state.home, (snapshot) => {
+    const statuses = Status.removeById(snapshot.statuses, statusId);
+    return Object.is(statuses, snapshot.statuses) ? snapshot : { ...snapshot, statuses };
+  });
+  const notifications = CachedView.map(state.notifications, (snapshot) => {
+    const next = snapshot.notifications.filter((item) => {
+      const attached = Notification.status(item);
+      return attached === null || !Status.containsId([attached], statusId);
+    });
+    return next.length === snapshot.notifications.length
+      ? snapshot
+      : { ...snapshot, notifications: next };
+  });
+  const profiles = ProfileSet.map(state.profiles, (snapshot) => {
+    const statuses = Status.removeById(snapshot.statuses, statusId);
+    return Object.is(statuses, snapshot.statuses) ? snapshot : { ...snapshot, statuses };
+  });
+  if (
+    home === state.home &&
+    notifications === state.notifications &&
+    profiles === state.profiles
+  ) {
+    return state;
+  }
+  return { home, notifications, profiles };
+};
 
 export const ViewCache = {
   empty: (): ViewCacheState => ({
@@ -67,11 +127,12 @@ export const ViewCache = {
   applyHomeUpdate: (
     home: PresentView<TimelineSnapshot>,
     status: Status,
-  ): PresentView<TimelineSnapshot> =>
-    CachedView.present({
-      ...home.value,
-      statuses: StatusModel.prependUnique(home.value.statuses, status),
-    }),
+  ): PresentView<TimelineSnapshot> => {
+    const statuses = Status.prependUnique(home.value.statuses, status);
+    return Object.is(statuses, home.value.statuses)
+      ? home
+      : CachedView.present({ ...home.value, statuses });
+  },
 
   applyNotification: (
     notifications: PresentView<NotificationsSnapshot>,
@@ -88,14 +149,14 @@ export const ViewCache = {
 
   applyStreamEvent: (state: ViewCacheState, event: ViewCacheStreamEvent): ViewCacheState => {
     switch (event.kind) {
-      case "update":
+      case "Update":
         switch (state.home.kind) {
           case "Absent":
             return state;
           case "Present":
             return { ...state, home: ViewCache.applyHomeUpdate(state.home, event.status) };
         }
-      case "notification":
+      case "Notification":
         switch (state.notifications.kind) {
           case "Absent":
             return state;
@@ -105,47 +166,24 @@ export const ViewCache = {
               notifications: ViewCache.applyNotification(state.notifications, event.notification),
             };
         }
-      case "delete":
+      case "Delete":
         return removeStatus(state, event.statusId);
     }
   },
 
-  patchStatus: (state: ViewCacheState, updated: Status): ViewCacheState => ({
-    home: CachedView.map(state.home, (snapshot) => ({
-      ...snapshot,
-      statuses: StatusModel.replaceInList(snapshot.statuses, updated),
-    })),
-    notifications: CachedView.map(state.notifications, (snapshot) => ({
-      ...snapshot,
-      notifications: snapshot.notifications.map((notification) => {
-        const current = Notification.status(notification);
-        if (!current) {
-          return notification;
-        }
-        const [next] = StatusModel.replaceInList([current], updated);
-        return next === current ? notification : Notification.withStatus(notification, next);
-      }),
-    })),
-    profiles: ProfileSet.map(state.profiles, (snapshot) => ({
-      ...snapshot,
-      statuses: StatusModel.replaceInList(snapshot.statuses, updated),
-    })),
-  }),
+  patchStatus: (state: ViewCacheState, updated: Status): ViewCacheState => {
+    const home = CachedView.map(state.home, (snapshot) => patchTimeline(snapshot, updated));
+    const notifications = CachedView.map(state.notifications, (snapshot) =>
+      patchNotifications(snapshot, updated),
+    );
+    const profiles = ProfileSet.map(state.profiles, (snapshot) => patchProfile(snapshot, updated));
+    if (
+      home === state.home &&
+      notifications === state.notifications &&
+      profiles === state.profiles
+    ) {
+      return state;
+    }
+    return { home, notifications, profiles };
+  },
 } as const;
-
-const removeStatus = (state: ViewCacheState, statusId: string): ViewCacheState => ({
-  home: CachedView.map(state.home, (snapshot) => ({
-    ...snapshot,
-    statuses: snapshot.statuses.filter((item) => item.id !== statusId && item.reblog?.id !== statusId),
-  })),
-  notifications: CachedView.map(state.notifications, (snapshot) => ({
-    ...snapshot,
-    notifications: snapshot.notifications.filter(
-      (item) => Notification.status(item)?.id !== statusId,
-    ),
-  })),
-  profiles: ProfileSet.map(state.profiles, (snapshot) => ({
-    ...snapshot,
-    statuses: snapshot.statuses.filter((item) => item.id !== statusId && item.reblog?.id !== statusId),
-  })),
-});

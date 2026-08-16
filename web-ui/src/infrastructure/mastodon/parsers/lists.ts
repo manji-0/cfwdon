@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import type { AccountList } from "@/domain/lists/list";
+import { ListRepliesPolicy } from "@/domain/lists/replies-policy";
 
 export const parseAccountList = type({
   id: "string>0",
@@ -10,7 +11,7 @@ export const parseAccountList = type({
   (value): AccountList => ({
     id: value.id,
     title: value.title,
-    repliesPolicy: value.replies_policy,
+    repliesPolicy: ListRepliesPolicy.fromApi(value.replies_policy),
     exclusive: value.exclusive,
   }),
 );

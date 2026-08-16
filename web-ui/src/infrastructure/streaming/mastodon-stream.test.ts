@@ -45,8 +45,8 @@ describe("streamingWebSocketUrl", () => {
 describe("parseStreamingPayload", () => {
   it("parses update events into statuses", () => {
     const event = parseStreamingPayload("update", JSON.stringify(sampleStatus));
-    expect(event?.kind).toBe("update");
-    if (event?.kind === "update") {
+    expect(event?.kind).toBe("Update");
+    if (event?.kind === "Update") {
       expect(event.status.id).toBe("status-1");
       expect(event.status.account.displayName).toBe("Alice");
     }
@@ -54,15 +54,15 @@ describe("parseStreamingPayload", () => {
 
   it("parses delete events as status ids", () => {
     expect(parseStreamingPayload("delete", "status-1")).toEqual({
-      kind: "delete",
+      kind: "Delete",
       statusId: "status-1",
     });
   });
 
   it("parses notification events", () => {
     const event = parseStreamingPayload("notification", JSON.stringify(sampleNotification));
-    expect(event?.kind).toBe("notification");
-    if (event?.kind === "notification") {
+    expect(event?.kind).toBe("Notification");
+    if (event?.kind === "Notification") {
       expect(event.notification.id).toBe("notif-1");
       expect(event.notification.kind).toBe("Favourite");
     }
@@ -78,8 +78,8 @@ describe("parseStreamingPayload", () => {
         last_status: sampleStatus,
       }),
     );
-    expect(event?.kind).toBe("conversation");
-    if (event?.kind === "conversation") {
+    expect(event?.kind).toBe("Conversation");
+    if (event?.kind === "Conversation") {
       expect(event.conversation.id).toBe("conv-1");
       expect(event.conversation.kind).toBe("Unread");
       expect(event.conversation.lastStatus?.id).toBe("status-1");
@@ -101,8 +101,8 @@ describe("parseStreamingWebSocketMessage", () => {
         payload: JSON.stringify(sampleStatus),
       }),
     );
-    expect(event?.kind).toBe("update");
-    if (event?.kind === "update") {
+    expect(event?.kind).toBe("Update");
+    if (event?.kind === "Update") {
       expect(event.status.id).toBe("status-1");
     }
   });

@@ -8,9 +8,11 @@ export const ListRepliesPolicy = {
   fromApi: (value: string): ListRepliesPolicy => {
     switch (value.trim().toLowerCase()) {
       case "followed":
+        return "followed";
       case "list":
+        return "list";
       case "none":
-        return value.trim().toLowerCase() as ListRepliesPolicy;
+        return "none";
       default:
         return ListRepliesPolicy.defaultValue();
     }

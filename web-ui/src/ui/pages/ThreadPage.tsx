@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 import {
   bookmarkStatus,
@@ -69,18 +68,15 @@ export const ThreadPage = () => {
 
   const replaceStatus = (updated: Status) => {
     const apply = (status: Status) => {
-      const body = StatusModel.displayBody(status);
-      if (body.id === updated.id) {
-        return status.reblog ? { ...status, reblog: updated } : updated;
-      }
-      return status;
+      const [next] = Status.replaceInList([status], updated);
+      return next;
     };
     setFocus((current) => (current ? apply(current) : current));
-    setAncestors((current) => current.map(apply));
-    setDescendants((current) => current.map(apply));
+    setAncestors((current) => Status.replaceInList(current, updated));
+    setDescendants((current) => Status.replaceInList(current, updated));
   };
 
-  const handleFavourite = async (status: Status) => {
+  const handleFavourite = async (status: OriginalStatus) => {
     const result = status.favourited
       ? await unfavouriteStatus(status.id)
       : await favouriteStatus(status.id);
@@ -91,7 +87,7 @@ export const ThreadPage = () => {
     replaceStatus(result.value);
   };
 
-  const handleReblog = async (status: Status) => {
+  const handleReblog = async (status: OriginalStatus) => {
     const result = status.reblogged
       ? await unreblogStatus(status.id)
       : await reblogStatus(status.id);
@@ -102,7 +98,7 @@ export const ThreadPage = () => {
     replaceStatus(result.value);
   };
 
-  const handleBookmark = async (status: Status) => {
+  const handleBookmark = async (status: OriginalStatus) => {
     const result = status.bookmarked
       ? await unbookmarkStatus(status.id)
       : await bookmarkStatus(status.id);
@@ -143,7 +139,7 @@ export const ThreadPage = () => {
     setDescendants((current) => [...current, result.value]);
   };
 
-  const focusBody = focus ? StatusModel.displayBody(focus) : null;
+  const focusBody = focus ? Status.displayBody(focus) : null;
   const isDirectThread = focusBody?.visibility.kind === "Direct";
 
   return (
@@ -172,7 +168,7 @@ export const ThreadPage = () => {
                 onFavourite={(body) => void handleFavourite(body)}
                 onReblog={(body) => void handleReblog(body)}
                 onBookmark={(body) => void handleBookmark(body)}
-                onReply={() => navigate(`/status/${StatusModel.displayBody(status).id}`)}
+                onReply={() => navigate(`/status/${Status.displayBody(status).id}`)}
               />
             ))}
             <StatusCard
@@ -188,7 +184,7 @@ export const ThreadPage = () => {
                 onFavourite={(body) => void handleFavourite(body)}
                 onReblog={(body) => void handleReblog(body)}
                 onBookmark={(body) => void handleBookmark(body)}
-                onReply={() => navigate(`/status/${StatusModel.displayBody(status).id}`)}
+                onReply={() => navigate(`/status/${Status.displayBody(status).id}`)}
               />
             ))}
           </div>

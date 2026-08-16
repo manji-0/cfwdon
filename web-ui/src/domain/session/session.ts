@@ -18,7 +18,9 @@ export type SessionFailed = Readonly<{
   message: string;
 }>;
 
-export type SessionState = SessionAnonymous | SessionAuthenticated | SessionLoading | SessionFailed;
+export type SessionResolved = SessionAnonymous | SessionAuthenticated | SessionFailed;
+
+export type SessionState = SessionResolved | SessionLoading;
 
 export const SessionState = {
   anonymous: (): SessionAnonymous => ({ kind: "Anonymous" }),
@@ -33,6 +35,18 @@ export const SessionState = {
   failed: (message: string): SessionFailed => ({
     kind: "Failed",
     message,
+  }),
+
+  resolve: (_loading: SessionLoading, outcome: SessionResolved): SessionResolved => outcome,
+
+  logout: (_session: SessionAuthenticated): SessionAnonymous => SessionState.anonymous(),
+
+  updateAccount: (
+    session: SessionAuthenticated,
+    account: AccountSummary,
+  ): SessionAuthenticated => ({
+    ...session,
+    account,
   }),
 
   isAuthenticated: (state: SessionState): state is SessionAuthenticated =>

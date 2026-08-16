@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import type { Status } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import { fetchBookmarks } from "@/infrastructure/api/bookmarks";
 import {
   bookmarkStatus,
@@ -50,18 +50,10 @@ export const BookmarksPage = () => {
   }, [loadBookmarks]);
 
   const updateStatusInList = (updated: Status) => {
-    setStatuses((current) =>
-      current.map((item) => {
-        const body = item.reblog ?? item;
-        if (body.id === updated.id) {
-          return item.reblog ? { ...item, reblog: updated } : updated;
-        }
-        return item;
-      }),
-    );
+    setStatuses((current) => Status.replaceInList(current, updated));
   };
 
-  const handleFavourite = async (status: Status) => {
+  const handleFavourite = async (status: OriginalStatus) => {
     const result = status.favourited
       ? await unfavouriteStatus(status.id)
       : await favouriteStatus(status.id);
@@ -72,7 +64,7 @@ export const BookmarksPage = () => {
     updateStatusInList(result.value);
   };
 
-  const handleReblog = async (status: Status) => {
+  const handleReblog = async (status: OriginalStatus) => {
     const result = status.reblogged
       ? await unreblogStatus(status.id)
       : await reblogStatus(status.id);
@@ -83,7 +75,7 @@ export const BookmarksPage = () => {
     updateStatusInList(result.value);
   };
 
-  const handleBookmark = async (status: Status) => {
+  const handleBookmark = async (status: OriginalStatus) => {
     const result = status.bookmarked
       ? await unbookmarkStatus(status.id)
       : await bookmarkStatus(status.id);
@@ -91,12 +83,10 @@ export const BookmarksPage = () => {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    if (!result.value.bookmarked) {
+    const updated = Status.displayBody(result.value);
+    if (!updated.bookmarked) {
       setStatuses((current) =>
-        current.filter((item) => {
-          const body = item.reblog ?? item;
-          return body.id !== result.value.id;
-        }),
+        current.filter((item) => Status.displayBody(item).id !== updated.id),
       );
       return;
     }

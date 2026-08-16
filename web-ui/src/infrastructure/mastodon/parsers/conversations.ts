@@ -1,6 +1,5 @@
 import { type } from "arktype";
 import { Conversation } from "@/domain/conversations/conversation";
-import type { Conversation as ConversationState } from "@/domain/conversations/conversation";
 import { parseAccountRef } from "@/infrastructure/mastodon/parsers/account";
 import { parseStatus } from "@/infrastructure/mastodon/parsers/status";
 
@@ -9,7 +8,7 @@ export const parseConversation = type({
   unread: "boolean",
   accounts: parseAccountRef.array(),
   "last_status?": parseStatus.or("null"),
-}).pipe((value): ConversationState => {
+}).pipe((value): Conversation => {
   const fields = {
     id: value.id,
     accounts: value.accounts,

@@ -22,8 +22,10 @@ export const CachedView = {
     switch (view.kind) {
       case "Absent":
         return view;
-      case "Present":
-        return CachedView.present(update(view.value));
+      case "Present": {
+        const next = update(view.value);
+        return Object.is(next, view.value) ? view : CachedView.present(next);
+      }
     }
   },
 } as const;

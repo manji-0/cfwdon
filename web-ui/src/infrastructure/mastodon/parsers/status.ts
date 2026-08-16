@@ -1,8 +1,13 @@
-import { type } from "arktype";
 import type { AccountRef } from "@/domain/account/account";
-import type { PreviewCard } from "@/domain/status/preview-card";
-import type { MediaAttachment, Status, StatusContext } from "@/domain/status/status";
+import { MediaAttachment } from "@/domain/media/attachment";
+import { PreviewCard } from "@/domain/status/preview-card";
+import {
+  Status,
+  type OriginalStatus,
+  type StatusContext,
+} from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
+import { type } from "arktype";
 import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
 
 type StatusPayload = {
@@ -55,43 +60,60 @@ const toAccountRef = (account: StatusPayload["account"]): AccountRef => ({
 });
 
 const toPreviewCard = (card: NonNullable<StatusPayload["card"]>): PreviewCard => ({
+  kind: PreviewCard.fromApi(card.type),
   url: card.url,
   title: card.title,
   description: card.description,
-  type: card.type,
   providerName: card.provider_name,
   providerUrl: card.provider_url,
   image: card.image ?? null,
   blurhash: card.blurhash ?? null,
 });
 
-const toMediaAttachment = (media: NonNullable<StatusPayload["media_attachments"]>[number]): MediaAttachment => ({
+const toMediaAttachment = (
+  media: NonNullable<StatusPayload["media_attachments"]>[number],
+): MediaAttachment => ({
+  kind: MediaAttachment.fromApi(media.type),
   id: media.id,
-  type: media.type,
   url: media.url,
   previewUrl: media.preview_url ?? media.url,
   description: media.description ?? null,
 });
 
-const toStatus = (payload: StatusPayload): Status => ({
-  id: payload.id,
-  createdAt: payload.created_at,
-  content: payload.content,
-  spoilerText: payload.spoiler_text ?? "",
-  sensitive: payload.sensitive ?? false,
-  visibility: Visibility.fromApi(payload.visibility),
-  inReplyToId: payload.in_reply_to_id ?? null,
-  repliesCount: payload.replies_count ?? 0,
-  reblogsCount: payload.reblogs_count ?? 0,
-  favouritesCount: payload.favourites_count ?? 0,
-  favourited: payload.favourited ?? false,
-  reblogged: payload.reblogged ?? false,
-  bookmarked: payload.bookmarked ?? false,
-  account: toAccountRef(payload.account),
-  mediaAttachments: (payload.media_attachments ?? []).map(toMediaAttachment),
-  card: payload.card ? toPreviewCard(payload.card) : null,
-  reblog: payload.reblog ? toStatus(payload.reblog) : null,
-});
+const toOriginal = (payload: StatusPayload): OriginalStatus => {
+  const nested = payload.reblog;
+  const source = nested ?? payload;
+  return Status.original({
+    id: source.id,
+    createdAt: source.created_at,
+    content: source.content,
+    spoilerText: source.spoiler_text ?? "",
+    sensitive: source.sensitive ?? false,
+    visibility: Visibility.fromApi(source.visibility),
+    inReplyToId: source.in_reply_to_id ?? null,
+    repliesCount: source.replies_count ?? 0,
+    reblogsCount: source.reblogs_count ?? 0,
+    favouritesCount: source.favourites_count ?? 0,
+    favourited: source.favourited ?? false,
+    reblogged: source.reblogged ?? false,
+    bookmarked: source.bookmarked ?? false,
+    account: toAccountRef(source.account),
+    mediaAttachments: (source.media_attachments ?? []).map(toMediaAttachment),
+    card: source.card ? toPreviewCard(source.card) : null,
+  });
+};
+
+const toStatus = (payload: StatusPayload): Status => {
+  if (!payload.reblog) {
+    return toOriginal(payload);
+  }
+  return Status.boost({
+    id: payload.id,
+    createdAt: payload.created_at,
+    account: toAccountRef(payload.account),
+    original: toOriginal(payload.reblog),
+  });
+};
 
 const StatusParser = mastodon.type("StatusPayloadApi").pipe(toStatus);
 const StatusListParser = type(StatusParser, "[]");

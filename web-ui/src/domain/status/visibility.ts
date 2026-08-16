@@ -1,3 +1,5 @@
+import { assertNever } from "@/domain/never";
+
 export type Visibility =
   | Readonly<{ kind: "Public" }>
   | Readonly<{ kind: "Unlisted" }>
@@ -21,6 +23,7 @@ export const Visibility = {
       case "direct":
         return Visibility.direct();
       default:
+        // Unknown wire values are treated as public. ArkType rejects them at the parser.
         return Visibility.public();
     }
   },
@@ -35,6 +38,8 @@ export const Visibility = {
         return "private";
       case "Direct":
         return "direct";
+      default:
+        return assertNever(visibility);
     }
   },
 
@@ -48,6 +53,8 @@ export const Visibility = {
         return "フォロワーのみ";
       case "Direct":
         return "ダイレクト";
+      default:
+        return assertNever(visibility);
     }
   },
 } as const;

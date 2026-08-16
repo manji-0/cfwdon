@@ -100,11 +100,11 @@ export const ConversationPage = () => {
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "conversation" && event.conversation.id === conversationId) {
+      if (event.kind === "Conversation" && event.conversation.id === conversationId) {
         setConversation(event.conversation);
         return;
       }
-      if (event.kind !== "update") {
+      if (event.kind !== "Update") {
         return;
       }
       setStatuses((current) => appendConversationStatus(current, event.status));

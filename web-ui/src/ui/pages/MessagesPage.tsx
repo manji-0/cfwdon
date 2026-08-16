@@ -4,6 +4,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { conversationTitle } from "@/domain/conversations/participants";
+import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
@@ -60,7 +61,7 @@ export const MessagesPage = () => {
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "conversation") {
+      if (event.kind === "Conversation") {
         setConversations((current) => {
           const next = ConversationSet.upsert(current, event.conversation);
           setUnreadCount(ConversationSet.unreadCount(next));
@@ -102,7 +103,10 @@ export const MessagesPage = () => {
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="conversation-list">
         {conversations.map((conversation) => {
-          const preview = conversation.lastStatus?.content.replace(/<[^>]+>/g, "") ?? "";
+          const lastStatus = conversation.lastStatus;
+          const preview = lastStatus
+            ? Status.displayBody(lastStatus).content.replace(/<[^>]+>/g, "")
+            : "";
           return (
             <button
               key={conversation.id}

@@ -1,6 +1,6 @@
 import type { AccountProfile } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
-import { CachedView, type CachedView as CachedSlot } from "./cached-view";
+import { CachedView } from "./cached-view";
 
 export const VIEW_CACHE_MAX_PROFILES = 20;
 
@@ -18,26 +18,38 @@ export const ProfileSet = {
 
   has: (set: ProfileSet, accountId: string) => set.has(accountId),
 
-  lookup: (set: ProfileSet, accountId: string): CachedSlot<ProfileSnapshot> => {
+  lookup: (set: ProfileSet, accountId: string): CachedView<ProfileSnapshot> => {
     const snapshot = set.get(accountId);
     return snapshot === undefined ? CachedView.absent() : CachedView.present(snapshot);
   },
 
   insert: (set: ProfileSet, accountId: string, snapshot: ProfileSnapshot): ProfileSet => {
-    const next = [...set].filter(([id]) => id !== accountId);
-    const entries: ReadonlyArray<readonly [string, ProfileSnapshot]> = [
-      ...next,
-      [accountId, snapshot],
-    ];
-    const kept =
-      entries.length > VIEW_CACHE_MAX_PROFILES
-        ? entries.slice(entries.length - VIEW_CACHE_MAX_PROFILES)
-        : entries;
-    return new Map(kept);
+    const next = new Map(set);
+    next.delete(accountId);
+    next.set(accountId, snapshot);
+    while (next.size > VIEW_CACHE_MAX_PROFILES) {
+      const oldest = next.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      next.delete(oldest);
+    }
+    return next;
   },
 
   map: (
     set: ProfileSet,
     update: (snapshot: ProfileSnapshot) => ProfileSnapshot,
-  ): ProfileSet => new Map([...set].map(([accountId, snapshot]) => [accountId, update(snapshot)])),
+  ): ProfileSet => {
+    let changed = false;
+    const next = new Map<string, ProfileSnapshot>();
+    for (const [accountId, snapshot] of set) {
+      const updated = update(snapshot);
+      if (!Object.is(updated, snapshot)) {
+        changed = true;
+      }
+      next.set(accountId, updated);
+    }
+    return changed ? next : set;
+  },
 } as const;

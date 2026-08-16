@@ -1,10 +1,10 @@
-import type { Status } from "@/domain/status/status";
+export type PreviewCardKind = "Link" | "Photo" | "Video" | "Rich" | "Unknown";
 
 export type PreviewCard = Readonly<{
+  kind: PreviewCardKind;
   url: string;
   title: string;
   description: string;
-  type: string;
   providerName: string;
   providerUrl: string;
   image: string | null;
@@ -12,6 +12,18 @@ export type PreviewCard = Readonly<{
 }>;
 
 export const PreviewCard = {
-  isVisible: (status: Status): boolean =>
-    status.card !== null && status.mediaAttachments.length === 0,
+  fromApi: (value: string): PreviewCardKind => {
+    switch (value) {
+      case "link":
+        return "Link";
+      case "photo":
+        return "Photo";
+      case "video":
+        return "Video";
+      case "rich":
+        return "Rich";
+      default:
+        return "Unknown";
+    }
+  },
 } as const;

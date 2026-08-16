@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Status } from "@/domain/status/status";
-import { PreviewCard } from "@/domain/status/preview-card";
+import { Status } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
@@ -10,25 +9,30 @@ type ChatMessageProps = Readonly<{
   isOwn: boolean;
 }>;
 
-export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => (
-  <article className={`chat-row${isOwn ? " is-own" : ""}`}>
-    {isOwn ? null : (
-      <Link className="chat-author" to={`/profile/${status.account.id}`}>
-        <img className="status-avatar" src={status.account.avatar} alt="" loading="lazy" />
-      </Link>
-    )}
-    <div className="chat-bubble">
-      <div className="chat-meta">
-        {isOwn ? null : (
-          <Link className="status-display-name" to={`/profile/${status.account.id}`}>
-            {status.account.displayName || status.account.username}
-          </Link>
-        )}
-        <span className="app-muted">{formatRelativeTime(status.createdAt)}</span>
+export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => {
+  const body = Status.displayBody(status);
+  const card = Status.visibleCard(status);
+
+  return (
+    <article className={`chat-row${isOwn ? " is-own" : ""}`}>
+      {isOwn ? null : (
+        <Link className="chat-author" to={`/profile/${body.account.id}`}>
+          <img className="status-avatar" src={body.account.avatar} alt="" loading="lazy" />
+        </Link>
+      )}
+      <div className="chat-bubble">
+        <div className="chat-meta">
+          {isOwn ? null : (
+            <Link className="status-display-name" to={`/profile/${body.account.id}`}>
+              {body.account.displayName || body.account.username}
+            </Link>
+          )}
+          <span className="app-muted">{formatRelativeTime(body.createdAt)}</span>
+        </div>
+        {body.spoilerText ? <p className="chat-cw">CW: {body.spoilerText}</p> : null}
+        <StatusContent html={body.content} />
+        {card ? <LinkPreviewCard card={card} /> : null}
       </div>
-      {status.spoilerText ? <p className="chat-cw">CW: {status.spoilerText}</p> : null}
-      <StatusContent html={status.content} />
-      {PreviewCard.isVisible(status) ? <LinkPreviewCard card={status.card!} /> : null}
-    </div>
-  </article>
-);
+    </article>
+  );
+};

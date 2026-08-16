@@ -9,7 +9,7 @@ export const applyStreamingNotificationEvent = (
   current: ReadonlyArray<Notification>,
   event: StreamingUserEvent,
 ): ReadonlyArray<Notification> => {
-  if (event.kind !== "notification") {
+  if (event.kind !== "Notification") {
     return current;
   }
   if (current.some((item) => item.id === event.notification.id)) {
@@ -30,7 +30,7 @@ export const useStreamingNotifications = (
       return undefined;
     }
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind !== "notification") {
+      if (event.kind !== "Notification") {
         return;
       }
       onNotificationsChange((current) => applyStreamingNotificationEvent(current, event));

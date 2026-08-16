@@ -15,10 +15,10 @@ export type StreamingSubscription = {
 };
 
 export type StreamingUserEvent =
-  | { readonly kind: "update"; readonly status: Status }
-  | { readonly kind: "delete"; readonly statusId: string }
-  | { readonly kind: "notification"; readonly notification: Notification }
-  | { readonly kind: "conversation"; readonly conversation: Conversation };
+  | { readonly kind: "Update"; readonly status: Status }
+  | { readonly kind: "Delete"; readonly statusId: string }
+  | { readonly kind: "Notification"; readonly notification: Notification }
+  | { readonly kind: "Conversation"; readonly conversation: Conversation };
 
 /**
  * Mastodon WS event shape from Stream Hub DO / worker poll fallback:
@@ -48,13 +48,13 @@ export const parseStreamingPayload = (
 ): StreamingUserEvent | null => {
   if (eventName === "delete") {
     const statusId = data.trim();
-    return statusId.length > 0 ? { kind: "delete", statusId } : null;
+    return statusId.length > 0 ? { kind: "Delete", statusId } : null;
   }
 
   if (eventName === "update") {
     try {
       const status = parseStatus(JSON.parse(data) as unknown);
-      return isArkError(status) ? null : { kind: "update", status };
+      return isArkError(status) ? null : { kind: "Update", status };
     } catch {
       return null;
     }
@@ -63,7 +63,7 @@ export const parseStreamingPayload = (
   if (eventName === "notification") {
     try {
       const notification = parseNotification(JSON.parse(data) as unknown);
-      return isArkError(notification) ? null : { kind: "notification", notification };
+      return isArkError(notification) ? null : { kind: "Notification", notification };
     } catch {
       return null;
     }
@@ -72,7 +72,7 @@ export const parseStreamingPayload = (
   if (eventName === "conversation") {
     try {
       const conversation = parseConversation(JSON.parse(data) as unknown);
-      return isArkError(conversation) ? null : { kind: "conversation", conversation };
+      return isArkError(conversation) ? null : { kind: "Conversation", conversation };
     } catch {
       return null;
     }

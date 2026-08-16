@@ -1,19 +1,18 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
-import { PreviewCard } from "@/domain/status/preview-card";
+import { MediaAttachment } from "@/domain/media/attachment";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type StatusCardProps = Readonly<{
   status: Status;
-  onFavourite?: (status: Status) => void;
-  onReblog?: (status: Status) => void;
-  onBookmark?: (status: Status) => void;
-  onReply?: (status: Status) => void;
+  onFavourite?: (status: OriginalStatus) => void;
+  onReblog?: (status: OriginalStatus) => void;
+  onBookmark?: (status: OriginalStatus) => void;
+  onReply?: (status: OriginalStatus) => void;
   compact?: boolean;
 }>;
 
@@ -41,9 +40,10 @@ export const StatusCard = ({
   onReply,
   compact = false,
 }: StatusCardProps) => {
-  const [revealed, setRevealed] = useState(!status.sensitive && !status.spoilerText);
-  const body = StatusModel.displayBody(status);
-  const boostedBy = StatusModel.boostedBy(status);
+  const body = Status.displayBody(status);
+  const boostedBy = Status.boostedBy(status);
+  const card = Status.visibleCard(status);
+  const [revealed, setRevealed] = useState(!body.sensitive && !body.spoilerText);
   const showContent = revealed || (!body.sensitive && !body.spoilerText);
 
   return (
@@ -65,19 +65,19 @@ export const StatusCard = ({
           {body.mediaAttachments.length > 0 ? (
             <div className="status-media-grid">
               {body.mediaAttachments.map((media) =>
-                media.type === "image" || media.type === "gifv" ? (
+                MediaAttachment.isVisual(media) ? (
                   <a key={media.id} href={media.url} target="_blank" rel="noreferrer">
                     <img src={media.previewUrl} alt={media.description ?? ""} loading="lazy" />
                   </a>
                 ) : (
                   <a key={media.id} className="status-media-link" href={media.url} target="_blank" rel="noreferrer">
-                    {media.type} を開く
+                    {MediaAttachment.label(media)} を開く
                   </a>
                 ),
               )}
             </div>
           ) : null}
-          {PreviewCard.isVisible(body) ? <LinkPreviewCard card={body.card!} /> : null}
+          {card ? <LinkPreviewCard card={card} /> : null}
         </>
       ) : null}
       <footer className="status-actions">

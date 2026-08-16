@@ -1,5 +1,5 @@
 import { ok, type Result } from "neverthrow";
-import { SessionState } from "@/domain/session/session";
+import { SessionState, type SessionResolved } from "@/domain/session/session";
 import type { FetchSessionError } from "@/infrastructure/api/web-session";
 import { fetchWebSession } from "@/infrastructure/api/web-session";
 
@@ -16,7 +16,7 @@ const toFailureMessage = (error: LoadSessionError): string => {
   }
 };
 
-export const loadSession = async (): Promise<Result<SessionState, never>> => {
+export const loadSession = async (): Promise<Result<SessionResolved, never>> => {
   const result = await fetchWebSession();
   if (result.isErr()) {
     return ok(SessionState.failed(toFailureMessage(result.error)));

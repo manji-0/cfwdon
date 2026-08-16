@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ConversationSet } from "@/domain/conversations/conversation-set";
+import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
@@ -29,15 +30,15 @@ export const UnreadMessagesProvider = ({ children }: Readonly<{ children: ReactN
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "conversation") {
+      if (event.kind === "Conversation") {
         refreshUnreadCount();
         return;
       }
-      if (event.kind === "notification") {
+      if (event.kind === "Notification") {
         refreshUnreadCount();
         return;
       }
-      if (event.kind === "update" && event.status.visibility.kind === "Direct") {
+      if (event.kind === "Update" && Status.displayBody(event.status).visibility.kind === "Direct") {
         refreshUnreadCount();
       }
     });

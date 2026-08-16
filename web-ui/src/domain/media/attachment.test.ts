@@ -16,6 +16,6 @@ describe("parseUploadedMedia", () => {
     }
 
     expect(result.id).toBe("media-1");
-    expect(result.type).toBe("image");
+    expect(result.kind).toBe("Image");
   });
 });

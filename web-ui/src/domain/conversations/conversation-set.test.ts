@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ConversationSet } from "@/domain/conversations/conversation-set";
-import { countUnreadConversations } from "@/domain/conversations/unread";
 
 const conversation = (id: string, kind: "Read" | "Unread") => {
   const fields = { id, accounts: [], lastStatus: null };
@@ -16,7 +15,6 @@ describe("ConversationSet", () => {
       conversation("3", "Read"),
     ]);
     expect(ConversationSet.unreadCount(set)).toBe(2);
-    expect(countUnreadConversations(set)).toBe(2);
   });
 
   it("upserts by id at the front and does not invent members", () => {

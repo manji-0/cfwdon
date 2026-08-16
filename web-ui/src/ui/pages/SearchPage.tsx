@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { SearchResults } from "@/domain/search/search";
+import type { OriginalStatus } from "@/domain/status/status";
 import { search } from "@/infrastructure/api/search";
 import {
   bookmarkStatus,
@@ -67,12 +68,7 @@ export const SearchPage = () => {
     setSearchParams({ q: trimmed });
   };
 
-  const handleFavourite = async (statusId: string) => {
-    const status = results.statuses.find((item) => (item.reblog ?? item).id === statusId);
-    if (!status) {
-      return;
-    }
-    const body = status.reblog ?? status;
+  const handleFavourite = async (body: OriginalStatus) => {
     const result = body.favourited
       ? await unfavouriteStatus(body.id)
       : await favouriteStatus(body.id);
@@ -83,12 +79,7 @@ export const SearchPage = () => {
     await runSearch(queryFromUrl || query);
   };
 
-  const handleReblog = async (statusId: string) => {
-    const status = results.statuses.find((item) => (item.reblog ?? item).id === statusId);
-    if (!status) {
-      return;
-    }
-    const body = status.reblog ?? status;
+  const handleReblog = async (body: OriginalStatus) => {
     const result = body.reblogged ? await unreblogStatus(body.id) : await reblogStatus(body.id);
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
@@ -97,12 +88,7 @@ export const SearchPage = () => {
     await runSearch(queryFromUrl || query);
   };
 
-  const handleBookmark = async (statusId: string) => {
-    const status = results.statuses.find((item) => (item.reblog ?? item).id === statusId);
-    if (!status) {
-      return;
-    }
-    const body = status.reblog ?? status;
+  const handleBookmark = async (body: OriginalStatus) => {
     const result = body.bookmarked
       ? await unbookmarkStatus(body.id)
       : await bookmarkStatus(body.id);
@@ -161,9 +147,9 @@ export const SearchPage = () => {
               <StatusCard
                 key={status.id}
                 status={status}
-                onFavourite={(body) => void handleFavourite(body.id)}
-                onReblog={(body) => void handleReblog(body.id)}
-                onBookmark={(body) => void handleBookmark(body.id)}
+                onFavourite={(body) => void handleFavourite(body)}
+                onReblog={(body) => void handleReblog(body)}
+                onBookmark={(body) => void handleBookmark(body)}
               />
             ))}
           </div>

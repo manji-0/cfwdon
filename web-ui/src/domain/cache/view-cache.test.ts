@@ -17,7 +17,7 @@ import {
 } from "@/domain/cache/view-readiness";
 import { Notification } from "@/domain/notification/notification";
 import { SessionState } from "@/domain/session/session";
-import type { Status } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 
 const account = {
@@ -28,25 +28,25 @@ const account = {
   avatar: "https://example.test/a.png",
 } as const satisfies AccountRef;
 
-const status = (id: string, favourited = false): Status => ({
-  id,
-  createdAt: "2026-08-13T00:00:00.000Z",
-  content: `<p>${id}</p>`,
-  spoilerText: "",
-  sensitive: false,
-  visibility: Visibility.public(),
-  inReplyToId: null,
-  repliesCount: 0,
-  reblogsCount: 0,
-  favouritesCount: 0,
-  favourited,
-  reblogged: false,
-  bookmarked: false,
-  account,
-  mediaAttachments: [],
-  card: null,
-  reblog: null,
-});
+const status = (id: string, favourited = false) =>
+  Status.original({
+    id,
+    createdAt: "2026-08-13T00:00:00.000Z",
+    content: `<p>${id}</p>`,
+    spoilerText: "",
+    sensitive: false,
+    visibility: Visibility.public(),
+    inReplyToId: null,
+    repliesCount: 0,
+    reblogsCount: 0,
+    favouritesCount: 0,
+    favourited,
+    reblogged: false,
+    bookmarked: false,
+    account,
+    mediaAttachments: [],
+    card: null,
+  });
 
 const profile = (id: string): AccountProfile => ({
   id,
@@ -184,27 +184,31 @@ describe("ViewCache", () => {
       }),
     );
     const cachedProfile = ProfileSet.lookup(state.profiles, "1");
-    expect(cachedProfile.kind === "Present" && cachedProfile.value.statuses[0]?.favourited).toBe(true);
+    expect(
+      cachedProfile.kind === "Present" &&
+        cachedProfile.value.statuses[0] &&
+        Status.displayBody(cachedProfile.value.statuses[0]).favourited,
+    ).toBe(true);
   });
 
   it("applies live stream events only to present snapshots", () => {
     let state = ViewCache.writeHome(ViewCache.empty(), homeSnapshot([status("s1")]));
     state = ViewCache.writeNotifications(state, notificationsSnapshot([]));
 
-    state = ViewCache.applyStreamEvent(state, { kind: "update", status: status("s2") });
+    state = ViewCache.applyStreamEvent(state, { kind: "Update", status: status("s2") });
     expect(state.home).toEqual(CachedView.present(homeSnapshot([status("s2"), status("s1")])));
 
-    state = ViewCache.applyStreamEvent(state, { kind: "notification", notification: mention });
+    state = ViewCache.applyStreamEvent(state, { kind: "Notification", notification: mention });
     expect(state.notifications).toEqual(CachedView.present(notificationsSnapshot([mention])));
 
-    state = ViewCache.applyStreamEvent(state, { kind: "delete", statusId: "s2" });
+    state = ViewCache.applyStreamEvent(state, { kind: "Delete", statusId: "s2" });
     expect(state.home).toEqual(CachedView.present(homeSnapshot([status("s1")])));
     expect(state.notifications).toEqual(CachedView.present(notificationsSnapshot([])));
   });
 
   it("does not invent snapshots from stream events before the first fetch", () => {
     const next = ViewCache.applyStreamEvent(ViewCache.empty(), {
-      kind: "update",
+      kind: "Update",
       status: status("s1"),
     });
     expect(next.home).toEqual(CachedView.absent());

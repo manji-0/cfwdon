@@ -1,8 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { loadSession } from "@/application/load-session";
-import type { SessionState } from "@/domain/session/session";
-import { SessionState as Session } from "@/domain/session/session";
+import { SessionState } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
@@ -68,13 +67,15 @@ const AppRoutes = ({
 };
 
 export const App = () => {
-  const [session, setSession] = useState<SessionState>(Session.loading());
+  const [session, setSession] = useState<SessionState>(SessionState.loading());
 
   useEffect(() => {
     let active = true;
     void loadSession().then((result) => {
       if (active && result.isOk()) {
-        setSession(result.value);
+        setSession((current) =>
+          current.kind === "Loading" ? SessionState.resolve(current, result.value) : current,
+        );
       }
     });
     return () => {

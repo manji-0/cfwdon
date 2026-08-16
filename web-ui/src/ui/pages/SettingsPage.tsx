@@ -144,7 +144,7 @@ export const SettingsPage = () => {
       return;
     }
     setSession(
-      SessionState.authenticated({
+      SessionState.updateAccount(session, {
         ...session.account,
         displayName: updated.displayName,
         avatar: updated.avatar,

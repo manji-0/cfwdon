@@ -5,8 +5,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import {
   bookmarkStatus,
   favouriteStatus,
@@ -142,11 +141,11 @@ export const ProfilePage = () => {
   };
 
   const replaceStatus = (updated: Status) => {
-    setStatuses((current) => StatusModel.replaceInList(current, updated));
+    setStatuses((current) => Status.replaceInList(current, updated));
     cache.patchStatus(updated);
   };
 
-  const handleFavourite = async (status: Status) => {
+  const handleFavourite = async (status: OriginalStatus) => {
     const result = status.favourited
       ? await unfavouriteStatus(status.id)
       : await favouriteStatus(status.id);
@@ -157,7 +156,7 @@ export const ProfilePage = () => {
     replaceStatus(result.value);
   };
 
-  const handleReblog = async (status: Status) => {
+  const handleReblog = async (status: OriginalStatus) => {
     const result = status.reblogged
       ? await unreblogStatus(status.id)
       : await reblogStatus(status.id);
@@ -168,7 +167,7 @@ export const ProfilePage = () => {
     replaceStatus(result.value);
   };
 
-  const handleBookmark = async (status: Status) => {
+  const handleBookmark = async (status: OriginalStatus) => {
     const result = status.bookmarked
       ? await unbookmarkStatus(status.id)
       : await bookmarkStatus(status.id);

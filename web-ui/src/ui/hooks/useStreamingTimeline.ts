@@ -1,6 +1,5 @@
 import { useEffect } from "react";
-import type { Status } from "@/domain/status/status";
-import { Status as StatusModel } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import {
   StreamingUser,
   type StreamingUserEvent,
@@ -11,12 +10,12 @@ export const applyStreamingTimelineEvent = (
   event: StreamingUserEvent,
 ): ReadonlyArray<Status> => {
   switch (event.kind) {
-    case "update":
-      return StatusModel.prependUnique(current, event.status);
-    case "delete":
-      return current.filter((status) => status.id !== event.statusId);
-    case "notification":
-    case "conversation":
+    case "Update":
+      return Status.prependUnique(current, event.status);
+    case "Delete":
+      return Status.removeById(current, event.statusId);
+    case "Notification":
+    case "Conversation":
       return current;
   }
 };
@@ -31,7 +30,7 @@ export const useStreamingTimeline = (
       return undefined;
     }
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "notification" || event.kind === "conversation") {
+      if (event.kind === "Notification" || event.kind === "Conversation") {
         return;
       }
       onStatusesChange((current) => applyStreamingTimelineEvent(current, event));

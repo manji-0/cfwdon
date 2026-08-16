@@ -1,21 +1,22 @@
-import { Conversation, type Conversation as ConversationState } from "./conversation";
+import { Conversation } from "./conversation";
 
-export type ConversationSet = ReadonlyArray<ConversationState>;
+export type ConversationSet = ReadonlyArray<Conversation>;
 
 export const ConversationSet = {
   empty: (): ConversationSet => [],
 
-  replace: (items: ReadonlyArray<ConversationState>): ConversationSet => items,
+  replace: (items: ReadonlyArray<Conversation>): ConversationSet => items,
 
-  appendPage: (set: ConversationSet, page: ReadonlyArray<ConversationState>): ConversationSet => [
+  appendPage: (set: ConversationSet, page: ReadonlyArray<Conversation>): ConversationSet => [
     ...set,
     ...page,
   ],
 
-  upsert: (set: ConversationSet, conversation: ConversationState): ConversationSet => [
+  upsert: (set: ConversationSet, conversation: Conversation): ConversationSet => [
     conversation,
     ...set.filter((item) => item.id !== conversation.id),
   ],
 
-  unreadCount: (set: ConversationSet): number => set.filter(Conversation.isUnread).length,
+  unreadCount: (set: ConversationSet): number =>
+    set.reduce((count, item) => count + (Conversation.isUnread(item) ? 1 : 0), 0),
 } as const;

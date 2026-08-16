@@ -6,7 +6,7 @@ import {
   ListRepliesPolicy,
   type ListRepliesPolicy as ListRepliesPolicyValue,
 } from "@/domain/lists/replies-policy";
-import type { Status } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import {
   addListAccounts,
   createList,
@@ -141,18 +141,10 @@ export const ListsPage = () => {
   }, [selectedListId, loadTimeline, loadMembers]);
 
   const updateStatusInList = (updated: Status) => {
-    setStatuses((current) =>
-      current.map((item) => {
-        const body = item.reblog ?? item;
-        if (body.id === updated.id) {
-          return item.reblog ? { ...item, reblog: updated } : updated;
-        }
-        return item;
-      }),
-    );
+    setStatuses((current) => Status.replaceInList(current, updated));
   };
 
-  const handleFavourite = async (status: Status) => {
+  const handleFavourite = async (status: OriginalStatus) => {
     const result = status.favourited
       ? await unfavouriteStatus(status.id)
       : await favouriteStatus(status.id);
@@ -163,7 +155,7 @@ export const ListsPage = () => {
     updateStatusInList(result.value);
   };
 
-  const handleReblog = async (status: Status) => {
+  const handleReblog = async (status: OriginalStatus) => {
     const result = status.reblogged
       ? await unreblogStatus(status.id)
       : await reblogStatus(status.id);
@@ -174,7 +166,7 @@ export const ListsPage = () => {
     updateStatusInList(result.value);
   };
 
-  const handleBookmark = async (status: Status) => {
+  const handleBookmark = async (status: OriginalStatus) => {
     const result = status.bookmarked
       ? await unbookmarkStatus(status.id)
       : await bookmarkStatus(status.id);
