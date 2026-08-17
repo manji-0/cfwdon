@@ -13,12 +13,17 @@ use worker::{ResponseBody, d1::D1Type};
 
 use crate::D1Database;
 mod auth0_callback;
+mod authorization_codes;
 mod authorize_route;
 mod authorize_validation;
 mod create_app_route;
 mod token_routes;
 
 pub(crate) use auth0_callback::{auth0_callback_response, exchange_auth0_refresh_token};
+pub(in crate::oauth_apps) use authorization_codes::{
+    OAuthAuthorizationCodeRow, authorization_redirect_with_params, delete_oauth_authorization_code,
+    issue_oauth_authorization_code, load_oauth_authorization_code,
+};
 pub(crate) use authorize_route::oauth_authorize_response;
 pub(in crate::oauth_apps) use authorize_route::{
     access_authenticated_without_account_response, oauth_authorize_error_response,
@@ -28,7 +33,6 @@ pub(in crate::oauth_apps) use token_routes::requested_oauth_token_scopes;
 pub(crate) use token_routes::{oauth_revoke_response, oauth_token_response};
 
 use authorize_validation::code_challenge_method_is_supported;
-const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
 const AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS: i64 = 3600;
 pub(crate) const AUTH0_WEB_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -97,18 +101,6 @@ pub(crate) struct OAuthAccessTokenRow {
 pub(crate) struct OAuthAccessTokenWithAccount {
     pub(crate) token: OAuthAccessTokenRow,
     pub(crate) account: Option<LocalAccount>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct OAuthAuthorizationCodeRow {
-    code: String,
-    oauth_app_id: i64,
-    account_id: String,
-    redirect_uri: String,
-    scopes_json: String,
-    code_challenge: Option<String>,
-    code_challenge_method: Option<String>,
-    expires_at: i64,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -701,116 +693,6 @@ async fn issue_oauth_app_access_token(
     .run()
     .await?;
     Ok(access_token)
-}
-
-pub(in crate::oauth_apps) async fn issue_oauth_authorization_code(
-    db: &D1Database,
-    oauth_app_id: i64,
-    account_id: &str,
-    redirect_uri: &str,
-    scopes: &[String],
-    code_challenge: Option<&str>,
-    code_challenge_method: Option<&str>,
-) -> Result<String> {
-    let code = generate_entity_id(32)?;
-    let scopes_json = serde_json::to_string(scopes).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize authorization scopes: {error}"))
-    })?;
-    let expires_at = now_unix_timestamp() + AUTHORIZATION_CODE_TTL_SECONDS;
-    let bindings = [
-        D1Type::Text(code.as_str()),
-        D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
-        D1Type::Text(account_id),
-        D1Type::Text(redirect_uri),
-        D1Type::Text(scopes_json.as_str()),
-        code_challenge.map(D1Type::Text).unwrap_or(D1Type::Null),
-        code_challenge_method
-            .map(D1Type::Text)
-            .unwrap_or(D1Type::Null),
-        D1Type::Integer(i32::try_from(expires_at).unwrap_or(i32::MAX)),
-    ];
-    db.prepare(
-        "INSERT INTO oauth_authorization_codes (
-            code,
-            oauth_app_id,
-            account_id,
-            redirect_uri,
-            scopes_json,
-            code_challenge,
-            code_challenge_method,
-            expires_at
-        ) VALUES (
-            ?1,
-            ?2,
-            ?3,
-            ?4,
-            ?5,
-            ?6,
-            ?7,
-            ?8
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(code)
-}
-
-async fn load_oauth_authorization_code(
-    db: &D1Database,
-    code: &str,
-) -> Result<Option<OAuthAuthorizationCodeRow>> {
-    let binding = D1Type::Text(code);
-    db.prepare(
-        "SELECT code, oauth_app_id, account_id, redirect_uri, scopes_json,
-                code_challenge, code_challenge_method, expires_at
-         FROM oauth_authorization_codes
-         WHERE code = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&binding)?
-    .first::<OAuthAuthorizationCodeRow>(None)
-    .await
-}
-
-async fn delete_oauth_authorization_code(db: &D1Database, code: &str) -> Result<()> {
-    let binding = D1Type::Text(code);
-    db.prepare("DELETE FROM oauth_authorization_codes WHERE code = ?1")
-        .bind_refs(&binding)?
-        .run()
-        .await?;
-    Ok(())
-}
-
-pub(in crate::oauth_apps) fn authorization_redirect_with_params(
-    redirect_uri: &str,
-    params: &[(&str, String)],
-) -> Result<Response> {
-    if redirect_uri == "urn:ietf:wg:oauth:2.0:oob" {
-        let code = params
-            .iter()
-            .find_map(|(name, value)| (*name == "code").then_some(value.as_str()))
-            .unwrap_or_default();
-        return html_response(
-            &format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><title>Authorization code</title></head><body><main><h1>Authorization code</h1><p><code>{}</code></p></main></body></html>",
-                escape_html(code)
-            ),
-            200,
-        );
-    }
-
-    let mut url = Url::parse(redirect_uri)
-        .map_err(|error| worker::Error::RustError(format!("invalid redirect URI: {error}")))?;
-    {
-        let mut query = url.query_pairs_mut();
-        for (name, value) in params {
-            if !value.is_empty() {
-                query.append_pair(name, value);
-            }
-        }
-    }
-    redirect_response(url.as_str())
 }
 
 pub(crate) fn auth0_login_configured(config: &cfwdon_core::AppConfig) -> bool {
