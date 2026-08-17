@@ -1,6 +1,5 @@
 use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
 use crate::id_utils::generate_entity_id;
-use crate::runtime_config::load_config;
 use crate::time_html::{escape_html, now_unix_timestamp};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -9,25 +8,31 @@ use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use worker::{FormData, ResponseBody, d1::D1Type};
-use worker::{Request, Response, Result, RouteContext};
+use worker::{Request, Response, Result};
+use worker::{ResponseBody, d1::D1Type};
 
 use crate::D1Database;
 mod auth0_callback;
+mod authorization_codes;
 mod authorize_route;
 mod authorize_validation;
+mod create_app_route;
 mod token_routes;
 
 pub(crate) use auth0_callback::{auth0_callback_response, exchange_auth0_refresh_token};
+pub(in crate::oauth_apps) use authorization_codes::{
+    OAuthAuthorizationCodeRow, authorization_redirect_with_params, delete_oauth_authorization_code,
+    issue_oauth_authorization_code, load_oauth_authorization_code,
+};
 pub(crate) use authorize_route::oauth_authorize_response;
 pub(in crate::oauth_apps) use authorize_route::{
     access_authenticated_without_account_response, oauth_authorize_error_response,
 };
+pub(crate) use create_app_route::create_app_response;
 pub(in crate::oauth_apps) use token_routes::requested_oauth_token_scopes;
 pub(crate) use token_routes::{oauth_revoke_response, oauth_token_response};
 
 use authorize_validation::code_challenge_method_is_supported;
-const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
 const AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS: i64 = 3600;
 pub(crate) const AUTH0_WEB_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -44,13 +49,6 @@ const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
            AND t.expires_at > ?2
          ORDER BY a.id ASC
          LIMIT 1";
-
-#[derive(Debug, Default, Deserialize)]
-struct CreateAppRequest {
-    client_name: Option<String>,
-    scopes: Option<String>,
-    website: Option<String>,
-}
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct OAuthAuthorizeRequest {
@@ -79,14 +77,6 @@ struct Auth0AuthorizeStateCookie {
     return_url: String,
 }
 
-#[derive(Debug)]
-struct ParsedCreateAppRequest {
-    client_name: String,
-    website: Option<String>,
-    scopes: Vec<String>,
-    redirect_uris: Vec<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct OAuthAppRow {
     pub(crate) id: i64,
@@ -111,18 +101,6 @@ pub(crate) struct OAuthAccessTokenRow {
 pub(crate) struct OAuthAccessTokenWithAccount {
     pub(crate) token: OAuthAccessTokenRow,
     pub(crate) account: Option<LocalAccount>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct OAuthAuthorizationCodeRow {
-    code: String,
-    oauth_app_id: i64,
-    account_id: String,
-    redirect_uri: String,
-    scopes_json: String,
-    code_challenge: Option<String>,
-    code_challenge_method: Option<String>,
-    expires_at: i64,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -254,7 +232,7 @@ pub(crate) fn oauth_access_token_has_any_scope(row: &OAuthAccessTokenRow, scopes
     oauth_access_token_has_any_scope_json(&row.scopes_json, scopes)
 }
 
-fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
+pub(in crate::oauth_apps) fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
     let redirect_uris = serde_json::from_str::<Vec<String>>(&row.redirect_uris_json)
         .unwrap_or_default()
         .into_iter()
@@ -333,23 +311,6 @@ pub(crate) fn build_app_verify_credentials_document_from_row(
         &row.redirect_uri_legacy,
         config.web_push_vapid_public_key.as_deref().unwrap_or(""),
     )
-}
-
-fn app_document(row: &OAuthAppRow, config: &cfwdon_core::AppConfig) -> serde_json::Value {
-    let scopes = oauth_app_scopes(row);
-    let redirect_uris = oauth_app_redirect_uris(row);
-    serde_json::json!({
-        "id": row.id.to_string(),
-        "name": row.name,
-        "website": row.website,
-        "scopes": scopes,
-        "redirect_uri": row.redirect_uri_legacy,
-        "redirect_uris": redirect_uris,
-        "client_id": row.client_id,
-        "client_secret": row.client_secret,
-        "client_secret_expires_at": row.client_secret_expires_at,
-        "vapid_key": config.web_push_vapid_public_key.as_deref().unwrap_or(""),
-    })
 }
 
 pub(crate) fn app_bearer_token_from_request(req: &Request) -> Result<Option<String>> {
@@ -734,186 +695,6 @@ async fn issue_oauth_app_access_token(
     Ok(access_token)
 }
 
-pub(in crate::oauth_apps) async fn issue_oauth_authorization_code(
-    db: &D1Database,
-    oauth_app_id: i64,
-    account_id: &str,
-    redirect_uri: &str,
-    scopes: &[String],
-    code_challenge: Option<&str>,
-    code_challenge_method: Option<&str>,
-) -> Result<String> {
-    let code = generate_entity_id(32)?;
-    let scopes_json = serde_json::to_string(scopes).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize authorization scopes: {error}"))
-    })?;
-    let expires_at = now_unix_timestamp() + AUTHORIZATION_CODE_TTL_SECONDS;
-    let bindings = [
-        D1Type::Text(code.as_str()),
-        D1Type::Integer(i32::try_from(oauth_app_id).unwrap_or(i32::MAX)),
-        D1Type::Text(account_id),
-        D1Type::Text(redirect_uri),
-        D1Type::Text(scopes_json.as_str()),
-        code_challenge.map(D1Type::Text).unwrap_or(D1Type::Null),
-        code_challenge_method
-            .map(D1Type::Text)
-            .unwrap_or(D1Type::Null),
-        D1Type::Integer(i32::try_from(expires_at).unwrap_or(i32::MAX)),
-    ];
-    db.prepare(
-        "INSERT INTO oauth_authorization_codes (
-            code,
-            oauth_app_id,
-            account_id,
-            redirect_uri,
-            scopes_json,
-            code_challenge,
-            code_challenge_method,
-            expires_at
-        ) VALUES (
-            ?1,
-            ?2,
-            ?3,
-            ?4,
-            ?5,
-            ?6,
-            ?7,
-            ?8
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(code)
-}
-
-async fn load_oauth_authorization_code(
-    db: &D1Database,
-    code: &str,
-) -> Result<Option<OAuthAuthorizationCodeRow>> {
-    let binding = D1Type::Text(code);
-    db.prepare(
-        "SELECT code, oauth_app_id, account_id, redirect_uri, scopes_json,
-                code_challenge, code_challenge_method, expires_at
-         FROM oauth_authorization_codes
-         WHERE code = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&binding)?
-    .first::<OAuthAuthorizationCodeRow>(None)
-    .await
-}
-
-async fn delete_oauth_authorization_code(db: &D1Database, code: &str) -> Result<()> {
-    let binding = D1Type::Text(code);
-    db.prepare("DELETE FROM oauth_authorization_codes WHERE code = ?1")
-        .bind_refs(&binding)?
-        .run()
-        .await?;
-    Ok(())
-}
-
-fn normalize_required_client_name(value: Option<String>) -> std::result::Result<String, String> {
-    value
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Validation failed: Name can't be blank".to_owned())
-}
-
-fn normalize_scopes(value: Option<String>) -> Vec<String> {
-    let raw = value.unwrap_or_else(|| "read".to_owned());
-    let mut scopes = Vec::new();
-    for scope in raw.split_whitespace() {
-        let normalized = scope.trim().to_owned();
-        if !normalized.is_empty() && !scopes.contains(&normalized) {
-            scopes.push(normalized);
-        }
-    }
-    if scopes.is_empty() {
-        vec!["read".to_owned()]
-    } else {
-        scopes
-    }
-}
-
-fn normalize_website(value: Option<String>) -> std::result::Result<Option<String>, String> {
-    let Some(value) = value.map(|value| value.trim().to_owned()) else {
-        return Ok(None);
-    };
-    if value.is_empty() {
-        return Ok(None);
-    }
-    let url = Url::parse(&value)
-        .map_err(|_| "Validation failed: Website must be a valid URL".to_owned())?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err("Validation failed: Website must be a valid URL".to_owned());
-    }
-    Ok(Some(value))
-}
-
-fn validate_redirect_uri(value: &str) -> std::result::Result<String, String> {
-    if value == "urn:ietf:wg:oauth:2.0:oob" {
-        return Ok(value.to_owned());
-    }
-    let url = Url::parse(value)
-        .map_err(|_| "Validation failed: Redirect URI must be an absolute URI.".to_owned())?;
-    if matches!(url.scheme(), "http" | "https") && url.host_str().is_none() {
-        return Err("Validation failed: Redirect URI must be an absolute URI.".to_owned());
-    }
-    Ok(value.to_owned())
-}
-
-fn normalize_redirect_uris(values: Vec<String>) -> std::result::Result<Vec<String>, String> {
-    let mut redirect_uris = Vec::new();
-    for value in values {
-        for candidate in value.split_whitespace() {
-            let candidate = candidate.trim();
-            if candidate.is_empty() {
-                continue;
-            }
-            let normalized = validate_redirect_uri(candidate)?;
-            if !redirect_uris.contains(&normalized) {
-                redirect_uris.push(normalized);
-            }
-        }
-    }
-    if redirect_uris.is_empty() {
-        return Err("Validation failed: Redirect URI must be an absolute URI.".to_owned());
-    }
-    Ok(redirect_uris)
-}
-
-pub(in crate::oauth_apps) fn authorization_redirect_with_params(
-    redirect_uri: &str,
-    params: &[(&str, String)],
-) -> Result<Response> {
-    if redirect_uri == "urn:ietf:wg:oauth:2.0:oob" {
-        let code = params
-            .iter()
-            .find_map(|(name, value)| (*name == "code").then_some(value.as_str()))
-            .unwrap_or_default();
-        return html_response(
-            &format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><title>Authorization code</title></head><body><main><h1>Authorization code</h1><p><code>{}</code></p></main></body></html>",
-                escape_html(code)
-            ),
-            200,
-        );
-    }
-
-    let mut url = Url::parse(redirect_uri)
-        .map_err(|error| worker::Error::RustError(format!("invalid redirect URI: {error}")))?;
-    {
-        let mut query = url.query_pairs_mut();
-        for (name, value) in params {
-            if !value.is_empty() {
-                query.append_pair(name, value);
-            }
-        }
-    }
-    redirect_response(url.as_str())
-}
-
 pub(crate) fn auth0_login_configured(config: &cfwdon_core::AppConfig) -> bool {
     !config.auth0_domain.trim().is_empty()
         && !config.auth0_client_id.trim().is_empty()
@@ -1177,173 +958,6 @@ fn oauth_access_token_is_unexpired(expires_at: Option<i64>, now: i64) -> bool {
     expires_at.is_none_or(|expires_at| expires_at > now)
 }
 
-async fn parse_create_app_request(
-    req: &mut Request,
-) -> std::result::Result<ParsedCreateAppRequest, String> {
-    let content_type = request_content_type(req)?;
-    let (request, redirect_uris) = if request_is_json(&content_type) {
-        create_app_request_from_json_payload(
-            req.json::<serde_json::Value>()
-                .await
-                .map_err(|error| format!("invalid JSON app payload: {error}"))?,
-        )?
-    } else {
-        let form = req
-            .form_data()
-            .await
-            .map_err(|error| format!("invalid form app payload: {error}"))?;
-        create_app_request_from_form(&form)
-    };
-
-    parsed_create_app_request(request, redirect_uris)
-}
-
-fn request_content_type(req: &Request) -> std::result::Result<String, String> {
-    Ok(req
-        .headers()
-        .get("Content-Type")
-        .map_err(|error| format!("failed to read Content-Type header: {error}"))?
-        .unwrap_or_default()
-        .to_ascii_lowercase())
-}
-
-fn request_is_json(content_type: &str) -> bool {
-    content_type.contains("application/json")
-}
-
-fn create_app_request_from_json_payload(
-    payload: serde_json::Value,
-) -> std::result::Result<(CreateAppRequest, Vec<String>), String> {
-    let redirect_uris = redirect_uris_from_json_payload(&payload);
-    let request = serde_json::from_value::<CreateAppRequest>(payload)
-        .map_err(|error| format!("invalid JSON app payload: {error}"))?;
-    Ok((request, redirect_uris))
-}
-
-fn redirect_uris_from_json_payload(payload: &serde_json::Value) -> Vec<String> {
-    match payload.get("redirect_uris") {
-        Some(serde_json::Value::String(value)) => vec![value.clone()],
-        Some(serde_json::Value::Array(values)) => values
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-            .collect(),
-        _ => payload
-            .get("redirect_uri")
-            .and_then(serde_json::Value::as_str)
-            .map(|value| vec![value.to_owned()])
-            .unwrap_or_default(),
-    }
-}
-
-fn create_app_request_from_form(form: &FormData) -> (CreateAppRequest, Vec<String>) {
-    (
-        CreateAppRequest {
-            client_name: form.get_field("client_name"),
-            scopes: form.get_field("scopes"),
-            website: form.get_field("website"),
-        },
-        redirect_uris_from_form(form),
-    )
-}
-
-fn redirect_uris_from_form(form: &FormData) -> Vec<String> {
-    form.get_all("redirect_uris[]")
-        .map(|entries| {
-            entries
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    worker::FormEntry::Field(value) => Some(value),
-                    worker::FormEntry::File(_) => None,
-                })
-                .collect::<Vec<_>>()
-        })
-        .filter(|values| !values.is_empty())
-        .unwrap_or_else(|| {
-            form.get_field("redirect_uris")
-                .or_else(|| form.get_field("redirect_uri"))
-                .map(|value| vec![value])
-                .unwrap_or_default()
-        })
-}
-
-fn parsed_create_app_request(
-    request: CreateAppRequest,
-    redirect_uris: Vec<String>,
-) -> std::result::Result<ParsedCreateAppRequest, String> {
-    Ok(ParsedCreateAppRequest {
-        client_name: normalize_required_client_name(request.client_name)?,
-        website: normalize_website(request.website)?,
-        scopes: normalize_scopes(request.scopes),
-        redirect_uris: normalize_redirect_uris(redirect_uris)?,
-    })
-}
-
-async fn insert_oauth_app(
-    db: &crate::D1Database,
-    request: &ParsedCreateAppRequest,
-) -> Result<OAuthAppRow> {
-    let scopes_json = serde_json::to_string(&request.scopes).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize app scopes: {error}"))
-    })?;
-    let redirect_uris_json = serde_json::to_string(&request.redirect_uris).map_err(|error| {
-        worker::Error::RustError(format!("failed to serialize app redirect URIs: {error}"))
-    })?;
-    let redirect_uri_legacy = request.redirect_uris.join("\n");
-    let client_id = generate_entity_id(24)?;
-    let client_secret = generate_entity_id(32)?;
-    let bindings = [
-        D1Type::Text(request.client_name.as_str()),
-        request
-            .website
-            .as_deref()
-            .map(D1Type::Text)
-            .unwrap_or(D1Type::Null),
-        D1Type::Text(scopes_json.as_str()),
-        D1Type::Text(redirect_uris_json.as_str()),
-        D1Type::Text(redirect_uri_legacy.as_str()),
-        D1Type::Text(client_id.as_str()),
-        D1Type::Text(client_secret.as_str()),
-    ];
-    db.prepare(
-        "INSERT INTO oauth_apps (
-            name,
-            website,
-            scopes_json,
-            redirect_uris_json,
-            redirect_uri_legacy,
-            client_id,
-            client_secret,
-            client_secret_expires_at
-        ) VALUES (
-            ?1,
-            ?2,
-            ?3,
-            ?4,
-            ?5,
-            ?6,
-            ?7,
-            0
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-
-    let client_id_binding = D1Type::Text(client_id.as_str());
-    db.prepare(
-        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
-                client_id, client_secret, client_secret_expires_at
-         FROM oauth_apps
-         WHERE client_id = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&client_id_binding)?
-    .first::<OAuthAppRow>(None)
-    .await?
-    .ok_or_else(|| worker::Error::RustError("created app could not be reloaded".to_owned()))
-}
-
 fn pkce_code_challenge(verifier: &str, method: Option<&str>) -> String {
     match method {
         Some("S256") => URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
@@ -1361,20 +975,6 @@ fn pkce_verifier_matches(verifier: &str, challenge: &str, method: Option<&str>) 
     )
 }
 
-pub(crate) async fn create_app_response(
-    mut req: Request,
-    ctx: RouteContext<()>,
-) -> Result<Response> {
-    let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let request = match parse_create_app_request(&mut req).await {
-        Ok(request) => request,
-        Err(message) => return Response::error(&message, 422),
-    };
-    let app = insert_oauth_app(&db, &request).await?;
-    Response::from_json(&app_document(&app, &config))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1386,83 +986,6 @@ mod tests {
         assert!(body.starts_with("<!doctype html>"));
         assert!(body.contains("<meta http-equiv=\"refresh\""));
         assert!(body.contains("https://phanpy.social?code=abc&amp;state=a&amp;b"));
-    }
-
-    #[test]
-    fn create_app_request_from_json_payload_extracts_redirect_variants() {
-        let payload = serde_json::json!({
-            "client_name": "Client",
-            "scopes": "read write",
-            "website": "https://example.com",
-            "redirect_uris": [
-                "https://client.example/callback",
-                42,
-                "app://callback"
-            ],
-            "redirect_uri": "https://fallback.example/callback"
-        });
-
-        let (request, redirect_uris) =
-            create_app_request_from_json_payload(payload).expect("app request");
-
-        assert_eq!(request.client_name.as_deref(), Some("Client"));
-        assert_eq!(request.scopes.as_deref(), Some("read write"));
-        assert_eq!(request.website.as_deref(), Some("https://example.com"));
-        assert_eq!(
-            redirect_uris,
-            vec!["https://client.example/callback", "app://callback"]
-        );
-    }
-
-    #[test]
-    fn create_app_request_from_json_payload_falls_back_to_redirect_uri() {
-        let payload = serde_json::json!({
-            "client_name": "Client",
-            "redirect_uri": "https://client.example/callback"
-        });
-
-        let (_, redirect_uris) =
-            create_app_request_from_json_payload(payload).expect("app request");
-
-        assert_eq!(redirect_uris, vec!["https://client.example/callback"]);
-    }
-
-    #[test]
-    fn parsed_create_app_request_normalizes_fields() {
-        let parsed = parsed_create_app_request(
-            CreateAppRequest {
-                client_name: Some("  Client  ".to_owned()),
-                scopes: Some("read write read".to_owned()),
-                website: Some(" https://example.com/app ".to_owned()),
-            },
-            vec![
-                " https://client.example/callback app://callback ".to_owned(),
-                "app://callback".to_owned(),
-            ],
-        )
-        .expect("parsed app request");
-
-        assert_eq!(parsed.client_name, "Client");
-        assert_eq!(parsed.website.as_deref(), Some("https://example.com/app"));
-        assert_eq!(parsed.scopes, vec!["read", "write"]);
-        assert_eq!(
-            parsed.redirect_uris,
-            vec!["https://client.example/callback", "app://callback"]
-        );
-    }
-
-    #[test]
-    fn parsed_create_app_request_rejects_blank_client_name() {
-        let error = parsed_create_app_request(
-            CreateAppRequest {
-                client_name: Some("  ".to_owned()),
-                ..CreateAppRequest::default()
-            },
-            vec!["https://client.example/callback".to_owned()],
-        )
-        .expect_err("blank client name");
-
-        assert_eq!(error, "Validation failed: Name can't be blank");
     }
 
     #[test]
