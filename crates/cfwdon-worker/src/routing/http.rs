@@ -233,9 +233,9 @@ pub(crate) fn error_response_with_plain_content_type(
 #[cfg(test)]
 mod tests {
     use super::{
-        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path,
-        is_websocket_upgrade, is_websocket_upgrade_header, missing_content_type_fallback,
-        sanitize_log_value, should_apply_cors_headers,
+        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
+        is_websocket_upgrade_header, missing_content_type_fallback, sanitize_log_value,
+        should_apply_cors_headers,
     };
 
     #[test]
