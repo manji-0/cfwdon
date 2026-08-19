@@ -52,8 +52,8 @@ pub(crate) fn parse_signature_header(header: &str) -> Result<ParsedSignatureHead
         };
         let value = raw_value.trim().trim_matches('"');
 
-        match name.trim() {
-            "keyId" => key_id = Some(value.to_owned()),
+        match name.trim().to_ascii_lowercase().as_str() {
+            "keyid" => key_id = Some(value.to_owned()),
             "headers" => {
                 headers = Some(
                     value
@@ -390,5 +390,33 @@ mod tests {
             signing_string,
             "(request-target): post /inbox\nhost: social.example\ndate: Sat, 25 Jul 2026 00:00:00 GMT\ndigest: SHA-256=abc\ncontent-type: application/activity+json"
         );
+    }
+
+    #[test]
+    fn parse_signature_header_accepts_case_insensitive_parameter_names() {
+        let parsed = parse_signature_header(
+            "KEYID=\"https://remote.example/users/bob#main-key\",Headers=\"(request-target) host date digest\",SIGNATURE=\"YQ==\"",
+        )
+        .unwrap();
+        assert_eq!(parsed.key_id, "https://remote.example/users/bob#main-key");
+        assert_eq!(
+            parsed.headers,
+            vec![
+                "(request-target)".to_owned(),
+                "host".to_owned(),
+                "date".to_owned(),
+                "digest".to_owned()
+            ]
+        );
+        assert_eq!(parsed.signature, b"a");
+    }
+
+    #[test]
+    fn parse_signature_header_requires_key_id() {
+        let error = parse_signature_header(
+            "headers=\"(request-target) host date digest\",signature=\"YQ==\"",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Signature keyId missing"));
     }
 }

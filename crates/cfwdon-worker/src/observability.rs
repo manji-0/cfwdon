@@ -61,7 +61,7 @@ pub(crate) fn log_federation_event(
 fn federation_event_level(outcome: &str) -> &'static str {
     match outcome {
         "failed" | "error" | "unauthorized" => "error",
-        "skipped" | "replay" => "warn",
+        "skipped" | "replay" | "rejected" => "warn",
         _ => "info",
     }
 }
@@ -221,5 +221,6 @@ mod tests {
         assert_eq!(federation_event_level("unauthorized"), "error");
         assert_eq!(federation_event_level("skipped"), "warn");
         assert_eq!(federation_event_level("replay"), "warn");
+        assert_eq!(federation_event_level("rejected"), "warn");
     }
 }
