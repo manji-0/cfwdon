@@ -18,7 +18,7 @@ pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Res
         Ok(response) => response,
         Err(response) => return Ok(response),
     };
-    Response::from_json(&response)
+    search_json_response(&response)
 }
 
 pub(crate) async fn search_v1(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -26,7 +26,14 @@ pub(crate) async fn search_v1(req: Request, ctx: RouteContext<()>) -> Result<Res
         Ok(response) => response,
         Err(response) => return Ok(response),
     };
-    Response::from_json(&search_v1_legacy_response_value(response)?)
+    search_json_response(&search_v1_legacy_response_value(response)?)
+}
+
+fn search_json_response<T: serde::Serialize>(value: &T) -> Result<Response> {
+    crate::json_response(value, "application/json", &[]).map_err(|error| {
+        worker::console_error!("search JSON serialization failed: {error}");
+        error
+    })
 }
 
 fn search_v1_legacy_response_value(response: MastodonSearchResponse) -> Result<serde_json::Value> {
@@ -378,6 +385,19 @@ mod tests {
 
         assert!(value.get("collections").is_none());
         assert_eq!(value["hashtags"], serde_json::json!(["rust"]));
+    }
+
+    #[test]
+    fn search_responses_serialize_through_serde_json() {
+        let v2 = MastodonSearchResponse {
+            collections: vec![serde_json::json!({"id": "collection-1"})],
+            statuses: Vec::new(),
+            ..MastodonSearchResponse::default()
+        };
+        serde_json::to_string(&v2).expect("v2 search response must serialize");
+
+        let v1 = search_v1_legacy_response_value(v2).unwrap();
+        serde_json::to_string(&v1).expect("v1 search response must serialize");
     }
 
     #[test]
