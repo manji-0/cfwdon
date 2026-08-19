@@ -159,22 +159,6 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     router::handle_fetch(req, env).await
 }
 
-fn optional_env_var(env: &Env, key: &str) -> Option<String> {
-    env.var(key).ok().map(|value| value.to_string())
-}
-
-fn scheduled_config(env: &Env) -> AppConfig {
-    AppConfig::new(
-        normalize_configured_instance_domain(
-            &optional_env_var(env, "INSTANCE_DOMAIN").unwrap_or_else(|| "example.com".to_owned()),
-        ),
-        optional_env_var(env, "INSTANCE_NAME").unwrap_or_else(|| "cfwdon".to_owned()),
-        optional_env_var(env, "INSTANCE_DESCRIPTION").unwrap_or_else(|| {
-            "Cloudflare Workers + D1 + R2 based Mastodon-compatible server".to_owned()
-        }),
-    )
-}
-
 const SCHEDULED_CRON_HOURLY: &str = "17 * * * *";
 const SCHEDULED_CRON_TRENDS: &str = "17 */6 * * *";
 
@@ -196,7 +180,8 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         return;
     }
 
-    let config = scheduled_config(&env);
+    // Same full env/secret load as fetch and queue so cron can decrypt account keys.
+    let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
     let result = async {
