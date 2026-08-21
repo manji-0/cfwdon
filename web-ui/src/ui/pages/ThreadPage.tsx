@@ -1,28 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
-import { Status, type OriginalStatus } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
-import {
-  bookmarkStatus,
-  createStatus,
-  favouriteStatus,
-  fetchStatus,
-  fetchStatusContext,
-  reblogStatus,
-  unbookmarkStatus,
-  unfavouriteStatus,
-  unreblogStatus,
-} from "@/infrastructure/api/status";
+import { createStatus, fetchStatus, fetchStatusContext } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
-import { Composer, type ComposerHandle } from "@/ui/components/Composer";
+import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { useSession } from "@/ui/context/SessionContext";
 
 export const ThreadPage = () => {
   const composerRef = useRef<ComposerHandle>(null);
   const { statusId = "" } = useParams();
   const navigate = useNavigate();
+  const { session } = useSession();
+  const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const [focus, setFocus] = useState<Status | null>(null);
   const [ancestors, setAncestors] = useState<ReadonlyArray<Status>>([]);
   const [descendants, setDescendants] = useState<ReadonlyArray<Status>>([]);
@@ -76,38 +70,19 @@ export const ThreadPage = () => {
     setDescendants((current) => Status.replaceInList(current, updated));
   };
 
-  const handleFavourite = async (status: OriginalStatus) => {
-    const result = status.favourited
-      ? await unfavouriteStatus(status.id)
-      : await favouriteStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    replaceStatus(result.value);
-  };
-
-  const handleReblog = async (status: OriginalStatus) => {
-    const result = status.reblogged
-      ? await unreblogStatus(status.id)
-      : await reblogStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    replaceStatus(result.value);
-  };
-
-  const handleBookmark = async (status: OriginalStatus) => {
-    const result = status.bookmarked
-      ? await unbookmarkStatus(status.id)
-      : await bookmarkStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    replaceStatus(result.value);
-  };
+  const actions = useStatusActions({
+    selfAccountId,
+    onReplace: replaceStatus,
+    onRemove: (removedId) => {
+      if (removedId === statusId) {
+        navigate("/");
+        return;
+      }
+      setAncestors((current) => Status.removeById(current, removedId));
+      setDescendants((current) => Status.removeById(current, removedId));
+    },
+    onError: setError,
+  });
 
   useKeyboardShortcuts([
     {
@@ -117,14 +92,7 @@ export const ThreadPage = () => {
     },
   ]);
 
-  const handleReply = async (input: {
-    text: string;
-    visibility: ReturnType<typeof Visibility.public>;
-    spoilerText: string;
-    sensitive: boolean;
-    inReplyToId?: string;
-    mediaIds: ReadonlyArray<string>;
-  }) => {
+  const handleReply = async (input: ComposerSubmitInput) => {
     const result = await createStatus({
       text: input.text,
       visibility: Visibility.toApi(input.visibility),
@@ -132,6 +100,7 @@ export const ThreadPage = () => {
       sensitive: input.sensitive,
       inReplyToId: statusId,
       mediaIds: input.mediaIds,
+      poll: input.poll,
     });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
@@ -161,31 +130,11 @@ export const ThreadPage = () => {
           ) : null}
           <div className="timeline">
             {ancestors.map((status) => (
-              <StatusCard
-                key={status.id}
-                status={status}
-                compact
-                onFavourite={(body) => void handleFavourite(body)}
-                onReblog={(body) => void handleReblog(body)}
-                onBookmark={(body) => void handleBookmark(body)}
-                onReply={() => navigate(`/status/${Status.displayBody(status).id}`)}
-              />
+              <StatusCard key={status.id} status={status} compact {...actions} />
             ))}
-            <StatusCard
-              status={focus}
-              onFavourite={(body) => void handleFavourite(body)}
-              onReblog={(body) => void handleReblog(body)}
-              onBookmark={(body) => void handleBookmark(body)}
-            />
+            <StatusCard status={focus} {...actions} />
             {descendants.map((status) => (
-              <StatusCard
-                key={status.id}
-                status={status}
-                onFavourite={(body) => void handleFavourite(body)}
-                onReblog={(body) => void handleReblog(body)}
-                onBookmark={(body) => void handleBookmark(body)}
-                onReply={() => navigate(`/status/${Status.displayBody(status).id}`)}
-              />
+              <StatusCard key={status.id} status={status} {...actions} />
             ))}
           </div>
           <Composer
@@ -195,6 +144,7 @@ export const ThreadPage = () => {
             submitLabel={isDirectThread ? "送信" : "返信"}
             initialVisibility={isDirectThread ? Visibility.direct() : Visibility.public()}
             lockVisibility={isDirectThread}
+            allowPoll={!isDirectThread}
             inReplyToId={statusId}
             onSubmit={handleReply}
           />

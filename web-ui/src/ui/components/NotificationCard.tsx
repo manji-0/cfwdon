@@ -7,13 +7,20 @@ import { formatRelativeTime } from "@/ui/lib/time";
 
 type NotificationCardProps = Readonly<{
   notification: Notification;
+  onAuthorizeFollow?: (accountId: string) => void;
+  onRejectFollow?: (accountId: string) => void;
 }>;
 
-export const NotificationCard = ({ notification }: NotificationCardProps) => {
+export const NotificationCard = ({
+  notification,
+  onAuthorizeFollow,
+  onRejectFollow,
+}: NotificationCardProps) => {
   const navigate = useNavigate();
   const status = Notification.status(notification);
   const body = status ? Status.displayBody(status) : null;
   const card = status ? Status.visibleCard(status) : null;
+  const isFollowRequest = notification.kind === "FollowRequest";
 
   return (
     <article className="notification-card">
@@ -28,6 +35,24 @@ export const NotificationCard = ({ notification }: NotificationCardProps) => {
           </div>
         </Link>
       </header>
+      {isFollowRequest ? (
+        <div className="notification-follow-actions">
+          <button
+            type="button"
+            className="app-button"
+            onClick={() => onAuthorizeFollow?.(notification.account.id)}
+          >
+            承認
+          </button>
+          <button
+            type="button"
+            className="app-button app-button-secondary"
+            onClick={() => onRejectFollow?.(notification.account.id)}
+          >
+            拒否
+          </button>
+        </div>
+      ) : null}
       {status && body ? (
         <div
           className="notification-status-preview"

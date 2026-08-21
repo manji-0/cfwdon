@@ -5,6 +5,7 @@ import {
   IconBookmark,
   IconBrand,
   IconGear,
+  IconHeart,
   IconHome,
   IconList,
   IconMessage,
@@ -23,6 +24,7 @@ const PRIMARY_NAV_ITEMS = [
 
 const LIBRARY_NAV_ITEMS = [
   { route: AppRoute.bookmarks(), icon: IconBookmark },
+  { route: AppRoute.favourites(), icon: IconHeart },
   { route: AppRoute.lists(), icon: IconList },
   { route: AppRoute.messages(), icon: IconMessage },
 ] as const;

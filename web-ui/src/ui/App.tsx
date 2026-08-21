@@ -12,14 +12,19 @@ import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
   ConversationPage,
+  FavouritesPage,
   ListsPage,
   MessagesPage,
   NewMessagePage,
   NotificationsPage,
   ProfilePage,
+  PublicTimelinePage,
   SearchPage,
   SettingsPage,
+  TagTimelinePage,
   ThreadPage,
+  AccountFollowersPage,
+  AccountFollowingPage,
 } from "@/ui/pages/lazy-pages";
 import "@/ui/styles/app.css";
 
@@ -46,13 +51,19 @@ const AppRoutes = ({
           <Suspense fallback={<RouteFallback />}>
             <Routes>
               <Route path="/" element={<HomePage />} />
+              <Route path="/public" element={<PublicTimelinePage />} />
+              <Route path="/public/local" element={<PublicTimelinePage />} />
+              <Route path="/tags/:tagName" element={<TagTimelinePage />} />
               <Route path="/status/:statusId" element={<ThreadPage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
+              <Route path="/profile/:accountId/following" element={<AccountFollowingPage />} />
               <Route path="/profile/:accountId" element={<ProfilePage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/search" element={<SearchPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/bookmarks" element={<BookmarksPage />} />
+              <Route path="/favourites" element={<FavouritesPage />} />
               <Route path="/lists" element={<ListsPage />} />
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/messages/new" element={<NewMessagePage />} />

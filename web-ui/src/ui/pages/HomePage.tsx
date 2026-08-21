@@ -2,30 +2,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
-import { Status, type OriginalStatus } from "@/domain/status/status";
-import {
-  bookmarkStatus,
-  createStatus,
-  favouriteStatus,
-  fetchHomeTimeline,
-  reblogStatus,
-  unbookmarkStatus,
-  unfavouriteStatus,
-  unreblogStatus,
-} from "@/infrastructure/api/status";
+import { Status } from "@/domain/status/status";
+import { createStatus, fetchHomeTimeline } from "@/infrastructure/api/status";
 import { Visibility } from "@/domain/status/visibility";
-import { Composer, type ComposerHandle } from "@/ui/components/Composer";
+import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 import { SearchSidebar } from "@/ui/components/SearchSidebar";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { TimelineTabs } from "@/ui/components/TimelineTabs";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
+import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
+  const { session } = useSession();
+  const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const cache = useViewCache();
   const cached = cache.getHome();
   const [statuses, setStatuses] = useState<ReadonlyArray<Status>>(
@@ -136,19 +132,14 @@ export const HomePage = () => {
     }
   };
 
-  const handlePublish = async (input: {
-    text: string;
-    visibility: ReturnType<typeof Visibility.public>;
-    spoilerText: string;
-    sensitive: boolean;
-    mediaIds: ReadonlyArray<string>;
-  }) => {
+  const handlePublish = async (input: ComposerSubmitInput) => {
     const result = await createStatus({
       text: input.text,
       visibility: Visibility.toApi(input.visibility),
       spoilerText: input.spoilerText,
       sensitive: input.sensitive,
       mediaIds: input.mediaIds,
+      poll: input.poll,
     });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
@@ -160,21 +151,17 @@ export const HomePage = () => {
     });
   };
 
-  const updateStatusInList = (updated: Status) => {
-    setStatuses((current) => Status.replaceInList(current, updated));
-    cache.patchStatus(updated);
-  };
-
-  const handleFavourite = async (status: OriginalStatus) => {
-    const result = status.favourited
-      ? await unfavouriteStatus(status.id)
-      : await favouriteStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    updateStatusInList(result.value);
-  };
+  const actions = useStatusActions({
+    selfAccountId,
+    onReplace: (updated) => {
+      setStatuses((current) => Status.replaceInList(current, updated));
+      cache.patchStatus(updated);
+    },
+    onRemove: (statusId) => {
+      setStatuses((current) => Status.removeById(current, statusId));
+    },
+    onError: setError,
+  });
 
   useKeyboardShortcuts([
     {
@@ -189,29 +176,6 @@ export const HomePage = () => {
     },
   ]);
 
-  const handleBookmark = async (status: OriginalStatus) => {
-    const result = status.bookmarked
-      ? await unbookmarkStatus(status.id)
-      : await bookmarkStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    updateStatusInList(result.value);
-  };
-
-  const handleReblog = async (status: OriginalStatus) => {
-    const targetId = status.id;
-    const result = status.reblogged
-      ? await unreblogStatus(targetId)
-      : await reblogStatus(targetId);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    await handleRefresh();
-  };
-
   return (
     <AppShell
       title="ホーム"
@@ -222,18 +186,13 @@ export const HomePage = () => {
         </>
       }
     >
+      <TimelineTabs />
       <Composer ref={composerRef} onSubmit={handlePublish} />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">
         {statuses.map((status) => (
-          <StatusCard
-            key={status.id}
-            status={status}
-            onFavourite={(body) => void handleFavourite(body)}
-            onReblog={(body) => void handleReblog(body)}
-            onBookmark={(body) => void handleBookmark(body)}
-          />
+          <StatusCard key={status.id} status={status} {...actions} />
         ))}
       </div>
       {!loading && statuses.length === 0 ? (

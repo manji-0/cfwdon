@@ -32,6 +32,8 @@ export const parseAccountProfile = mastodon.type("AccountProfileApi").pipe(
   }),
 );
 
+export const parseAccountProfileList = type(parseAccountProfile, "[]");
+
 export const parseAccountCredentials = mastodon.type("AccountCredentialsApi").pipe(
   (value): AccountCredentials => ({
     id: value.id,

@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { PollDraft } from "@/domain/status/poll";
 import type { Visibility } from "@/domain/status/visibility";
 import { Visibility as VisibilityModel } from "@/domain/status/visibility";
 import { uploadMedia } from "@/infrastructure/api/media";
@@ -15,21 +16,33 @@ const VISIBILITY_OPTIONS: ReadonlyArray<Visibility> = [
   VisibilityModel.direct(),
 ];
 
+const POLL_EXPIRES = [
+  { value: 3600, label: "1時間" },
+  { value: 21_600, label: "6時間" },
+  { value: 86_400, label: "1日" },
+  { value: 259_200, label: "3日" },
+  { value: 604_800, label: "7日" },
+] as const;
+
+export type ComposerSubmitInput = Readonly<{
+  text: string;
+  visibility: Visibility;
+  spoilerText: string;
+  sensitive: boolean;
+  inReplyToId?: string;
+  mediaIds: ReadonlyArray<string>;
+  poll: PollDraft | null;
+}>;
+
 type ComposerProps = Readonly<{
   placeholder?: string;
   submitLabel?: string;
   initialVisibility?: Visibility;
   lockVisibility?: boolean;
   inReplyToId?: string;
+  allowPoll?: boolean;
   disabled?: boolean;
-  onSubmit: (input: {
-    text: string;
-    visibility: Visibility;
-    spoilerText: string;
-    sensitive: boolean;
-    inReplyToId?: string;
-    mediaIds: ReadonlyArray<string>;
-  }) => Promise<void>;
+  onSubmit: (input: ComposerSubmitInput) => Promise<void>;
 }>;
 
 export type ComposerHandle = Readonly<{
@@ -43,6 +56,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     initialVisibility = VisibilityModel.public(),
     lockVisibility = false,
     inReplyToId,
+    allowPoll = true,
     disabled = false,
     onSubmit,
   },
@@ -58,6 +72,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [mediaAttachments, setMediaAttachments] = useState<ReadonlyArray<ComposerMediaItem>>([]);
+  const [pollEnabled, setPollEnabled] = useState(false);
+  const [poll, setPoll] = useState(PollDraft.empty);
   const mediaAttachmentsRef = useRef(mediaAttachments);
   mediaAttachmentsRef.current = mediaAttachments;
 
@@ -81,8 +97,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
 
   const readyMediaIds = ComposerMedia.readyIds(mediaAttachments);
+  const pollReady = pollEnabled && PollDraft.isReady(poll);
   const canSubmit =
-    (text.trim().length > 0 || readyMediaIds.length > 0) &&
+    (text.trim().length > 0 || readyMediaIds.length > 0 || pollReady) &&
+    (!pollEnabled || PollDraft.isReady(poll)) &&
     !ComposerMedia.hasUploading(mediaAttachments) &&
     !submitting &&
     !disabled;
@@ -144,11 +162,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         spoilerText: showCw ? spoilerText.trim() : "",
         sensitive: showCw && spoilerText.trim().length > 0,
         inReplyToId,
-        mediaIds: readyMediaIds,
+        mediaIds: pollEnabled ? [] : readyMediaIds,
+        poll: pollEnabled && PollDraft.isReady(poll) ? { ...poll, options: PollDraft.filledOptions(poll) } : null,
       });
       setText("");
       setSpoilerText("");
       setShowCw(false);
+      setPollEnabled(false);
+      setPoll(PollDraft.empty());
       clearMediaAttachments();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "投稿に失敗しました");
@@ -189,10 +210,73 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           />
           <ComposerMediaPicker
             attachments={mediaAttachments}
-            disabled={disabled || submitting}
+            disabled={disabled || submitting || pollEnabled}
             onSelectFiles={handleSelectFiles}
             onRemove={handleRemoveMedia}
           />
+          {pollEnabled ? (
+            <div className="composer-poll">
+              {poll.options.map((option, index) => (
+                <div key={index} className="composer-poll-option">
+                  <input
+                    value={option}
+                    onChange={(event) =>
+                      setPoll((current) => PollDraft.setOption(current, index, event.target.value))
+                    }
+                    placeholder={`選択肢 ${index + 1}`}
+                    disabled={disabled || submitting}
+                  />
+                  {poll.options.length > PollDraft.minOptions ? (
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      onClick={() => setPoll((current) => PollDraft.removeOption(current, index))}
+                      disabled={disabled || submitting}
+                    >
+                      削除
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {poll.options.length < PollDraft.maxOptions ? (
+                <button
+                  type="button"
+                  className="app-button app-button-secondary"
+                  onClick={() => setPoll((current) => PollDraft.addOption(current))}
+                  disabled={disabled || submitting}
+                >
+                  選択肢を追加
+                </button>
+              ) : null}
+              <label className="composer-poll-meta">
+                <span className="app-muted">期限</span>
+                <select
+                  value={poll.expiresIn}
+                  onChange={(event) =>
+                    setPoll((current) => ({ ...current, expiresIn: Number(event.target.value) }))
+                  }
+                  disabled={disabled || submitting}
+                >
+                  {POLL_EXPIRES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="composer-cw">
+                <input
+                  type="checkbox"
+                  checked={poll.multiple}
+                  onChange={(event) =>
+                    setPoll((current) => ({ ...current, multiple: event.target.checked }))
+                  }
+                  disabled={disabled || submitting}
+                />
+                複数選択可
+              </label>
+            </div>
+          ) : null}
           <div className="composer-toolbar">
             {lockVisibility ? null : (
               <label className="composer-visibility">
@@ -219,6 +303,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               />
               CW
             </label>
+            {allowPoll ? (
+              <label className="composer-cw">
+                <input
+                  type="checkbox"
+                  checked={pollEnabled}
+                  onChange={(event) => {
+                    setPollEnabled(event.target.checked);
+                    if (event.target.checked) {
+                      clearMediaAttachments();
+                    }
+                  }}
+                  disabled={disabled || submitting || readyMediaIds.length > 0}
+                />
+                アンケート
+              </label>
+            ) : null}
             <span className="composer-shortcut-hint app-muted" aria-hidden="true">
               {modKeyLabel()}↵ で{submitLabel}
             </span>

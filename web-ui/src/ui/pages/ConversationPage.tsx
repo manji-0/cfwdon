@@ -9,7 +9,7 @@ import {
   flattenConversationStatuses,
 } from "@/domain/conversations/thread";
 import type { Status } from "@/domain/status/status";
-import { Visibility, type Visibility as StatusVisibility } from "@/domain/status/visibility";
+import { Visibility } from "@/domain/status/visibility";
 import {
   deleteConversation,
   findConversationById,
@@ -19,7 +19,7 @@ import { createStatus, fetchStatus, fetchStatusContext } from "@/infrastructure/
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
 import { ChatMessage } from "@/ui/components/ChatMessage";
-import { Composer } from "@/ui/components/Composer";
+import { Composer, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 
@@ -119,14 +119,7 @@ export const ConversationPage = () => {
   );
   const latestStatusId = statuses.at(-1)?.id ?? conversation?.lastStatus?.id;
 
-  const handleSend = async (input: {
-    text: string;
-    visibility: StatusVisibility;
-    spoilerText: string;
-    sensitive: boolean;
-    inReplyToId?: string;
-    mediaIds: ReadonlyArray<string>;
-  }) => {
+  const handleSend = async (input: ComposerSubmitInput) => {
     const result = await createStatus({
       text: ensureDirectMentions(input.text, mentionTargets),
       visibility: Visibility.toApi(Visibility.direct()),
@@ -189,6 +182,7 @@ export const ConversationPage = () => {
             submitLabel="送信"
             initialVisibility={Visibility.direct()}
             lockVisibility
+            allowPoll={false}
             inReplyToId={latestStatusId}
             onSubmit={handleSend}
           />

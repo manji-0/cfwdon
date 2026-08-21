@@ -1,5 +1,6 @@
 import type { AccountRef } from "@/domain/account/account";
 import { MediaAttachment } from "@/domain/media/attachment";
+import type { Poll } from "@/domain/status/poll";
 import { PreviewCard } from "@/domain/status/preview-card";
 import {
   Status,
@@ -9,6 +10,7 @@ import {
 import { Visibility } from "@/domain/status/visibility";
 import { type } from "arktype";
 import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
+import { parsePoll } from "@/infrastructure/mastodon/parsers/poll";
 
 type StatusPayload = {
   id: string;
@@ -48,6 +50,17 @@ type StatusPayload = {
     image?: string | null;
     blurhash?: string | null;
   } | null;
+  poll?: {
+    id: string;
+    expires_at?: string | null;
+    expired: boolean;
+    multiple: boolean;
+    votes_count: number;
+    voters_count?: number | null;
+    voted?: boolean;
+    own_votes?: number[];
+    options: Array<{ title: string; votes_count?: number | null }>;
+  } | null;
   reblog?: StatusPayload | null;
 };
 
@@ -80,6 +93,27 @@ const toMediaAttachment = (
   description: media.description ?? null,
 });
 
+const toPoll = (poll: NonNullable<StatusPayload["poll"]>): Poll => {
+  const parsed = parsePoll(poll);
+  if (parsed instanceof type.errors) {
+    return {
+      id: poll.id,
+      expiresAt: poll.expires_at ?? "",
+      expired: poll.expired,
+      multiple: poll.multiple,
+      votesCount: poll.votes_count,
+      votersCount: poll.voters_count ?? null,
+      voted: poll.voted ?? false,
+      ownVotes: poll.own_votes ?? [],
+      options: poll.options.map((option) => ({
+        title: option.title,
+        votesCount: option.votes_count ?? null,
+      })),
+    };
+  }
+  return parsed;
+};
+
 const toOriginal = (payload: StatusPayload): OriginalStatus => {
   const nested = payload.reblog;
   const source = nested ?? payload;
@@ -100,6 +134,7 @@ const toOriginal = (payload: StatusPayload): OriginalStatus => {
     account: toAccountRef(source.account),
     mediaAttachments: (source.media_attachments ?? []).map(toMediaAttachment),
     card: source.card ? toPreviewCard(source.card) : null,
+    poll: source.poll ? toPoll(source.poll) : null,
   });
 };
 

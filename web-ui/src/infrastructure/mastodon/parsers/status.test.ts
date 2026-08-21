@@ -87,3 +87,43 @@ describe("parseStatus boost", () => {
     expect(result.original.id).toBe("orig-1");
   });
 });
+
+describe("parseStatus poll", () => {
+  it("maps poll fields from the API payload", () => {
+    const result = parseStatus({
+      ...basePayload,
+      poll: {
+        id: "poll-1",
+        expires_at: "2026-08-23T00:00:00.000Z",
+        expired: false,
+        multiple: false,
+        votes_count: 4,
+        voters_count: 4,
+        voted: false,
+        own_votes: [],
+        options: [
+          { title: "yes", votes_count: 1 },
+          { title: "no", votes_count: 3 },
+        ],
+      },
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(Status.displayBody(result).poll).toEqual({
+      id: "poll-1",
+      expiresAt: "2026-08-23T00:00:00.000Z",
+      expired: false,
+      multiple: false,
+      votesCount: 4,
+      votersCount: 4,
+      voted: false,
+      ownVotes: [],
+      options: [
+        { title: "yes", votesCount: 1 },
+        { title: "no", votesCount: 3 },
+      ],
+    });
+  });
+});

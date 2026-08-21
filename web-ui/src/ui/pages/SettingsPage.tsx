@@ -10,6 +10,7 @@ import { Visibility } from "@/domain/status/visibility";
 import { AppRoute } from "@/domain/navigation/route";
 import { fetchAccountCredentials, updateAccountProfile } from "@/infrastructure/api/credentials";
 import { fetchBlockedAccounts, fetchMutedAccounts } from "@/infrastructure/api/moderation";
+import { unmuteAccount, unblockAccount } from "@/infrastructure/api/relationship";
 import {
   fetchNotificationPolicy,
   updateNotificationPolicy,
@@ -45,14 +46,29 @@ const VISIBILITY_OPTIONS = [
   Visibility.direct(),
 ] as const;
 
-const ModerationAccountLink = ({ account }: Readonly<{ account: AccountRef }>) => (
-  <Link className="account-row" to={`/profile/${account.id}`}>
-    <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
-    <div className="account-row-meta">
-      <span className="status-display-name">{account.displayName || account.username}</span>
-      <span className="status-acct">@{account.acct}</span>
-    </div>
-  </Link>
+const ModerationAccountRow = ({
+  account,
+  actionLabel,
+  onAction,
+  disabled,
+}: Readonly<{
+  account: AccountRef;
+  actionLabel: string;
+  onAction: () => void;
+  disabled: boolean;
+}>) => (
+  <div className="account-row settings-moderation-row">
+    <Link className="settings-moderation-link" to={`/profile/${account.id}`}>
+      <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
+      <div className="account-row-meta">
+        <span className="status-display-name">{account.displayName || account.username}</span>
+        <span className="status-acct">@{account.acct}</span>
+      </div>
+    </Link>
+    <button type="button" className="app-button app-button-secondary" onClick={onAction} disabled={disabled}>
+      {actionLabel}
+    </button>
+  </div>
 );
 
 export const SettingsPage = () => {
@@ -78,6 +94,7 @@ export const SettingsPage = () => {
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPosting, setSavingPosting] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [savingModeration, setSavingModeration] = useState(false);
   const [sectionMessage, setSectionMessage] = useState("");
 
   const loadSettings = useCallback(async () => {
@@ -220,6 +237,32 @@ export const SettingsPage = () => {
     } finally {
       setSavingPolicy(false);
     }
+  };
+
+  const handleUnmute = async (accountId: string) => {
+    setSavingModeration(true);
+    setSectionMessage("");
+    const result = await unmuteAccount(accountId);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setMutes((current) => current.filter((account) => account.id !== accountId));
+    setSectionMessage("ミュートを解除しました");
+  };
+
+  const handleUnblock = async (accountId: string) => {
+    setSavingModeration(true);
+    setSectionMessage("");
+    const result = await unblockAccount(accountId);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setBlocks((current) => current.filter((account) => account.id !== accountId));
+    setSectionMessage("ブロックを解除しました");
   };
 
   const handleLogout = () => {
@@ -367,7 +410,13 @@ export const SettingsPage = () => {
                 ) : (
                   <div className="settings-account-list">
                     {mutes.map((account) => (
-                      <ModerationAccountLink key={account.id} account={account} />
+                      <ModerationAccountRow
+                        key={account.id}
+                        account={account}
+                        actionLabel="解除"
+                        disabled={savingModeration}
+                        onAction={() => void handleUnmute(account.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -379,7 +428,13 @@ export const SettingsPage = () => {
                 ) : (
                   <div className="settings-account-list">
                     {blocks.map((account) => (
-                      <ModerationAccountLink key={account.id} account={account} />
+                      <ModerationAccountRow
+                        key={account.id}
+                        account={account}
+                        actionLabel="解除"
+                        disabled={savingModeration}
+                        onAction={() => void handleUnblock(account.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -391,7 +446,7 @@ export const SettingsPage = () => {
             <h2>ライブラリ</h2>
             <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
             <div className="settings-library-links">
-              {[AppRoute.bookmarks(), AppRoute.lists(), AppRoute.messages()].map((route) => {
+              {[AppRoute.bookmarks(), AppRoute.favourites(), AppRoute.lists(), AppRoute.messages()].map((route) => {
                 const isMessages = route.kind === "Messages";
                 const label = AppRoute.label(route);
                 return (

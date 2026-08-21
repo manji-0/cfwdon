@@ -2,19 +2,18 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
 import { MediaAttachment } from "@/domain/media/attachment";
-import { Status, type OriginalStatus } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
+import { PollCard } from "@/ui/components/PollCard";
 import { StatusContent } from "@/ui/components/StatusContent";
+import type { StatusActionHandlers } from "@/ui/hooks/useStatusActions";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type StatusCardProps = Readonly<{
   status: Status;
-  onFavourite?: (status: OriginalStatus) => void;
-  onReblog?: (status: OriginalStatus) => void;
-  onBookmark?: (status: OriginalStatus) => void;
-  onReply?: (status: OriginalStatus) => void;
   compact?: boolean;
-}>;
+}> &
+  Partial<StatusActionHandlers>;
 
 const AccountHeader = ({
   account,
@@ -34,17 +33,34 @@ const AccountHeader = ({
 
 export const StatusCard = ({
   status,
+  selfAccountId = null,
   onFavourite,
   onReblog,
   onBookmark,
   onReply,
+  onDelete,
+  onMute,
+  onBlock,
+  onReport,
+  onVotePoll,
   compact = false,
 }: StatusCardProps) => {
   const body = Status.displayBody(status);
   const boostedBy = Status.boostedBy(status);
   const card = Status.visibleCard(status);
+  const isOwn = Boolean(selfAccountId && body.account.id === selfAccountId);
   const [revealed, setRevealed] = useState(!body.sensitive && !body.spoilerText);
+  const [menuOpen, setMenuOpen] = useState(false);
   const showContent = revealed || (!body.sensitive && !body.spoilerText);
+
+  const handleReport = () => {
+    const comment = window.prompt("通報の理由（任意）");
+    if (comment === null) {
+      return;
+    }
+    onReport?.(body, comment);
+    setMenuOpen(false);
+  };
 
   return (
     <article className={`status-card${compact ? " status-card-compact" : ""}`}>
@@ -76,6 +92,12 @@ export const StatusCard = ({
                 ),
               )}
             </div>
+          ) : null}
+          {body.poll ? (
+            <PollCard
+              poll={body.poll}
+              onVote={onVotePoll ? (choices) => onVotePoll(body, choices) : undefined}
+            />
           ) : null}
           {card ? <LinkPreviewCard card={card} /> : null}
         </>
@@ -113,7 +135,40 @@ export const StatusCard = ({
         <Link className="status-action" to={`/status/${body.id}`} aria-label="スレッドを開く">
           ⧉
         </Link>
+        <button
+          type="button"
+          className={`status-action${menuOpen ? " is-active" : ""}`}
+          aria-label="その他"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          …
+        </button>
       </footer>
+      {menuOpen ? (
+        <div className="status-menu">
+          {isOwn && onDelete ? (
+            <button type="button" onClick={() => onDelete(body)}>
+              削除
+            </button>
+          ) : null}
+          {!isOwn && onMute ? (
+            <button type="button" onClick={() => onMute(body)}>
+              ミュート
+            </button>
+          ) : null}
+          {!isOwn && onBlock ? (
+            <button type="button" onClick={() => onBlock(body)}>
+              ブロック
+            </button>
+          ) : null}
+          {!isOwn && onReport ? (
+            <button type="button" onClick={handleReport}>
+              通報
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 };

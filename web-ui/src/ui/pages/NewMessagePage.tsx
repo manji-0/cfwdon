@@ -3,12 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
-import { Visibility, type Visibility as StatusVisibility } from "@/domain/status/visibility";
+import { Visibility } from "@/domain/status/visibility";
 import { findConversationByStatusId } from "@/infrastructure/api/conversations";
 import { search } from "@/infrastructure/api/search";
 import { createStatus } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
-import { Composer } from "@/ui/components/Composer";
+import { Composer, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { useSession } from "@/ui/context/SessionContext";
 
 export const NewMessagePage = () => {
@@ -52,14 +52,7 @@ export const NewMessagePage = () => {
     setSelected((current) => current.filter((account) => account.id !== accountId));
   };
 
-  const handleSend = async (input: {
-    text: string;
-    visibility: StatusVisibility;
-    spoilerText: string;
-    sensitive: boolean;
-    inReplyToId?: string;
-    mediaIds: ReadonlyArray<string>;
-  }) => {
+  const handleSend = async (input: ComposerSubmitInput) => {
     if (selected.length === 0) {
       throw new Error("送信先を選んでください");
     }
@@ -137,6 +130,7 @@ export const NewMessagePage = () => {
         submitLabel="送信"
         initialVisibility={Visibility.direct()}
         lockVisibility
+        allowPoll={false}
         disabled={selected.length === 0}
         onSubmit={handleSend}
       />

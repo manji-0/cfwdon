@@ -6,7 +6,7 @@ import {
   ListRepliesPolicy,
   type ListRepliesPolicy as ListRepliesPolicyValue,
 } from "@/domain/lists/replies-policy";
-import { Status, type OriginalStatus } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import {
   addListAccounts,
   createList,
@@ -17,19 +17,15 @@ import {
   removeListAccounts,
   updateList,
 } from "@/infrastructure/api/lists";
-import {
-  bookmarkStatus,
-  favouriteStatus,
-  reblogStatus,
-  unbookmarkStatus,
-  unfavouriteStatus,
-  unreblogStatus,
-} from "@/infrastructure/api/status";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { useSession } from "@/ui/context/SessionContext";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
 
 export const ListsPage = () => {
+  const { session } = useSession();
+  const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const [lists, setLists] = useState<ReadonlyArray<AccountList>>([]);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<ReadonlyArray<Status>>([]);
@@ -140,42 +136,12 @@ export const ListsPage = () => {
     };
   }, [selectedListId, loadTimeline, loadMembers]);
 
-  const updateStatusInList = (updated: Status) => {
-    setStatuses((current) => Status.replaceInList(current, updated));
-  };
-
-  const handleFavourite = async (status: OriginalStatus) => {
-    const result = status.favourited
-      ? await unfavouriteStatus(status.id)
-      : await favouriteStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    updateStatusInList(result.value);
-  };
-
-  const handleReblog = async (status: OriginalStatus) => {
-    const result = status.reblogged
-      ? await unreblogStatus(status.id)
-      : await reblogStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    updateStatusInList(result.value);
-  };
-
-  const handleBookmark = async (status: OriginalStatus) => {
-    const result = status.bookmarked
-      ? await unbookmarkStatus(status.id)
-      : await bookmarkStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    updateStatusInList(result.value);
-  };
+  const actions = useStatusActions({
+    selfAccountId,
+    onReplace: (updated) => setStatuses((current) => Status.replaceInList(current, updated)),
+    onRemove: (statusId) => setStatuses((current) => Status.removeById(current, statusId)),
+    onError: setError,
+  });
 
   const handleLoadMore = async () => {
     if (!selectedListId) {
@@ -508,13 +474,7 @@ export const ListsPage = () => {
         {loadingTimeline ? <div className="app-status">読み込み中…</div> : null}
         <div className="timeline">
           {statuses.map((status) => (
-            <StatusCard
-              key={status.id}
-              status={status}
-              onFavourite={(body) => void handleFavourite(body)}
-              onReblog={(body) => void handleReblog(body)}
-              onBookmark={(body) => void handleBookmark(body)}
-            />
+            <StatusCard key={status.id} status={status} {...actions} />
           ))}
         </div>
         {!loadingLists && !loadingTimeline && selectedList && statuses.length === 0 ? (

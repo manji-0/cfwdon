@@ -4,6 +4,10 @@ import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
 import type { Notification } from "@/domain/notification/notification";
 import { fetchNotifications } from "@/infrastructure/api/notification";
+import {
+  authorizeFollowRequest,
+  rejectFollowRequest,
+} from "@/infrastructure/api/relationship";
 import { AppShell } from "@/ui/components/AppShell";
 import { NotificationCard } from "@/ui/components/NotificationCard";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
@@ -112,13 +116,34 @@ export const NotificationsPage = () => {
     }
   };
 
+  const handleFollowRequest = async (accountId: string, accept: boolean) => {
+    const result = accept
+      ? await authorizeFollowRequest(accountId)
+      : await rejectFollowRequest(accountId);
+    if (result.isErr()) {
+      setError(mastodonErrorMessage(result.error));
+      return;
+    }
+    setNotifications((current) =>
+      current.filter(
+        (notification) =>
+          !(notification.kind === "FollowRequest" && notification.account.id === accountId),
+      ),
+    );
+  };
+
   return (
     <AppShell title="通知">
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">
         {notifications.map((notification) => (
-          <NotificationCard key={notification.id} notification={notification} />
+          <NotificationCard
+            key={notification.id}
+            notification={notification}
+            onAuthorizeFollow={(accountId) => void handleFollowRequest(accountId, true)}
+            onRejectFollow={(accountId) => void handleFollowRequest(accountId, false)}
+          />
         ))}
       </div>
       {!loading && notifications.length === 0 ? (
