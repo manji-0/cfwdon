@@ -166,4 +166,23 @@ describe("parseStatus high-priority fields", () => {
       },
     });
   });
+
+  it("accepts quote:null and edited_at:null from Worker payloads", () => {
+    const result = parseStatus({
+      ...basePayload,
+      edited_at: null,
+      quote: null,
+      reblog: null,
+      card: null,
+      poll: null,
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    const body = Status.displayBody(result);
+    expect(body.quote).toBeNull();
+    expect(body.editedAt).toBeNull();
+    expect(body.pinned).toBe(false);
+  });
 });

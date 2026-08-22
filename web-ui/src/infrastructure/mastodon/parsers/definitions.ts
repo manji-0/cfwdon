@@ -108,10 +108,11 @@ export const mastodon = scope({
     "poll?": "PollApi | null",
     "pinned?": "boolean",
     "edited_at?": "string | null",
-    "quote?": {
-      state: "string",
-      "quoted_status?": "StatusPayloadApi | null",
-    },
+    "quote?": "StatusQuoteApi | null",
     "reblog?": "StatusPayloadApi | null",
+  },
+  StatusQuoteApi: {
+    state: "string",
+    "quoted_status?": "StatusPayloadApi | null",
   },
 });
