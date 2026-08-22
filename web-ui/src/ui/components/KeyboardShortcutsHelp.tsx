@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isHelpShortcut, modKeyLabel } from "@/ui/lib/keyboard";
+import { isHelpShortcut, isTypingTarget, modKeyLabel } from "@/ui/lib/keyboard";
 
 const SHORTCUTS = [
   { keys: `${modKeyLabel()} + Enter`, description: "投稿 / 返信を送信" },
@@ -14,7 +14,7 @@ export const KeyboardShortcutsHelp = () => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isHelpShortcut(event)) {
+      if (isHelpShortcut(event) && !isTypingTarget(event.target)) {
         event.preventDefault();
         setOpen((current) => !current);
         return;
