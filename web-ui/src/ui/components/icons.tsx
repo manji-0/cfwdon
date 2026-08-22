@@ -74,3 +74,10 @@ export const IconMessage = (props: IconProps) => (
     <path d="m4 6 8 7 8-7" />
   </svg>
 );
+
+export const IconCompass = (props: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m14.8 9.2-1.6 4.6-4.6 1.6 1.6-4.6 4.6-1.6Z" />
+  </svg>
+);

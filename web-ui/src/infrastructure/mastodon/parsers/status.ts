@@ -61,6 +61,12 @@ type StatusPayload = {
     own_votes?: number[];
     options: Array<{ title: string; votes_count?: number | null }>;
   } | null;
+  pinned?: boolean;
+  edited_at?: string | null;
+  quote?: {
+    state: string;
+    quoted_status?: StatusPayload | null;
+  } | null;
   reblog?: StatusPayload | null;
 };
 
@@ -135,6 +141,21 @@ const toOriginal = (payload: StatusPayload): OriginalStatus => {
     mediaAttachments: (source.media_attachments ?? []).map(toMediaAttachment),
     card: source.card ? toPreviewCard(source.card) : null,
     poll: source.poll ? toPoll(source.poll) : null,
+    pinned: source.pinned ?? false,
+    editedAt: source.edited_at ?? null,
+    quote: source.quote
+      ? {
+          state: source.quote.state,
+          quotedStatus: source.quote.quoted_status
+            ? {
+                id: source.quote.quoted_status.id,
+                content: source.quote.quoted_status.content,
+                spoilerText: source.quote.quoted_status.spoiler_text ?? "",
+                account: toAccountRef(source.quote.quoted_status.account),
+              }
+            : null,
+        }
+      : null,
   });
 };
 

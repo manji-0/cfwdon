@@ -26,6 +26,41 @@ import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 
+const PROFILE_TABS = [
+  { id: "posts", label: "投稿" },
+  { id: "replies", label: "返信" },
+  { id: "media", label: "メディア" },
+  { id: "pinned", label: "固定" },
+] as const;
+
+type ProfileTab = (typeof PROFILE_TABS)[number]["id"];
+
+const statusesQueryForTab = (tab: ProfileTab) => {
+  switch (tab) {
+    case "posts":
+      return { excludeReplies: true };
+    case "replies":
+      return {};
+    case "media":
+      return { onlyMedia: true };
+    case "pinned":
+      return { pinned: true };
+  }
+};
+
+const emptyMessageForTab = (tab: ProfileTab): string => {
+  switch (tab) {
+    case "posts":
+      return "まだ投稿がありません。";
+    case "replies":
+      return "返信はまだありません。";
+    case "media":
+      return "メディア付きの投稿はまだありません。";
+    case "pinned":
+      return "ピン留めされた投稿はありません。";
+  }
+};
+
 export const ProfilePage = () => {
   const { accountId: routeAccountId } = useParams();
   const { session } = useSession();
@@ -47,6 +82,7 @@ export const ProfilePage = () => {
   const [error, setError] = useState("");
   const [relationship, setRelationship] = useState<Relationship | null>(null);
   const [savingRelationship, setSavingRelationship] = useState(false);
+  const [tab, setTab] = useState<ProfileTab>("posts");
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const profileRef = useRef(profile);
   const statusesRef = useRef(statuses);
@@ -74,6 +110,7 @@ export const ProfilePage = () => {
     setEditing(false);
     setError("");
     setRelationship(null);
+    setTab("posts");
 
     let active = true;
     switch (ViewReadiness.forProfile(snapshot, Date.now()).kind) {
@@ -142,6 +179,28 @@ export const ProfilePage = () => {
     };
   }, [accountId, isSelf]);
 
+  useEffect(() => {
+    if (!accountId || tab === "posts") {
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    void fetchAccountStatuses(accountId, statusesQueryForTab(tab)).then((result) => {
+      if (!active) {
+        return;
+      }
+      setLoading(false);
+      if (result.isErr()) {
+        setError(mastodonErrorMessage(result.error));
+        return;
+      }
+      setStatuses(result.value);
+    });
+    return () => {
+      active = false;
+    };
+  }, [accountId, tab]);
+
   const handleLoadMore = async () => {
     if (!accountId) {
       return;
@@ -153,7 +212,7 @@ export const ProfilePage = () => {
     setLoadingMore(true);
     const result = await fetchAccountStatuses(accountId, {
       maxId: last.id,
-      excludeReplies: true,
+      ...statusesQueryForTab(tab),
     });
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
@@ -334,11 +393,39 @@ export const ProfilePage = () => {
           </div>
         </header>
       ) : null}
+      <nav className="timeline-tabs" aria-label="プロフィール投稿">
+        {PROFILE_TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={tab === item.id ? "is-active" : undefined}
+            onClick={() => {
+              if (item.id === tab) {
+                return;
+              }
+              setTab(item.id);
+              if (item.id === "posts" && accountId) {
+                const snapshot = cache.getProfile(accountId);
+                if (snapshot.kind === "Present") {
+                  setStatuses(snapshot.value.statuses);
+                }
+              }
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
       <div className="timeline">
         {statuses.map((status) => (
           <StatusCard key={status.id} status={status} {...actions} />
         ))}
       </div>
+      {!loading && statuses.length === 0 ? (
+        <div className="app-card">
+          <p className="app-muted">{emptyMessageForTab(tab)}</p>
+        </div>
+      ) : null}
       {statuses.length > 0 ? (
         <div className="timeline-footer">
           <button

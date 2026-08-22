@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
+import type { QuotedStatusPreview } from "@/domain/status/quote";
 import { Status } from "@/domain/status/status";
-import { createStatus, fetchHomeTimeline } from "@/infrastructure/api/status";
+import {
+  createStatus,
+  fetchHomeTimeline,
+  fetchStatus,
+  fetchStatusSource,
+  updateStatus,
+} from "@/infrastructure/api/status";
 import { Visibility } from "@/domain/status/visibility";
 import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
@@ -20,6 +28,9 @@ import { useViewCache } from "@/ui/context/ViewCacheContext";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const quoteId = searchParams.get("quote");
+  const editId = searchParams.get("edit");
   const { session } = useSession();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const cache = useViewCache();
@@ -30,12 +41,57 @@ export const HomePage = () => {
   const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [quotedPreview, setQuotedPreview] = useState<QuotedStatusPreview | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editSpoiler, setEditSpoiler] = useState("");
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const statusesRef = useRef(statuses);
   const scrollYRef = useWindowScrollY();
   statusesRef.current = statuses;
 
   useStreamingTimeline(!loading, setStatuses);
+
+  useEffect(() => {
+    if (!quoteId) {
+      setQuotedPreview(null);
+      return;
+    }
+    let active = true;
+    void fetchStatus(quoteId).then((result) => {
+      if (!active || result.isErr()) {
+        return;
+      }
+      const body = Status.displayBody(result.value);
+      setQuotedPreview({
+        id: body.id,
+        content: body.content,
+        spoilerText: body.spoilerText,
+        account: body.account,
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [quoteId]);
+
+  useEffect(() => {
+    if (!editId) {
+      setEditText("");
+      setEditSpoiler("");
+      return;
+    }
+    let active = true;
+    void fetchStatusSource(editId).then((result) => {
+      if (!active || result.isErr()) {
+        return;
+      }
+      setEditText(result.value.text);
+      setEditSpoiler(result.value.spoilerText);
+    });
+    return () => {
+      active = false;
+    };
+  }, [editId]);
 
   const persist = useCallback(
     (nextStatuses: ReadonlyArray<Status>, fetchedAt: number) => {
@@ -133,19 +189,30 @@ export const HomePage = () => {
   };
 
   const handlePublish = async (input: ComposerSubmitInput) => {
-    const result = await createStatus({
-      text: input.text,
-      visibility: Visibility.toApi(input.visibility),
-      spoilerText: input.spoilerText,
-      sensitive: input.sensitive,
-      mediaIds: input.mediaIds,
-      poll: input.poll,
-    });
+    const result = editId
+      ? await updateStatus(editId, {
+          text: input.text,
+          spoilerText: input.spoilerText,
+          sensitive: input.sensitive,
+          mediaIds: input.mediaIds,
+        })
+      : await createStatus({
+          text: input.text,
+          visibility: Visibility.toApi(input.visibility),
+          spoilerText: input.spoilerText,
+          sensitive: input.sensitive,
+          mediaIds: input.mediaIds,
+          poll: input.poll,
+          quotedStatusId: quoteId ?? input.quotedStatusId,
+        });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
+    setSearchParams({});
     setStatuses((current) => {
-      const next = Status.prependUnique(current, result.value);
+      const next = editId
+        ? Status.replaceInList(current, result.value)
+        : Status.prependUnique(current, result.value);
       persist(next, fetchedAtRef.current);
       return next;
     });
@@ -187,7 +254,17 @@ export const HomePage = () => {
       }
     >
       <TimelineTabs />
-      <Composer ref={composerRef} onSubmit={handlePublish} />
+      <Composer
+        key={editId ?? quoteId ?? "compose"}
+        ref={composerRef}
+        submitLabel={editId ? "保存" : "投稿"}
+        initialText={editText}
+        initialSpoilerText={editSpoiler}
+        quotedStatusId={quoteId ?? undefined}
+        quotedPreview={quotedPreview}
+        onCancel={quoteId || editId ? () => setSearchParams({}) : undefined}
+        onSubmit={handlePublish}
+      />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">

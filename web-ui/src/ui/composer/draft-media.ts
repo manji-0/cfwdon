@@ -14,6 +14,7 @@ export type ComposerMediaReady = Readonly<{
   file: File;
   previewUrl: string;
   mediaId: string;
+  description: string;
 }>;
 
 export type ComposerMediaFailed = Readonly<{
@@ -44,12 +45,17 @@ export const ComposerMedia = {
     previewUrl,
   }),
 
-  markReady: (item: ComposerMediaUploading, mediaId: string): ComposerMediaReady => ({
+  markReady: (
+    item: ComposerMediaUploading,
+    mediaId: string,
+    description = "",
+  ): ComposerMediaReady => ({
     kind: "Ready",
     localId: item.localId,
     file: item.file,
     previewUrl: item.previewUrl,
     mediaId,
+    description,
   }),
 
   markFailed: (item: ComposerMediaUploading, message: string): ComposerMediaFailed => ({
@@ -98,4 +104,13 @@ export const ComposerMedia = {
 
   member: (items: ReadonlyArray<ComposerMediaItem>, localId: string): ComposerMediaItem | undefined =>
     items.find((item) => item.localId === localId),
+
+  setDescription: (
+    items: ReadonlyArray<ComposerMediaItem>,
+    localId: string,
+    description: string,
+  ): ReadonlyArray<ComposerMediaItem> =>
+    items.map((item) =>
+      item.localId === localId && item.kind === "Ready" ? { ...item, description } : item,
+    ),
 } as const;

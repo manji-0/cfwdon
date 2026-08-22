@@ -12,9 +12,11 @@ import {
   bookmarkStatus,
   deleteStatus,
   favouriteStatus,
+  pinStatus,
   reblogStatus,
   unbookmarkStatus,
   unfavouriteStatus,
+  unpinStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
 
@@ -29,6 +31,10 @@ export type StatusActionHandlers = Readonly<{
   onBlock: (status: OriginalStatus) => void;
   onReport: (status: OriginalStatus, comment: string) => void;
   onVotePoll: (status: OriginalStatus, choices: ReadonlyArray<number>) => void;
+  onPin: (status: OriginalStatus) => void;
+  onQuote: (status: OriginalStatus) => void;
+  onEdit: (status: OriginalStatus) => void;
+  onHistory: (status: OriginalStatus) => void;
 }>;
 
 export const useStatusActions = (options: {
@@ -160,6 +166,18 @@ export const useStatusActions = (options: {
     [onError, onReplace],
   );
 
+  const handlePin = useCallback(
+    async (status: OriginalStatus) => {
+      const result = status.pinned ? await unpinStatus(status.id) : await pinStatus(status.id);
+      if (result.isErr()) {
+        onError(mastodonErrorMessage(result.error));
+        return;
+      }
+      onReplace(result.value);
+    },
+    [onError, onReplace],
+  );
+
   return {
     selfAccountId,
     onFavourite: (status) => void handleFavourite(status),
@@ -171,5 +189,9 @@ export const useStatusActions = (options: {
     onBlock: (status) => void handleBlock(status),
     onReport: (status, comment) => void handleReport(status, comment),
     onVotePoll: (status, choices) => void handleVotePoll(status, choices),
+    onPin: (status) => void handlePin(status),
+    onQuote: (status) => navigate(`/?quote=${encodeURIComponent(status.id)}`),
+    onEdit: (status) => navigate(`/?edit=${encodeURIComponent(status.id)}`),
+    onHistory: (status) => navigate(`/status/${status.id}/history`),
   };
 };

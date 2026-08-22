@@ -2,6 +2,7 @@ export type AppRoute =
   | Readonly<{ kind: "Home" }>
   | Readonly<{ kind: "PublicTimeline"; local: boolean }>
   | Readonly<{ kind: "Tag"; name: string }>
+  | Readonly<{ kind: "Explore" }>
   | Readonly<{ kind: "Notifications" }>
   | Readonly<{ kind: "Search" }>
   | Readonly<{ kind: "Profile" }>
@@ -17,6 +18,7 @@ export const AppRoute = {
   home: (): AppRoute => ({ kind: "Home" }),
   publicTimeline: (local = false): AppRoute => ({ kind: "PublicTimeline", local }),
   tag: (name: string): AppRoute => ({ kind: "Tag", name }),
+  explore: (): AppRoute => ({ kind: "Explore" }),
   notifications: (): AppRoute => ({ kind: "Notifications" }),
   search: (): AppRoute => ({ kind: "Search" }),
   profile: (): AppRoute => ({ kind: "Profile" }),
@@ -41,6 +43,8 @@ export const AppRoute = {
         return AppRoute.publicTimeline(rest[0] === "local");
       case "tags":
         return rest[0] ? AppRoute.tag(decodeURIComponent(rest[0])) : AppRoute.home();
+      case "explore":
+        return AppRoute.explore();
       case "notifications":
         return AppRoute.notifications();
       case "search":
@@ -80,6 +84,8 @@ export const AppRoute = {
         return route.local ? "/public/local" : "/public";
       case "Tag":
         return `/tags/${encodeURIComponent(route.name)}`;
+      case "Explore":
+        return "/explore";
       case "Notifications":
         return "/notifications";
       case "Search":
@@ -111,6 +117,8 @@ export const AppRoute = {
         return route.local ? "ローカル" : "連合";
       case "Tag":
         return `#${route.name}`;
+      case "Explore":
+        return "探索";
       case "Notifications":
         return "通知";
       case "Search":

@@ -14,5 +14,8 @@ export const TimelineTabs = () => (
     <NavLink to="/public" end className={({ isActive }) => (isActive ? "is-active" : undefined)}>
       連合
     </NavLink>
+    <NavLink to="/explore" className={({ isActive }) => (isActive ? "is-active" : undefined)}>
+      探索
+    </NavLink>
   </nav>
 );

@@ -6,11 +6,13 @@ export const parseUploadedMedia = type({
   type: "string",
   url: "string",
   "preview_url?": "string",
+  "description?": "string | null",
 }).pipe(
   (value): UploadedMedia => ({
     kind: MediaAttachment.fromApi(value.type),
     id: value.id,
     url: value.url,
     previewUrl: value.preview_url ?? value.url,
+    description: value.description ?? null,
   }),
 );

@@ -14,6 +14,8 @@ export type AccountStatusesQuery = Readonly<{
   maxId?: string;
   limit?: number;
   excludeReplies?: boolean;
+  onlyMedia?: boolean;
+  pinned?: boolean;
 }>;
 
 export type AccountCollectionQuery = Readonly<{
@@ -39,6 +41,12 @@ export const fetchAccountStatuses = (
   }
   if (query.excludeReplies) {
     params.set("exclude_replies", "true");
+  }
+  if (query.onlyMedia) {
+    params.set("only_media", "true");
+  }
+  if (query.pinned) {
+    params.set("pinned", "true");
   }
   return mastodonFetchJson(
     `/api/v1/accounts/${encodeURIComponent(accountId)}/statuses?${params}`,

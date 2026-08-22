@@ -9,12 +9,14 @@ type NotificationCardProps = Readonly<{
   notification: Notification;
   onAuthorizeFollow?: (accountId: string) => void;
   onRejectFollow?: (accountId: string) => void;
+  onDismiss?: (notificationId: string) => void;
 }>;
 
 export const NotificationCard = ({
   notification,
   onAuthorizeFollow,
   onRejectFollow,
+  onDismiss,
 }: NotificationCardProps) => {
   const navigate = useNavigate();
   const status = Notification.status(notification);
@@ -34,6 +36,15 @@ export const NotificationCard = ({
             </time>
           </div>
         </Link>
+        {onDismiss ? (
+          <button
+            type="button"
+            className="app-button app-button-secondary"
+            onClick={() => onDismiss(notification.id)}
+          >
+            閉じる
+          </button>
+        ) : null}
       </header>
       {isFollowRequest ? (
         <div className="notification-follow-actions">

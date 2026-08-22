@@ -4,6 +4,7 @@ import {
   IconBell,
   IconBookmark,
   IconBrand,
+  IconCompass,
   IconGear,
   IconHeart,
   IconHome,
@@ -13,6 +14,7 @@ import {
   IconUser,
 } from "@/ui/components/icons";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
+import { useUnreadNotifications } from "@/ui/context/UnreadNotificationsContext";
 
 const PRIMARY_NAV_ITEMS = [
   { route: AppRoute.home(), icon: IconHome, end: true },
@@ -23,6 +25,7 @@ const PRIMARY_NAV_ITEMS = [
 ] as const;
 
 const LIBRARY_NAV_ITEMS = [
+  { route: AppRoute.explore(), icon: IconCompass },
   { route: AppRoute.bookmarks(), icon: IconBookmark },
   { route: AppRoute.favourites(), icon: IconHeart },
   { route: AppRoute.lists(), icon: IconList },
@@ -31,6 +34,7 @@ const LIBRARY_NAV_ITEMS = [
 
 export const SidebarNav = () => {
   const { unreadCount } = useUnreadMessages();
+  const { unreadCount: unreadNotifications } = useUnreadNotifications();
 
   return (
     <nav className="app-nav" aria-label="メイン">
@@ -44,17 +48,30 @@ export const SidebarNav = () => {
           <IconBrand />
         </span>
       </NavLink>
-      {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => (
-        <NavLink
-          key={route.kind}
-          to={AppRoute.toPath(route)}
-          end={end}
-          className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
-          aria-label={AppRoute.label(route)}
-        >
-          <Icon aria-hidden="true" />
-        </NavLink>
-      ))}
+      {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => {
+        const isNotifications = route.kind === "Notifications";
+        const label = AppRoute.label(route);
+        return (
+          <NavLink
+            key={route.kind}
+            to={AppRoute.toPath(route)}
+            end={end}
+            className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
+            aria-label={
+              isNotifications && unreadNotifications > 0
+                ? `${label}（未読 ${unreadNotifications}）`
+                : label
+            }
+          >
+            <Icon aria-hidden="true" />
+            {isNotifications && unreadNotifications > 0 ? (
+              <span className="nav-unread-badge" aria-hidden="true">
+                {unreadNotifications > 99 ? "99+" : unreadNotifications}
+              </span>
+            ) : null}
+          </NavLink>
+        );
+      })}
       <div className="app-nav-library" aria-label="ライブラリ">
         {LIBRARY_NAV_ITEMS.map(({ route, icon: Icon }) => {
           const isMessages = route.kind === "Messages";
@@ -82,19 +99,35 @@ export const SidebarNav = () => {
   );
 };
 
-export const BottomNav = () => (
+export const BottomNav = () => {
+  const { unreadCount: unreadNotifications } = useUnreadNotifications();
+  return (
   <nav className="app-bottom-nav" aria-label="モバイルナビ">
-    {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => (
+    {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => {
+      const isNotifications = route.kind === "Notifications";
+      const label = AppRoute.label(route);
+      return (
       <NavLink
         key={route.kind}
         to={AppRoute.toPath(route)}
         end={end}
         className={({ isActive }) => (isActive ? "is-active" : undefined)}
-        aria-label={AppRoute.label(route)}
+        aria-label={
+          isNotifications && unreadNotifications > 0
+            ? `${label}（未読 ${unreadNotifications}）`
+            : label
+        }
       >
         <Icon aria-hidden="true" />
-        <span>{AppRoute.label(route)}</span>
+        <span>{label}</span>
+        {isNotifications && unreadNotifications > 0 ? (
+          <span className="nav-unread-badge" aria-hidden="true">
+            {unreadNotifications > 99 ? "99+" : unreadNotifications}
+          </span>
+        ) : null}
       </NavLink>
-    ))}
+      );
+    })}
   </nav>
-);
+  );
+};

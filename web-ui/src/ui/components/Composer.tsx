@@ -1,9 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import type { CustomEmoji } from "@/domain/emoji/custom-emoji";
 import { PollDraft } from "@/domain/status/poll";
+import type { QuotedStatusPreview } from "@/domain/status/quote";
 import type { Visibility } from "@/domain/status/visibility";
 import { Visibility as VisibilityModel } from "@/domain/status/visibility";
-import { uploadMedia } from "@/infrastructure/api/media";
+import { fetchCustomEmojis } from "@/infrastructure/api/emojis";
+import { updateMediaDescription, uploadMedia } from "@/infrastructure/api/media";
 import { ComposerMediaPicker } from "@/ui/components/ComposerMediaPicker";
 import { ComposerMedia, type ComposerMediaItem } from "@/ui/composer/draft-media";
 import { useSession } from "@/ui/context/SessionContext";
@@ -30,6 +33,7 @@ export type ComposerSubmitInput = Readonly<{
   spoilerText: string;
   sensitive: boolean;
   inReplyToId?: string;
+  quotedStatusId?: string;
   mediaIds: ReadonlyArray<string>;
   poll: PollDraft | null;
 }>;
@@ -38,10 +42,15 @@ type ComposerProps = Readonly<{
   placeholder?: string;
   submitLabel?: string;
   initialVisibility?: Visibility;
+  initialText?: string;
+  initialSpoilerText?: string;
   lockVisibility?: boolean;
   inReplyToId?: string;
+  quotedStatusId?: string;
+  quotedPreview?: QuotedStatusPreview | null;
   allowPoll?: boolean;
   disabled?: boolean;
+  onCancel?: () => void;
   onSubmit: (input: ComposerSubmitInput) => Promise<void>;
 }>;
 
@@ -54,10 +63,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     placeholder = "いまどうしてる？",
     submitLabel = "投稿",
     initialVisibility = VisibilityModel.public(),
+    initialText = "",
+    initialSpoilerText = "",
     lockVisibility = false,
     inReplyToId,
+    quotedStatusId,
+    quotedPreview = null,
     allowPoll = true,
     disabled = false,
+    onCancel,
     onSubmit,
   },
   ref,
@@ -65,15 +79,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const { session } = useSession();
   const account = session.kind === "Authenticated" ? session.account : null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [visibility, setVisibility] = useState<Visibility>(initialVisibility);
-  const [spoilerText, setSpoilerText] = useState("");
-  const [showCw, setShowCw] = useState(false);
+  const [spoilerText, setSpoilerText] = useState(initialSpoilerText);
+  const [showCw, setShowCw] = useState(initialSpoilerText.length > 0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [mediaAttachments, setMediaAttachments] = useState<ReadonlyArray<ComposerMediaItem>>([]);
   const [pollEnabled, setPollEnabled] = useState(false);
   const [poll, setPoll] = useState(PollDraft.empty);
+  const [emojis, setEmojis] = useState<ReadonlyArray<CustomEmoji>>([]);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const mediaAttachmentsRef = useRef(mediaAttachments);
   mediaAttachmentsRef.current = mediaAttachments;
 
@@ -86,6 +102,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }),
     [],
   );
+
+  useEffect(() => {
+    setText(initialText);
+    setSpoilerText(initialSpoilerText);
+    setShowCw(initialSpoilerText.length > 0);
+  }, [initialText, initialSpoilerText]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchCustomEmojis().then((result) => {
+      if (active && result.isOk()) {
+        setEmojis(result.value.filter((emoji) => emoji.visibleInPicker));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(
     () => () => {
@@ -140,6 +174,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
   };
 
+  const handleDescriptionChange = (localId: string, description: string) => {
+    setMediaAttachments((current) => ComposerMedia.setDescription(current, localId, description));
+  };
+
+  const handleDescriptionBlur = (localId: string) => {
+    const item = ComposerMedia.member(mediaAttachments, localId);
+    if (!item || item.kind !== "Ready") {
+      return;
+    }
+    void updateMediaDescription(item.mediaId, item.description).then((result) => {
+      if (result.isErr()) {
+        setError(mastodonErrorMessage(result.error));
+      }
+    });
+  };
+
+  const insertEmoji = (shortcode: string) => {
+    const insertion = `:${shortcode}:`;
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setText((current) => `${current}${insertion}`);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    setText((current) => `${current.slice(0, start)}${insertion}${current.slice(end)}`);
+    requestAnimationFrame(() => {
+      const next = start + insertion.length;
+      textarea.focus();
+      textarea.setSelectionRange(next, next);
+    });
+    setEmojiOpen(false);
+  };
+
   const clearMediaAttachments = () => {
     setMediaAttachments((current) => {
       for (const attachment of current) {
@@ -162,6 +230,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         spoilerText: showCw ? spoilerText.trim() : "",
         sensitive: showCw && spoilerText.trim().length > 0,
         inReplyToId,
+        quotedStatusId,
         mediaIds: pollEnabled ? [] : readyMediaIds,
         poll: pollEnabled && PollDraft.isReady(poll) ? { ...poll, options: PollDraft.filledOptions(poll) } : null,
       });
@@ -170,6 +239,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setShowCw(false);
       setPollEnabled(false);
       setPoll(PollDraft.empty());
+      setEmojiOpen(false);
       clearMediaAttachments();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "投稿に失敗しました");
@@ -200,6 +270,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           />
         ) : null}
         <div className="composer-fields">
+          {quotedPreview ? (
+            <div className="composer-quote-preview">
+              <p className="app-muted">引用: @{quotedPreview.account.acct}</p>
+              <p>{quotedPreview.spoilerText || quotedPreview.content.replace(/<[^>]+>/g, "")}</p>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={text}
@@ -213,6 +289,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             disabled={disabled || submitting || pollEnabled}
             onSelectFiles={handleSelectFiles}
             onRemove={handleRemoveMedia}
+            onDescriptionChange={handleDescriptionChange}
+            onDescriptionBlur={handleDescriptionBlur}
           />
           {pollEnabled ? (
             <div className="composer-poll">
@@ -277,6 +355,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </label>
             </div>
           ) : null}
+          {emojiOpen && emojis.length > 0 ? (
+            <div className="composer-emoji-picker" role="listbox" aria-label="カスタム絵文字">
+              {emojis.map((emoji) => (
+                <button
+                  key={emoji.shortcode}
+                  type="button"
+                  title={`:${emoji.shortcode}:`}
+                  onClick={() => insertEmoji(emoji.shortcode)}
+                >
+                  <img src={emoji.url} alt={emoji.shortcode} />
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="composer-toolbar">
             {lockVisibility ? null : (
               <label className="composer-visibility">
@@ -319,9 +411,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 アンケート
               </label>
             ) : null}
+            {emojis.length > 0 ? (
+              <button
+                type="button"
+                className="app-button app-button-secondary"
+                onClick={() => setEmojiOpen((current) => !current)}
+                disabled={disabled || submitting}
+              >
+                絵文字
+              </button>
+            ) : null}
             <span className="composer-shortcut-hint app-muted" aria-hidden="true">
               {modKeyLabel()}↵ で{submitLabel}
             </span>
+            {onCancel ? (
+              <button
+                type="button"
+                className="app-button app-button-secondary"
+                onClick={onCancel}
+                disabled={submitting}
+              >
+                キャンセル
+              </button>
+            ) : null}
             <button
               type="button"
               className="app-button"

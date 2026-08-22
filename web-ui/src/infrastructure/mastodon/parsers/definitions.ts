@@ -106,6 +106,12 @@ export const mastodon = scope({
     "media_attachments?": "MediaAttachmentApi[]",
     "card?": "PreviewCardApi | null",
     "poll?": "PollApi | null",
+    "pinned?": "boolean",
+    "edited_at?": "string | null",
+    "quote?": {
+      state: "string",
+      "quoted_status?": "StatusPayloadApi | null",
+    },
     "reblog?": "StatusPayloadApi | null",
   },
 });

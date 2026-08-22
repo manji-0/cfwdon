@@ -3,6 +3,7 @@ import type { MediaAttachment } from "@/domain/media/attachment";
 import { assertNever } from "@/domain/never";
 import type { Poll } from "@/domain/status/poll";
 import type { PreviewCard } from "@/domain/status/preview-card";
+import type { StatusQuote } from "@/domain/status/quote";
 import type { Visibility } from "@/domain/status/visibility";
 
 type StatusBody = Readonly<{
@@ -23,6 +24,9 @@ type StatusBody = Readonly<{
   mediaAttachments: ReadonlyArray<MediaAttachment>;
   card: PreviewCard | null;
   poll: Poll | null;
+  pinned: boolean;
+  editedAt: string | null;
+  quote: StatusQuote | null;
 }>;
 
 export type OriginalStatus = StatusBody &
@@ -46,10 +50,20 @@ export type StatusContext = Readonly<{
 }>;
 
 export const Status = {
-  original: (fields: Omit<StatusBody, "poll"> & { poll?: Poll | null }): OriginalStatus => ({
+  original: (
+    fields: Omit<StatusBody, "poll" | "pinned" | "editedAt" | "quote"> & {
+      poll?: Poll | null;
+      pinned?: boolean;
+      editedAt?: string | null;
+      quote?: StatusQuote | null;
+    },
+  ): OriginalStatus => ({
     kind: "Original",
     ...fields,
     poll: fields.poll ?? null,
+    pinned: fields.pinned ?? false,
+    editedAt: fields.editedAt ?? null,
+    quote: fields.quote ?? null,
   }),
 
   boost: (fields: Readonly<{

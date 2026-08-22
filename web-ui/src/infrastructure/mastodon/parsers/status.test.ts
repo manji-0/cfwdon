@@ -127,3 +127,43 @@ describe("parseStatus poll", () => {
     });
   });
 });
+
+describe("parseStatus high-priority fields", () => {
+  it("maps pin, edit timestamp, and nested quotes", () => {
+    const result = parseStatus({
+      ...basePayload,
+      pinned: true,
+      edited_at: "2026-08-22T01:00:00.000Z",
+      quote: {
+        state: "accepted",
+        quoted_status: {
+          ...basePayload,
+          id: "quoted-1",
+          content: "<p>quoted</p>",
+        },
+      },
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    const body = Status.displayBody(result);
+    expect(body.pinned).toBe(true);
+    expect(body.editedAt).toBe("2026-08-22T01:00:00.000Z");
+    expect(body.quote).toEqual({
+      state: "accepted",
+      quotedStatus: {
+        id: "quoted-1",
+        content: "<p>quoted</p>",
+        spoilerText: "",
+        account: {
+          id: "10",
+          username: "alice",
+          acct: "alice",
+          displayName: "Alice",
+          avatar: "https://example.test/a.png",
+        },
+      },
+    });
+  });
+});

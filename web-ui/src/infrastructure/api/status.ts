@@ -1,13 +1,22 @@
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { PollDraft } from "@/domain/status/poll";
+import type { StatusEdit } from "@/domain/status/edit";
+import type { StatusSource } from "@/domain/status/source";
 import type { Status, StatusContext } from "@/domain/status/status";
+import type { StatusTranslation } from "@/domain/status/translation";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
   mastodonPostJson,
+  mastodonPutJson,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
+import {
+  parseStatusEditList,
+  parseStatusSource,
+  parseStatusTranslation,
+} from "@/infrastructure/mastodon/parsers/status-extra";
 import {
   parseStatus,
   parseStatusContext,
@@ -73,6 +82,7 @@ export type CreateStatusInput = Readonly<{
   spoilerText?: string;
   sensitive?: boolean;
   inReplyToId?: string;
+  quotedStatusId?: string;
   mediaIds?: ReadonlyArray<string>;
   poll?: PollDraft | null;
 }>;
@@ -86,6 +96,7 @@ export const createStatus = (
     spoiler_text: input.spoilerText ?? "",
     sensitive: input.sensitive ?? false,
     in_reply_to_id: input.inReplyToId,
+    quoted_status_id: input.quotedStatusId,
   };
   if (input.mediaIds && input.mediaIds.length > 0) {
     body.media_ids = input.mediaIds;
@@ -145,4 +156,59 @@ export const bookmarkStatus = (statusId: string): ResultAsync<Status, MastodonFe
 export const unbookmarkStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
   mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unbookmark`, {}).andThen(
     mapStatusResponse,
+  );
+
+export type UpdateStatusInput = Readonly<{
+  text: string;
+  spoilerText?: string;
+  sensitive?: boolean;
+  mediaIds?: ReadonlyArray<string>;
+}>;
+
+export const updateStatus = (
+  statusId: string,
+  input: UpdateStatusInput,
+): ResultAsync<Status, MastodonFetchError> => {
+  const body: Record<string, unknown> = {
+    status: input.text,
+    spoiler_text: input.spoilerText ?? "",
+    sensitive: input.sensitive ?? false,
+  };
+  if (input.mediaIds && input.mediaIds.length > 0) {
+    body.media_ids = input.mediaIds;
+  }
+  return mastodonPutJson(`/api/v1/statuses/${encodeURIComponent(statusId)}`, body).andThen(
+    mapStatusResponse,
+  );
+};
+
+export const fetchStatusSource = (
+  statusId: string,
+): ResultAsync<StatusSource, MastodonFetchError> =>
+  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/source`).andThen((raw) =>
+    parseMastodon(parseStatusSource, raw),
+  );
+
+export const fetchStatusHistory = (
+  statusId: string,
+): ResultAsync<ReadonlyArray<StatusEdit>, MastodonFetchError> =>
+  mastodonFetchJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/history`).andThen((raw) =>
+    parseMastodon(parseStatusEditList, raw),
+  );
+
+export const pinStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/pin`, {}).andThen(
+    mapStatusResponse,
+  );
+
+export const unpinStatus = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unpin`, {}).andThen(
+    mapStatusResponse,
+  );
+
+export const translateStatus = (
+  statusId: string,
+): ResultAsync<StatusTranslation, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/translate`, {}).andThen(
+    (raw) => parseMastodon(parseStatusTranslation, raw),
   );

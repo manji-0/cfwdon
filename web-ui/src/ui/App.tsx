@@ -7,11 +7,13 @@ import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
+import { UnreadNotificationsProvider } from "@/ui/context/UnreadNotificationsContext";
 import { ViewCacheProvider } from "@/ui/context/ViewCacheContext";
 import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
   ConversationPage,
+  ExplorePage,
   FavouritesPage,
   ListsPage,
   MessagesPage,
@@ -21,6 +23,7 @@ import {
   PublicTimelinePage,
   SearchPage,
   SettingsPage,
+  StatusHistoryPage,
   TagTimelinePage,
   ThreadPage,
   AccountFollowersPage,
@@ -47,6 +50,7 @@ const AppRoutes = ({
       <ViewCacheProvider>
         <SelfProfilePreloader />
         <UnreadMessagesProvider>
+          <UnreadNotificationsProvider>
           <KeyboardShortcutsHelp />
           <Suspense fallback={<RouteFallback />}>
             <Routes>
@@ -54,6 +58,8 @@ const AppRoutes = ({
               <Route path="/public" element={<PublicTimelinePage />} />
               <Route path="/public/local" element={<PublicTimelinePage />} />
               <Route path="/tags/:tagName" element={<TagTimelinePage />} />
+              <Route path="/explore" element={<ExplorePage />} />
+              <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
               <Route path="/status/:statusId" element={<ThreadPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
@@ -71,6 +77,7 @@ const AppRoutes = ({
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
+          </UnreadNotificationsProvider>
         </UnreadMessagesProvider>
       </ViewCacheProvider>
     </SessionProvider>

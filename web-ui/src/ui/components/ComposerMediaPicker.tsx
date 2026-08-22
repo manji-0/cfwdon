@@ -7,6 +7,8 @@ type ComposerMediaPickerProps = Readonly<{
   disabled?: boolean;
   onSelectFiles: (files: ReadonlyArray<File>) => void;
   onRemove: (localId: string) => void;
+  onDescriptionChange?: (localId: string, description: string) => void;
+  onDescriptionBlur?: (localId: string) => void;
 }>;
 
 export const ComposerMediaPicker = ({
@@ -14,6 +16,8 @@ export const ComposerMediaPicker = ({
   disabled = false,
   onSelectFiles,
   onRemove,
+  onDescriptionChange,
+  onDescriptionBlur,
 }: ComposerMediaPickerProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const atLimit = attachments.length >= ComposerMedia.maxAttachments;
@@ -52,7 +56,7 @@ export const ComposerMediaPicker = ({
           {attachments.map((attachment) => (
             <li key={attachment.localId} className="composer-media-item">
               {attachment.file.type.startsWith("image/") ? (
-                <img src={attachment.previewUrl} alt="" />
+                <img src={attachment.previewUrl} alt={attachment.kind === "Ready" ? attachment.description : ""} />
               ) : (
                 <div className="composer-media-file">
                   <span>{attachment.file.name}</span>
@@ -65,6 +69,18 @@ export const ComposerMediaPicker = ({
                 ) : null}
                 {attachment.kind === "Failed" ? (
                   <span className="app-error">{attachment.message}</span>
+                ) : null}
+                {attachment.kind === "Ready" ? (
+                  <label className="composer-media-alt">
+                    <span className="app-muted">代替テキスト</span>
+                    <input
+                      value={attachment.description}
+                      onChange={(event) => onDescriptionChange?.(attachment.localId, event.target.value)}
+                      onBlur={() => onDescriptionBlur?.(attachment.localId)}
+                      placeholder="画像の説明"
+                      disabled={disabled}
+                    />
+                  </label>
                 ) : null}
                 <button
                   type="button"
