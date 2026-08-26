@@ -180,6 +180,8 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         return;
     }
 
+    reset_d1_request_metrics();
+    bind_d1_request_route("scheduled");
     // Same full env/secret load as fetch and queue so cron can decrypt account keys.
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
@@ -307,6 +309,8 @@ async fn queue(
 ) -> Result<()> {
     let message_count = batch.raw_iter().count();
     batch.ack_all();
+    reset_d1_request_metrics();
+    bind_d1_request_route("queue:outbox");
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
