@@ -30,6 +30,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             if should_apply_auth0_web_session_cookies(
                 response.status_code(),
                 response.headers().get("Upgrade")?.as_deref(),
+                request_context.upgrade(),
             ) {
                 apply_auth0_web_session_cookies(&mut response)?;
             }

@@ -1,7 +1,9 @@
 import type { AccountRef } from "@/domain/account/account";
 import type { MediaAttachment } from "@/domain/media/attachment";
 import { assertNever } from "@/domain/never";
+import type { Poll } from "@/domain/status/poll";
 import type { PreviewCard } from "@/domain/status/preview-card";
+import type { StatusQuote } from "@/domain/status/quote";
 import type { Visibility } from "@/domain/status/visibility";
 
 type StatusBody = Readonly<{
@@ -21,6 +23,10 @@ type StatusBody = Readonly<{
   account: AccountRef;
   mediaAttachments: ReadonlyArray<MediaAttachment>;
   card: PreviewCard | null;
+  poll: Poll | null;
+  pinned: boolean;
+  editedAt: string | null;
+  quote: StatusQuote | null;
 }>;
 
 export type OriginalStatus = StatusBody &
@@ -44,9 +50,20 @@ export type StatusContext = Readonly<{
 }>;
 
 export const Status = {
-  original: (fields: StatusBody): OriginalStatus => ({
+  original: (
+    fields: Omit<StatusBody, "poll" | "pinned" | "editedAt" | "quote"> & {
+      poll?: Poll | null;
+      pinned?: boolean;
+      editedAt?: string | null;
+      quote?: StatusQuote | null;
+    },
+  ): OriginalStatus => ({
     kind: "Original",
     ...fields,
+    poll: fields.poll ?? null,
+    pinned: fields.pinned ?? false,
+    editedAt: fields.editedAt ?? null,
+    quote: fields.quote ?? null,
   }),
 
   boost: (fields: Readonly<{
@@ -102,6 +119,11 @@ export const Status = {
 
   findByBodyId: (statuses: ReadonlyArray<Status>, statusId: string): Status | undefined =>
     statuses.find((item) => Status.displayBody(item).id === statusId),
+
+  withPoll: (status: Status, poll: Poll | null): Status => {
+    const body = Status.displayBody(status);
+    return Status.withBody(status, { ...body, poll });
+  },
 
   replaceInList: (statuses: ReadonlyArray<Status>, updated: Status): ReadonlyArray<Status> => {
     const nextBody = Status.displayBody(updated);

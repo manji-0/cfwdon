@@ -1,0 +1,96 @@
+import { describe, expect, it } from "vitest";
+import { isArkError } from "@/infrastructure/mastodon/parse";
+import { parseCustomEmojiList } from "@/infrastructure/mastodon/parsers/emoji";
+import { parseKeywordFilter } from "@/infrastructure/mastodon/parsers/filter";
+import {
+  parseStatusSource,
+  parseStatusTranslation,
+} from "@/infrastructure/mastodon/parsers/status-extra";
+import { parseFollowedTag } from "@/infrastructure/mastodon/parsers/tag";
+import { parseTrendLinkList } from "@/infrastructure/mastodon/parsers/trend-link";
+
+describe("high-priority Mastodon parsers", () => {
+  it("parses status source and translation", () => {
+    const source = parseStatusSource({
+      id: "1",
+      text: "hello",
+      spoiler_text: "cw",
+    });
+    expect(isArkError(source)).toBe(false);
+    if (!isArkError(source)) {
+      expect(source).toEqual({ id: "1", text: "hello", spoilerText: "cw" });
+    }
+
+    const translation = parseStatusTranslation({
+      content: "<p>こんにちは</p>",
+      spoiler_text: "",
+      detected_source_language: "en",
+      language: "ja",
+      provider: "cfwdon",
+    });
+    expect(isArkError(translation)).toBe(false);
+    if (!isArkError(translation)) {
+      expect(translation.content).toBe("<p>こんにちは</p>");
+      expect(translation.provider).toBe("cfwdon");
+    }
+  });
+
+  it("parses v2 keyword filters", () => {
+    const result = parseKeywordFilter({
+      id: "filter-1",
+      title: "spam",
+      context: ["home", "notifications"],
+      expires_at: null,
+      filter_action: "warn",
+      keywords: [{ id: "kw-1", keyword: "ads", whole_word: false }],
+      statuses: [],
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result.title).toBe("spam");
+    expect(result.keywords).toEqual([{ id: "kw-1", keyword: "ads", wholeWord: false }]);
+  });
+
+  it("parses custom emojis, followed tags, and trend links", () => {
+    const emojis = parseCustomEmojiList([
+      {
+        shortcode: "blobcat",
+        url: "https://example.test/blobcat.png",
+        static_url: "https://example.test/blobcat.png",
+        visible_in_picker: true,
+        category: "cats",
+      },
+    ]);
+    expect(isArkError(emojis)).toBe(false);
+    if (!isArkError(emojis)) {
+      expect(emojis[0]?.shortcode).toBe("blobcat");
+    }
+
+    const tag = parseFollowedTag({
+      id: "fediverse",
+      name: "fediverse",
+      url: "https://example.test/tags/fediverse",
+      following: true,
+      history: [{ day: "2026-08-22", uses: "3", accounts: "2" }],
+    });
+    expect(isArkError(tag)).toBe(false);
+    if (!isArkError(tag)) {
+      expect(tag.following).toBe(true);
+    }
+
+    const links = parseTrendLinkList([
+      {
+        url: "https://example.com/story",
+        title: "Story",
+        description: "A link",
+        image: null,
+      },
+    ]);
+    expect(isArkError(links)).toBe(false);
+    if (!isArkError(links)) {
+      expect(links[0]?.title).toBe("Story");
+    }
+  });
+});

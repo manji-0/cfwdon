@@ -87,3 +87,102 @@ describe("parseStatus boost", () => {
     expect(result.original.id).toBe("orig-1");
   });
 });
+
+describe("parseStatus poll", () => {
+  it("maps poll fields from the API payload", () => {
+    const result = parseStatus({
+      ...basePayload,
+      poll: {
+        id: "poll-1",
+        expires_at: "2026-08-23T00:00:00.000Z",
+        expired: false,
+        multiple: false,
+        votes_count: 4,
+        voters_count: 4,
+        voted: false,
+        own_votes: [],
+        options: [
+          { title: "yes", votes_count: 1 },
+          { title: "no", votes_count: 3 },
+        ],
+      },
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(Status.displayBody(result).poll).toEqual({
+      id: "poll-1",
+      expiresAt: "2026-08-23T00:00:00.000Z",
+      expired: false,
+      multiple: false,
+      votesCount: 4,
+      votersCount: 4,
+      voted: false,
+      ownVotes: [],
+      options: [
+        { title: "yes", votesCount: 1 },
+        { title: "no", votesCount: 3 },
+      ],
+    });
+  });
+});
+
+describe("parseStatus high-priority fields", () => {
+  it("maps pin, edit timestamp, and nested quotes", () => {
+    const result = parseStatus({
+      ...basePayload,
+      pinned: true,
+      edited_at: "2026-08-22T01:00:00.000Z",
+      quote: {
+        state: "accepted",
+        quoted_status: {
+          ...basePayload,
+          id: "quoted-1",
+          content: "<p>quoted</p>",
+        },
+      },
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    const body = Status.displayBody(result);
+    expect(body.pinned).toBe(true);
+    expect(body.editedAt).toBe("2026-08-22T01:00:00.000Z");
+    expect(body.quote).toEqual({
+      state: "accepted",
+      quotedStatus: {
+        id: "quoted-1",
+        content: "<p>quoted</p>",
+        spoilerText: "",
+        account: {
+          id: "10",
+          username: "alice",
+          acct: "alice",
+          displayName: "Alice",
+          avatar: "https://example.test/a.png",
+        },
+      },
+    });
+  });
+
+  it("accepts quote:null and edited_at:null from Worker payloads", () => {
+    const result = parseStatus({
+      ...basePayload,
+      edited_at: null,
+      quote: null,
+      reblog: null,
+      card: null,
+      poll: null,
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    const body = Status.displayBody(result);
+    expect(body.quote).toBeNull();
+    expect(body.editedAt).toBeNull();
+    expect(body.pinned).toBe(false);
+  });
+});

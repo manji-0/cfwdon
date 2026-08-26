@@ -13,7 +13,7 @@ use crate::federation::{
 use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, activitypub_key_id_matches_actor};
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 
 use crate::D1Database;
@@ -191,25 +191,61 @@ async fn resolve_remote_actor_for_signature(
     signature: &[u8],
 ) -> Result<RemoteActorProfile> {
     let actor_uri = actor_uri_from_key_id(key_id)?;
-    if let Some(remote_actor) =
-        find_cached_remote_actor_profile_by_actor_uri(db, &actor_uri).await?
-        && cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri)
+    let cached_actor = find_cached_remote_actor_profile_by_actor_uri(db, &actor_uri).await?;
+    if let Some(remote_actor) = cached_actor.as_ref()
+        && cached_actor_can_verify_key(remote_actor, key_id, &actor_uri)
         && verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature)
             .await
             .is_ok()
     {
-        return Ok(remote_actor);
+        return Ok(remote_actor.clone());
     }
 
-    let remote_actor = fetch_remote_actor_profile(&actor_uri).await?;
-    if !cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri) {
-        return Err(Error::RustError(
-            "Signature keyId did not match delivery actor".to_owned(),
-        ));
+    match fetch_remote_actor_profile(&actor_uri).await {
+        Ok(remote_actor) => {
+            if !cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri) {
+                return Err(Error::RustError(
+                    "Signature keyId did not match delivery actor".to_owned(),
+                ));
+            }
+            verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature)
+                .await?;
+            upsert_remote_actor(db, &remote_actor).await?;
+            Ok(remote_actor)
+        }
+        Err(error) if remote_actor_document_unavailable(&error) => {
+            if let Some(remote_actor) = cached_actor
+                && cached_actor_can_verify_key(&remote_actor, key_id, &actor_uri)
+                && verify_http_signature_bytes(
+                    &remote_actor.public_key_pem,
+                    signing_string,
+                    signature,
+                )
+                .await
+                .is_ok()
+            {
+                return Ok(remote_actor);
+            }
+            Err(error)
+        }
+        Err(error) => Err(error),
     }
-    verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature).await?;
-    upsert_remote_actor(db, &remote_actor).await?;
-    Ok(remote_actor)
+}
+
+fn cached_actor_can_verify_key(
+    remote_actor: &RemoteActorProfile,
+    key_id: &str,
+    actor_uri: &str,
+) -> bool {
+    cached_remote_actor_matches_key(remote_actor, key_id, actor_uri)
+        || activitypub_key_id_matches_actor(key_id, actor_uri, &remote_actor.actor_uri)
+}
+
+fn remote_actor_document_unavailable(error: &Error) -> bool {
+    let message = error.to_string();
+    ["HTTP 403", "HTTP 404", "HTTP 410"]
+        .iter()
+        .any(|status| message.contains(status))
 }
 
 fn actor_uri_from_key_id(key_id: &str) -> Result<String> {
@@ -265,5 +301,57 @@ mod tests {
             SIGNED_POST_HEADERS.join(" "),
             "(request-target) host date digest content-type"
         );
+    }
+
+    fn sample_remote_actor(public_key_id: &str) -> RemoteActorProfile {
+        RemoteActorProfile {
+            actor_uri: "https://remote.example/users/bob".to_owned(),
+            username: "bob".to_owned(),
+            domain: "remote.example".to_owned(),
+            locked: false,
+            bot: false,
+            discoverable: true,
+            indexable: true,
+            inbox_uri: "https://remote.example/users/bob/inbox".to_owned(),
+            shared_inbox_uri: None,
+            public_key_id: public_key_id.to_owned(),
+            public_key_pem: "pem".to_owned(),
+            display_name: "Bob".to_owned(),
+            summary_html: String::new(),
+            profile_url: None,
+            avatar_url: None,
+            header_url: None,
+        }
+    }
+
+    #[test]
+    fn cached_actor_can_verify_key_when_key_id_fragment_differs() {
+        let actor = sample_remote_actor("https://remote.example/users/bob#main-key");
+        assert!(cached_actor_can_verify_key(
+            &actor,
+            "https://remote.example/users/bob",
+            "https://remote.example/users/bob",
+        ));
+        assert!(!cached_remote_actor_matches_key(
+            &actor,
+            "https://remote.example/users/bob",
+            "https://remote.example/users/bob",
+        ));
+    }
+
+    #[test]
+    fn remote_actor_document_unavailable_matches_gone_and_forbidden() {
+        assert!(remote_actor_document_unavailable(&Error::RustError(
+            "failed to fetch remote document https://remote.example/users/bob: HTTP 410".to_owned()
+        )));
+        assert!(remote_actor_document_unavailable(&Error::RustError(
+            "failed to fetch remote document https://remote.example/users/bob: HTTP 404".to_owned()
+        )));
+        assert!(remote_actor_document_unavailable(&Error::RustError(
+            "failed to fetch remote document https://remote.example/users/bob: HTTP 403".to_owned()
+        )));
+        assert!(!remote_actor_document_unavailable(&Error::RustError(
+            "failed to fetch remote document https://remote.example/users/bob: HTTP 500".to_owned()
+        )));
     }
 }

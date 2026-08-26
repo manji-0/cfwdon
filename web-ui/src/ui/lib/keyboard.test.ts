@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSubmitShortcut } from "@/ui/lib/keyboard";
+import { isHelpShortcut, isSubmitShortcut } from "@/ui/lib/keyboard";
 
 describe("keyboard", () => {
   it("detects modifier+Enter as submit shortcut", () => {
@@ -13,6 +13,18 @@ describe("keyboard", () => {
       false,
     );
     expect(isSubmitShortcut({ key: "Enter", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false })).toBe(
+      false,
+    );
+  });
+
+  it("detects ? as help shortcut without modifiers", () => {
+    expect(isHelpShortcut({ key: "?", metaKey: false, ctrlKey: false, shiftKey: true, altKey: false })).toBe(
+      true,
+    );
+    expect(isHelpShortcut({ key: "?", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false })).toBe(
+      false,
+    );
+    expect(isHelpShortcut({ key: "/", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false })).toBe(
       false,
     );
   });

@@ -1,8 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import type { CustomEmoji } from "@/domain/emoji/custom-emoji";
+import { PollDraft } from "@/domain/status/poll";
+import type { QuotedStatusPreview } from "@/domain/status/quote";
 import type { Visibility } from "@/domain/status/visibility";
 import { Visibility as VisibilityModel } from "@/domain/status/visibility";
-import { uploadMedia } from "@/infrastructure/api/media";
+import { fetchCustomEmojis } from "@/infrastructure/api/emojis";
+import { updateMediaDescription, uploadMedia } from "@/infrastructure/api/media";
 import { ComposerMediaPicker } from "@/ui/components/ComposerMediaPicker";
 import { ComposerMedia, type ComposerMediaItem } from "@/ui/composer/draft-media";
 import { useSession } from "@/ui/context/SessionContext";
@@ -15,21 +19,39 @@ const VISIBILITY_OPTIONS: ReadonlyArray<Visibility> = [
   VisibilityModel.direct(),
 ];
 
+const POLL_EXPIRES = [
+  { value: 3600, label: "1時間" },
+  { value: 21_600, label: "6時間" },
+  { value: 86_400, label: "1日" },
+  { value: 259_200, label: "3日" },
+  { value: 604_800, label: "7日" },
+] as const;
+
+export type ComposerSubmitInput = Readonly<{
+  text: string;
+  visibility: Visibility;
+  spoilerText: string;
+  sensitive: boolean;
+  inReplyToId?: string;
+  quotedStatusId?: string;
+  mediaIds: ReadonlyArray<string>;
+  poll: PollDraft | null;
+}>;
+
 type ComposerProps = Readonly<{
   placeholder?: string;
   submitLabel?: string;
   initialVisibility?: Visibility;
+  initialText?: string;
+  initialSpoilerText?: string;
   lockVisibility?: boolean;
   inReplyToId?: string;
+  quotedStatusId?: string;
+  quotedPreview?: QuotedStatusPreview | null;
+  allowPoll?: boolean;
   disabled?: boolean;
-  onSubmit: (input: {
-    text: string;
-    visibility: Visibility;
-    spoilerText: string;
-    sensitive: boolean;
-    inReplyToId?: string;
-    mediaIds: ReadonlyArray<string>;
-  }) => Promise<void>;
+  onCancel?: () => void;
+  onSubmit: (input: ComposerSubmitInput) => Promise<void>;
 }>;
 
 export type ComposerHandle = Readonly<{
@@ -41,9 +63,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     placeholder = "いまどうしてる？",
     submitLabel = "投稿",
     initialVisibility = VisibilityModel.public(),
+    initialText = "",
+    initialSpoilerText = "",
     lockVisibility = false,
     inReplyToId,
+    quotedStatusId,
+    quotedPreview = null,
+    allowPoll = true,
     disabled = false,
+    onCancel,
     onSubmit,
   },
   ref,
@@ -51,13 +79,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const { session } = useSession();
   const account = session.kind === "Authenticated" ? session.account : null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [visibility, setVisibility] = useState<Visibility>(initialVisibility);
-  const [spoilerText, setSpoilerText] = useState("");
-  const [showCw, setShowCw] = useState(false);
+  const [spoilerText, setSpoilerText] = useState(initialSpoilerText);
+  const [showCw, setShowCw] = useState(initialSpoilerText.length > 0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [mediaAttachments, setMediaAttachments] = useState<ReadonlyArray<ComposerMediaItem>>([]);
+  const [pollEnabled, setPollEnabled] = useState(false);
+  const [poll, setPoll] = useState(PollDraft.empty);
+  const [emojis, setEmojis] = useState<ReadonlyArray<CustomEmoji>>([]);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const mediaAttachmentsRef = useRef(mediaAttachments);
   mediaAttachmentsRef.current = mediaAttachments;
 
@@ -71,6 +103,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [],
   );
 
+  useEffect(() => {
+    setText(initialText);
+    setSpoilerText(initialSpoilerText);
+    setShowCw(initialSpoilerText.length > 0);
+  }, [initialText, initialSpoilerText]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchCustomEmojis().then((result) => {
+      if (active && result.isOk()) {
+        setEmojis(result.value.filter((emoji) => emoji.visibleInPicker));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(
     () => () => {
       for (const attachment of mediaAttachmentsRef.current) {
@@ -81,8 +131,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
 
   const readyMediaIds = ComposerMedia.readyIds(mediaAttachments);
+  const pollReady = pollEnabled && PollDraft.isReady(poll);
   const canSubmit =
-    (text.trim().length > 0 || readyMediaIds.length > 0) &&
+    (text.trim().length > 0 || readyMediaIds.length > 0 || pollReady) &&
+    (!pollEnabled || PollDraft.isReady(poll)) &&
     !ComposerMedia.hasUploading(mediaAttachments) &&
     !submitting &&
     !disabled;
@@ -122,6 +174,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
   };
 
+  const handleDescriptionChange = (localId: string, description: string) => {
+    setMediaAttachments((current) => ComposerMedia.setDescription(current, localId, description));
+  };
+
+  const handleDescriptionBlur = (localId: string) => {
+    const item = ComposerMedia.member(mediaAttachments, localId);
+    if (!item || item.kind !== "Ready") {
+      return;
+    }
+    void updateMediaDescription(item.mediaId, item.description).then((result) => {
+      if (result.isErr()) {
+        setError(mastodonErrorMessage(result.error));
+      }
+    });
+  };
+
+  const insertEmoji = (shortcode: string) => {
+    const insertion = `:${shortcode}:`;
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setText((current) => `${current}${insertion}`);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    setText((current) => `${current.slice(0, start)}${insertion}${current.slice(end)}`);
+    requestAnimationFrame(() => {
+      const next = start + insertion.length;
+      textarea.focus();
+      textarea.setSelectionRange(next, next);
+    });
+    setEmojiOpen(false);
+  };
+
   const clearMediaAttachments = () => {
     setMediaAttachments((current) => {
       for (const attachment of current) {
@@ -144,11 +230,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         spoilerText: showCw ? spoilerText.trim() : "",
         sensitive: showCw && spoilerText.trim().length > 0,
         inReplyToId,
-        mediaIds: readyMediaIds,
+        quotedStatusId,
+        mediaIds: pollEnabled ? [] : readyMediaIds,
+        poll: pollEnabled && PollDraft.isReady(poll) ? { ...poll, options: PollDraft.filledOptions(poll) } : null,
       });
       setText("");
       setSpoilerText("");
       setShowCw(false);
+      setPollEnabled(false);
+      setPoll(PollDraft.empty());
+      setEmojiOpen(false);
       clearMediaAttachments();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "投稿に失敗しました");
@@ -179,6 +270,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           />
         ) : null}
         <div className="composer-fields">
+          {quotedPreview ? (
+            <div className="composer-quote-preview">
+              <p className="app-muted">引用: @{quotedPreview.account.acct}</p>
+              <p>{quotedPreview.spoilerText || quotedPreview.content.replace(/<[^>]+>/g, "")}</p>
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={text}
@@ -189,10 +286,89 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           />
           <ComposerMediaPicker
             attachments={mediaAttachments}
-            disabled={disabled || submitting}
+            disabled={disabled || submitting || pollEnabled}
             onSelectFiles={handleSelectFiles}
             onRemove={handleRemoveMedia}
+            onDescriptionChange={handleDescriptionChange}
+            onDescriptionBlur={handleDescriptionBlur}
           />
+          {pollEnabled ? (
+            <div className="composer-poll">
+              {poll.options.map((option, index) => (
+                <div key={index} className="composer-poll-option">
+                  <input
+                    value={option}
+                    onChange={(event) =>
+                      setPoll((current) => PollDraft.setOption(current, index, event.target.value))
+                    }
+                    placeholder={`選択肢 ${index + 1}`}
+                    disabled={disabled || submitting}
+                  />
+                  {poll.options.length > PollDraft.minOptions ? (
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      onClick={() => setPoll((current) => PollDraft.removeOption(current, index))}
+                      disabled={disabled || submitting}
+                    >
+                      削除
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {poll.options.length < PollDraft.maxOptions ? (
+                <button
+                  type="button"
+                  className="app-button app-button-secondary"
+                  onClick={() => setPoll((current) => PollDraft.addOption(current))}
+                  disabled={disabled || submitting}
+                >
+                  選択肢を追加
+                </button>
+              ) : null}
+              <label className="composer-poll-meta">
+                <span className="app-muted">期限</span>
+                <select
+                  value={poll.expiresIn}
+                  onChange={(event) =>
+                    setPoll((current) => ({ ...current, expiresIn: Number(event.target.value) }))
+                  }
+                  disabled={disabled || submitting}
+                >
+                  {POLL_EXPIRES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="composer-cw">
+                <input
+                  type="checkbox"
+                  checked={poll.multiple}
+                  onChange={(event) =>
+                    setPoll((current) => ({ ...current, multiple: event.target.checked }))
+                  }
+                  disabled={disabled || submitting}
+                />
+                複数選択可
+              </label>
+            </div>
+          ) : null}
+          {emojiOpen && emojis.length > 0 ? (
+            <div className="composer-emoji-picker" role="listbox" aria-label="カスタム絵文字">
+              {emojis.map((emoji) => (
+                <button
+                  key={emoji.shortcode}
+                  type="button"
+                  title={`:${emoji.shortcode}:`}
+                  onClick={() => insertEmoji(emoji.shortcode)}
+                >
+                  <img src={emoji.url} alt={emoji.shortcode} />
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="composer-toolbar">
             {lockVisibility ? null : (
               <label className="composer-visibility">
@@ -219,9 +395,45 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               />
               CW
             </label>
+            {allowPoll ? (
+              <label className="composer-cw">
+                <input
+                  type="checkbox"
+                  checked={pollEnabled}
+                  onChange={(event) => {
+                    setPollEnabled(event.target.checked);
+                    if (event.target.checked) {
+                      clearMediaAttachments();
+                    }
+                  }}
+                  disabled={disabled || submitting || readyMediaIds.length > 0}
+                />
+                アンケート
+              </label>
+            ) : null}
+            {emojis.length > 0 ? (
+              <button
+                type="button"
+                className="app-button app-button-secondary"
+                onClick={() => setEmojiOpen((current) => !current)}
+                disabled={disabled || submitting}
+              >
+                絵文字
+              </button>
+            ) : null}
             <span className="composer-shortcut-hint app-muted" aria-hidden="true">
               {modKeyLabel()}↵ で{submitLabel}
             </span>
+            {onCancel ? (
+              <button
+                type="button"
+                className="app-button app-button-secondary"
+                onClick={onCancel}
+                disabled={submitting}
+              >
+                キャンセル
+              </button>
+            ) : null}
             <button
               type="button"
               className="app-button"

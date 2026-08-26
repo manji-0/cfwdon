@@ -3,18 +3,28 @@ import { Link } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountRef } from "@/domain/account/account";
+import { FilterContext, type KeywordFilter } from "@/domain/filters/filter";
 import type { NotificationPolicy, NotificationPolicyAction } from "@/domain/settings/notification-policy";
 import { NotificationPolicy as NotificationPolicyModel } from "@/domain/settings/notification-policy";
 import { SessionState } from "@/domain/session/session";
 import { Visibility } from "@/domain/status/visibility";
+import type { FollowedTag } from "@/domain/tags/followed-tag";
 import { AppRoute } from "@/domain/navigation/route";
 import { fetchAccountCredentials, updateAccountProfile } from "@/infrastructure/api/credentials";
+import { blockDomain, fetchDomainBlocks, unblockDomain } from "@/infrastructure/api/domain-blocks";
+import {
+  createKeywordFilter,
+  deleteKeywordFilter,
+  fetchKeywordFilters,
+} from "@/infrastructure/api/filters";
 import { fetchBlockedAccounts, fetchMutedAccounts } from "@/infrastructure/api/moderation";
+import { unmuteAccount, unblockAccount } from "@/infrastructure/api/relationship";
 import {
   fetchNotificationPolicy,
   updateNotificationPolicy,
 } from "@/infrastructure/api/notification-policy";
 import { fetchAccountPreferences, updatePostingPreferences } from "@/infrastructure/api/settings";
+import { fetchFollowedTags, unfollowTag } from "@/infrastructure/api/tags";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { useSession } from "@/ui/context/SessionContext";
@@ -45,14 +55,29 @@ const VISIBILITY_OPTIONS = [
   Visibility.direct(),
 ] as const;
 
-const ModerationAccountLink = ({ account }: Readonly<{ account: AccountRef }>) => (
-  <Link className="account-row" to={`/profile/${account.id}`}>
-    <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
-    <div className="account-row-meta">
-      <span className="status-display-name">{account.displayName || account.username}</span>
-      <span className="status-acct">@{account.acct}</span>
-    </div>
-  </Link>
+const ModerationAccountRow = ({
+  account,
+  actionLabel,
+  onAction,
+  disabled,
+}: Readonly<{
+  account: AccountRef;
+  actionLabel: string;
+  onAction: () => void;
+  disabled: boolean;
+}>) => (
+  <div className="account-row settings-moderation-row">
+    <Link className="settings-moderation-link" to={`/profile/${account.id}`}>
+      <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
+      <div className="account-row-meta">
+        <span className="status-display-name">{account.displayName || account.username}</span>
+        <span className="status-acct">@{account.acct}</span>
+      </div>
+    </Link>
+    <button type="button" className="app-button app-button-secondary" onClick={onAction} disabled={disabled}>
+      {actionLabel}
+    </button>
+  </div>
 );
 
 export const SettingsPage = () => {
@@ -67,6 +92,12 @@ export const SettingsPage = () => {
   const [notificationPolicy, setNotificationPolicy] = useState<NotificationPolicy | null>(null);
   const [mutes, setMutes] = useState<ReadonlyArray<AccountRef>>([]);
   const [blocks, setBlocks] = useState<ReadonlyArray<AccountRef>>([]);
+  const [filters, setFilters] = useState<ReadonlyArray<KeywordFilter>>([]);
+  const [domainBlocks, setDomainBlocks] = useState<ReadonlyArray<string>>([]);
+  const [followedTags, setFollowedTags] = useState<ReadonlyArray<FollowedTag>>([]);
+  const [filterTitle, setFilterTitle] = useState("");
+  const [filterKeywords, setFilterKeywords] = useState("");
+  const [domainInput, setDomainInput] = useState("");
 
   const [displayName, setDisplayName] = useState("");
   const [note, setNote] = useState("");
@@ -78,16 +109,28 @@ export const SettingsPage = () => {
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPosting, setSavingPosting] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [savingModeration, setSavingModeration] = useState(false);
   const [sectionMessage, setSectionMessage] = useState("");
 
   const loadSettings = useCallback(async () => {
-    const [credentialsResult, preferencesResult, policyResult, mutesResult, blocksResult] =
-      await Promise.all([
+    const [
+      credentialsResult,
+      preferencesResult,
+      policyResult,
+      mutesResult,
+      blocksResult,
+      filtersResult,
+      domainsResult,
+      tagsResult,
+    ] = await Promise.all([
         fetchAccountCredentials(),
         fetchAccountPreferences(),
         fetchNotificationPolicy(),
         fetchMutedAccounts(),
         fetchBlockedAccounts(),
+        fetchKeywordFilters(),
+        fetchDomainBlocks(),
+        fetchFollowedTags(),
       ]);
 
     if (credentialsResult.isErr()) {
@@ -105,11 +148,23 @@ export const SettingsPage = () => {
     if (blocksResult.isErr()) {
       throw new Error(mastodonErrorMessage(blocksResult.error));
     }
+    if (filtersResult.isErr()) {
+      throw new Error(mastodonErrorMessage(filtersResult.error));
+    }
+    if (domainsResult.isErr()) {
+      throw new Error(mastodonErrorMessage(domainsResult.error));
+    }
+    if (tagsResult.isErr()) {
+      throw new Error(mastodonErrorMessage(tagsResult.error));
+    }
 
     setCredentials(credentialsResult.value);
     setNotificationPolicy(policyResult.value);
     setMutes(mutesResult.value);
     setBlocks(blocksResult.value);
+    setFilters(filtersResult.value);
+    setDomainBlocks(domainsResult.value);
+    setFollowedTags(tagsResult.value);
 
     setDisplayName(credentialsResult.value.displayName);
     setNote(credentialsResult.value.source.note);
@@ -220,6 +275,113 @@ export const SettingsPage = () => {
     } finally {
       setSavingPolicy(false);
     }
+  };
+
+  const handleUnmute = async (accountId: string) => {
+    setSavingModeration(true);
+    setSectionMessage("");
+    const result = await unmuteAccount(accountId);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setMutes((current) => current.filter((account) => account.id !== accountId));
+    setSectionMessage("ミュートを解除しました");
+  };
+
+  const handleUnblock = async (accountId: string) => {
+    setSavingModeration(true);
+    setSectionMessage("");
+    const result = await unblockAccount(accountId);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setBlocks((current) => current.filter((account) => account.id !== accountId));
+    setSectionMessage("ブロックを解除しました");
+  };
+
+  const handleCreateFilter = async () => {
+    const title = filterTitle.trim();
+    const keywords = filterKeywords
+      .split(/[,\n]/)
+      .map((keyword) => keyword.trim())
+      .filter((keyword) => keyword.length > 0);
+    if (!title || keywords.length === 0) {
+      setSectionMessage("タイトルとキーワードを入力してください");
+      return;
+    }
+    setSavingModeration(true);
+    const result = await createKeywordFilter({
+      title,
+      context: [...FilterContext.values],
+      keywords,
+      filterAction: "warn",
+    });
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setFilters((current) => [result.value, ...current]);
+    setFilterTitle("");
+    setFilterKeywords("");
+    setSectionMessage("フィルターを追加しました");
+  };
+
+  const handleDeleteFilter = async (filterId: string) => {
+    setSavingModeration(true);
+    const result = await deleteKeywordFilter(filterId);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setFilters((current) => current.filter((item) => item.id !== filterId));
+    setSectionMessage("フィルターを削除しました");
+  };
+
+  const handleBlockDomain = async () => {
+    const domain = domainInput.trim().toLowerCase();
+    if (!domain) {
+      return;
+    }
+    setSavingModeration(true);
+    const result = await blockDomain(domain);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setDomainBlocks((current) => (current.includes(domain) ? current : [domain, ...current]));
+    setDomainInput("");
+    setSectionMessage("ドメインをブロックしました");
+  };
+
+  const handleUnblockDomain = async (domain: string) => {
+    setSavingModeration(true);
+    const result = await unblockDomain(domain);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setDomainBlocks((current) => current.filter((item) => item !== domain));
+    setSectionMessage("ドメインブロックを解除しました");
+  };
+
+  const handleUnfollowTag = async (name: string) => {
+    setSavingModeration(true);
+    const result = await unfollowTag(name);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setFollowedTags((current) => current.filter((tag) => tag.name !== name));
+    setSectionMessage("ハッシュタグのフォローを解除しました");
   };
 
   const handleLogout = () => {
@@ -358,7 +520,126 @@ export const SettingsPage = () => {
           </section>
 
           <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
-            <h2>フィルター</h2>
+            <h2>キーワードフィルター</h2>
+            <div className="settings-form">
+              <label className="settings-field">
+                <span>タイトル</span>
+                <input
+                  value={filterTitle}
+                  onChange={(event) => setFilterTitle(event.target.value)}
+                  disabled={savingModeration}
+                />
+              </label>
+              <label className="settings-field">
+                <span>キーワード（カンマ区切り）</span>
+                <input
+                  value={filterKeywords}
+                  onChange={(event) => setFilterKeywords(event.target.value)}
+                  disabled={savingModeration}
+                />
+              </label>
+              <button
+                type="button"
+                className="app-button"
+                onClick={() => void handleCreateFilter()}
+                disabled={savingModeration}
+              >
+                追加
+              </button>
+            </div>
+            {filters.length === 0 ? (
+              <p className="app-muted">キーワードフィルターはありません</p>
+            ) : (
+              <div className="settings-account-list">
+                {filters.map((item) => (
+                  <div key={item.id} className="settings-moderation-row">
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p className="app-muted">
+                        {item.keywords.map((keyword) => keyword.keyword).join(", ")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      disabled={savingModeration}
+                      onClick={() => void handleDeleteFilter(item.id)}
+                    >
+                      削除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+            <h2>ドメインブロック</h2>
+            <div className="settings-form">
+              <label className="settings-field">
+                <span>ドメイン</span>
+                <input
+                  value={domainInput}
+                  onChange={(event) => setDomainInput(event.target.value)}
+                  placeholder="example.com"
+                  disabled={savingModeration}
+                />
+              </label>
+              <button
+                type="button"
+                className="app-button"
+                onClick={() => void handleBlockDomain()}
+                disabled={savingModeration}
+              >
+                ブロック
+              </button>
+            </div>
+            {domainBlocks.length === 0 ? (
+              <p className="app-muted">ブロック中のドメインはありません</p>
+            ) : (
+              <div className="settings-account-list">
+                {domainBlocks.map((domain) => (
+                  <div key={domain} className="settings-moderation-row">
+                    <span>{domain}</span>
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      disabled={savingModeration}
+                      onClick={() => void handleUnblockDomain(domain)}
+                    >
+                      解除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+            <h2>フォロー中のハッシュタグ</h2>
+            {followedTags.length === 0 ? (
+              <p className="app-muted">フォロー中のハッシュタグはありません</p>
+            ) : (
+              <div className="settings-account-list">
+                {followedTags.map((tag) => (
+                  <div key={tag.id} className="settings-moderation-row">
+                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>#{tag.name}</Link>
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      disabled={savingModeration}
+                      onClick={() => void handleUnfollowTag(tag.name)}
+                    >
+                      解除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+            <h2>ミュートとブロック</h2>
             <div className="settings-moderation">
               <div>
                 <h3>ミュート ({mutes.length})</h3>
@@ -367,7 +648,13 @@ export const SettingsPage = () => {
                 ) : (
                   <div className="settings-account-list">
                     {mutes.map((account) => (
-                      <ModerationAccountLink key={account.id} account={account} />
+                      <ModerationAccountRow
+                        key={account.id}
+                        account={account}
+                        actionLabel="解除"
+                        disabled={savingModeration}
+                        onAction={() => void handleUnmute(account.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -379,7 +666,13 @@ export const SettingsPage = () => {
                 ) : (
                   <div className="settings-account-list">
                     {blocks.map((account) => (
-                      <ModerationAccountLink key={account.id} account={account} />
+                      <ModerationAccountRow
+                        key={account.id}
+                        account={account}
+                        actionLabel="解除"
+                        disabled={savingModeration}
+                        onAction={() => void handleUnblock(account.id)}
+                      />
                     ))}
                   </div>
                 )}
@@ -391,7 +684,7 @@ export const SettingsPage = () => {
             <h2>ライブラリ</h2>
             <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
             <div className="settings-library-links">
-              {[AppRoute.bookmarks(), AppRoute.lists(), AppRoute.messages()].map((route) => {
+              {[AppRoute.explore(), AppRoute.bookmarks(), AppRoute.favourites(), AppRoute.lists(), AppRoute.messages()].map((route) => {
                 const isMessages = route.kind === "Messages";
                 const label = AppRoute.label(route);
                 return (

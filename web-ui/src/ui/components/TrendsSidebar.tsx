@@ -53,7 +53,7 @@ export const TrendsSidebar = () => {
         <ol className="trends-list">
           {tags.map((tag) => (
             <li key={tag.id}>
-              <Link className="trends-tag" to={`/search?q=%23${encodeURIComponent(tag.name)}`}>
+              <Link className="trends-tag" to={`/tags/${encodeURIComponent(tag.name)}`}>
                 <span className="trends-tag-name">#{tag.name}</span>
                 {trendUsesLabel(tag) ? (
                   <span className="app-muted trends-tag-uses">{trendUsesLabel(tag)}</span>

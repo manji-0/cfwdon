@@ -1,10 +1,14 @@
 export type AppRoute =
   | Readonly<{ kind: "Home" }>
+  | Readonly<{ kind: "PublicTimeline"; local: boolean }>
+  | Readonly<{ kind: "Tag"; name: string }>
+  | Readonly<{ kind: "Explore" }>
   | Readonly<{ kind: "Notifications" }>
   | Readonly<{ kind: "Search" }>
   | Readonly<{ kind: "Profile" }>
   | Readonly<{ kind: "Settings" }>
   | Readonly<{ kind: "Bookmarks" }>
+  | Readonly<{ kind: "Favourites" }>
   | Readonly<{ kind: "Lists" }>
   | Readonly<{ kind: "Messages" }>
   | Readonly<{ kind: "NewMessage" }>
@@ -12,11 +16,15 @@ export type AppRoute =
 
 export const AppRoute = {
   home: (): AppRoute => ({ kind: "Home" }),
+  publicTimeline: (local = false): AppRoute => ({ kind: "PublicTimeline", local }),
+  tag: (name: string): AppRoute => ({ kind: "Tag", name }),
+  explore: (): AppRoute => ({ kind: "Explore" }),
   notifications: (): AppRoute => ({ kind: "Notifications" }),
   search: (): AppRoute => ({ kind: "Search" }),
   profile: (): AppRoute => ({ kind: "Profile" }),
   settings: (): AppRoute => ({ kind: "Settings" }),
   bookmarks: (): AppRoute => ({ kind: "Bookmarks" }),
+  favourites: (): AppRoute => ({ kind: "Favourites" }),
   lists: (): AppRoute => ({ kind: "Lists" }),
   messages: (): AppRoute => ({ kind: "Messages" }),
   newMessage: (): AppRoute => ({ kind: "NewMessage" }),
@@ -31,6 +39,12 @@ export const AppRoute = {
     switch (head) {
       case "":
         return AppRoute.home();
+      case "public":
+        return AppRoute.publicTimeline(rest[0] === "local");
+      case "tags":
+        return rest[0] ? AppRoute.tag(decodeURIComponent(rest[0])) : AppRoute.home();
+      case "explore":
+        return AppRoute.explore();
       case "notifications":
         return AppRoute.notifications();
       case "search":
@@ -41,6 +55,8 @@ export const AppRoute = {
         return AppRoute.settings();
       case "bookmarks":
         return AppRoute.bookmarks();
+      case "favourites":
+        return AppRoute.favourites();
       case "lists":
         return AppRoute.lists();
       case "messages": {
@@ -64,6 +80,12 @@ export const AppRoute = {
     switch (route.kind) {
       case "Home":
         return "/";
+      case "PublicTimeline":
+        return route.local ? "/public/local" : "/public";
+      case "Tag":
+        return `/tags/${encodeURIComponent(route.name)}`;
+      case "Explore":
+        return "/explore";
       case "Notifications":
         return "/notifications";
       case "Search":
@@ -74,6 +96,8 @@ export const AppRoute = {
         return "/settings";
       case "Bookmarks":
         return "/bookmarks";
+      case "Favourites":
+        return "/favourites";
       case "Lists":
         return "/lists";
       case "Messages":
@@ -89,6 +113,12 @@ export const AppRoute = {
     switch (route.kind) {
       case "Home":
         return "ホーム";
+      case "PublicTimeline":
+        return route.local ? "ローカル" : "連合";
+      case "Tag":
+        return `#${route.name}`;
+      case "Explore":
+        return "探索";
       case "Notifications":
         return "通知";
       case "Search":
@@ -99,6 +129,8 @@ export const AppRoute = {
         return "設定";
       case "Bookmarks":
         return "ブックマーク";
+      case "Favourites":
+        return "お気に入り";
       case "Lists":
         return "リスト";
       case "Messages":

@@ -3,24 +3,63 @@ import { Link, useParams } from "react-router-dom";
 import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
+import { Relationship } from "@/domain/account/relationship";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
-import { Status, type OriginalStatus } from "@/domain/status/status";
-import {
-  bookmarkStatus,
-  favouriteStatus,
-  reblogStatus,
-  unbookmarkStatus,
-  unfavouriteStatus,
-  unreblogStatus,
-} from "@/infrastructure/api/status";
+import { Status } from "@/domain/status/status";
 import { fetchAccountStatuses } from "@/infrastructure/api/account";
+import {
+  blockAccount,
+  fetchRelationship,
+  followAccount,
+  muteAccount,
+  unfollowAccount,
+  unmuteAccount,
+  unblockAccount,
+} from "@/infrastructure/api/relationship";
+import { createReport } from "@/infrastructure/api/report";
 import { AppShell } from "@/ui/components/AppShell";
 import { ProfileEditor } from "@/ui/components/ProfileEditor";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
+
+const PROFILE_TABS = [
+  { id: "posts", label: "投稿" },
+  { id: "replies", label: "返信" },
+  { id: "media", label: "メディア" },
+  { id: "pinned", label: "固定" },
+] as const;
+
+type ProfileTab = (typeof PROFILE_TABS)[number]["id"];
+
+const statusesQueryForTab = (tab: ProfileTab) => {
+  switch (tab) {
+    case "posts":
+      return { excludeReplies: true };
+    case "replies":
+      return {};
+    case "media":
+      return { onlyMedia: true };
+    case "pinned":
+      return { pinned: true };
+  }
+};
+
+const emptyMessageForTab = (tab: ProfileTab): string => {
+  switch (tab) {
+    case "posts":
+      return "まだ投稿がありません。";
+    case "replies":
+      return "返信はまだありません。";
+    case "media":
+      return "メディア付きの投稿はまだありません。";
+    case "pinned":
+      return "ピン留めされた投稿はありません。";
+  }
+};
 
 export const ProfilePage = () => {
   const { accountId: routeAccountId } = useParams();
@@ -41,6 +80,9 @@ export const ProfilePage = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
+  const [relationship, setRelationship] = useState<Relationship | null>(null);
+  const [savingRelationship, setSavingRelationship] = useState(false);
+  const [tab, setTab] = useState<ProfileTab>("posts");
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const profileRef = useRef(profile);
   const statusesRef = useRef(statuses);
@@ -67,6 +109,8 @@ export const ProfilePage = () => {
     }
     setEditing(false);
     setError("");
+    setRelationship(null);
+    setTab("posts");
 
     let active = true;
     switch (ViewReadiness.forProfile(snapshot, Date.now()).kind) {
@@ -119,6 +163,44 @@ export const ProfilePage = () => {
     };
   }, [accountId, cache]);
 
+  useEffect(() => {
+    if (!accountId || isSelf) {
+      setRelationship(null);
+      return;
+    }
+    let active = true;
+    void fetchRelationship(accountId).then((result) => {
+      if (active && result.isOk()) {
+        setRelationship(result.value);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [accountId, isSelf]);
+
+  useEffect(() => {
+    if (!accountId || tab === "posts") {
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    void fetchAccountStatuses(accountId, statusesQueryForTab(tab)).then((result) => {
+      if (!active) {
+        return;
+      }
+      setLoading(false);
+      if (result.isErr()) {
+        setError(mastodonErrorMessage(result.error));
+        return;
+      }
+      setStatuses(result.value);
+    });
+    return () => {
+      active = false;
+    };
+  }, [accountId, tab]);
+
   const handleLoadMore = async () => {
     if (!accountId) {
       return;
@@ -130,7 +212,7 @@ export const ProfilePage = () => {
     setLoadingMore(true);
     const result = await fetchAccountStatuses(accountId, {
       maxId: last.id,
-      excludeReplies: true,
+      ...statusesQueryForTab(tab),
     });
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
@@ -140,42 +222,70 @@ export const ProfilePage = () => {
     setLoadingMore(false);
   };
 
-  const replaceStatus = (updated: Status) => {
-    setStatuses((current) => Status.replaceInList(current, updated));
-    cache.patchStatus(updated);
-  };
+  const actions = useStatusActions({
+    selfAccountId,
+    onReplace: (updated) => {
+      setStatuses((current) => Status.replaceInList(current, updated));
+      cache.patchStatus(updated);
+    },
+    onRemove: (statusId) => setStatuses((current) => Status.removeById(current, statusId)),
+    onError: setError,
+  });
 
-  const handleFavourite = async (status: OriginalStatus) => {
-    const result = status.favourited
-      ? await unfavouriteStatus(status.id)
-      : await favouriteStatus(status.id);
+  const runRelationship = async (action: () => ReturnType<typeof followAccount>) => {
+    setSavingRelationship(true);
+    const result = await action();
+    setSavingRelationship(false);
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    replaceStatus(result.value);
+    setRelationship(result.value);
   };
 
-  const handleReblog = async (status: OriginalStatus) => {
-    const result = status.reblogged
-      ? await unreblogStatus(status.id)
-      : await reblogStatus(status.id);
+  const handleFollowToggle = async () => {
+    if (!accountId || !relationship) {
+      return;
+    }
+    if (relationship.following || relationship.requested) {
+      await runRelationship(() => unfollowAccount(accountId));
+      return;
+    }
+    await runRelationship(() => followAccount(accountId));
+  };
+
+  const handleMuteToggle = async () => {
+    if (!accountId || !relationship) {
+      return;
+    }
+    await runRelationship(() =>
+      relationship.muting ? unmuteAccount(accountId) : muteAccount(accountId),
+    );
+  };
+
+  const handleBlockToggle = async () => {
+    if (!accountId || !relationship) {
+      return;
+    }
+    await runRelationship(() =>
+      relationship.blocking ? unblockAccount(accountId) : blockAccount(accountId),
+    );
+  };
+
+  const handleReportProfile = async () => {
+    if (!accountId) {
+      return;
+    }
+    const comment = window.prompt("通報の理由（任意）");
+    if (comment === null) {
+      return;
+    }
+    const result = await createReport({ accountId, comment });
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    replaceStatus(result.value);
-  };
-
-  const handleBookmark = async (status: OriginalStatus) => {
-    const result = status.bookmarked
-      ? await unbookmarkStatus(status.id)
-      : await bookmarkStatus(status.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    replaceStatus(result.value);
+    window.alert("通報を送信しました");
   };
 
   if (!accountId) {
@@ -232,30 +342,90 @@ export const ProfilePage = () => {
                 >
                   プロフィールを編集
                 </button>
-              ) : null}
+              ) : (
+                <div className="profile-actions">
+                  <button
+                    type="button"
+                    className="app-button"
+                    disabled={savingRelationship || !relationship}
+                    onClick={() => void handleFollowToggle()}
+                  >
+                    {relationship
+                      ? Relationship.followLabel(relationship, profile.locked)
+                      : "フォロー"}
+                  </button>
+                  <button
+                    type="button"
+                    className="app-button app-button-secondary"
+                    disabled={savingRelationship || !relationship}
+                    onClick={() => void handleMuteToggle()}
+                  >
+                    {relationship?.muting ? "ミュート解除" : "ミュート"}
+                  </button>
+                  <button
+                    type="button"
+                    className="app-button app-button-secondary"
+                    disabled={savingRelationship || !relationship}
+                    onClick={() => void handleBlockToggle()}
+                  >
+                    {relationship?.blocking ? "ブロック解除" : "ブロック"}
+                  </button>
+                  <button
+                    type="button"
+                    className="app-button app-button-secondary"
+                    onClick={() => void handleReportProfile()}
+                  >
+                    通報
+                  </button>
+                </div>
+              )}
             </div>
             {profile.note ? (
               <div className="profile-note" dangerouslySetInnerHTML={{ __html: profile.note }} />
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>
-              <span>{profile.followingCount} フォロー</span>
-              <span>{profile.followersCount} フォロワー</span>
+              <Link to={`/profile/${profile.id}/following`}>{profile.followingCount} フォロー</Link>
+              <Link to={`/profile/${profile.id}/followers`}>
+                {profile.followersCount} フォロワー
+              </Link>
             </p>
           </div>
         </header>
       ) : null}
+      <nav className="timeline-tabs" aria-label="プロフィール投稿">
+        {PROFILE_TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={tab === item.id ? "is-active" : undefined}
+            onClick={() => {
+              if (item.id === tab) {
+                return;
+              }
+              setTab(item.id);
+              if (item.id === "posts" && accountId) {
+                const snapshot = cache.getProfile(accountId);
+                if (snapshot.kind === "Present") {
+                  setStatuses(snapshot.value.statuses);
+                }
+              }
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
       <div className="timeline">
         {statuses.map((status) => (
-          <StatusCard
-            key={status.id}
-            status={status}
-            onFavourite={(body) => void handleFavourite(body)}
-            onReblog={(body) => void handleReblog(body)}
-            onBookmark={(body) => void handleBookmark(body)}
-          />
+          <StatusCard key={status.id} status={status} {...actions} />
         ))}
       </div>
+      {!loading && statuses.length === 0 ? (
+        <div className="app-card">
+          <p className="app-muted">{emptyMessageForTab(tab)}</p>
+        </div>
+      ) : null}
       {statuses.length > 0 ? (
         <div className="timeline-footer">
           <button

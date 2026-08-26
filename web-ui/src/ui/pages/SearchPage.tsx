@@ -2,19 +2,13 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { SearchResults } from "@/domain/search/search";
-import type { OriginalStatus } from "@/domain/status/status";
+import { Status } from "@/domain/status/status";
 import { search } from "@/infrastructure/api/search";
-import {
-  bookmarkStatus,
-  favouriteStatus,
-  reblogStatus,
-  unbookmarkStatus,
-  unfavouriteStatus,
-  unreblogStatus,
-} from "@/infrastructure/api/status";
 import { AccountRow } from "@/ui/components/AccountRow";
 import { AppShell } from "@/ui/components/AppShell";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { useSession } from "@/ui/context/SessionContext";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
 
 const emptyResults = (): SearchResults => ({
   accounts: [],
@@ -23,6 +17,8 @@ const emptyResults = (): SearchResults => ({
 });
 
 export const SearchPage = () => {
+  const { session } = useSession();
+  const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const [searchParams, setSearchParams] = useSearchParams();
   const queryFromUrl = searchParams.get("q") ?? "";
   const [query, setQuery] = useState(queryFromUrl);
@@ -68,36 +64,20 @@ export const SearchPage = () => {
     setSearchParams({ q: trimmed });
   };
 
-  const handleFavourite = async (body: OriginalStatus) => {
-    const result = body.favourited
-      ? await unfavouriteStatus(body.id)
-      : await favouriteStatus(body.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    await runSearch(queryFromUrl || query);
-  };
-
-  const handleReblog = async (body: OriginalStatus) => {
-    const result = body.reblogged ? await unreblogStatus(body.id) : await reblogStatus(body.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    await runSearch(queryFromUrl || query);
-  };
-
-  const handleBookmark = async (body: OriginalStatus) => {
-    const result = body.bookmarked
-      ? await unbookmarkStatus(body.id)
-      : await bookmarkStatus(body.id);
-    if (result.isErr()) {
-      setError(mastodonErrorMessage(result.error));
-      return;
-    }
-    await runSearch(queryFromUrl || query);
-  };
+  const actions = useStatusActions({
+    selfAccountId,
+    onReplace: (updated) =>
+      setResults((current) => ({
+        ...current,
+        statuses: Status.replaceInList(current.statuses, updated),
+      })),
+    onRemove: (statusId) =>
+      setResults((current) => ({
+        ...current,
+        statuses: Status.removeById(current.statuses, statusId),
+      })),
+    onError: setError,
+  });
 
   const hasResults =
     results.accounts.length > 0 || results.statuses.length > 0 || results.hashtags.length > 0;
@@ -144,13 +124,7 @@ export const SearchPage = () => {
           <h2>投稿</h2>
           <div className="timeline">
             {results.statuses.map((status) => (
-              <StatusCard
-                key={status.id}
-                status={status}
-                onFavourite={(body) => void handleFavourite(body)}
-                onReblog={(body) => void handleReblog(body)}
-                onBookmark={(body) => void handleBookmark(body)}
-              />
+              <StatusCard key={status.id} status={status} {...actions} />
             ))}
           </div>
         </section>
@@ -161,7 +135,7 @@ export const SearchPage = () => {
           <ul className="search-hashtags">
             {results.hashtags.map((tag) => (
               <li key={tag.id}>
-                <Link className="search-hashtag" to={`/search?q=%23${encodeURIComponent(tag.name)}`}>
+                <Link className="search-hashtag" to={`/tags/${encodeURIComponent(tag.name)}`}>
                   #{tag.name}
                 </Link>
               </li>

@@ -13,6 +13,7 @@ describe("ComposerMedia", () => {
       file,
       previewUrl: "blob:preview",
       mediaId: "media-1",
+      description: "",
     });
     expect(ComposerMedia.markFailed(uploading, "失敗")).toEqual({
       kind: "Failed",
@@ -47,5 +48,16 @@ describe("ComposerMedia", () => {
     ];
     expect(ComposerMedia.readyIds(mixed)).toEqual(["id-0"]);
     expect(ComposerMedia.hasUploading(mixed)).toBe(true);
+  });
+
+  it("updates alt text on a ready attachment", () => {
+    const ready = ComposerMedia.markReady(
+      ComposerMedia.uploading("local-1", file, "blob:preview"),
+      "media-1",
+    );
+    expect(ComposerMedia.setDescription([ready], "local-1", "猫の写真")[0]).toMatchObject({
+      kind: "Ready",
+      description: "猫の写真",
+    });
   });
 });

@@ -29,6 +29,44 @@ fn inbox_activity_type(activity: &serde_json::Value) -> &str {
     activitypub_primary_type(activity).unwrap_or_default()
 }
 
+fn log_inbox_signature_failure(inbox: &str, activity: &serde_json::Value, error: &Error) {
+    let activity_type = inbox_activity_type(activity);
+    let outcome = inbox_signature_failure_outcome(activity_type, error);
+    let actor_uri = extract_activity_actor_uri(activity).ok();
+    log_federation_event(
+        "inbox_signature_failed",
+        outcome,
+        format!(
+            "{inbox} inbox signature verification failed: activity_type={activity_type} error={error}"
+        ),
+        serde_json::json!({
+            "inbox": inbox,
+            "activity_type": activity_type,
+            "actor_uri": actor_uri,
+            "error": error.to_string(),
+        }),
+    );
+}
+
+fn inbox_signature_failure_outcome(activity_type: &str, error: &Error) -> &'static str {
+    if inbox_signature_failure_is_expected_noise(activity_type, error) {
+        "rejected"
+    } else {
+        "unauthorized"
+    }
+}
+
+fn inbox_signature_failure_is_expected_noise(activity_type: &str, error: &Error) -> bool {
+    if !activity_type.eq_ignore_ascii_case("Delete") {
+        return false;
+    }
+    let message = error.to_string();
+    message.contains("Signature keyId missing")
+        || ["HTTP 403", "HTTP 404", "HTTP 410"]
+            .iter()
+            .any(|status| message.contains(status))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SharedInboxPreprocessOutcome {
     Unauthorized,
@@ -180,19 +218,7 @@ pub(crate) async fn shared_inbox_response(
     let delivery = match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
         Ok(delivery) => delivery,
         Err(error) => {
-            log_federation_event(
-                "inbox_signature_failed",
-                "unauthorized",
-                format!(
-                    "shared inbox signature verification failed: activity_type={} error={error}",
-                    inbox_activity_type(&activity)
-                ),
-                serde_json::json!({
-                    "inbox": "shared",
-                    "activity_type": inbox_activity_type(&activity),
-                    "error": error.to_string(),
-                }),
-            );
+            log_inbox_signature_failure("shared", &activity, &error);
             return Response::error("invalid activitypub signature", 401);
         }
     };
@@ -308,19 +334,7 @@ pub(crate) async fn handle_inbox_request_for_accounts(
     let remote_actor = match verify_incoming_activitypub_request(req, db, body, activity).await {
         Ok(remote_actor) => remote_actor,
         Err(error) => {
-            log_federation_event(
-                "inbox_signature_failed",
-                "unauthorized",
-                format!(
-                    "inbox signature verification failed: activity_type={} error={error}",
-                    inbox_activity_type(activity)
-                ),
-                serde_json::json!({
-                    "inbox": "personal",
-                    "activity_type": inbox_activity_type(activity),
-                    "error": error.to_string(),
-                }),
-            );
+            log_inbox_signature_failure("personal", activity, &error);
             return Response::error("invalid activitypub signature", 401);
         }
     };
@@ -451,6 +465,29 @@ mod tests {
         );
         assert_eq!(inbox_activity_type(&serde_json::json!({})), "");
         assert_eq!(inbox_activity_type(&serde_json::json!({"type": 1})), "");
+    }
+
+    #[test]
+    fn delete_signature_noise_is_rejected_not_unauthorized() {
+        let gone = Error::RustError(
+            "failed to fetch remote document https://remote.example/users/bob: HTTP 410".to_owned(),
+        );
+        let missing_key = Error::RustError("Signature keyId missing".to_owned());
+        let other = Error::RustError("invalid Signature header encoding".to_owned());
+
+        assert_eq!(inbox_signature_failure_outcome("Delete", &gone), "rejected");
+        assert_eq!(
+            inbox_signature_failure_outcome("Delete", &missing_key),
+            "rejected"
+        );
+        assert_eq!(
+            inbox_signature_failure_outcome("Create", &gone),
+            "unauthorized"
+        );
+        assert_eq!(
+            inbox_signature_failure_outcome("Delete", &other),
+            "unauthorized"
+        );
     }
 
     #[test]

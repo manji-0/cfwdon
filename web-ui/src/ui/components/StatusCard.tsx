@@ -2,24 +2,34 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
 import { MediaAttachment } from "@/domain/media/attachment";
-import { Status, type OriginalStatus } from "@/domain/status/status";
+import { StatusQuote } from "@/domain/status/quote";
+import { Status } from "@/domain/status/status";
+import type { StatusTranslation } from "@/domain/status/translation";
+import { translateStatus } from "@/infrastructure/api/status";
+import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
+import { PollCard } from "@/ui/components/PollCard";
 import { StatusContent } from "@/ui/components/StatusContent";
+import type { StatusActionHandlers } from "@/ui/hooks/useStatusActions";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type StatusCardProps = Readonly<{
   status: Status;
-  onFavourite?: (status: OriginalStatus) => void;
-  onReblog?: (status: OriginalStatus) => void;
-  onBookmark?: (status: OriginalStatus) => void;
-  onReply?: (status: OriginalStatus) => void;
   compact?: boolean;
-}>;
+}> &
+  Partial<StatusActionHandlers>;
 
 const AccountHeader = ({
   account,
   createdAt,
-}: Readonly<{ account: AccountRef; createdAt: string }>) => (
+  editedAt,
+  pinned,
+}: Readonly<{
+  account: AccountRef;
+  createdAt: string;
+  editedAt: string | null;
+  pinned: boolean;
+}>) => (
   <div className="status-card-header">
     <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
     <div className="status-card-meta">
@@ -28,23 +38,65 @@ const AccountHeader = ({
       </Link>
       <span className="status-acct">@{account.acct}</span>
       <span className="status-time">· {formatRelativeTime(createdAt)}</span>
+      {editedAt ? <span className="status-time">· 編集済み</span> : null}
+      {pinned ? <span className="status-time">· ピン留め</span> : null}
     </div>
   </div>
 );
 
 export const StatusCard = ({
   status,
+  selfAccountId = null,
   onFavourite,
   onReblog,
   onBookmark,
   onReply,
+  onDelete,
+  onMute,
+  onBlock,
+  onReport,
+  onVotePoll,
+  onPin,
+  onQuote,
+  onEdit,
+  onHistory,
   compact = false,
 }: StatusCardProps) => {
   const body = Status.displayBody(status);
   const boostedBy = Status.boostedBy(status);
   const card = Status.visibleCard(status);
+  const quote = body.quote && StatusQuote.isVisible(body.quote) ? body.quote.quotedStatus : null;
+  const isOwn = Boolean(selfAccountId && body.account.id === selfAccountId);
   const [revealed, setRevealed] = useState(!body.sensitive && !body.spoilerText);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [translation, setTranslation] = useState<StatusTranslation | null>(null);
+  const [translating, setTranslating] = useState(false);
   const showContent = revealed || (!body.sensitive && !body.spoilerText);
+
+  const handleReport = () => {
+    const comment = window.prompt("通報の理由（任意）");
+    if (comment === null) {
+      return;
+    }
+    onReport?.(body, comment);
+    setMenuOpen(false);
+  };
+
+  const handleTranslate = async () => {
+    setMenuOpen(false);
+    if (translation) {
+      setTranslation(null);
+      return;
+    }
+    setTranslating(true);
+    const result = await translateStatus(body.id);
+    setTranslating(false);
+    if (result.isErr()) {
+      window.alert(mastodonErrorMessage(result.error));
+      return;
+    }
+    setTranslation(result.value);
+  };
 
   return (
     <article className={`status-card${compact ? " status-card-compact" : ""}`}>
@@ -53,7 +105,12 @@ export const StatusCard = ({
           <span aria-hidden="true">↻</span> {boostedBy.displayName || boostedBy.username} がブースト
         </p>
       ) : null}
-      <AccountHeader account={body.account} createdAt={body.createdAt} />
+      <AccountHeader
+        account={body.account}
+        createdAt={body.createdAt}
+        editedAt={body.editedAt}
+        pinned={body.pinned}
+      />
       {body.spoilerText ? (
         <button type="button" className="status-spoiler-toggle" onClick={() => setRevealed((v) => !v)}>
           {showContent ? "警告を隠す" : `CW: ${body.spoilerText}`}
@@ -61,7 +118,14 @@ export const StatusCard = ({
       ) : null}
       {showContent ? (
         <>
-          <StatusContent html={body.content} />
+          <StatusContent html={translation?.content ?? body.content} />
+          {translation ? (
+            <p className="status-translation-meta app-muted">
+              {translation.provider
+                ? `${translation.provider} が翻訳（${translation.detectedSourceLanguage || "auto"} → ${translation.language || "ja"}）`
+                : "翻訳済み"}
+            </p>
+          ) : null}
           {body.mediaAttachments.length > 0 ? (
             <div className="status-media-grid">
               {body.mediaAttachments.map((media) =>
@@ -77,7 +141,23 @@ export const StatusCard = ({
               )}
             </div>
           ) : null}
+          {body.poll ? (
+            <PollCard
+              poll={body.poll}
+              onVote={onVotePoll ? (choices) => onVotePoll(body, choices) : undefined}
+            />
+          ) : null}
           {card ? <LinkPreviewCard card={card} /> : null}
+          {quote ? (
+            <Link className="status-quote" to={`/status/${quote.id}`}>
+              <span className="status-quote-acct">@{quote.account.acct}</span>
+              {quote.spoilerText ? (
+                <span className="app-muted">CW: {quote.spoilerText}</span>
+              ) : (
+                <StatusContent html={quote.content} />
+              )}
+            </Link>
+          ) : null}
         </>
       ) : null}
       <footer className="status-actions">
@@ -113,7 +193,63 @@ export const StatusCard = ({
         <Link className="status-action" to={`/status/${body.id}`} aria-label="スレッドを開く">
           ⧉
         </Link>
+        <button
+          type="button"
+          className={`status-action${menuOpen ? " is-active" : ""}`}
+          aria-label="その他"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          …
+        </button>
       </footer>
+      {menuOpen ? (
+        <div className="status-menu">
+          {onQuote ? (
+            <button type="button" onClick={() => onQuote(body)}>
+              引用
+            </button>
+          ) : null}
+          <button type="button" onClick={() => void handleTranslate()} disabled={translating}>
+            {translation ? "原文を表示" : translating ? "翻訳中…" : "翻訳"}
+          </button>
+          {body.editedAt && onHistory ? (
+            <button type="button" onClick={() => onHistory(body)}>
+              編集履歴
+            </button>
+          ) : null}
+          {isOwn && onEdit ? (
+            <button type="button" onClick={() => onEdit(body)}>
+              編集
+            </button>
+          ) : null}
+          {isOwn && onPin ? (
+            <button type="button" onClick={() => onPin(body)}>
+              {body.pinned ? "ピン留めを外す" : "ピン留め"}
+            </button>
+          ) : null}
+          {isOwn && onDelete ? (
+            <button type="button" onClick={() => onDelete(body)}>
+              削除
+            </button>
+          ) : null}
+          {!isOwn && onMute ? (
+            <button type="button" onClick={() => onMute(body)}>
+              ミュート
+            </button>
+          ) : null}
+          {!isOwn && onBlock ? (
+            <button type="button" onClick={() => onBlock(body)}>
+              ブロック
+            </button>
+          ) : null}
+          {!isOwn && onReport ? (
+            <button type="button" onClick={handleReport}>
+              通報
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 };

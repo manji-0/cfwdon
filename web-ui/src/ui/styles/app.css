@@ -1315,3 +1315,259 @@ button {
   cursor: default;
 }
 
+.timeline-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.timeline-tabs a,
+.timeline-tabs button {
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.timeline-tabs a.is-active,
+.timeline-tabs button.is-active {
+  color: var(--color-text);
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+
+.poll-card {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.poll-options {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.poll-choice {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.poll-result {
+  position: relative;
+  overflow: hidden;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.45rem;
+}
+
+.poll-result-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.poll-result-label {
+  position: relative;
+}
+
+.poll-result.is-voted .poll-result-label {
+  font-weight: 700;
+}
+
+.poll-meta {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.status-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.status-menu button {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+}
+
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.profile-stats a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.composer-poll {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.65rem 0;
+}
+
+.composer-poll-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+}
+
+.composer-poll-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.notification-follow-actions {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.settings-moderation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.settings-moderation-link {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.status-quote {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.status-quote-acct {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.composer-quote-preview {
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.composer-quote-preview p {
+  margin: 0.15rem 0 0;
+}
+
+.composer-emoji-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+}
+
+.composer-emoji-picker button {
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0.15rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.composer-emoji-picker img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.composer-media-alt {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.notification-toolbar {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.notification-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.explore-section {
+  margin-bottom: 1.25rem;
+}
+
+.explore-section h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.explore-accounts,
+.explore-links {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.explore-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.explore-links a {
+  display: flex;
+  gap: 0.75rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.explore-links img {
+  width: 4.5rem;
+  height: 4.5rem;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.explore-links span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.tag-follow-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.status-translation-meta {
+  margin: 0.2rem 0 0.4rem;
+}
+
+

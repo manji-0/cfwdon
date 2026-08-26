@@ -15,6 +15,7 @@ export type UploadedMedia = Readonly<{
   id: string;
   url: string;
   previewUrl: string;
+  description: string | null;
 }>;
 
 export const MediaAttachment = {

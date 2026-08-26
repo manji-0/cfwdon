@@ -49,3 +49,38 @@ export const ConversationPage = lazy(async () => {
   const module = await import("@/ui/pages/ConversationPage");
   return { default: module.ConversationPage };
 });
+
+export const FavouritesPage = lazy(async () => {
+  const module = await import("@/ui/pages/FavouritesPage");
+  return { default: module.FavouritesPage };
+});
+
+export const PublicTimelinePage = lazy(async () => {
+  const module = await import("@/ui/pages/PublicTimelinePage");
+  return { default: module.PublicTimelinePage };
+});
+
+export const TagTimelinePage = lazy(async () => {
+  const module = await import("@/ui/pages/TagTimelinePage");
+  return { default: module.TagTimelinePage };
+});
+
+export const ExplorePage = lazy(async () => {
+  const module = await import("@/ui/pages/ExplorePage");
+  return { default: module.ExplorePage };
+});
+
+export const StatusHistoryPage = lazy(async () => {
+  const module = await import("@/ui/pages/StatusHistoryPage");
+  return { default: module.StatusHistoryPage };
+});
+
+export const AccountFollowersPage = lazy(async () => {
+  const module = await import("@/ui/pages/AccountCollectionPage");
+  return { default: module.AccountFollowersPage };
+});
+
+export const AccountFollowingPage = lazy(async () => {
+  const module = await import("@/ui/pages/AccountCollectionPage");
+  return { default: module.AccountFollowingPage };
+});

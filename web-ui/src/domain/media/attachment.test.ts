@@ -17,5 +17,20 @@ describe("parseUploadedMedia", () => {
 
     expect(result.id).toBe("media-1");
     expect(result.kind).toBe("Image");
+    expect(result.description).toBeNull();
+  });
+
+  it("keeps media descriptions", () => {
+    const result = parseUploadedMedia({
+      id: "media-2",
+      type: "image",
+      url: "https://example.test/media/media-2",
+      preview_url: "https://example.test/media/media-2",
+      description: "a cat",
+    });
+    if (isArkError(result)) {
+      throw new Error(result.summary);
+    }
+    expect(result.description).toBe("a cat");
   });
 });

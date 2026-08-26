@@ -9,6 +9,7 @@ pub(crate) struct HttpRequestContext {
     method: String,
     path: String,
     origin: Option<String>,
+    upgrade: Option<String>,
     user_agent: String,
     log_api_requests: bool,
 }
@@ -22,6 +23,7 @@ impl HttpRequestContext {
             method: req.method().to_string(),
             path: request_url.path().to_owned(),
             origin: req.headers().get("Origin")?,
+            upgrade: req.headers().get("Upgrade")?,
             user_agent: req.headers().get("User-Agent")?.unwrap_or_default(),
             log_api_requests: api_request_logging_enabled(env),
         })
@@ -33,6 +35,10 @@ impl HttpRequestContext {
 
     pub(crate) fn path(&self) -> &str {
         &self.path
+    }
+
+    pub(crate) fn upgrade(&self) -> Option<&str> {
+        self.upgrade.as_deref()
     }
 
     pub(crate) fn is_cors_preflight(&self) -> bool {
@@ -53,6 +59,7 @@ impl HttpRequestContext {
             &self.path,
             response.status_code(),
             response.headers().get("Upgrade")?.as_deref(),
+            self.upgrade.as_deref(),
         ) {
             apply_cors_headers(&mut response, self.origin.as_deref())?;
         }
@@ -148,24 +155,34 @@ pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
         || path == "/nodeinfo/2.1"
 }
 
-fn should_apply_cors_headers(path: &str, status: u16, upgrade_header: Option<&str>) -> bool {
-    is_cors_enabled_path(path) && !is_websocket_upgrade(status, upgrade_header)
+fn should_apply_cors_headers(
+    path: &str,
+    status: u16,
+    response_upgrade: Option<&str>,
+    request_upgrade: Option<&str>,
+) -> bool {
+    is_cors_enabled_path(path)
+        && !is_websocket_upgrade(status, response_upgrade)
+        && !is_websocket_upgrade_header(request_upgrade)
 }
 
 /// Session cookies belong on HTML/API responses, not WebSocket upgrades.
 /// Stream Hub 101 responses should not get `Set-Cookie` / `Cache-Control: no-store`.
+/// Request `Upgrade` is enough: the DO proxy response can omit that header.
 /// The next non-upgrade response still refreshes the Auth0 cookie session.
 pub(crate) fn should_apply_auth0_web_session_cookies(
     status: u16,
-    upgrade_header: Option<&str>,
+    response_upgrade: Option<&str>,
+    request_upgrade: Option<&str>,
 ) -> bool {
-    !is_websocket_upgrade(status, upgrade_header)
+    !is_websocket_upgrade(status, response_upgrade) && !is_websocket_upgrade_header(request_upgrade)
 }
 
 fn is_websocket_upgrade(status: u16, upgrade_header: Option<&str>) -> bool {
-    if status == 101 {
-        return true;
-    }
+    status == 101 || is_websocket_upgrade_header(upgrade_header)
+}
+
+fn is_websocket_upgrade_header(upgrade_header: Option<&str>) -> bool {
     upgrade_header
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -233,8 +250,8 @@ pub(crate) fn error_response_with_plain_content_type(
 mod tests {
     use super::{
         PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
-        missing_content_type_fallback, sanitize_log_value, should_apply_auth0_web_session_cookies,
-        should_apply_cors_headers,
+        is_websocket_upgrade_header, missing_content_type_fallback, sanitize_log_value,
+        should_apply_auth0_web_session_cookies, should_apply_cors_headers,
     };
 
     #[test]
@@ -291,6 +308,9 @@ mod tests {
     #[test]
     fn websocket_upgrade_rejects_normal_json_response() {
         assert!(!is_websocket_upgrade(200, None));
+        assert!(!is_websocket_upgrade_header(None));
+        assert!(!is_websocket_upgrade_header(Some("")));
+        assert!(!is_websocket_upgrade_header(Some("h2c")));
     }
 
     #[test]
@@ -298,7 +318,36 @@ mod tests {
         assert!(!should_apply_cors_headers(
             "/api/v1/streaming",
             101,
+            Some("websocket"),
+            None
+        ));
+    }
+
+    #[test]
+    fn cors_skipped_when_request_upgrades_to_websocket() {
+        // Stream Hub DO proxy responses can be immutable and omit Upgrade.
+        // Request Upgrade is enough to skip CORS mutation.
+        assert!(!should_apply_cors_headers(
+            "/api/v1/streaming",
+            200,
+            None,
             Some("websocket")
+        ));
+        assert!(!should_apply_cors_headers(
+            "/api/v1/streaming",
+            200,
+            None,
+            Some("WebSocket")
+        ));
+    }
+
+    #[test]
+    fn cors_applied_for_streaming_sse_without_websocket_upgrade() {
+        assert!(should_apply_cors_headers(
+            "/api/v1/streaming",
+            200,
+            None,
+            None
         ));
     }
 
@@ -307,6 +356,7 @@ mod tests {
         assert!(should_apply_cors_headers(
             "/api/v1/timelines/public",
             200,
+            None,
             None
         ));
     }
@@ -315,17 +365,24 @@ mod tests {
     fn auth0_session_cookies_skipped_for_websocket_upgrade() {
         assert!(!should_apply_auth0_web_session_cookies(
             101,
-            Some("websocket")
+            Some("websocket"),
+            None
         ));
         assert!(!should_apply_auth0_web_session_cookies(
             200,
-            Some("WebSocket")
+            Some("WebSocket"),
+            None
+        ));
+        assert!(!should_apply_auth0_web_session_cookies(
+            200,
+            None,
+            Some("websocket")
         ));
     }
 
     #[test]
     fn auth0_session_cookies_applied_for_html_and_api_responses() {
-        assert!(should_apply_auth0_web_session_cookies(200, None));
-        assert!(should_apply_auth0_web_session_cookies(302, None));
+        assert!(should_apply_auth0_web_session_cookies(200, None, None));
+        assert!(should_apply_auth0_web_session_cookies(302, None, None));
     }
 }
