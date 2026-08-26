@@ -38,6 +38,8 @@ use worker::{
 const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
 const STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS: u64 = 30;
 const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
+const STREAMING_SSE_HUB_CLOSE_CODE: u16 = 1000;
+const STREAMING_SSE_HUB_CLOSE_REASON: &str = "sse closed";
 const STREAMING_MAX_SUBSCRIPTION_POLLS_PER_INVOCATION: u32 = 200;
 /// Cloudflare's per-invocation subrequest cap is 1000; recycle before D1 polling exhausts it.
 const STREAMING_MAX_D1_SUBREQUESTS_PER_INVOCATION: u32 = 900;
@@ -1555,6 +1557,40 @@ fn retain_new_streaming_events(state: &mut StreamingLoopState, events: &mut Vec<
     events.retain(|event| state.emitted_event_ids.insert(streaming_event_key(event)));
 }
 
+/// Closes a Worker↔StreamHub websocket when public SSE is cancelled.
+///
+/// The accepted hub socket is not closed by `WebSocket` Drop. If it stays open
+/// after the client disconnects, the runtime treats that I/O as `waitUntil`
+/// work and logs a 30s cancellation warning (#52).
+struct CloseWebSocketOnDrop {
+    websocket: Option<WebSocket>,
+}
+
+impl CloseWebSocketOnDrop {
+    fn new(websocket: WebSocket) -> Self {
+        Self {
+            websocket: Some(websocket),
+        }
+    }
+
+    fn events(&self) -> Option<worker::EventStream<'_>> {
+        self.websocket
+            .as_ref()
+            .and_then(|websocket| websocket.events().ok())
+    }
+}
+
+impl Drop for CloseWebSocketOnDrop {
+    fn drop(&mut self) {
+        if let Some(websocket) = self.websocket.take() {
+            let _ = websocket.close(
+                Some(STREAMING_SSE_HUB_CLOSE_CODE),
+                Some(STREAMING_SSE_HUB_CLOSE_REASON),
+            );
+        }
+    }
+}
+
 fn build_streaming_event_stream(
     env: Option<Env>,
     db: D1Database,
@@ -1573,7 +1609,7 @@ fn build_streaming_event_stream(
         yield sse_comment_bytes(&format!("stream={stream_name}"));
         let mut state = StreamingLoopState::new();
         let mut poll_rounds = 0_u32;
-        let hub_websocket = if let (Some(env), Some((hub_name, account_id))) =
+        let mut hub_socket = if let (Some(env), Some((hub_name, account_id))) =
             (env.as_ref(), hub_target.as_ref())
         {
             yield sse_comment_bytes("source=stream-hub");
@@ -1606,7 +1642,7 @@ fn build_streaming_event_stream(
                             error
                         );
                     }
-                    Some(websocket)
+                    Some(CloseWebSocketOnDrop::new(websocket))
                 }
                 Err(error) => {
                     console_log!(
@@ -1621,9 +1657,7 @@ fn build_streaming_event_stream(
             None
         };
 
-        let mut hub_events = hub_websocket
-            .as_ref()
-            .and_then(|websocket| websocket.events().ok());
+        let mut hub_events = hub_socket.as_ref().and_then(CloseWebSocketOnDrop::events);
         while hub_events.is_some() {
             let backup_tick =
                 worker::Delay::from(Duration::from_secs(STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS))
@@ -1649,7 +1683,10 @@ fn build_streaming_event_stream(
                                     hub_name
                                 );
                             }
+                            // Drop listeners before closing the socket (EventStream panics if
+                            // the websocket is already gone).
                             hub_events = None;
+                            drop(hub_socket.take());
                         }
                         Some(Err(error)) => {
                             if let Some((hub_name, _)) = hub_target.as_ref() {
@@ -1660,6 +1697,7 @@ fn build_streaming_event_stream(
                                 );
                             }
                             hub_events = None;
+                            drop(hub_socket.take());
                         }
                     }
                 }
@@ -2585,6 +2623,12 @@ mod tests {
         assert!(streaming_channel_supports_live_events("user:notification"));
         assert!(streaming_channel_supports_live_events("direct"));
         assert!(!streaming_channel_supports_live_events("unknown"));
+    }
+
+    #[test]
+    fn stream_hub_sse_close_uses_normal_closure() {
+        assert_eq!(STREAMING_SSE_HUB_CLOSE_CODE, 1000);
+        assert_eq!(STREAMING_SSE_HUB_CLOSE_REASON, "sse closed");
     }
 
     #[test]
