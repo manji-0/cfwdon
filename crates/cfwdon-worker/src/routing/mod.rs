@@ -25,6 +25,7 @@ mod timelines;
 pub(crate) use dispatch::dispatch_route;
 pub(crate) use http::{
     HttpRequestContext, ensure_missing_content_type, error_response_with_plain_content_type,
+    should_apply_auth0_web_session_cookies,
 };
 
 #[cfg(test)]

@@ -152,6 +152,16 @@ fn should_apply_cors_headers(path: &str, status: u16, upgrade_header: Option<&st
     is_cors_enabled_path(path) && !is_websocket_upgrade(status, upgrade_header)
 }
 
+/// Session cookies belong on HTML/API responses, not WebSocket upgrades.
+/// Stream Hub 101 responses should not get `Set-Cookie` / `Cache-Control: no-store`.
+/// The next non-upgrade response still refreshes the Auth0 cookie session.
+pub(crate) fn should_apply_auth0_web_session_cookies(
+    status: u16,
+    upgrade_header: Option<&str>,
+) -> bool {
+    !is_websocket_upgrade(status, upgrade_header)
+}
+
 fn is_websocket_upgrade(status: u16, upgrade_header: Option<&str>) -> bool {
     if status == 101 {
         return true;
@@ -223,7 +233,8 @@ pub(crate) fn error_response_with_plain_content_type(
 mod tests {
     use super::{
         PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
-        missing_content_type_fallback, sanitize_log_value, should_apply_cors_headers,
+        missing_content_type_fallback, sanitize_log_value, should_apply_auth0_web_session_cookies,
+        should_apply_cors_headers,
     };
 
     #[test]
@@ -298,5 +309,23 @@ mod tests {
             200,
             None
         ));
+    }
+
+    #[test]
+    fn auth0_session_cookies_skipped_for_websocket_upgrade() {
+        assert!(!should_apply_auth0_web_session_cookies(
+            101,
+            Some("websocket")
+        ));
+        assert!(!should_apply_auth0_web_session_cookies(
+            200,
+            Some("WebSocket")
+        ));
+    }
+
+    #[test]
+    fn auth0_session_cookies_applied_for_html_and_api_responses() {
+        assert!(should_apply_auth0_web_session_cookies(200, None));
+        assert!(should_apply_auth0_web_session_cookies(302, None));
     }
 }
