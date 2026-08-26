@@ -149,6 +149,112 @@ pub(crate) fn outbox_batch_made_progress(summary: &OutboxProcessResponse) -> boo
         || summary.completed_without_targets > 0
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutboxQueueBatchAck {
+    Ack,
+    Retry,
+}
+
+pub(crate) fn outbox_queue_batch_ack(result: &Result<()>) -> OutboxQueueBatchAck {
+    match result {
+        Ok(()) => OutboxQueueBatchAck::Ack,
+        Err(_) => OutboxQueueBatchAck::Retry,
+    }
+}
+
+pub(crate) async fn consume_outbox_process_queue_batch(
+    batch: worker::MessageBatch<OutboxProcessQueueMessage>,
+    env: Env,
+) -> Result<()> {
+    let message_count = batch.raw_iter().count();
+    let result = process_outbox_queue_batch(&env, message_count).await;
+    match outbox_queue_batch_ack(&result) {
+        OutboxQueueBatchAck::Ack => batch.ack_all(),
+        OutboxQueueBatchAck::Retry => {
+            if let Err(error) = result {
+                log_outbox_queue_processing_failed(message_count, &error);
+            }
+            batch.retry_all();
+        }
+    }
+    Ok(())
+}
+
+fn log_outbox_queue_processing_failed(message_count: usize, error: &worker::Error) {
+    log_federation_event(
+        "outbox_queue_processing_failed",
+        "failed",
+        format!("outbox queue processing failed: {error}"),
+        serde_json::json!({
+            "messages": message_count,
+            "error": error.to_string(),
+        }),
+    );
+}
+
+async fn process_outbox_queue_batch(env: &Env, message_count: usize) -> Result<()> {
+    let config = load_config_from_env(env);
+    install_remote_dns_cache(env, &config.remote_dns_cache_binding);
+    install_app_cache(env, &config.app_cache_binding);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
+    if !pending_outbox_work_exists(&db).await? {
+        log_federation_event(
+            "outbox_queue_idle",
+            "ok",
+            format!("outbox queue batch idle: messages={message_count}"),
+            serde_json::json!({ "messages": message_count }),
+        );
+        return Ok(());
+    }
+
+    let summary = process_outbox_deliveries_for_config(&db, &config).await?;
+    log_federation_event(
+        "outbox_queue_processed",
+        "ok",
+        format!(
+            "outbox queue processed: messages={} expanded={} delivered={} failed={} completed_without_targets={}",
+            message_count,
+            summary.expanded,
+            summary.delivered,
+            summary.failed,
+            summary.completed_without_targets
+        ),
+        serde_json::json!({
+            "messages": message_count,
+            "expanded": summary.expanded,
+            "delivered": summary.delivered,
+            "failed": summary.failed,
+            "completed_without_targets": summary.completed_without_targets,
+        }),
+    );
+    // Each run claims a bounded batch. Continue only while the previous
+    // batch progressed, so a stalled backlog cannot self-schedule forever.
+    if outbox_batch_made_progress(&summary) {
+        match enqueue_outbox_process_queue_if_pending(env, &db, "queue_continuation").await {
+            Ok(true) => log_federation_event(
+                "outbox_queue_kick",
+                "ok",
+                "outbox queue continuation enqueued",
+                serde_json::json!({
+                    "reason": "queue_continuation",
+                    "queued": true,
+                }),
+            ),
+            Ok(false) => {}
+            Err(error) => log_federation_event(
+                "outbox_queue_kick_failed",
+                "failed",
+                format!("outbox queue continuation failed: {error}"),
+                serde_json::json!({
+                    "reason": "queue_continuation",
+                    "error": error.to_string(),
+                }),
+            ),
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn requeue_stale_in_flight_deliveries(db: &D1Database) -> Result<()> {
     requeue_stale_in_flight_outbox_deliveries(db).await?;
     requeue_stale_in_flight_outbound_activities(db).await?;
@@ -357,6 +463,26 @@ mod tests {
             completed_without_targets: 1,
             ..OutboxProcessResponse::default()
         }));
+    }
+
+    #[test]
+    fn outbox_queue_batch_acks_success_and_retries_errors() {
+        let ok: Result<()> = Ok(());
+        assert_eq!(outbox_queue_batch_ack(&ok), OutboxQueueBatchAck::Ack);
+
+        let setup_error: Result<()> =
+            Err(worker::Error::RustError("D1 binding missing".to_owned()));
+        assert_eq!(
+            outbox_queue_batch_ack(&setup_error),
+            OutboxQueueBatchAck::Retry
+        );
+
+        let processing_error: Result<()> =
+            Err(worker::Error::RustError("outbox claim failed".to_owned()));
+        assert_eq!(
+            outbox_queue_batch_ack(&processing_error),
+            OutboxQueueBatchAck::Retry
+        );
     }
 
     #[test]
