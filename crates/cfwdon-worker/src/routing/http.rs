@@ -37,6 +37,10 @@ impl HttpRequestContext {
         &self.path
     }
 
+    pub(crate) fn upgrade(&self) -> Option<&str> {
+        self.upgrade.as_deref()
+    }
+
     pub(crate) fn is_cors_preflight(&self) -> bool {
         self.method == "OPTIONS" && is_cors_enabled_path(&self.path)
     }
@@ -162,6 +166,18 @@ fn should_apply_cors_headers(
         && !is_websocket_upgrade_header(request_upgrade)
 }
 
+/// Session cookies belong on HTML/API responses, not WebSocket upgrades.
+/// Stream Hub 101 responses should not get `Set-Cookie` / `Cache-Control: no-store`.
+/// Request `Upgrade` is enough: the DO proxy response can omit that header.
+/// The next non-upgrade response still refreshes the Auth0 cookie session.
+pub(crate) fn should_apply_auth0_web_session_cookies(
+    status: u16,
+    response_upgrade: Option<&str>,
+    request_upgrade: Option<&str>,
+) -> bool {
+    !is_websocket_upgrade(status, response_upgrade) && !is_websocket_upgrade_header(request_upgrade)
+}
+
 fn is_websocket_upgrade(status: u16, upgrade_header: Option<&str>) -> bool {
     status == 101 || is_websocket_upgrade_header(upgrade_header)
 }
@@ -235,7 +251,7 @@ mod tests {
     use super::{
         PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
         is_websocket_upgrade_header, missing_content_type_fallback, sanitize_log_value,
-        should_apply_cors_headers,
+        should_apply_auth0_web_session_cookies, should_apply_cors_headers,
     };
 
     #[test]
@@ -343,5 +359,30 @@ mod tests {
             None,
             None
         ));
+    }
+
+    #[test]
+    fn auth0_session_cookies_skipped_for_websocket_upgrade() {
+        assert!(!should_apply_auth0_web_session_cookies(
+            101,
+            Some("websocket"),
+            None
+        ));
+        assert!(!should_apply_auth0_web_session_cookies(
+            200,
+            Some("WebSocket"),
+            None
+        ));
+        assert!(!should_apply_auth0_web_session_cookies(
+            200,
+            None,
+            Some("websocket")
+        ));
+    }
+
+    #[test]
+    fn auth0_session_cookies_applied_for_html_and_api_responses() {
+        assert!(should_apply_auth0_web_session_cookies(200, None, None));
+        assert!(should_apply_auth0_web_session_cookies(302, None, None));
     }
 }

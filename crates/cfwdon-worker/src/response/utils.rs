@@ -37,6 +37,32 @@ fn ui_shell_must_revalidate(path: &str) -> bool {
         || path.ends_with(".webmanifest")
 }
 
+/// Rebuild a response so middleware can mutate headers.
+///
+/// Cache API hits, Workers ASSETS fetches, and Durable Object `fetch` responses
+/// expose immutable header maps. Copying entries onto a new `Headers` object
+/// keeps status, body, and WebSocket pairing intact while allowing
+/// `Cache-Control` / `Set-Cookie` updates.
+pub(crate) fn into_mutable_response(response: Response) -> Result<Response> {
+    let headers = headers_with_copied_entries(response.headers().entries())?;
+    let encode_body = *response.encode_body();
+    let (builder, body) = response.into_parts();
+    Ok(builder
+        .with_headers(headers)
+        .with_encode_body(encode_body)
+        .body(body))
+}
+
+fn headers_with_copied_entries(
+    entries: impl IntoIterator<Item = (String, String)>,
+) -> Result<worker::Headers> {
+    let headers = worker::Headers::new();
+    for (name, value) in entries {
+        headers.append(&name, &value)?;
+    }
+    Ok(headers)
+}
+
 pub(crate) fn json_response<T>(
     value: &T,
     content_type: &str,
@@ -157,6 +183,10 @@ mod tests {
     fn unhashed_icons_use_short_public_ttl() {
         assert_eq!(
             ui_asset_cache_control("/app/icons/icon-192.png"),
+            CACHE_CONTROL_UNHASHED_ASSET
+        );
+        assert_eq!(
+            ui_asset_cache_control("/app/.env"),
             CACHE_CONTROL_UNHASHED_ASSET
         );
     }

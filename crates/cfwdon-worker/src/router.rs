@@ -1,8 +1,9 @@
 use crate::{
     HttpRequestContext, apply_auth0_web_session_cookies, dispatch_route,
     ensure_missing_content_type, error_response_with_plain_content_type, install_app_cache,
-    install_remote_dns_cache, kick_outbox_process_queue_after_request, load_config_from_env,
-    reset_app_cache_request_state, reset_auth0_web_session_state, reset_d1_request_metrics,
+    install_remote_dns_cache, into_mutable_response, kick_outbox_process_queue_after_request,
+    load_config_from_env, reset_app_cache_request_state, reset_auth0_web_session_state,
+    reset_d1_request_metrics, should_apply_auth0_web_session_cookies,
 };
 use worker::{Env, Request, Response, Result, console_error};
 
@@ -23,8 +24,16 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let method = request_context.method().to_owned();
     let path = request_context.path().to_owned();
     let response = match dispatch_route(req, env, &method, &path).await {
-        Ok(mut response) => {
-            apply_auth0_web_session_cookies(&mut response)?;
+        Ok(response) => {
+            // Durable Object / ASSETS / Cache API responses are immutable.
+            let mut response = into_mutable_response(response)?;
+            if should_apply_auth0_web_session_cookies(
+                response.status_code(),
+                response.headers().get("Upgrade")?.as_deref(),
+                request_context.upgrade(),
+            ) {
+                apply_auth0_web_session_cookies(&mut response)?;
+            }
             response
         }
         Err(error) => {
