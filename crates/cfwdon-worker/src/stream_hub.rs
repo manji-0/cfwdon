@@ -4,6 +4,8 @@ use worker::{
     WebSocketIncomingMessage, WebSocketPair, console_error, durable_object,
 };
 
+use crate::{add_log_message, log_json_event};
+
 const STREAM_HUB_WEBSOCKET_PATH: &str = "/websocket";
 const STREAM_HUB_PUBLISH_PATH: &str = "/publish";
 const STREAM_HUB_FORWARD_REGISTER_PATH: &str = "/forward/register";
@@ -245,11 +247,23 @@ impl DurableObject for StreamHub {
 
     async fn websocket_close(
         &self,
-        _ws: WebSocket,
-        _code: usize,
-        _reason: String,
+        ws: WebSocket,
+        code: usize,
+        reason: String,
         _was_clean: bool,
     ) -> Result<()> {
+        if stream_hub_error_is_deploy_reset(&reason) {
+            log_stream_hub_websocket_event("close", &reason);
+        }
+        let close_code = u16::try_from(code).ok();
+        let _ = ws.close(close_code, Some(reason.as_str()));
+        Ok(())
+    }
+
+    async fn websocket_error(&self, _ws: WebSocket, error: worker::Error) -> Result<()> {
+        // worker-rs defaults this to `unimplemented!`, which turns deploy-time
+        // Durable Object resets into `$workers.outcome=exception`.
+        log_stream_hub_websocket_event("error", &error.to_string());
         Ok(())
     }
 }
@@ -923,6 +937,38 @@ fn stream_hub_websocket_error_message(message: &str, status: u16) -> String {
     .to_string()
 }
 
+fn stream_hub_error_is_deploy_reset(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("durable object reset") && message.contains("updated")
+}
+
+fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
+    let deploy_reset = stream_hub_error_is_deploy_reset(detail);
+    let (level, outcome) = if deploy_reset {
+        ("info", "deploy_reset")
+    } else if handler == "error" {
+        ("warn", "error")
+    } else {
+        ("info", "closed")
+    };
+    let message = if deploy_reset {
+        "Stream Hub websocket closed because Durable Object code was updated".to_owned()
+    } else {
+        format!("Stream Hub websocket {handler}: {detail}")
+    };
+    log_json_event(add_log_message(
+        serde_json::json!({
+            "event": "stream_hub_websocket",
+            "component": "stream_hub",
+            "handler": handler,
+            "outcome": outcome,
+            "level": level,
+            "deploy_reset": deploy_reset,
+        }),
+        message,
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,6 +1082,20 @@ mod tests {
         assert!(list.matches("list", None, Some("list-1")));
         assert!(!list.matches("list", None, Some("list-2")));
         assert!(!list.matches("list", None, None));
+    }
+
+    #[test]
+    fn deploy_reset_websocket_errors_are_operational_not_exceptions() {
+        assert!(stream_hub_error_is_deploy_reset(
+            "Durable Object reset because its code was updated."
+        ));
+        assert!(stream_hub_error_is_deploy_reset(
+            "Error: Durable Object reset because its code was updated."
+        ));
+        assert!(!stream_hub_error_is_deploy_reset("websocket closed"));
+        assert!(!stream_hub_error_is_deploy_reset(
+            "failed to forward stream hub event"
+        ));
     }
 
     #[test]
