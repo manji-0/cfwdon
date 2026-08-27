@@ -82,7 +82,10 @@ pub(crate) async fn extract_authenticated_user(
         .await
         {
             Ok(user) => Ok(user),
-            Err(error) if auth0_jwt_is_expired_error(&error) => Ok(None),
+            Err(error) if auth0_jwt_is_client_error(&error) => {
+                log_auth0_jwt_client_error(&error);
+                Ok(None)
+            }
             Err(error) => Err(error),
         };
     }
@@ -90,12 +93,26 @@ pub(crate) async fn extract_authenticated_user(
     if let Some(token) = request_cookie_value(req, AUTH0_SESSION_COOKIE)? {
         match user_from_access_token(&token, config).await {
             Ok(user) => return Ok(user),
-            Err(error) if auth0_jwt_is_expired_error(&error) => {}
+            Err(error) if auth0_jwt_is_client_error(&error) => {
+                log_auth0_jwt_client_error(&error);
+            }
             Err(error) => return Err(error),
         }
     }
 
     refresh_auth0_cookie_session(req, config).await
+}
+
+fn log_auth0_jwt_client_error(error: &Error) {
+    if auth0_jwt_is_expired_error(error) {
+        return;
+    }
+    log_federation_event(
+        "auth0_jwt_rejected",
+        "skipped",
+        format!("Auth0 JWT rejected as unauthenticated: {error}"),
+        serde_json::json!({ "error": error.to_string() }),
+    );
 }
 
 async fn user_from_access_token(
@@ -133,7 +150,15 @@ async fn refresh_auth0_cookie_session(
         Ok(token) => token,
         Err(_) => return Ok(None),
     };
-    let Some(user) = user_from_access_token(&token.access_token, config).await? else {
+    let user = match user_from_access_token(&token.access_token, config).await {
+        Ok(user) => user,
+        Err(error) if auth0_jwt_is_client_error(&error) => {
+            log_auth0_jwt_client_error(&error);
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(user) = user else {
         return Ok(None);
     };
     let next_refresh = token

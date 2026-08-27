@@ -250,6 +250,26 @@ pub(crate) fn auth0_jwt_is_expired_error(error: &Error) -> bool {
     error.to_string().contains("Auth0 JWT has expired")
 }
 
+/// JWT material the client presented cannot be used as a session.
+/// These must not become HTTP 500; treat them as logged-out / unauthenticated.
+pub(crate) fn auth0_jwt_is_client_error(error: &Error) -> bool {
+    let message = error.to_string();
+    auth0_jwt_is_expired_error(error)
+        || message.contains("malformed Auth0 JWT")
+        || message.contains("invalid Auth0 JWT payload")
+        || message.contains("invalid base64url data")
+        || message.contains("unsupported Auth0 JWT algorithm")
+        || message.contains("Auth0 JWT issuer mismatch")
+        || message.contains("Auth0 JWT audience mismatch")
+        || message.contains("Auth0 JWT is not yet valid")
+        || message.contains("Auth0 JWT is missing required exp claim")
+        || message.contains("Auth0 JWT iat is unreasonably far in the future")
+        || message.contains("Auth0 JWT signature verification failed")
+        || message.contains("Auth0 JWT email is not verified")
+        || message.contains("matching Auth0 signing key was not found")
+        || message.contains("validated Auth0 JWT did not include a string")
+}
+
 pub(crate) fn require_rs256_alg(alg: &str) -> Result<()> {
     if alg == "RS256" {
         Ok(())
@@ -467,12 +487,14 @@ fn current_unix_timestamp() -> u64 {
 mod tests {
     use super::{
         Auth0AudClaim, Auth0Jwk, Auth0JwtClaims, JWT_CLOCK_SKEW_LEEWAY_SECS, auth0_email_verified,
-        auth0_jwt_is_expired_error, auth0_roles_claim_name, auth0_roles_from_claims,
-        jwk_is_usable_rs256_signing_key, normalized_auth0_issuer, require_auth0_email_verified,
-        require_rs256_alg, select_auth0_signing_jwk, validate_auth0_time_claims,
+        auth0_jwt_is_client_error, auth0_jwt_is_expired_error, auth0_roles_claim_name,
+        auth0_roles_from_claims, jwk_is_usable_rs256_signing_key, normalized_auth0_issuer,
+        require_auth0_email_verified, require_rs256_alg, select_auth0_signing_jwk,
+        validate_auth0_time_claims,
     };
     use cfwdon_core::AppConfig;
     use serde_json::json;
+    use worker::Error;
 
     fn sample_jwk(kid: &str, kty: &str, alg: Option<&str>, use_: Option<&str>) -> Auth0Jwk {
         Auth0Jwk {
@@ -527,6 +549,44 @@ mod tests {
         .expect_err("expired exp must fail");
         assert!(err.to_string().contains("expired"));
         assert!(auth0_jwt_is_expired_error(&err));
+        assert!(auth0_jwt_is_client_error(&err));
+    }
+
+    #[test]
+    fn malformed_and_invalid_jwts_are_client_errors_not_server_faults() {
+        let cases = [
+            "malformed Auth0 JWT",
+            "invalid Auth0 JWT payload: expected ident at line 1 column 1",
+            "invalid base64url data: Invalid padding",
+            "unsupported Auth0 JWT algorithm: HS256",
+            "Auth0 JWT issuer mismatch",
+            "Auth0 JWT audience mismatch",
+            "Auth0 JWT is not yet valid",
+            "Auth0 JWT is missing required exp claim",
+            "Auth0 JWT iat is unreasonably far in the future",
+            "Auth0 JWT signature verification failed",
+            "Auth0 JWT email is not verified",
+            "matching Auth0 signing key was not found",
+            "validated Auth0 JWT did not include a string email claim",
+        ];
+        for message in cases {
+            let err = Error::RustError(message.to_owned());
+            assert!(
+                auth0_jwt_is_client_error(&err),
+                "{message} should be treated as unauthenticated"
+            );
+            assert!(
+                !auth0_jwt_is_expired_error(&err),
+                "{message} is not an expiry error"
+            );
+        }
+
+        let infra = Error::RustError("failed to import Auth0 public key".to_owned());
+        assert!(!auth0_jwt_is_client_error(&infra));
+        let config = Error::RustError(
+            "missing Auth0 configuration: AUTH0_DOMAIN and AUTH0_AUDIENCE are required".to_owned(),
+        );
+        assert!(!auth0_jwt_is_client_error(&config));
     }
 
     #[test]
