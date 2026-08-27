@@ -125,6 +125,10 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
     wrangler deploy
     ```
 
+    A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
+    Clients reconnect; this is expected and is logged as
+    `stream_hub_websocket` with `outcome=deploy_reset`, not as an application 5xx.
+
 ## Verification Gates
 
 - `devbox run ci`
