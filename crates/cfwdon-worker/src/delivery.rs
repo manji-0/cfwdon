@@ -193,6 +193,8 @@ fn log_outbox_queue_processing_failed(message_count: usize, error: &worker::Erro
 }
 
 async fn process_outbox_queue_batch(env: &Env, message_count: usize) -> Result<()> {
+    reset_d1_request_metrics();
+    bind_d1_request_route("queue:outbox");
     let config = load_config_from_env(env);
     install_remote_dns_cache(env, &config.remote_dns_cache_binding);
     install_app_cache(env, &config.app_cache_binding);

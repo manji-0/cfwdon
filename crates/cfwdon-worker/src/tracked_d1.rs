@@ -5,18 +5,39 @@ use wasm_bindgen::JsCast;
 use worker::d1::{D1PreparedStatement as InnerPreparedStatement, D1Result};
 use worker::{D1Database as InnerD1Database, Result};
 
-use crate::{record_d1_query_duration, record_d1_wall_clock};
+use crate::d1_metrics::{D1QueryIdentity, record_d1_query, record_d1_wall_clock};
 
 #[derive(Debug, Clone)]
-pub(crate) struct D1PreparedStatement(InnerPreparedStatement);
+pub(crate) struct D1PreparedStatement {
+    inner: InnerPreparedStatement,
+    identity: D1QueryIdentity,
+}
 
 impl D1PreparedStatement {
+    fn new(inner: InnerPreparedStatement, sql: &str) -> Self {
+        Self {
+            inner,
+            identity: D1QueryIdentity::from_sql(sql, "prepare"),
+        }
+    }
+
+    fn with_operation(&self, operation: &'static str) -> D1QueryIdentity {
+        D1QueryIdentity {
+            query_name: self.identity.query_name.clone(),
+            statement_family: self.identity.statement_family.clone(),
+            operation,
+        }
+    }
+
     pub fn bind_refs<'a, T, U>(&self, values: T) -> Result<Self>
     where
         T: IntoIterator<Item = &'a U>,
         U: worker::d1::D1Argument + 'a,
     {
-        Ok(Self(self.0.bind_refs(values)?))
+        Ok(Self {
+            inner: self.inner.bind_refs(values)?,
+            identity: self.identity.clone(),
+        })
     }
 
     pub async fn first<T>(&self, col_name: Option<&str>) -> Result<Option<T>>
@@ -24,20 +45,20 @@ impl D1PreparedStatement {
         T: for<'a> Deserialize<'a>,
     {
         let started_at_ms = js_sys::Date::now();
-        let result = self.0.first(col_name).await;
-        record_d1_wall_clock(started_at_ms);
+        let result = self.inner.first(col_name).await;
+        record_d1_wall_clock(started_at_ms, &self.with_operation("first"));
         result
     }
 
     pub async fn run(&self) -> Result<D1Result> {
-        let result = self.0.run().await?;
-        record_d1_result(&result);
+        let result = self.inner.run().await?;
+        record_d1_result(&result, Some(&self.with_operation("run")));
         Ok(result)
     }
 
     pub async fn all(&self) -> Result<D1Result> {
-        let result = self.0.all().await?;
-        record_d1_result(&result);
+        let result = self.inner.all().await?;
+        record_d1_result(&result, Some(&self.with_operation("all")));
         Ok(result)
     }
 }
@@ -60,17 +81,22 @@ impl D1Database {
     }
 
     pub fn prepare<T: Into<String>>(&self, query: T) -> D1PreparedStatement {
-        D1PreparedStatement(self.0.prepare(query))
+        let query = query.into();
+        D1PreparedStatement::new(self.0.prepare(&query), &query)
     }
 
     pub async fn batch(&self, statements: Vec<D1PreparedStatement>) -> Result<Vec<D1Result>> {
+        let identities = statements
+            .iter()
+            .map(|statement| statement.with_operation("batch"))
+            .collect::<Vec<_>>();
         let statements = statements
             .into_iter()
-            .map(|statement| statement.0)
+            .map(|statement| statement.inner)
             .collect::<Vec<_>>();
         let results = self.0.batch(statements).await?;
-        for result in &results {
-            record_d1_result(result);
+        for (result, identity) in results.iter().zip(identities.iter()) {
+            record_d1_result(result, Some(identity));
         }
         Ok(results)
     }
@@ -84,7 +110,7 @@ impl D1Database {
     }
 }
 
-fn record_d1_result(result: &D1Result) {
+fn record_d1_result(result: &D1Result, identity: Option<&D1QueryIdentity>) {
     let duration_ms = result
         .meta()
         .ok()
@@ -92,5 +118,5 @@ fn record_d1_result(result: &D1Result) {
         .and_then(|meta| meta.duration)
         .map(|duration| duration.max(0.0).round() as u64)
         .unwrap_or(0);
-    record_d1_query_duration(duration_ms);
+    record_d1_query(duration_ms, identity);
 }

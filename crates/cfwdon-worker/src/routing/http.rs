@@ -1,6 +1,7 @@
 use crate::{
-    add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
-    publish_d1_request_pressure, snapshot_d1_request_metrics,
+    add_log_message, bind_d1_request_route, d1_request_route, log_json_event,
+    observability_duration_ms, observability_started_at_ms, publish_d1_request_pressure,
+    snapshot_d1_request_metrics,
 };
 use worker::{Env, Request, Response, Result};
 
@@ -18,7 +19,7 @@ impl HttpRequestContext {
     pub(crate) fn from_request(req: &Request, env: &Env) -> Result<Self> {
         let request_url = req.url()?;
 
-        Ok(Self {
+        let context = Self {
             started_at_ms: observability_started_at_ms(),
             method: req.method().to_string(),
             path: request_url.path().to_owned(),
@@ -26,7 +27,9 @@ impl HttpRequestContext {
             upgrade: req.headers().get("Upgrade")?,
             user_agent: req.headers().get("User-Agent")?.unwrap_or_default(),
             log_api_requests: api_request_logging_enabled(env),
-        })
+        };
+        bind_d1_request_route(d1_request_route(&context.method, &context.path));
+        Ok(context)
     }
 
     pub(crate) fn method(&self) -> &str {
