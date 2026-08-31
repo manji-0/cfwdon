@@ -1,11 +1,49 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use url::Url;
-use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
+use worker::{
+    Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, Result,
+};
 
 use super::{parse_remote_http_url, validate_remote_fetch_url};
 
 const MAX_REMOTE_FETCH_REDIRECTS: usize = 5;
+const REMOTE_FETCH_JSON_BODY_SNIPPET_LIMIT: usize = 200;
+
+fn remote_fetch_json_body_snippet(body: &str) -> String {
+    body.chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => ' ',
+            _ => character,
+        })
+        .take(REMOTE_FETCH_JSON_BODY_SNIPPET_LIMIT)
+        .collect()
+}
+
+pub(crate) fn parse_remote_fetch_json_body(
+    url: &str,
+    status: u16,
+    content_type: Option<&str>,
+    body: &str,
+) -> Result<serde_json::Value> {
+    serde_json::from_str(body).map_err(|error| {
+        let content_type = content_type.unwrap_or("<missing>");
+        Error::RustError(format!(
+            "failed to parse remote JSON from {url}: HTTP {status}, content-type={content_type}, parse_error={error}, body={}",
+            remote_fetch_json_body_snippet(body)
+        ))
+    })
+}
+
+pub(crate) async fn parse_remote_http_json_response(
+    response: &mut Response,
+    url: &str,
+    status: u16,
+) -> Result<serde_json::Value> {
+    let content_type = response.headers().get("Content-Type")?;
+    let body = response.text().await?;
+    parse_remote_fetch_json_body(url, status, content_type.as_deref(), &body)
+}
 
 pub(crate) fn resolve_remote_redirect_location(base: &Url, location: &str) -> Result<Url> {
     let location = location.trim();
@@ -76,7 +114,7 @@ pub(crate) async fn fetch_remote_http_json(url: &str, accept: &str) -> Result<se
             )));
         }
 
-        return response.json().await;
+        return parse_remote_http_json_response(&mut response, current_url.as_str(), status).await;
     }
 
     Err(Error::RustError(format!(
@@ -157,5 +195,44 @@ mod tests {
     fn resolve_redirect_rejects_unsupported_scheme() {
         let base = Url::parse("https://example.com/a").unwrap();
         assert!(resolve_remote_redirect_location(&base, "ftp://example.com/x").is_err());
+    }
+
+    #[test]
+    fn remote_fetch_json_body_snippet_collapses_whitespace_and_truncates() {
+        let body = format!("{}\n{}", "a".repeat(150), "b".repeat(100));
+        let snippet = remote_fetch_json_body_snippet(&body);
+        assert_eq!(snippet.len(), REMOTE_FETCH_JSON_BODY_SNIPPET_LIMIT);
+        assert!(!snippet.contains('\n'));
+    }
+
+    #[test]
+    fn parse_remote_fetch_json_body_reports_diagnostics_on_invalid_json() {
+        let error = parse_remote_fetch_json_body(
+            "https://remote.example/note",
+            200,
+            Some("text/html"),
+            "<html>not json</html>",
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("https://remote.example/note"));
+        assert!(message.contains("HTTP 200"));
+        assert!(message.contains("text/html"));
+        assert!(message.contains("<html>not json</html>"));
+    }
+
+    #[test]
+    fn parse_remote_fetch_json_body_accepts_valid_json() {
+        let value = parse_remote_fetch_json_body(
+            "https://remote.example/note",
+            200,
+            Some("application/activity+json"),
+            r#"{"id":"https://remote.example/note"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            value.get("id").and_then(serde_json::Value::as_str),
+            Some("https://remote.example/note")
+        );
     }
 }
