@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 use url::Url;
-use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, Result};
+use worker::{
+    Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, Result,
+};
 
 use super::{parse_remote_http_url, validate_remote_fetch_url};
 
