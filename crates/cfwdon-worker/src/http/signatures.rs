@@ -8,7 +8,7 @@ use super::{
 use crate::auth::load_account_private_key_jwk;
 use crate::federation::{
     RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts, parse_remote_http_url,
-    resolve_remote_redirect_location, validate_remote_fetch_url,
+    parse_remote_http_json_response, resolve_remote_redirect_location, validate_remote_fetch_url,
 };
 use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
@@ -120,7 +120,7 @@ pub(crate) async fn fetch_signed_activitypub_document(
             )));
         }
 
-        return response.json().await;
+        return parse_remote_http_json_response(&mut response, current_url.as_str(), status).await;
     }
 
     Err(Error::RustError(format!(
