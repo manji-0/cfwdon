@@ -135,10 +135,15 @@ fn current_d1_request_route() -> Option<String> {
 }
 
 pub(crate) fn d1_statement_family(sql: &str) -> String {
-    let stripped = replace_sql_string_literals(sql);
+    let normalized = collapse_sql_whitespace_lower(&replace_sql_string_literals(sql));
+    let after_with = sql_after_with_clause(&normalized);
+    truncate_statement_family(after_with)
+}
+
+fn collapse_sql_whitespace_lower(sql: &str) -> String {
     let mut out = String::new();
     let mut prev_space = true;
-    for ch in stripped.chars() {
+    for ch in sql.chars() {
         if ch.is_whitespace() {
             if !prev_space && !out.is_empty() {
                 out.push(' ');
@@ -148,11 +153,111 @@ pub(crate) fn d1_statement_family(sql: &str) -> String {
         }
         out.push(ch.to_ascii_lowercase());
         prev_space = false;
-        if out.len() >= D1_STATEMENT_FAMILY_MAX_LEN {
-            break;
-        }
     }
     out.trim().to_owned()
+}
+
+fn truncate_statement_family(normalized: &str) -> String {
+    if normalized.len() <= D1_STATEMENT_FAMILY_MAX_LEN {
+        return normalized.to_owned();
+    }
+    normalized
+        .char_indices()
+        .take_while(|(index, _)| *index < D1_STATEMENT_FAMILY_MAX_LEN)
+        .last()
+        .map(|(index, ch)| normalized[..index + ch.len_utf8()].trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// Drop a leading `WITH [RECURSIVE] cte AS (...) [, ...]` list so query names
+/// use the outer statement's verb and table instead of `with:unknown`.
+fn sql_after_with_clause(normalized: &str) -> &str {
+    let Some(rest) = normalized.strip_prefix("with ") else {
+        return normalized;
+    };
+    let rest = rest.strip_prefix("recursive ").unwrap_or(rest);
+    let mut index = 0;
+    loop {
+        index = skip_sql_whitespace(rest, index);
+        let ident_start = index;
+        index = skip_sql_ident(rest, index);
+        if index == ident_start {
+            return normalized;
+        }
+        index = skip_sql_whitespace(rest, index);
+        if rest.as_bytes().get(index) == Some(&b'(') {
+            let Some(after_cols) = skip_balanced_parens(rest, index) else {
+                return normalized;
+            };
+            index = after_cols;
+            index = skip_sql_whitespace(rest, index);
+        }
+        if !rest[index..].starts_with("as") {
+            return normalized;
+        }
+        index += 2;
+        index = skip_sql_whitespace(rest, index);
+        if rest.as_bytes().get(index) != Some(&b'(') {
+            return normalized;
+        }
+        let Some(after_body) = skip_balanced_parens(rest, index) else {
+            return normalized;
+        };
+        index = skip_sql_whitespace(rest, after_body);
+        if rest.as_bytes().get(index) == Some(&b',') {
+            index += 1;
+            continue;
+        }
+        let remainder = rest[index..].trim();
+        return if remainder.is_empty() {
+            normalized
+        } else {
+            remainder
+        };
+    }
+}
+
+fn skip_sql_whitespace(sql: &str, mut index: usize) -> usize {
+    let bytes = sql.as_bytes();
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    index
+}
+
+fn skip_sql_ident(sql: &str, start: usize) -> usize {
+    let bytes = sql.as_bytes();
+    let mut index = start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    index
+}
+
+fn skip_balanced_parens(sql: &str, open_at: usize) -> Option<usize> {
+    let bytes = sql.as_bytes();
+    if bytes.get(open_at) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, byte) in bytes[open_at..].iter().enumerate() {
+        match byte {
+            b'(' => depth = depth.saturating_add(1),
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open_at + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn d1_query_name_from_family(statement_family: &str) -> String {
@@ -184,7 +289,7 @@ fn first_sql_table(normalized: &str) -> Option<&str> {
             continue;
         }
         let table = table.trim_matches(|ch| matches!(ch, '(' | ')' | '`' | '"' | '[' | ']'));
-        if table.is_empty() || table == "select" {
+        if table.is_empty() || table == "select" || table == "values" || table.starts_with('(') {
             continue;
         }
         return Some(table);
@@ -341,6 +446,44 @@ mod tests {
                 .query_name,
             "delete:follow_requests"
         );
+        assert_eq!(
+            D1QueryIdentity::from_sql(
+                "WITH requested(id) AS (VALUES (?1), (?2))
+                 UPDATE media_attachments
+                 SET status_id = ?3
+                 WHERE id IN (SELECT id FROM requested)",
+                "run"
+            )
+            .query_name,
+            "update:media_attachments"
+        );
+        assert_eq!(
+            D1QueryIdentity::from_sql(
+                "WITH max_cursor AS (
+                    SELECT id, created_at
+                    FROM remote_statuses
+                    WHERE id = ?1
+                    LIMIT 1
+                 )
+                 SELECT rs.id
+                 FROM remote_statuses rs
+                 WHERE EXISTS (
+                    SELECT 1 FROM max_cursor
+                    WHERE rs.published_at < max_cursor.created_at
+                 )",
+                "all"
+            )
+            .query_name,
+            "select:remote_statuses"
+        );
+        assert_eq!(
+            D1QueryIdentity::from_sql(
+                "SELECT id FROM (SELECT id FROM accounts WHERE username = ?1)",
+                "first"
+            )
+            .query_name,
+            "select:accounts"
+        );
     }
 
     #[test]
@@ -352,6 +495,21 @@ mod tests {
         assert_eq!(
             d1_statement_family("SELECT * FROM accounts WHERE handle = 'O''Brien'"),
             "select * from accounts where handle = ?"
+        );
+        assert_eq!(
+            d1_statement_family(
+                "WITH requested(id) AS (VALUES (?1))
+                 UPDATE media_attachments SET status_id = ?2"
+            ),
+            "update media_attachments set status_id = ?2"
+        );
+        assert_eq!(
+            d1_statement_family(
+                "WITH max_cursor AS (SELECT id FROM statuses WHERE id = ?1 LIMIT 1),
+                      min_cursor AS (SELECT id FROM statuses WHERE id = ?2 LIMIT 1)
+                 SELECT id FROM statuses"
+            ),
+            "select id from statuses"
         );
     }
 

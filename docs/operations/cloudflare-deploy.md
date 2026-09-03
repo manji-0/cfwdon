@@ -11,7 +11,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - A D1 database bound as `DB`
 - An R2 bucket bound as `MEDIA`
 - A KV namespace bound as `REMOTE_DNS_CACHE` (remote hostname DoH validation cache)
-- A KV namespace bound as `APP_CACHE` (account capability bits and other short-lived app cache)
+- A KV namespace bound as `APP_CACHE` (account capability bits, public endpoint payloads, and trend lists)
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
 
 ## Provisioning Steps

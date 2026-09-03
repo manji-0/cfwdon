@@ -7,13 +7,14 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 ## Cloudflare Bindings
 <!-- derived-from ../../wrangler.toml.example -->
 <!-- dagayn: implemented-by crates/cfwdon-worker/src/ui_assets.rs::serve_ui_asset -->
+<!-- dagayn: implemented-by crates/cfwdon-worker/src/public_endpoint_cache.rs::load_public_endpoint_cache -->
 
 | Binding | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `DB` | D1 database | Yes | Database binding expected by the Worker runtime and by the defaults in `crates/cfwdon-core/src/config.rs`. |
 | `MEDIA` | R2 bucket | Yes | Bucket binding used for uploaded media bodies and profile media objects. |
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
-| `APP_CACHE` | KV namespace | Yes | Caches short-lived app data such as account capability bits used to skip empty D1 probes. |
+| `APP_CACHE` | KV namespace | Yes | Caches short-lived app data: account capability bits (skip empty D1 probes), public endpoint payloads (`public_timeline`, `instance_activity`), and trend lists. |
 | `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
 | `ASSETS` | Workers static assets | Yes | Staged `web-ui` and `admin-ui` files under `/app` and `/admin`. Configured by `[assets]` in `wrangler.toml`, not by `AppConfig`. |
 
