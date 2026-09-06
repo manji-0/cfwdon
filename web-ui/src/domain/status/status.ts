@@ -147,6 +147,14 @@ export const Status = {
   prependUnique: (statuses: ReadonlyArray<Status>, incoming: Status): ReadonlyArray<Status> =>
     Status.containsId(statuses, incoming.id) ? statuses : [incoming, ...statuses],
 
+  appendUnique: (
+    statuses: ReadonlyArray<Status>,
+    incoming: ReadonlyArray<Status>,
+  ): ReadonlyArray<Status> => {
+    const next = incoming.filter((item) => !Status.containsId(statuses, item.id));
+    return next.length === 0 ? statuses : [...statuses, ...next];
+  },
+
   removeById: (statuses: ReadonlyArray<Status>, statusId: string): ReadonlyArray<Status> => {
     const next = statuses.filter(
       (item) => item.id !== statusId && Status.displayBody(item).id !== statusId,

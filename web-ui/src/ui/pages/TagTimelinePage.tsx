@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { fetchTagTimeline } from "@/infrastructure/api/status";
 import { fetchFollowedTags, followTag, unfollowTag } from "@/infrastructure/api/tags";

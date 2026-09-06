@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
@@ -7,6 +7,7 @@ import { Relationship } from "@/domain/account/relationship";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
 import { Status } from "@/domain/status/status";
+import type { FeaturedTag } from "@/domain/tags/featured-tag";
 import { fetchAccountStatuses } from "@/infrastructure/api/account";
 import {
   blockAccount,
@@ -18,10 +19,12 @@ import {
   unblockAccount,
 } from "@/infrastructure/api/relationship";
 import { createReport } from "@/infrastructure/api/report";
+import { fetchAccountFeaturedTags } from "@/infrastructure/api/tags";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { ProfileEditor } from "@/ui/components/ProfileEditor";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
@@ -67,6 +70,7 @@ const emptyMessageForTab = (tab: ProfileTab): string => {
 export const ProfilePage = () => {
   const { accountId: routeAccountId } = useParams();
   const { session } = useSession();
+  const { prompt, alert } = useConfirm();
   const cache = useViewCache();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const accountId = routeAccountId ?? selfAccountId;
@@ -87,6 +91,7 @@ export const ProfilePage = () => {
   const [relationship, setRelationship] = useState<Relationship | null>(null);
   const [savingRelationship, setSavingRelationship] = useState(false);
   const [tab, setTab] = useState<ProfileTab>("posts");
+  const [featuredTags, setFeaturedTags] = useState<ReadonlyArray<FeaturedTag>>([]);
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
@@ -136,6 +141,7 @@ export const ProfilePage = () => {
     setError("");
     setRelationship(null);
     setTab("posts");
+    setFeaturedTags([]);
 
     let active = true;
     switch (ViewReadiness.forProfile(snapshot, Date.now()).kind) {
@@ -205,6 +211,22 @@ export const ProfilePage = () => {
       active = false;
     };
   }, [accountId, isSelf]);
+
+  useEffect(() => {
+    if (!accountId) {
+      setFeaturedTags([]);
+      return;
+    }
+    let active = true;
+    void fetchAccountFeaturedTags(accountId).then((result) => {
+      if (active && result.isOk()) {
+        setFeaturedTags(result.value);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [accountId]);
 
   useEffect(() => {
     if (!accountId || tab === "posts") {
@@ -324,7 +346,10 @@ export const ProfilePage = () => {
     if (!accountId) {
       return;
     }
-    const comment = window.prompt("通報の理由（任意）");
+    const comment = await prompt("通報の理由（任意）", {
+      title: "通報",
+      confirmLabel: "送信",
+    });
     if (comment === null) {
       return;
     }
@@ -333,7 +358,7 @@ export const ProfilePage = () => {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    window.alert("通報を送信しました");
+    await alert("通報を送信しました", { title: "通報" });
   };
 
   if (!accountId) {
@@ -454,6 +479,16 @@ export const ProfilePage = () => {
                   </div>
                 ))}
               </dl>
+            ) : null}
+            {featuredTags.length > 0 ? (
+              <ul className="profile-featured-tags">
+                {featuredTags.map((tag) => (
+                  <li key={tag.id}>
+                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>#{tag.name}</Link>
+                    <span className="app-muted">{tag.statusesCount}</span>
+                  </li>
+                ))}
+              </ul>
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>

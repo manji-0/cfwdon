@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { fetchStatusQuotes } from "@/infrastructure/api/status";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 

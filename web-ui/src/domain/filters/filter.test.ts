@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FilterAction, FilterContext } from "@/domain/filters/filter";
+import { FilterAction, FilterContext, FilterExpire } from "@/domain/filters/filter";
 
 describe("FilterContext", () => {
   it("labels known contexts", () => {
@@ -29,5 +29,18 @@ describe("FilterAction", () => {
     expect(FilterAction.label("warn")).toBe("警告");
     expect(FilterAction.label("hide")).toBe("隠す");
     expect(FilterAction.label("blur")).toBe("ぼかす");
+  });
+});
+
+describe("FilterExpire", () => {
+  it("omits seconds for never and keep", () => {
+    expect(FilterExpire.seconds("never")).toBeUndefined();
+    expect(FilterExpire.seconds("keep")).toBeUndefined();
+  });
+
+  it("maps duration presets to seconds", () => {
+    expect(FilterExpire.seconds("30m")).toBe(1800);
+    expect(FilterExpire.seconds("1h")).toBe(3600);
+    expect(FilterExpire.seconds("7d")).toBe(604800);
   });
 });

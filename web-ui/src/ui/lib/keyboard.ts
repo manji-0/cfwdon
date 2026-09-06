@@ -24,3 +24,6 @@ export const isTypingTarget = (target: EventTarget | null): boolean => {
 
 export const isHelpShortcut = (event: KeyboardEventLike): boolean =>
   event.key === "?" && !event.metaKey && !event.ctrlKey && !event.altKey;
+
+export const isOverlayOpen = (): boolean =>
+  typeof document !== "undefined" && Boolean(document.querySelector("[data-app-overlay]"));

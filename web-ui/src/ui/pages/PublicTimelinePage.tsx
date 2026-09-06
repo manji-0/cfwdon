@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { SearchSidebar } from "@/ui/components/SearchSidebar";
 import { TimelineTabs } from "@/ui/components/TimelineTabs";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";

@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 import { AppRoute } from "@/domain/navigation/route";
 import {
   IconBell,

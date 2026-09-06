@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Status, type OriginalStatus } from "@/domain/status/status";
 import { voteInPoll } from "@/infrastructure/api/poll";
@@ -21,6 +21,7 @@ import {
   unpinStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 
 export type StatusActionHandlers = Readonly<{
   selfAccountId: string | null;
@@ -47,6 +48,7 @@ export const useStatusActions = (options: {
   onError: (message: string) => void;
 }): StatusActionHandlers => {
   const navigate = useNavigate();
+  const { confirm, alert } = useConfirm();
   const selfAccountId = options.selfAccountId ?? null;
   const { onReplace, onRemove, onError } = options;
 
@@ -94,7 +96,12 @@ export const useStatusActions = (options: {
 
   const handleDelete = useCallback(
     async (status: OriginalStatus) => {
-      if (!window.confirm("この投稿を削除しますか？")) {
+      const ok = await confirm("この投稿を削除しますか？", {
+        title: "投稿の削除",
+        confirmLabel: "削除",
+        danger: true,
+      });
+      if (!ok) {
         return;
       }
       const result = await deleteStatus(status.id);
@@ -104,12 +111,16 @@ export const useStatusActions = (options: {
       }
       onRemove?.(status.id);
     },
-    [onError, onRemove],
+    [confirm, onError, onRemove],
   );
 
   const handleMute = useCallback(
     async (status: OriginalStatus) => {
-      if (!window.confirm(`@${status.account.acct} をミュートしますか？`)) {
+      const ok = await confirm(`@${status.account.acct} をミュートしますか？`, {
+        title: "ミュート",
+        confirmLabel: "ミュート",
+      });
+      if (!ok) {
         return;
       }
       const result = await muteAccount(status.account.id);
@@ -119,12 +130,17 @@ export const useStatusActions = (options: {
       }
       onRemove?.(status.id);
     },
-    [onError, onRemove],
+    [confirm, onError, onRemove],
   );
 
   const handleBlock = useCallback(
     async (status: OriginalStatus) => {
-      if (!window.confirm(`@${status.account.acct} をブロックしますか？`)) {
+      const ok = await confirm(`@${status.account.acct} をブロックしますか？`, {
+        title: "ブロック",
+        confirmLabel: "ブロック",
+        danger: true,
+      });
+      if (!ok) {
         return;
       }
       const result = await blockAccount(status.account.id);
@@ -134,7 +150,7 @@ export const useStatusActions = (options: {
       }
       onRemove?.(status.id);
     },
-    [onError, onRemove],
+    [confirm, onError, onRemove],
   );
 
   const handleReport = useCallback(
@@ -148,9 +164,9 @@ export const useStatusActions = (options: {
         onError(mastodonErrorMessage(result.error));
         return;
       }
-      window.alert("通報を送信しました");
+      await alert("通報を送信しました", { title: "通報" });
     },
-    [onError],
+    [alert, onError],
   );
 
   const handleVotePoll = useCallback(

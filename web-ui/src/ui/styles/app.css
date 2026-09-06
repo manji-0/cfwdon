@@ -255,6 +255,22 @@ button {
   border: 1px solid var(--color-border);
 }
 
+.app-button-danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.confirm-dialog-message {
+  margin: 0 0 1rem;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
 .app-login-panel {
   display: grid;
   gap: 1rem;
@@ -368,7 +384,7 @@ button {
 
 .shortcut-item {
   display: grid;
-  grid-template-columns: 7rem 1fr;
+  grid-template-columns: 8.5rem 1fr;
   gap: 0.75rem;
   align-items: center;
 }
@@ -419,6 +435,11 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+
+.status-card.is-focused {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .status-card-compact {
@@ -892,6 +913,13 @@ button {
   gap: 0.5rem;
 }
 
+.account-row-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .account-row {
   display: flex;
   gap: 0.75rem;
@@ -901,6 +929,10 @@ button {
   background: var(--color-surface);
   color: inherit;
   text-decoration: none;
+}
+
+.account-row-action {
+  justify-self: end;
 }
 
 .account-row-meta {
@@ -1764,6 +1796,58 @@ button {
 
 .status-translation-meta {
   margin: 0.2rem 0 0.4rem;
+}
+
+.announcement-banner {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0 0 0.85rem;
+}
+
+.announcement-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.announcement-card-body {
+  overflow-wrap: anywhere;
+}
+
+.announcement-card-body p:last-child {
+  margin-bottom: 0;
+}
+
+.profile-featured-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-featured-tags a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.profile-featured-tags li {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+
+.featured-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.75rem 0;
 }
 
 

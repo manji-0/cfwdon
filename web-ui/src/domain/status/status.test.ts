@@ -45,6 +45,23 @@ describe("Status.prependUnique", () => {
   });
 });
 
+describe("Status.appendUnique", () => {
+  it("appends statuses that are not already in the list", () => {
+    const existing = original("s1");
+    const incoming = original("s2");
+    expect(Status.appendUnique([existing], [incoming, original("s1")])).toEqual([
+      existing,
+      incoming,
+    ]);
+  });
+
+  it("returns the same array when every id is already present", () => {
+    const existing = original("s1");
+    const list = [existing];
+    expect(Status.appendUnique(list, [original("s1")])).toBe(list);
+  });
+});
+
 describe("Status.replaceInList", () => {
   it("replaces an original and keeps the array when nothing matches", () => {
     const existing = original("s1");

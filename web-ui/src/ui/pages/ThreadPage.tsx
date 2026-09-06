@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";

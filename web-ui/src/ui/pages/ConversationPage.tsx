@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
@@ -20,6 +20,7 @@ import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
 import { ChatMessage } from "@/ui/components/ChatMessage";
 import { Composer, type ComposerSubmitInput } from "@/ui/components/Composer";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 
@@ -27,6 +28,7 @@ export const ConversationPage = () => {
   const { conversationId = "" } = useParams();
   const navigate = useNavigate();
   const { session } = useSession();
+  const { confirm } = useConfirm();
   const { refreshUnreadCount } = useUnreadMessages();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [statuses, setStatuses] = useState<ReadonlyArray<Status>>([]);
@@ -136,7 +138,15 @@ export const ConversationPage = () => {
   };
 
   const handleDelete = async () => {
-    if (!conversationId || !window.confirm("この会話を削除しますか？")) {
+    if (!conversationId) {
+      return;
+    }
+    const ok = await confirm("この会話を削除しますか？", {
+      title: "会話の削除",
+      confirmLabel: "削除",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     const result = await deleteConversation(conversationId);

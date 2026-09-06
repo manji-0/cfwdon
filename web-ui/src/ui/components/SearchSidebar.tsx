@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { AppRoute } from "@/domain/navigation/route";
 import { WebUiPhase } from "@/plan/phases";
 

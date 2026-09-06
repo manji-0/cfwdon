@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { ScheduledStatus } from "@/domain/status/scheduled";
 import { AppRoute } from "@/domain/navigation/route";
@@ -9,10 +9,12 @@ import {
 } from "@/infrastructure/api/scheduled";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import { formatDateTime } from "@/ui/lib/time";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 export const ScheduledStatusesPage = () => {
+  const { confirm } = useConfirm();
   const [items, setItems] = useState<ReadonlyArray<ScheduledStatus>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -81,7 +83,12 @@ export const ScheduledStatusesPage = () => {
   };
 
   const handleCancel = async (id: string) => {
-    if (!window.confirm("この予約投稿を取り消しますか？")) {
+    const ok = await confirm("この予約投稿を取り消しますか？", {
+      title: "予約の取り消し",
+      confirmLabel: "取り消す",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     const result = await cancelScheduledStatus(id);

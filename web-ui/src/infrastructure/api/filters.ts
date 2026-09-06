@@ -18,12 +18,14 @@ export type KeywordFilterInput = Readonly<{
   context: ReadonlyArray<string>;
   keywords: ReadonlyArray<string>;
   filterAction: string;
+  expiresIn?: number;
 }>;
 
 const filterBody = (input: KeywordFilterInput): Record<string, unknown> => ({
   title: input.title,
   context: [...input.context],
   filter_action: input.filterAction,
+  ...(input.expiresIn !== undefined ? { expires_in: input.expiresIn } : {}),
   keywords: input.keywords
     .map((keyword) => keyword.trim())
     .filter((keyword) => keyword.length > 0)

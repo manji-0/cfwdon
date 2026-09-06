@@ -1,14 +1,16 @@
 import { Suspense, useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { loadSession } from "@/application/load-session";
 import { SessionState } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
+import { ConfirmProvider } from "@/ui/context/ConfirmContext";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
 import { UnreadNotificationsProvider } from "@/ui/context/UnreadNotificationsContext";
 import { ViewCacheProvider } from "@/ui/context/ViewCacheContext";
+import { AppKeyboard } from "@/ui/hooks/useAppKeyboard";
 import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
@@ -52,11 +54,13 @@ const AppRoutes = ({
   return (
     <SessionProvider value={createSessionContextValue(session, setSession)}>
       <ViewCacheProvider>
-        <SelfProfilePreloader />
-        <UnreadMessagesProvider>
-          <UnreadNotificationsProvider>
-          <KeyboardShortcutsHelp />
-          <Suspense fallback={<RouteFallback />}>
+        <ConfirmProvider>
+          <SelfProfilePreloader />
+          <UnreadMessagesProvider>
+            <UnreadNotificationsProvider>
+              <KeyboardShortcutsHelp />
+              <AppKeyboard />
+              <Suspense fallback={<RouteFallback />}>
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/public" element={<PublicTimelinePage />} />
@@ -84,9 +88,10 @@ const AppRoutes = ({
               <Route path="/messages/:conversationId" element={<ConversationPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </Suspense>
-          </UnreadNotificationsProvider>
-        </UnreadMessagesProvider>
+              </Suspense>
+            </UnreadNotificationsProvider>
+          </UnreadMessagesProvider>
+        </ConfirmProvider>
       </ViewCacheProvider>
     </SessionProvider>
   );

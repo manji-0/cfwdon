@@ -22,6 +22,7 @@ import { AccountSearchPicker } from "@/ui/components/AccountSearchPicker";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
@@ -29,6 +30,7 @@ import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 export const ListsPage = () => {
   const { session } = useSession();
+  const { confirm } = useConfirm();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const [lists, setLists] = useState<ReadonlyArray<AccountList>>([]);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
@@ -245,7 +247,12 @@ export const ListsPage = () => {
     if (!selectedListId || saving) {
       return;
     }
-    if (!window.confirm("このリストを削除しますか？")) {
+    const ok = await confirm("このリストを削除しますか？", {
+      title: "リストの削除",
+      confirmLabel: "削除",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     setSaving(true);

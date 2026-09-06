@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { TrendTag } from "@/domain/trends/trend";
 import { fetchTrendingTags } from "@/infrastructure/api/trends";

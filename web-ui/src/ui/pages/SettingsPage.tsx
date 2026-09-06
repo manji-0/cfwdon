@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountRef } from "@/domain/account/account";
-import { FilterAction, FilterContext, type FilterContext as FilterContextValue, type KeywordFilter } from "@/domain/filters/filter";
+import { FilterAction, FilterContext, FilterExpire, type FilterContext as FilterContextValue, type FilterExpirePreset, type KeywordFilter } from "@/domain/filters/filter";
 import type { NotificationPolicy, NotificationPolicyAction } from "@/domain/settings/notification-policy";
 import { NotificationPolicy as NotificationPolicyModel } from "@/domain/settings/notification-policy";
 import { SessionState } from "@/domain/session/session";
 import { Visibility } from "@/domain/status/visibility";
+import { FeaturedTag } from "@/domain/tags/featured-tag";
 import type { FollowedTag } from "@/domain/tags/followed-tag";
 import { AppRoute } from "@/domain/navigation/route";
 import { fetchAccountCredentials, updateAccountProfile } from "@/infrastructure/api/credentials";
@@ -25,7 +26,14 @@ import {
   updateNotificationPolicy,
 } from "@/infrastructure/api/notification-policy";
 import { fetchAccountPreferences, updatePostingPreferences } from "@/infrastructure/api/settings";
-import { fetchFollowedTags, unfollowTag } from "@/infrastructure/api/tags";
+import {
+  featureTag,
+  fetchFeaturedTagSuggestions,
+  fetchFeaturedTags,
+  fetchFollowedTags,
+  unfeatureTag,
+  unfollowTag,
+} from "@/infrastructure/api/tags";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
@@ -33,6 +41,7 @@ import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { usePwaInstall } from "@/ui/hooks/usePwaInstall";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
+import { formatExpiry } from "@/ui/lib/time";
 
 const POLICY_FIELDS = [
   { key: "forNotFollowing", label: "フォローしていないユーザー" },
@@ -98,12 +107,16 @@ export const SettingsPage = () => {
   const [filters, setFilters] = useState<ReadonlyArray<KeywordFilter>>([]);
   const [domainBlocks, setDomainBlocks] = useState<ReadonlyArray<string>>([]);
   const [followedTags, setFollowedTags] = useState<ReadonlyArray<FollowedTag>>([]);
+  const [featuredTags, setFeaturedTags] = useState<ReadonlyArray<FeaturedTag>>([]);
+  const [featuredSuggestions, setFeaturedSuggestions] = useState<ReadonlyArray<FeaturedTag>>([]);
+  const [featuredName, setFeaturedName] = useState("");
   const [filterTitle, setFilterTitle] = useState("");
   const [filterKeywords, setFilterKeywords] = useState("");
   const [filterContexts, setFilterContexts] = useState<ReadonlyArray<FilterContextValue>>([
     ...FilterContext.values,
   ]);
   const [filterAction, setFilterAction] = useState(FilterAction.defaultValue());
+  const [filterExpirePreset, setFilterExpirePreset] = useState<FilterExpirePreset>("never");
   const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
   const [domainInput, setDomainInput] = useState("");
   const [mutesHasMore, setMutesHasMore] = useState(false);
@@ -134,6 +147,8 @@ export const SettingsPage = () => {
       filtersResult,
       domainsResult,
       tagsResult,
+      featuredResult,
+      featuredSuggestionResult,
     ] = await Promise.all([
         fetchAccountCredentials(),
         fetchAccountPreferences(),
@@ -143,6 +158,8 @@ export const SettingsPage = () => {
         fetchKeywordFilters(),
         fetchDomainBlocks(),
         fetchFollowedTags(),
+        fetchFeaturedTags(),
+        fetchFeaturedTagSuggestions(),
       ]);
 
     if (credentialsResult.isErr()) {
@@ -169,6 +186,12 @@ export const SettingsPage = () => {
     if (tagsResult.isErr()) {
       throw new Error(mastodonErrorMessage(tagsResult.error));
     }
+    if (featuredResult.isErr()) {
+      throw new Error(mastodonErrorMessage(featuredResult.error));
+    }
+    if (featuredSuggestionResult.isErr()) {
+      throw new Error(mastodonErrorMessage(featuredSuggestionResult.error));
+    }
 
     setCredentials(credentialsResult.value);
     setNotificationPolicy(policyResult.value);
@@ -179,6 +202,8 @@ export const SettingsPage = () => {
     setFilters(filtersResult.value);
     setDomainBlocks(domainsResult.value);
     setFollowedTags(tagsResult.value);
+    setFeaturedTags(featuredResult.value);
+    setFeaturedSuggestions(featuredSuggestionResult.value);
 
     setDisplayName(credentialsResult.value.displayName);
     setNote(credentialsResult.value.source.note);
@@ -323,6 +348,7 @@ export const SettingsPage = () => {
     setFilterKeywords("");
     setFilterContexts([...FilterContext.values]);
     setFilterAction(FilterAction.defaultValue());
+    setFilterExpirePreset("never");
   };
 
   const handleSaveFilter = async () => {
@@ -345,6 +371,7 @@ export const SettingsPage = () => {
       context: filterContexts,
       keywords,
       filterAction,
+      expiresIn: FilterExpire.seconds(filterExpirePreset),
     };
     const result = editingFilterId
       ? await updateKeywordFilter(editingFilterId, input)
@@ -370,6 +397,7 @@ export const SettingsPage = () => {
     setFilterKeywords(item.keywords.map((keyword) => keyword.keyword).join(", "));
     setFilterContexts(contexts.length > 0 ? contexts : [...FilterContext.values]);
     setFilterAction(FilterAction.fromApi(item.filterAction));
+    setFilterExpirePreset("keep");
   };
 
   const handleDeleteFilter = async (filterId: string) => {
@@ -458,6 +486,43 @@ export const SettingsPage = () => {
     }
     setFollowedTags((current) => current.filter((tag) => tag.name !== name));
     setSectionMessage("ハッシュタグのフォローを解除しました");
+  };
+
+  const handleFeatureTag = async (name: string) => {
+    const tagName = name.replace(/^#/, "").trim();
+    if (!tagName) {
+      setSectionMessage("ハッシュタグを入力してください");
+      return;
+    }
+    if (!FeaturedTag.canAdd(featuredTags.length)) {
+      setSectionMessage(`注目タグは${FeaturedTag.maxCount}個までです`);
+      return;
+    }
+    setSavingModeration(true);
+    const result = await featureTag(tagName);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setFeaturedTags((current) =>
+      current.some((tag) => tag.id === result.value.id) ? current : [...current, result.value],
+    );
+    setFeaturedSuggestions((current) => current.filter((tag) => tag.name !== result.value.name));
+    setFeaturedName("");
+    setSectionMessage("注目タグを追加しました");
+  };
+
+  const handleUnfeatureTag = async (tag: FeaturedTag) => {
+    setSavingModeration(true);
+    const result = await unfeatureTag(tag.id);
+    setSavingModeration(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setFeaturedTags((current) => current.filter((item) => item.id !== tag.id));
+    setSectionMessage("注目タグを外しました");
   };
 
   const handleLogout = () => {
@@ -648,6 +713,22 @@ export const SettingsPage = () => {
                   ))}
                 </select>
               </label>
+              <label className="settings-field">
+                <span>期限</span>
+                <select
+                  value={filterExpirePreset}
+                  onChange={(event) => setFilterExpirePreset(event.target.value as FilterExpirePreset)}
+                  disabled={savingModeration}
+                >
+                  {(editingFilterId ? FilterExpire.editPresets : FilterExpire.createPresets).map(
+                    (preset) => (
+                      <option key={preset} value={preset}>
+                        {FilterExpire.label(preset)}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
               <div className="settings-filter-form-actions">
                 <button
                   type="button"
@@ -684,6 +765,7 @@ export const SettingsPage = () => {
                       <p className="app-muted">
                         {item.keywords.map((keyword) => keyword.keyword).join(", ")}
                       </p>
+                      <p className="app-muted">{formatExpiry(item.expiresAt)}</p>
                     </div>
                     <div className="settings-filter-actions">
                       <button
@@ -744,6 +826,66 @@ export const SettingsPage = () => {
                       onClick={() => void handleUnblockDomain(domain)}
                     >
                       解除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+            <h2>注目タグ</h2>
+            <div className="settings-form">
+              <label className="settings-field">
+                <span>ハッシュタグ</span>
+                <input
+                  value={featuredName}
+                  onChange={(event) => setFeaturedName(event.target.value)}
+                  placeholder="cfwdon"
+                  disabled={savingModeration || !FeaturedTag.canAdd(featuredTags.length)}
+                />
+              </label>
+              <button
+                type="button"
+                className="app-button"
+                onClick={() => void handleFeatureTag(featuredName)}
+                disabled={savingModeration || !FeaturedTag.canAdd(featuredTags.length)}
+              >
+                追加
+              </button>
+            </div>
+            {featuredSuggestions.length > 0 ? (
+              <div className="featured-tag-suggestions">
+                {featuredSuggestions.map((tag) => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    className="app-button app-button-secondary"
+                    disabled={savingModeration || !FeaturedTag.canAdd(featuredTags.length)}
+                    onClick={() => void handleFeatureTag(tag.name)}
+                  >
+                    #{tag.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {featuredTags.length === 0 ? (
+              <p className="app-muted">プロフィールに載せるハッシュタグはありません</p>
+            ) : (
+              <div className="settings-account-list">
+                {featuredTags.map((tag) => (
+                  <div key={tag.id} className="settings-moderation-row">
+                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>
+                      #{tag.name}
+                      <span className="app-muted"> · {tag.statusesCount} 投稿</span>
+                    </Link>
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      disabled={savingModeration}
+                      onClick={() => void handleUnfeatureTag(tag)}
+                    >
+                      外す
                     </button>
                   </div>
                 ))}

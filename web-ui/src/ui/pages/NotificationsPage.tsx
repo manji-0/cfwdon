@@ -19,6 +19,7 @@ import {
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { NotificationCard } from "@/ui/components/NotificationCard";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useUnreadNotifications } from "@/ui/context/UnreadNotificationsContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useStreamingNotifications } from "@/ui/hooks/useStreamingNotifications";
@@ -29,6 +30,7 @@ import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 export const NotificationsPage = () => {
   const cache = useViewCache();
   const cached = cache.getNotifications();
+  const { confirm } = useConfirm();
   const { refreshUnreadCount, clearUnreadCount } = useUnreadNotifications();
   const [notifications, setNotifications] = useState<ReadonlyArray<Notification>>(
     cached.kind === "Present" ? cached.value.notifications : [],
@@ -192,7 +194,12 @@ export const NotificationsPage = () => {
   };
 
   const handleClear = async () => {
-    if (!window.confirm("通知をすべて既読にして消しますか？")) {
+    const ok = await confirm("通知をすべて既読にして消しますか？", {
+      title: "通知をクリア",
+      confirmLabel: "クリア",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     const result = await clearNotifications();

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { AccountRef } from "@/domain/account/account";
 import type { AccountList } from "@/domain/lists/list";
 import { MediaAttachment } from "@/domain/media/attachment";
@@ -13,6 +13,7 @@ import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { MediaLightbox } from "@/ui/components/MediaLightbox";
 import { PollCard } from "@/ui/components/PollCard";
 import { StatusContent } from "@/ui/components/StatusContent";
+import { useConfirm } from "@/ui/context/ConfirmContext";
 import type { StatusActionHandlers } from "@/ui/hooks/useStatusActions";
 import { formatRelativeTime } from "@/ui/lib/time";
 
@@ -79,11 +80,15 @@ export const StatusCard = ({
   const [lists, setLists] = useState<ReadonlyArray<AccountList> | null>(null);
   const [listBusyId, setListBusyId] = useState<string | null>(null);
   const [listMessage, setListMessage] = useState("");
+  const { prompt, alert } = useConfirm();
   const showContent = revealed || (!body.sensitive && !body.spoilerText);
   const lightboxItems = body.mediaAttachments.filter(MediaAttachment.isLightboxable);
 
-  const handleReport = () => {
-    const comment = window.prompt("通報の理由（任意）");
+  const handleReport = async () => {
+    const comment = await prompt("通報の理由（任意）", {
+      title: "通報",
+      confirmLabel: "送信",
+    });
     if (comment === null) {
       return;
     }
@@ -101,7 +106,7 @@ export const StatusCard = ({
     const result = await translateStatus(body.id);
     setTranslating(false);
     if (result.isErr()) {
-      window.alert(mastodonErrorMessage(result.error));
+      await alert(mastodonErrorMessage(result.error), { title: "翻訳" });
       return;
     }
     setTranslation(result.value);
@@ -113,7 +118,11 @@ export const StatusCard = ({
       await navigator.clipboard.writeText(permalink);
       setMenuOpen(false);
     } catch {
-      window.prompt("リンクをコピーしてください", permalink);
+      await prompt("リンクをコピーしてください", {
+        title: "リンク",
+        defaultValue: permalink,
+        confirmLabel: "閉じる",
+      });
     }
   };
 
@@ -151,7 +160,10 @@ export const StatusCard = ({
   };
 
   return (
-    <article className={`status-card${compact ? " status-card-compact" : ""}`}>
+    <article
+      className={`status-card${compact ? " status-card-compact" : ""}`}
+      data-status-id={body.id}
+    >
       {boostedBy ? (
         <p className="status-boost">
           <span aria-hidden="true">↻</span> {boostedBy.displayName || boostedBy.username} がブースト
@@ -372,7 +384,7 @@ export const StatusCard = ({
             </button>
           ) : null}
           {!isOwn && onReport ? (
-            <button type="button" onClick={handleReport}>
+            <button type="button" onClick={() => void handleReport()}>
               通報
             </button>
           ) : null}

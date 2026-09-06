@@ -41,3 +41,17 @@ export const formatDateTime = (iso: string): string => {
     minute: "2-digit",
   });
 };
+
+export const formatExpiry = (iso: string | null): string => {
+  if (!iso) {
+    return "期限なし";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "期限なし";
+  }
+  if (date.getTime() <= Date.now()) {
+    return "期限切れ";
+  }
+  return `${formatRelativeTime(iso)}まで`;
+};

@@ -48,6 +48,58 @@ export const FilterContext = {
       : [...contexts, context],
 } as const;
 
+export type FilterExpirePreset = "never" | "keep" | "30m" | "1h" | "6h" | "12h" | "1d" | "7d";
+
+export const FilterExpire = {
+  createPresets: ["never", "30m", "1h", "6h", "12h", "1d", "7d"] as const satisfies ReadonlyArray<
+    Exclude<FilterExpirePreset, "keep">
+  >,
+  editPresets: ["keep", "30m", "1h", "6h", "12h", "1d", "7d"] as const satisfies ReadonlyArray<
+    Exclude<FilterExpirePreset, "never">
+  >,
+
+  seconds: (preset: FilterExpirePreset): number | undefined => {
+    switch (preset) {
+      case "never":
+      case "keep":
+        return undefined;
+      case "30m":
+        return 30 * 60;
+      case "1h":
+        return 60 * 60;
+      case "6h":
+        return 6 * 60 * 60;
+      case "12h":
+        return 12 * 60 * 60;
+      case "1d":
+        return 24 * 60 * 60;
+      case "7d":
+        return 7 * 24 * 60 * 60;
+    }
+  },
+
+  label: (preset: FilterExpirePreset): string => {
+    switch (preset) {
+      case "never":
+        return "期限なし";
+      case "keep":
+        return "期限を変更しない";
+      case "30m":
+        return "30分";
+      case "1h":
+        return "1時間";
+      case "6h":
+        return "6時間";
+      case "12h":
+        return "12時間";
+      case "1d":
+        return "1日";
+      case "7d":
+        return "7日";
+    }
+  },
+} as const;
+
 export const FilterAction = {
   values: ["warn", "hide", "blur"] as const satisfies ReadonlyArray<FilterAction>,
 

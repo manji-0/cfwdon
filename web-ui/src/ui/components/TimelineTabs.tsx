@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 
 export const TimelineTabs = () => (
   <nav className="timeline-tabs" aria-label="タイムライン">

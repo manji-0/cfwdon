@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { StatusEdit } from "@/domain/status/edit";
 import { fetchStatusHistory } from "@/infrastructure/api/status";

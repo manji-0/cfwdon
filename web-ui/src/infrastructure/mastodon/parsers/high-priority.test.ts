@@ -10,6 +10,8 @@ import { parseFollowedTag } from "@/infrastructure/mastodon/parsers/tag";
 import { parseTrendLinkList } from "@/infrastructure/mastodon/parsers/trend-link";
 import { parseAccountProfile } from "@/infrastructure/mastodon/parsers/account";
 import { parseScheduledStatus } from "@/infrastructure/mastodon/parsers/scheduled";
+import { parseAnnouncement } from "@/infrastructure/mastodon/parsers/announcement";
+import { parseFeaturedTag } from "@/infrastructure/mastodon/parsers/featured-tag";
 
 describe("high-priority Mastodon parsers", () => {
   it("parses status source and translation", () => {
@@ -142,5 +144,43 @@ describe("profile and scheduled parsers", () => {
     }
     expect(result.text).toBe("later");
     expect(result.visibility).toBe("unlisted");
+  });
+});
+
+describe("announcement and featured tag parsers", () => {
+  it("parses announcements with read state", () => {
+    const result = parseAnnouncement({
+      id: "ann-1",
+      content: "<p>Hello</p>",
+      read: false,
+      mentions: [],
+      statuses: [],
+      tags: [],
+      emojis: [],
+      reactions: [],
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result.id).toBe("ann-1");
+    expect(result.content).toBe("<p>Hello</p>");
+    expect(result.read).toBe(false);
+  });
+
+  it("parses featured tags", () => {
+    const result = parseFeaturedTag({
+      id: "cfwdon",
+      name: "cfwdon",
+      url: "https://example.test/@alice/tagged/cfwdon",
+      statuses_count: 4,
+      last_status_at: "2026-09-01T00:00:00.000Z",
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result.name).toBe("cfwdon");
+    expect(result.statusesCount).toBe(4);
   });
 });
