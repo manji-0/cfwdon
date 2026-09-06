@@ -84,3 +84,23 @@ export const AccountFollowingPage = lazy(async () => {
   const module = await import("@/ui/pages/AccountCollectionPage");
   return { default: module.AccountFollowingPage };
 });
+
+export const StatusFavouritedByPage = lazy(async () => {
+  const module = await import("@/ui/pages/StatusAccountsPage");
+  return { default: module.StatusFavouritedByPage };
+});
+
+export const StatusRebloggedByPage = lazy(async () => {
+  const module = await import("@/ui/pages/StatusAccountsPage");
+  return { default: module.StatusRebloggedByPage };
+});
+
+export const StatusQuotesPage = lazy(async () => {
+  const module = await import("@/ui/pages/StatusQuotesPage");
+  return { default: module.StatusQuotesPage };
+});
+
+export const ScheduledStatusesPage = lazy(async () => {
+  const module = await import("@/ui/pages/ScheduledStatusesPage");
+  return { default: module.ScheduledStatusesPage };
+});

@@ -8,6 +8,8 @@ import {
 } from "@/infrastructure/mastodon/parsers/status-extra";
 import { parseFollowedTag } from "@/infrastructure/mastodon/parsers/tag";
 import { parseTrendLinkList } from "@/infrastructure/mastodon/parsers/trend-link";
+import { parseAccountProfile } from "@/infrastructure/mastodon/parsers/account";
+import { parseScheduledStatus } from "@/infrastructure/mastodon/parsers/scheduled";
 
 describe("high-priority Mastodon parsers", () => {
   it("parses status source and translation", () => {
@@ -92,5 +94,53 @@ describe("high-priority Mastodon parsers", () => {
     if (!isArkError(links)) {
       expect(links[0]?.title).toBe("Story");
     }
+  });
+});
+
+describe("profile and scheduled parsers", () => {
+  it("maps profile fields, bot, and discoverable", () => {
+    const result = parseAccountProfile({
+      id: "1",
+      username: "alice",
+      acct: "alice",
+      display_name: "Alice",
+      avatar: "https://example.test/a.png",
+      header: "",
+      note: "<p>hi</p>",
+      followers_count: 1,
+      following_count: 2,
+      statuses_count: 3,
+      locked: true,
+      bot: true,
+      discoverable: false,
+      fields: [{ name: "site", value: "<a href=\"https://example.test\">ex</a>", verified_at: null }],
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result.locked).toBe(true);
+    expect(result.bot).toBe(true);
+    expect(result.discoverable).toBe(false);
+    expect(result.fields[0]?.name).toBe("site");
+  });
+
+  it("parses scheduled status params", () => {
+    const result = parseScheduledStatus({
+      id: "sched-1",
+      scheduled_at: "2026-09-07T12:00:00.000Z",
+      params: {
+        text: "later",
+        spoiler_text: null,
+        visibility: "unlisted",
+        sensitive: false,
+      },
+    });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result.text).toBe("later");
+    expect(result.visibility).toBe("unlisted");
   });
 });

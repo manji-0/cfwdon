@@ -20,6 +20,7 @@ type StatusBody = Readonly<{
   favourited: boolean;
   reblogged: boolean;
   bookmarked: boolean;
+  muted: boolean;
   account: AccountRef;
   mediaAttachments: ReadonlyArray<MediaAttachment>;
   card: PreviewCard | null;
@@ -51,11 +52,12 @@ export type StatusContext = Readonly<{
 
 export const Status = {
   original: (
-    fields: Omit<StatusBody, "poll" | "pinned" | "editedAt" | "quote"> & {
+    fields: Omit<StatusBody, "poll" | "pinned" | "editedAt" | "quote" | "muted"> & {
       poll?: Poll | null;
       pinned?: boolean;
       editedAt?: string | null;
       quote?: StatusQuote | null;
+      muted?: boolean;
     },
   ): OriginalStatus => ({
     kind: "Original",
@@ -64,6 +66,7 @@ export const Status = {
     pinned: fields.pinned ?? false,
     editedAt: fields.editedAt ?? null,
     quote: fields.quote ?? null,
+    muted: fields.muted ?? false,
   }),
 
   boost: (fields: Readonly<{

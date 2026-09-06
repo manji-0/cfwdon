@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AccountRef } from "@/domain/account/account";
+import type { AccountList } from "@/domain/lists/list";
 import { MediaAttachment } from "@/domain/media/attachment";
 import { StatusQuote } from "@/domain/status/quote";
 import { Status } from "@/domain/status/status";
 import type { StatusTranslation } from "@/domain/status/translation";
-import { translateStatus } from "@/infrastructure/api/status";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { addListAccounts, fetchLists } from "@/infrastructure/api/lists";
+import { translateStatus } from "@/infrastructure/api/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
+import { MediaLightbox } from "@/ui/components/MediaLightbox";
 import { PollCard } from "@/ui/components/PollCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import type { StatusActionHandlers } from "@/ui/hooks/useStatusActions";
@@ -60,6 +63,7 @@ export const StatusCard = ({
   onQuote,
   onEdit,
   onHistory,
+  onMuteConversation,
   compact = false,
 }: StatusCardProps) => {
   const body = Status.displayBody(status);
@@ -71,7 +75,12 @@ export const StatusCard = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [translation, setTranslation] = useState<StatusTranslation | null>(null);
   const [translating, setTranslating] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [lists, setLists] = useState<ReadonlyArray<AccountList> | null>(null);
+  const [listBusyId, setListBusyId] = useState<string | null>(null);
+  const [listMessage, setListMessage] = useState("");
   const showContent = revealed || (!body.sensitive && !body.spoilerText);
+  const lightboxItems = body.mediaAttachments.filter(MediaAttachment.isLightboxable);
 
   const handleReport = () => {
     const comment = window.prompt("通報の理由（任意）");
@@ -108,6 +117,39 @@ export const StatusCard = ({
     }
   };
 
+  const handleOpenLists = async () => {
+    setListMessage("");
+    if (lists) {
+      setLists(null);
+      return;
+    }
+    const result = await fetchLists();
+    if (result.isErr()) {
+      setListMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setLists(result.value);
+  };
+
+  const handleAddToList = async (listId: string) => {
+    setListBusyId(listId);
+    setListMessage("");
+    const result = await addListAccounts(listId, [body.account.id]);
+    setListBusyId(null);
+    if (result.isErr()) {
+      setListMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setListMessage("リストに追加しました");
+  };
+
+  const openLightbox = (mediaId: string) => {
+    const index = lightboxItems.findIndex((item) => item.id === mediaId);
+    if (index >= 0) {
+      setLightboxIndex(index);
+    }
+  };
+
   return (
     <article className={`status-card${compact ? " status-card-compact" : ""}`}>
       {boostedBy ? (
@@ -139,12 +181,35 @@ export const StatusCard = ({
           {body.mediaAttachments.length > 0 ? (
             <div className="status-media-grid">
               {body.mediaAttachments.map((media) =>
-                MediaAttachment.isVisual(media) ? (
-                  <a key={media.id} href={media.url} target="_blank" rel="noreferrer">
-                    <img src={media.previewUrl} alt={media.description ?? ""} loading="lazy" />
-                  </a>
+                MediaAttachment.isLightboxable(media) ? (
+                  <button
+                    key={media.id}
+                    type="button"
+                    className={
+                      MediaAttachment.isVisual(media)
+                        ? "status-media-thumb"
+                        : "status-media-link"
+                    }
+                    onClick={() => openLightbox(media.id)}
+                  >
+                    {MediaAttachment.isVisual(media) ? (
+                      <img
+                        src={media.previewUrl}
+                        alt={media.description ?? MediaAttachment.label(media)}
+                        loading="lazy"
+                      />
+                    ) : (
+                      `${MediaAttachment.label(media)}を再生`
+                    )}
+                  </button>
                 ) : (
-                  <a key={media.id} className="status-media-link" href={media.url} target="_blank" rel="noreferrer">
+                  <a
+                    key={media.id}
+                    className="status-media-link"
+                    href={media.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     {MediaAttachment.label(media)} を開く
                   </a>
                 ),
@@ -171,25 +236,46 @@ export const StatusCard = ({
         </>
       ) : null}
       <footer className="status-actions">
-        <button type="button" className="status-action" onClick={() => onReply?.(body)} aria-label="返信">
-          ↩ {body.repliesCount > 0 ? body.repliesCount : ""}
-        </button>
-        <button
-          type="button"
-          className={`status-action${body.reblogged ? " is-active" : ""}`}
-          onClick={() => onReblog?.(body)}
-          aria-label="ブースト"
-        >
-          ↻ {body.reblogsCount > 0 ? body.reblogsCount : ""}
-        </button>
-        <button
-          type="button"
-          className={`status-action${body.favourited ? " is-active" : ""}`}
-          onClick={() => onFavourite?.(body)}
-          aria-label="いいね"
-        >
-          ♥ {body.favouritesCount > 0 ? body.favouritesCount : ""}
-        </button>
+        <span className="status-action-group">
+          <button type="button" className="status-action" onClick={() => onReply?.(body)} aria-label="返信">
+            ↩
+          </button>
+          {body.repliesCount > 0 ? (
+            <Link className="status-action-count" to={`/status/${body.id}`}>
+              {body.repliesCount}
+            </Link>
+          ) : null}
+        </span>
+        <span className="status-action-group">
+          <button
+            type="button"
+            className={`status-action${body.reblogged ? " is-active" : ""}`}
+            onClick={() => onReblog?.(body)}
+            aria-label="ブースト"
+          >
+            ↻
+          </button>
+          {body.reblogsCount > 0 ? (
+            <Link className="status-action-count" to={`/status/${body.id}/reblogged-by`}>
+              {body.reblogsCount}
+            </Link>
+          ) : null}
+        </span>
+        <span className="status-action-group">
+          <button
+            type="button"
+            className={`status-action${body.favourited ? " is-active" : ""}`}
+            onClick={() => onFavourite?.(body)}
+            aria-label="いいね"
+          >
+            ♥
+          </button>
+          {body.favouritesCount > 0 ? (
+            <Link className="status-action-count" to={`/status/${body.id}/favourited-by`}>
+              {body.favouritesCount}
+            </Link>
+          ) : null}
+        </span>
         {onBookmark ? (
           <button
             type="button"
@@ -223,6 +309,35 @@ export const StatusCard = ({
           <button type="button" onClick={() => void handleCopyLink()}>
             リンクをコピー
           </button>
+          <Link className="status-menu-link" to={`/status/${body.id}/quotes`} onClick={() => setMenuOpen(false)}>
+            引用一覧
+          </Link>
+          {onMuteConversation ? (
+            <button type="button" onClick={() => onMuteConversation(body)}>
+              {body.muted ? "会話のミュートを解除" : "会話をミュート"}
+            </button>
+          ) : null}
+          {!isOwn ? (
+            <button type="button" onClick={() => void handleOpenLists()}>
+              {lists ? "リストを閉じる" : "リストに追加"}
+            </button>
+          ) : null}
+          {lists ? (
+            <div className="status-menu-lists">
+              {lists.length === 0 ? <p className="app-muted">リストはまだありません。</p> : null}
+              {lists.map((list) => (
+                <button
+                  key={list.id}
+                  type="button"
+                  disabled={listBusyId === list.id}
+                  onClick={() => void handleAddToList(list.id)}
+                >
+                  {listBusyId === list.id ? "追加中…" : list.title}
+                </button>
+              ))}
+              {listMessage ? <p className="app-muted">{listMessage}</p> : null}
+            </div>
+          ) : null}
           <button type="button" onClick={() => void handleTranslate()} disabled={translating}>
             {translation ? "原文を表示" : translating ? "翻訳中…" : "翻訳"}
           </button>
@@ -262,6 +377,14 @@ export const StatusCard = ({
             </button>
           ) : null}
         </div>
+      ) : null}
+      {lightboxIndex !== null ? (
+        <MediaLightbox
+          attachments={lightboxItems}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       ) : null}
     </article>
   );

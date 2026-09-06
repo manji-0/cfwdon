@@ -1,3 +1,5 @@
+import type { ProfileField } from "@/domain/account/profile-field";
+
 export type AccountCredentials = Readonly<{
   id: string;
   displayName: string;
@@ -6,6 +8,10 @@ export type AccountCredentials = Readonly<{
   header: string;
   username: string;
   acct: string;
+  locked: boolean;
+  bot: boolean;
+  discoverable: boolean;
+  fields: ReadonlyArray<ProfileField>;
   source: Readonly<{
     note: string;
     privacy: string;

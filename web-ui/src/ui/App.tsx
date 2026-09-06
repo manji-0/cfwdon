@@ -28,6 +28,10 @@ import {
   ThreadPage,
   AccountFollowersPage,
   AccountFollowingPage,
+  StatusFavouritedByPage,
+  StatusRebloggedByPage,
+  StatusQuotesPage,
+  ScheduledStatusesPage,
 } from "@/ui/pages/lazy-pages";
 import "@/ui/styles/app.css";
 
@@ -60,6 +64,9 @@ const AppRoutes = ({
               <Route path="/tags/:tagName" element={<TagTimelinePage />} />
               <Route path="/explore" element={<ExplorePage />} />
               <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
+              <Route path="/status/:statusId/favourited-by" element={<StatusFavouritedByPage />} />
+              <Route path="/status/:statusId/reblogged-by" element={<StatusRebloggedByPage />} />
+              <Route path="/status/:statusId/quotes" element={<StatusQuotesPage />} />
               <Route path="/status/:statusId" element={<ThreadPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
@@ -70,6 +77,7 @@ const AppRoutes = ({
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/bookmarks" element={<BookmarksPage />} />
               <Route path="/favourites" element={<FavouritesPage />} />
+              <Route path="/scheduled" element={<ScheduledStatusesPage />} />
               <Route path="/lists" element={<ListsPage />} />
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/messages/new" element={<NewMessagePage />} />

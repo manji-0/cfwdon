@@ -558,6 +558,10 @@ export const SettingsPage = () => {
                   ))}
                 </select>
               </label>
+              <p className="app-muted">
+                予約投稿の一覧は <Link to={AppRoute.toPath(AppRoute.scheduled())}>予約投稿</Link>{" "}
+                から確認できます。
+              </p>
               <button
                 type="button"
                 className="app-button"
@@ -828,7 +832,14 @@ export const SettingsPage = () => {
             <h2>ライブラリ</h2>
             <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
             <div className="settings-library-links">
-              {[AppRoute.explore(), AppRoute.bookmarks(), AppRoute.favourites(), AppRoute.lists(), AppRoute.messages()].map((route) => {
+              {[
+                AppRoute.explore(),
+                AppRoute.bookmarks(),
+                AppRoute.favourites(),
+                AppRoute.scheduled(),
+                AppRoute.lists(),
+                AppRoute.messages(),
+              ].map((route) => {
                 const isMessages = route.kind === "Messages";
                 const label = AppRoute.label(route);
                 return (

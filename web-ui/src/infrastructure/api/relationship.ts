@@ -24,10 +24,18 @@ export const fetchRelationship = (
   );
 };
 
-export const followAccount = (accountId: string): ResultAsync<Relationship, MastodonFetchError> =>
-  mastodonPostJson(`/api/v1/accounts/${encodeURIComponent(accountId)}/follow`, {}).andThen(
+export const followAccount = (
+  accountId: string,
+  options: Readonly<{ reblogs?: boolean }> = {},
+): ResultAsync<Relationship, MastodonFetchError> => {
+  const body: Record<string, unknown> = {};
+  if (options.reblogs !== undefined) {
+    body.reblogs = options.reblogs;
+  }
+  return mastodonPostJson(`/api/v1/accounts/${encodeURIComponent(accountId)}/follow`, body).andThen(
     mapRelationship,
   );
+};
 
 export const unfollowAccount = (accountId: string): ResultAsync<Relationship, MastodonFetchError> =>
   mastodonPostJson(`/api/v1/accounts/${encodeURIComponent(accountId)}/unfollow`, {}).andThen(

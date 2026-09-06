@@ -11,6 +11,8 @@ export const parseRelationship = mastodon.type("RelationshipApi").pipe(
     muting: value.muting,
     requested: value.requested,
     requestedBy: value.requested_by,
+    showingReblogs: value.showing_reblogs ?? true,
+    notifying: value.notifying ?? false,
   }),
 );
 

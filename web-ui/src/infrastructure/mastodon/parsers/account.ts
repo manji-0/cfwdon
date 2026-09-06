@@ -1,8 +1,18 @@
 import type { AccountProfile, AccountRef } from "@/domain/account/account";
 import type { AccountCredentials } from "@/domain/account/credentials";
+import type { ProfileField } from "@/domain/account/profile-field";
 import type { AccountSummary } from "@/domain/session/account";
 import { type } from "arktype";
 import { mastodon } from "@/infrastructure/mastodon/parsers/definitions";
+
+const toProfileFields = (
+  fields: ReadonlyArray<{ name: string; value: string; verified_at?: string | null }> | undefined,
+): ReadonlyArray<ProfileField> =>
+  (fields ?? []).map((field) => ({
+    name: field.name,
+    value: field.value,
+    verifiedAt: field.verified_at ?? null,
+  }));
 
 export const parseAccountRef = mastodon.type("AccountRefApi").pipe(
   (value): AccountRef => ({
@@ -29,6 +39,9 @@ export const parseAccountProfile = mastodon.type("AccountProfileApi").pipe(
     followingCount: value.following_count,
     statusesCount: value.statuses_count,
     locked: value.locked,
+    bot: value.bot ?? false,
+    discoverable: value.discoverable ?? true,
+    fields: toProfileFields(value.fields),
   }),
 );
 
@@ -43,6 +56,10 @@ export const parseAccountCredentials = mastodon.type("AccountCredentialsApi").pi
     header: value.header ?? "",
     username: value.username,
     acct: value.acct,
+    locked: value.locked ?? false,
+    bot: value.bot ?? false,
+    discoverable: value.discoverable ?? true,
+    fields: toProfileFields(value.fields),
     source: {
       note: value.source.note ?? "",
       privacy: value.source.privacy,

@@ -50,4 +50,10 @@ describe("Notification", () => {
     expect(Notification.label(notification)).toBe("Alice が返信しました");
     expect(Notification.status(notification)).toBe(status);
   });
+
+  it("labels quote notifications", () => {
+    const notification = Notification.quote({ ...meta, status });
+    expect(Notification.label(notification)).toBe("Alice が引用しました");
+    expect(Notification.status(notification)).toBe(status);
+  });
 });

@@ -3,6 +3,11 @@ import { scope } from "arktype";
 /** Shared Mastodon API shapes compiled once for all parsers. */
 export const mastodon = scope({
   VisibilityApi: "'public' | 'unlisted' | 'private' | 'direct'",
+  ProfileFieldApi: {
+    name: "string",
+    value: "string",
+    "verified_at?": "string | null",
+  },
   AccountRefApi: {
     id: "string>0",
     username: "string>0",
@@ -22,6 +27,9 @@ export const mastodon = scope({
     following_count: "number",
     statuses_count: "number",
     locked: "boolean",
+    "bot?": "boolean",
+    "discoverable?": "boolean",
+    "fields?": "ProfileFieldApi[]",
   },
   AccountCredentialsApi: {
     id: "string>0",
@@ -31,6 +39,10 @@ export const mastodon = scope({
     "header?": "string",
     username: "string>0",
     acct: "string>0",
+    "locked?": "boolean",
+    "bot?": "boolean",
+    "discoverable?": "boolean",
+    "fields?": "ProfileFieldApi[]",
     source: {
       "note?": "string",
       privacy: "string",
@@ -87,6 +99,8 @@ export const mastodon = scope({
     muting: "boolean",
     requested: "boolean",
     requested_by: "boolean",
+    "showing_reblogs?": "boolean",
+    "notifying?": "boolean",
   },
   StatusPayloadApi: {
     id: "string>0",
@@ -102,6 +116,7 @@ export const mastodon = scope({
     "favourited?": "boolean",
     "reblogged?": "boolean",
     "bookmarked?": "boolean",
+    "muted?": "boolean",
     account: "AccountRefApi",
     "media_attachments?": "MediaAttachmentApi[]",
     "card?": "PreviewCardApi | null",

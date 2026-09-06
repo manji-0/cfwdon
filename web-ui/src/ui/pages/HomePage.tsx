@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
@@ -12,6 +12,7 @@ import {
   fetchStatusSource,
   updateStatus,
 } from "@/infrastructure/api/status";
+import { createScheduledStatus } from "@/infrastructure/api/scheduled";
 import { Visibility } from "@/domain/status/visibility";
 import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
@@ -45,6 +46,7 @@ export const HomePage = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
+  const [scheduledNotice, setScheduledNotice] = useState(false);
   const [quotedPreview, setQuotedPreview] = useState<QuotedStatusPreview | null>(null);
   const [editText, setEditText] = useState("");
   const [editSpoiler, setEditSpoiler] = useState("");
@@ -212,6 +214,25 @@ export const HomePage = () => {
   };
 
   const handlePublish = async (input: ComposerSubmitInput) => {
+    if (!editId && input.scheduledAt) {
+      const result = await createScheduledStatus({
+        text: input.text,
+        visibility: Visibility.toApi(input.visibility),
+        scheduledAt: input.scheduledAt,
+        spoilerText: input.spoilerText,
+        sensitive: input.sensitive,
+        language: input.language,
+        mediaIds: input.mediaIds,
+        poll: input.poll,
+        quotedStatusId: quoteId ?? input.quotedStatusId,
+      });
+      if (result.isErr()) {
+        throw new Error(mastodonErrorMessage(result.error));
+      }
+      setSearchParams({});
+      setScheduledNotice(true);
+      return;
+    }
     const result = editId
       ? await updateStatus(editId, {
           text: input.text,
@@ -233,6 +254,7 @@ export const HomePage = () => {
       throw new Error(mastodonErrorMessage(result.error));
     }
     setSearchParams({});
+    setScheduledNotice(false);
     setStatuses((current) => {
       const next = editId
         ? Status.replaceInList(current, result.value)
@@ -287,9 +309,15 @@ export const HomePage = () => {
         initialSpoilerText={editSpoiler}
         quotedStatusId={quoteId ?? undefined}
         quotedPreview={quotedPreview}
+        allowSchedule={!editId}
         onCancel={quoteId || editId ? () => setSearchParams({}) : undefined}
         onSubmit={handlePublish}
       />
+      {scheduledNotice ? (
+        <p className="app-muted">
+          予約しました。<Link to="/scheduled">予約投稿を見る</Link>
+        </p>
+      ) : null}
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">

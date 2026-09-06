@@ -12,10 +12,12 @@ import {
   bookmarkStatus,
   deleteStatus,
   favouriteStatus,
+  muteConversation,
   pinStatus,
   reblogStatus,
   unbookmarkStatus,
   unfavouriteStatus,
+  unmuteConversation,
   unpinStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
@@ -35,6 +37,7 @@ export type StatusActionHandlers = Readonly<{
   onQuote: (status: OriginalStatus) => void;
   onEdit: (status: OriginalStatus) => void;
   onHistory: (status: OriginalStatus) => void;
+  onMuteConversation: (status: OriginalStatus) => void;
 }>;
 
 export const useStatusActions = (options: {
@@ -178,6 +181,20 @@ export const useStatusActions = (options: {
     [onError, onReplace],
   );
 
+  const handleMuteConversation = useCallback(
+    async (status: OriginalStatus) => {
+      const result = status.muted
+        ? await unmuteConversation(status.id)
+        : await muteConversation(status.id);
+      if (result.isErr()) {
+        onError(mastodonErrorMessage(result.error));
+        return;
+      }
+      onReplace(result.value);
+    },
+    [onError, onReplace],
+  );
+
   return {
     selfAccountId,
     onFavourite: (status) => void handleFavourite(status),
@@ -193,5 +210,6 @@ export const useStatusActions = (options: {
     onQuote: (status) => navigate(`/?quote=${encodeURIComponent(status.id)}`),
     onEdit: (status) => navigate(`/?edit=${encodeURIComponent(status.id)}`),
     onHistory: (status) => navigate(`/status/${status.id}/history`),
+    onMuteConversation: (status) => void handleMuteConversation(status),
   };
 };

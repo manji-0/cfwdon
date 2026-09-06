@@ -1,4 +1,5 @@
 import { okAsync, type ResultAsync } from "neverthrow";
+import type { AccountProfile } from "@/domain/account/account";
 import type { PollDraft } from "@/domain/status/poll";
 import type { StatusEdit } from "@/domain/status/edit";
 import type { StatusSource } from "@/domain/status/source";
@@ -22,6 +23,7 @@ import {
   parseStatusContext,
   parseStatusList,
 } from "@/infrastructure/mastodon/parsers/status";
+import { parseAccountProfileList } from "@/infrastructure/mastodon/parsers/account";
 
 export type TimelineQuery = Readonly<{
   maxId?: string;
@@ -216,3 +218,37 @@ export const translateStatus = (
   mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/translate`, {}).andThen(
     (raw) => parseMastodon(parseStatusTranslation, raw),
   );
+
+export const muteConversation = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/mute`, {}).andThen(
+    mapStatusResponse,
+  );
+
+export const unmuteConversation = (statusId: string): ResultAsync<Status, MastodonFetchError> =>
+  mastodonPostJson(`/api/v1/statuses/${encodeURIComponent(statusId)}/unmute`, {}).andThen(
+    mapStatusResponse,
+  );
+
+export const fetchStatusFavouritedBy = (
+  statusId: string,
+  query: TimelineQuery = {},
+): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
+  mastodonFetchJson(
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/favourited_by?${timelineParams(query)}`,
+  ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
+
+export const fetchStatusRebloggedBy = (
+  statusId: string,
+  query: TimelineQuery = {},
+): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
+  mastodonFetchJson(
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/reblogged_by?${timelineParams(query)}`,
+  ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
+
+export const fetchStatusQuotes = (
+  statusId: string,
+  query: TimelineQuery = {},
+): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> =>
+  mastodonFetchJson(
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/quotes?${timelineParams(query)}`,
+  ).andThen((raw) => parseMastodon(parseStatusList, raw));

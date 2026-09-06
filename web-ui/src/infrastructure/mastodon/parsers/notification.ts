@@ -39,6 +39,10 @@ const notificationFromPayload = (value: {
       return Notification.follow(fields);
     case "follow_request":
       return Notification.followRequest(fields);
+    case "quote":
+      return status ? Notification.quote({ ...fields, status }) : missingStatus();
+    case "quoted_update":
+      return status ? Notification.quotedUpdate({ ...fields, status }) : missingStatus();
     default:
       return Notification.unknown({ ...fields, type: value.type, status: status ?? null });
   }

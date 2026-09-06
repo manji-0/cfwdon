@@ -9,6 +9,7 @@ export type AppRoute =
   | Readonly<{ kind: "Settings" }>
   | Readonly<{ kind: "Bookmarks" }>
   | Readonly<{ kind: "Favourites" }>
+  | Readonly<{ kind: "Scheduled" }>
   | Readonly<{ kind: "Lists" }>
   | Readonly<{ kind: "Messages" }>
   | Readonly<{ kind: "NewMessage" }>
@@ -25,6 +26,7 @@ export const AppRoute = {
   settings: (): AppRoute => ({ kind: "Settings" }),
   bookmarks: (): AppRoute => ({ kind: "Bookmarks" }),
   favourites: (): AppRoute => ({ kind: "Favourites" }),
+  scheduled: (): AppRoute => ({ kind: "Scheduled" }),
   lists: (): AppRoute => ({ kind: "Lists" }),
   messages: (): AppRoute => ({ kind: "Messages" }),
   newMessage: (): AppRoute => ({ kind: "NewMessage" }),
@@ -57,6 +59,8 @@ export const AppRoute = {
         return AppRoute.bookmarks();
       case "favourites":
         return AppRoute.favourites();
+      case "scheduled":
+        return AppRoute.scheduled();
       case "lists":
         return AppRoute.lists();
       case "messages": {
@@ -98,6 +102,8 @@ export const AppRoute = {
         return "/bookmarks";
       case "Favourites":
         return "/favourites";
+      case "Scheduled":
+        return "/scheduled";
       case "Lists":
         return "/lists";
       case "Messages":
@@ -131,6 +137,8 @@ export const AppRoute = {
         return "ブックマーク";
       case "Favourites":
         return "お気に入り";
+      case "Scheduled":
+        return "予約投稿";
       case "Lists":
         return "リスト";
       case "Messages":

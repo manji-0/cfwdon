@@ -38,9 +38,23 @@ export const MediaAttachment = {
     switch (media.kind) {
       case "Image":
       case "Gifv":
+      case "Video":
         return true;
+      case "Audio":
+      case "Unknown":
+        return false;
+      default:
+        return assertNever(media.kind);
+    }
+  },
+
+  isLightboxable: (media: MediaAttachment): boolean => {
+    switch (media.kind) {
+      case "Image":
+      case "Gifv":
       case "Video":
       case "Audio":
+        return true;
       case "Unknown":
         return false;
       default:

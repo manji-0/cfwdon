@@ -9,6 +9,7 @@ describe("AppRoute", () => {
     expect(AppRoute.fromPathname("/app/search")).toEqual({ kind: "Search" });
     expect(AppRoute.fromPathname("/bookmarks")).toEqual({ kind: "Bookmarks" });
     expect(AppRoute.fromPathname("/favourites")).toEqual({ kind: "Favourites" });
+    expect(AppRoute.fromPathname("/scheduled")).toEqual({ kind: "Scheduled" });
     expect(AppRoute.fromPathname("/public")).toEqual({ kind: "PublicTimeline", local: false });
     expect(AppRoute.fromPathname("/public/local")).toEqual({ kind: "PublicTimeline", local: true });
     expect(AppRoute.fromPathname("/tags/fediverse")).toEqual({ kind: "Tag", name: "fediverse" });
@@ -27,6 +28,7 @@ describe("AppRoute", () => {
       AppRoute.notifications(),
       AppRoute.bookmarks(),
       AppRoute.favourites(),
+      AppRoute.scheduled(),
       AppRoute.publicTimeline(true),
       AppRoute.tag("fediverse"),
       AppRoute.explore(),

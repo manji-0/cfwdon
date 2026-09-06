@@ -8,6 +8,7 @@ export const NotificationFilter = {
     "favourite",
     "poll",
     "update",
+    "quote",
   ] as const,
 
   labels: {
@@ -19,6 +20,7 @@ export const NotificationFilter = {
     favourite: "いいね",
     poll: "投票",
     update: "編集",
+    quote: "引用",
   } as const,
 } as const;
 

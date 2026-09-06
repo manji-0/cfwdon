@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
+import { ProfileField } from "@/domain/account/profile-field";
 import { SessionState } from "@/domain/session/session";
 import {
   fetchAccountCredentials,
@@ -22,6 +23,10 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
   const headerInputRef = useRef<HTMLInputElement>(null);
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [note, setNote] = useState("");
+  const [locked, setLocked] = useState(profile.locked);
+  const [bot, setBot] = useState(profile.bot);
+  const [discoverable, setDiscoverable] = useState(profile.discoverable);
+  const [fields, setFields] = useState(() => ProfileField.pad(profile.fields));
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [headerFile, setHeaderFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState(profile.avatar);
@@ -42,6 +47,10 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
       }
       setDisplayName(result.value.displayName);
       setNote(result.value.source.note);
+      setLocked(result.value.locked);
+      setBot(result.value.bot);
+      setDiscoverable(result.value.discoverable);
+      setFields(ProfileField.pad(result.value.fields));
     });
     return () => {
       active = false;
@@ -89,6 +98,13 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
       note,
       avatar: avatarFile ?? undefined,
       header: headerFile ?? undefined,
+      locked,
+      bot,
+      discoverable,
+      fields: ProfileField.compact(fields).map((field) => ({
+        name: field.name,
+        value: field.value,
+      })),
     });
     if (result.isErr()) {
       setError(mastodonErrorMessage(result.error));
@@ -111,6 +127,10 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
       note: updated.note,
       avatar: updated.avatar,
       header: updated.header || profile.header,
+      locked: updated.locked,
+      bot: updated.bot,
+      discoverable: updated.discoverable,
+      fields: updated.fields,
     });
     setSaving(false);
   };
@@ -188,6 +208,56 @@ export const ProfileEditor = ({ profile, onCancel, onSaved }: ProfileEditorProps
             rows={4}
             disabled={saving}
           />
+        </label>
+        <fieldset className="settings-field">
+          <legend>プロフィール項目</legend>
+          {fields.map((field, index) => (
+            <div key={index} className="profile-field-row">
+              <input
+                value={field.name}
+                onChange={(event) =>
+                  setFields((current) => ProfileField.set(current, index, { name: event.target.value }))
+                }
+                placeholder="項目名"
+                disabled={saving}
+              />
+              <input
+                value={field.value}
+                onChange={(event) =>
+                  setFields((current) => ProfileField.set(current, index, { value: event.target.value }))
+                }
+                placeholder="内容"
+                disabled={saving}
+              />
+            </div>
+          ))}
+        </fieldset>
+        <label className="settings-field settings-field-inline">
+          <input
+            type="checkbox"
+            checked={locked}
+            onChange={(event) => setLocked(event.target.checked)}
+            disabled={saving}
+          />
+          <span>承認制アカウント（鍵垢）</span>
+        </label>
+        <label className="settings-field settings-field-inline">
+          <input
+            type="checkbox"
+            checked={bot}
+            onChange={(event) => setBot(event.target.checked)}
+            disabled={saving}
+          />
+          <span>ボットとして表示</span>
+        </label>
+        <label className="settings-field settings-field-inline">
+          <input
+            type="checkbox"
+            checked={discoverable}
+            onChange={(event) => setDiscoverable(event.target.checked)}
+            disabled={saving}
+          />
+          <span>ディレクトリや推薦に載せる</span>
         </label>
         {error ? <p className="app-error">{error}</p> : null}
         <div className="profile-editor-actions">

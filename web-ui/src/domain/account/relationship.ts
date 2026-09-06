@@ -8,6 +8,8 @@ export type Relationship = Readonly<{
   muting: boolean;
   requested: boolean;
   requestedBy: boolean;
+  showingReblogs: boolean;
+  notifying: boolean;
 }>;
 
 export const Relationship = {
@@ -19,6 +21,8 @@ export const Relationship = {
     muting: false,
     requested: false,
     requestedBy: false,
+    showingReblogs: true,
+    notifying: false,
   }),
 
   followKind: (

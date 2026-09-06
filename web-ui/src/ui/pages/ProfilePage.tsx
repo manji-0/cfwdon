@@ -293,6 +293,15 @@ export const ProfilePage = () => {
     await runRelationship(() => followAccount(accountId));
   };
 
+  const handleReblogsToggle = async () => {
+    if (!accountId || !relationship?.following) {
+      return;
+    }
+    await runRelationship(() =>
+      followAccount(accountId, { reblogs: !relationship.showingReblogs }),
+    );
+  };
+
   const handleMuteToggle = async () => {
     if (!accountId || !relationship) {
       return;
@@ -372,7 +381,11 @@ export const ProfilePage = () => {
             <img className="profile-avatar" src={profile.avatar} alt="" />
             <div className="profile-heading">
               <h1 className="profile-name">{profile.displayName || profile.username}</h1>
-              <p className="profile-acct">@{profile.acct}</p>
+              <p className="profile-acct">
+                @{profile.acct}
+                {profile.locked ? <span className="profile-badge">鍵</span> : null}
+                {profile.bot ? <span className="profile-badge">bot</span> : null}
+              </p>
               {isSelf ? (
                 <button
                   type="button"
@@ -393,6 +406,16 @@ export const ProfilePage = () => {
                       ? Relationship.followLabel(relationship, profile.locked)
                       : "フォロー"}
                   </button>
+                  {relationship?.following ? (
+                    <button
+                      type="button"
+                      className="app-button app-button-secondary"
+                      disabled={savingRelationship}
+                      onClick={() => void handleReblogsToggle()}
+                    >
+                      {relationship.showingReblogs ? "ブーストを非表示" : "ブーストを表示"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="app-button app-button-secondary"
@@ -421,6 +444,16 @@ export const ProfilePage = () => {
             </div>
             {profile.note ? (
               <div className="profile-note" dangerouslySetInnerHTML={{ __html: profile.note }} />
+            ) : null}
+            {profile.fields.length > 0 ? (
+              <dl className="profile-fields">
+                {profile.fields.map((field) => (
+                  <div key={`${field.name}:${field.value}`} className="profile-field">
+                    <dt>{field.name}</dt>
+                    <dd dangerouslySetInnerHTML={{ __html: field.value }} />
+                  </div>
+                ))}
+              </dl>
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>

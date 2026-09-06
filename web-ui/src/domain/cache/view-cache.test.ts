@@ -60,6 +60,9 @@ const profile = (id: string): AccountProfile => ({
   followingCount: 0,
   statusesCount: 0,
   locked: false,
+  bot: false,
+  discoverable: true,
+  fields: [],
 });
 
 const homeSnapshot = (statuses: ReadonlyArray<Status>, fetchedAt = 1): TimelineSnapshot => ({

@@ -54,6 +54,18 @@ export type FollowRequestNotification = NotificationMeta &
     kind: "FollowRequest";
   }>;
 
+export type QuoteNotification = NotificationMeta &
+  Readonly<{
+    kind: "Quote";
+    status: Status;
+  }>;
+
+export type QuotedUpdateNotification = NotificationMeta &
+  Readonly<{
+    kind: "QuotedUpdate";
+    status: Status;
+  }>;
+
 export type UnknownNotification = NotificationMeta &
   Readonly<{
     kind: "Unknown";
@@ -70,6 +82,8 @@ export type Notification =
   | UpdateNotification
   | FollowNotification
   | FollowRequestNotification
+  | QuoteNotification
+  | QuotedUpdateNotification
   | UnknownNotification;
 
 export const Notification = {
@@ -113,6 +127,18 @@ export const Notification = {
     ...fields,
   }),
 
+  quote: (fields: NotificationMeta & Readonly<{ status: Status }>): QuoteNotification => ({
+    kind: "Quote",
+    ...fields,
+  }),
+
+  quotedUpdate: (
+    fields: NotificationMeta & Readonly<{ status: Status }>,
+  ): QuotedUpdateNotification => ({
+    kind: "QuotedUpdate",
+    ...fields,
+  }),
+
   unknown: (
     fields: NotificationMeta & Readonly<{ type: string; status: Status | null }>,
   ): UnknownNotification => ({
@@ -133,6 +159,8 @@ export const Notification = {
       case "Favourite":
       case "Poll":
       case "Update":
+      case "Quote":
+      case "QuotedUpdate":
         return notification.status;
     }
   },
@@ -149,6 +177,8 @@ export const Notification = {
       case "Favourite":
       case "Poll":
       case "Update":
+      case "Quote":
+      case "QuotedUpdate":
         return { ...notification, status };
     }
   },
@@ -172,6 +202,10 @@ export const Notification = {
         return `${name} の投票が終了しました`;
       case "Update":
         return `${name} が投稿を編集しました`;
+      case "Quote":
+        return `${name} が引用しました`;
+      case "QuotedUpdate":
+        return `${name} が引用元を編集しました`;
       case "Unknown":
         return `${name} から通知`;
     }

@@ -1,3 +1,5 @@
+import type { ProfileField } from "@/domain/account/profile-field";
+
 export type AccountRef = Readonly<{
   id: string;
   username: string;
@@ -18,4 +20,7 @@ export type AccountProfile = Readonly<{
   followingCount: number;
   statusesCount: number;
   locked: boolean;
+  bot: boolean;
+  discoverable: boolean;
+  fields: ReadonlyArray<ProfileField>;
 }>;

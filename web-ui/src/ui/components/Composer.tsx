@@ -4,6 +4,7 @@ import type { CustomEmoji } from "@/domain/emoji/custom-emoji";
 import { PollDraft } from "@/domain/status/poll";
 import type { QuotedStatusPreview } from "@/domain/status/quote";
 import { StatusCharacters } from "@/domain/status/character-limit";
+import { ScheduledAt } from "@/domain/status/scheduled";
 import type { Visibility } from "@/domain/status/visibility";
 import { Visibility as VisibilityModel } from "@/domain/status/visibility";
 import { fetchCustomEmojis } from "@/infrastructure/api/emojis";
@@ -39,6 +40,7 @@ export type ComposerSubmitInput = Readonly<{
   quotedStatusId?: string;
   mediaIds: ReadonlyArray<string>;
   poll: PollDraft | null;
+  scheduledAt: string | null;
 }>;
 
 type ComposerProps = Readonly<{
@@ -53,6 +55,7 @@ type ComposerProps = Readonly<{
   quotedStatusId?: string;
   quotedPreview?: QuotedStatusPreview | null;
   allowPoll?: boolean;
+  allowSchedule?: boolean;
   disabled?: boolean;
   onCancel?: () => void;
   onSubmit: (input: ComposerSubmitInput) => Promise<void>;
@@ -75,6 +78,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     quotedStatusId,
     quotedPreview = null,
     allowPoll = true,
+    allowSchedule = false,
     disabled = false,
     onCancel,
     onSubmit,
@@ -94,6 +98,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [pollEnabled, setPollEnabled] = useState(false);
   const [poll, setPoll] = useState(PollDraft.empty);
   const [language, setLanguage] = useState<string | null>(null);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledLocal, setScheduledLocal] = useState(() => ScheduledAt.defaultLocalValue());
   const [emojis, setEmojis] = useState<ReadonlyArray<CustomEmoji>>([]);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const mediaAttachmentsRef = useRef(mediaAttachments);
@@ -159,11 +165,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const remaining = StatusCharacters.remaining(text);
   const readyMediaIds = ComposerMedia.readyIds(mediaAttachments);
   const pollReady = pollEnabled && PollDraft.isReady(poll);
+  const scheduledAt = scheduleEnabled ? ScheduledAt.toRfc3339(scheduledLocal) : null;
+  const scheduleValid = !scheduleEnabled || (scheduledAt !== null && ScheduledAt.isFarEnough(scheduledAt));
   const canSubmit =
     (text.trim().length > 0 || readyMediaIds.length > 0 || pollReady) &&
     (!pollEnabled || PollDraft.isReady(poll)) &&
     StatusCharacters.isWithinLimit(text) &&
     !ComposerMedia.hasUploading(mediaAttachments) &&
+    scheduleValid &&
     !submitting &&
     !disabled;
 
@@ -262,6 +271,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         quotedStatusId,
         mediaIds: pollEnabled ? [] : readyMediaIds,
         poll: pollEnabled && PollDraft.isReady(poll) ? { ...poll, options: PollDraft.filledOptions(poll) } : null,
+        scheduledAt,
       });
       setText("");
       setSpoilerText("");
@@ -269,6 +279,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setPollEnabled(false);
       setPoll(PollDraft.empty());
       setEmojiOpen(false);
+      setScheduleEnabled(false);
+      setScheduledLocal(ScheduledAt.defaultLocalValue());
       clearMediaAttachments();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "投稿に失敗しました");
@@ -440,6 +452,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 アンケート
               </label>
             ) : null}
+            {allowSchedule ? (
+              <label className="composer-cw">
+                <input
+                  type="checkbox"
+                  checked={scheduleEnabled}
+                  onChange={(event) => setScheduleEnabled(event.target.checked)}
+                  disabled={disabled || submitting}
+                />
+                予約
+              </label>
+            ) : null}
             {emojis.length > 0 ? (
               <button
                 type="button"
@@ -475,9 +498,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               onClick={() => void handleSubmit()}
               disabled={!canSubmit}
             >
-              {submitting ? "送信中…" : submitLabel}
+              {submitting ? "送信中…" : scheduleEnabled ? "予約する" : submitLabel}
             </button>
           </div>
+          {scheduleEnabled ? (
+            <label className="composer-schedule">
+              <span className="app-muted">投稿時刻（5分以上先）</span>
+              <input
+                type="datetime-local"
+                value={scheduledLocal}
+                min={ScheduledAt.minLocalValue()}
+                onChange={(event) => setScheduledLocal(event.target.value)}
+                disabled={disabled || submitting}
+              />
+              {!scheduleValid ? (
+                <span className="app-error">予約は現在から5分以上先にしてください</span>
+              ) : null}
+            </label>
+          ) : null}
           {showCw ? (
             <input
               className="composer-spoiler"

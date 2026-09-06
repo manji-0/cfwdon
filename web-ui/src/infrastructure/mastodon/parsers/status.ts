@@ -26,6 +26,7 @@ type StatusPayload = {
   favourited?: boolean;
   reblogged?: boolean;
   bookmarked?: boolean;
+  muted?: boolean;
   account: {
     id: string;
     username: string;
@@ -137,6 +138,7 @@ const toOriginal = (payload: StatusPayload): OriginalStatus => {
     favourited: source.favourited ?? false,
     reblogged: source.reblogged ?? false,
     bookmarked: source.bookmarked ?? false,
+    muted: source.muted ?? false,
     account: toAccountRef(source.account),
     mediaAttachments: (source.media_attachments ?? []).map(toMediaAttachment),
     card: source.card ? toPreviewCard(source.card) : null,
