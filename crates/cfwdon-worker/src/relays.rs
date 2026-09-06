@@ -298,47 +298,75 @@ pub(crate) async fn mark_federation_relay_rejected(
     Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
+fn stale_public_remote_status_purge_sql() -> &'static str {
+    // One equality per NOT EXISTS so SQLite can use boost_of_uri / quote_of_uri
+    // / in_reply_to_uri indexes. A 6-way OR here table-scans remote_statuses
+    // once per candidate row.
+    "DELETE FROM remote_statuses
+     WHERE id IN (
+        SELECT rs.id
+        FROM remote_statuses rs
+        WHERE rs.visibility = 'public'
+          AND rs.published_at < datetime(CURRENT_TIMESTAMP, ?1)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM follows f
+            WHERE f.target_actor_uri = rs.actor_uri
+              AND f.state = 'accepted'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM followers fl
+            WHERE fl.actor_uri = rs.actor_uri
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.boost_of_uri = rs.object_uri
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.boost_of_uri = rs.url
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.quote_of_uri = rs.object_uri
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.quote_of_uri = rs.url
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.in_reply_to_uri = rs.object_uri
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses ref
+            WHERE ref.id != rs.id
+              AND ref.in_reply_to_uri = rs.url
+          )
+        ORDER BY rs.published_at ASC
+        LIMIT ?2
+     )"
+}
+
 pub(crate) async fn purge_stale_public_remote_content(db: &D1Database) -> Result<u32> {
     let cutoff_modifier = format!("-{PUBLIC_REMOTE_RETENTION_DAYS} days");
     let limit = i32::try_from(PUBLIC_REMOTE_PURGE_BATCH_SIZE).unwrap_or(500);
     // Keep statuses still needed as boost/quote/reply targets even when the
     // author is not followed — otherwise timeline reblogs render empty bodies.
     let status_result = db
-        .prepare(
-            "DELETE FROM remote_statuses
-             WHERE id IN (
-                SELECT rs.id
-                FROM remote_statuses rs
-                WHERE rs.visibility = 'public'
-                  AND rs.published_at < datetime(CURRENT_TIMESTAMP, ?1)
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM follows f
-                    WHERE f.target_actor_uri = rs.actor_uri
-                      AND f.state = 'accepted'
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM followers fl
-                    WHERE fl.actor_uri = rs.actor_uri
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM remote_statuses ref
-                    WHERE ref.id != rs.id
-                      AND (
-                        ref.boost_of_uri = rs.object_uri
-                        OR ref.boost_of_uri = rs.url
-                        OR ref.quote_of_uri = rs.object_uri
-                        OR ref.quote_of_uri = rs.url
-                        OR ref.in_reply_to_uri = rs.object_uri
-                        OR ref.in_reply_to_uri = rs.url
-                      )
-                  )
-                ORDER BY rs.published_at ASC
-                LIMIT ?2
-             )",
-        )
+        .prepare(stale_public_remote_status_purge_sql())
         .bind_refs(&[D1Type::Text(&cutoff_modifier), D1Type::Integer(limit)])?
         .run()
         .await?;
@@ -414,6 +442,19 @@ mod tests {
         assert!(outbox_payload_is_public_relay_candidate(
             &serde_json::to_string(&payload).unwrap()
         ));
+    }
+
+    #[test]
+    fn stale_public_remote_status_purge_sql_avoids_or_on_reference_columns() {
+        let sql = stale_public_remote_status_purge_sql();
+        assert!(!sql.contains(" OR "));
+        assert!(sql.contains("ref.boost_of_uri = rs.object_uri"));
+        assert!(sql.contains("ref.boost_of_uri = rs.url"));
+        assert!(sql.contains("ref.quote_of_uri = rs.object_uri"));
+        assert!(sql.contains("ref.quote_of_uri = rs.url"));
+        assert!(sql.contains("ref.in_reply_to_uri = rs.object_uri"));
+        assert!(sql.contains("ref.in_reply_to_uri = rs.url"));
+        assert_eq!(sql.matches("NOT EXISTS").count(), 8);
     }
 
     #[test]

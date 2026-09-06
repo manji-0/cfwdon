@@ -47,12 +47,14 @@ async fn list_discoverable_remote_actor_rows(
     let sql = match order {
         DirectoryOrder::Active => {
             "SELECT ra.actor_uri,
-                    COALESCE(MAX(rs.published_at), ra.created_at) AS sort_key
+                    COALESCE(
+                      (SELECT MAX(rs.published_at)
+                       FROM remote_statuses rs
+                       WHERE rs.actor_uri = ra.actor_uri),
+                      ra.created_at
+                    ) AS sort_key
              FROM remote_actors ra
-             LEFT JOIN remote_statuses rs
-               ON rs.actor_uri = ra.actor_uri
              WHERE ra.discoverable = 1
-             GROUP BY ra.actor_uri
              ORDER BY sort_key DESC, ra.username ASC, ra.domain ASC
              LIMIT ?1
              OFFSET ?2"

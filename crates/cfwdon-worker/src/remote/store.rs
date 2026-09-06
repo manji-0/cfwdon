@@ -49,18 +49,31 @@ pub(crate) fn effective_remote_status_quote_state(status: &RemoteStatusRow) -> &
     status.effective_quote_state().as_str()
 }
 
+const REMOTE_STATUS_ROW_SELECT: &str = "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
+         FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id";
+
+fn remote_statuses_by_url_or_object_uris_sql() -> String {
+    let in_list = crate::sql_in_json_each(1);
+    format!(
+        "{REMOTE_STATUS_ROW_SELECT}
+         WHERE object_uri {in_list}
+         UNION
+         {REMOTE_STATUS_ROW_SELECT}
+         WHERE url {in_list}"
+    )
+}
+
 pub(crate) async fn find_remote_status_by_id(
     db: &D1Database,
     status_id: &str,
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_id_bindings(status_id);
-    db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
-         FROM remote_statuses
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
+    db.prepare(format!(
+        "{REMOTE_STATUS_ROW_SELECT}
          WHERE id = ?1
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
@@ -101,13 +114,11 @@ pub(crate) async fn find_remote_status_by_object_uri(
     object_uri: &str,
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_object_uri_bindings(object_uri);
-    db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
-         FROM remote_statuses
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
+    db.prepare(format!(
+        "{REMOTE_STATUS_ROW_SELECT}
          WHERE object_uri = ?1
-         LIMIT 1",
-    )
+         LIMIT 1"
+    ))
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
@@ -118,15 +129,15 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
     db: &D1Database,
     value: &str,
 ) -> Result<Option<RemoteStatusRow>> {
+    if let Some(row) = find_remote_status_by_object_uri(db, value).await? {
+        return Ok(Some(row));
+    }
     let bindings = remote_status_lookup_value_bindings(value);
-    db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
-         FROM remote_statuses
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
-         WHERE object_uri = ?1
-            OR url = ?1
-         LIMIT 1",
-    )
+    db.prepare(format!(
+        "{REMOTE_STATUS_ROW_SELECT}
+         WHERE url = ?1
+         LIMIT 1"
+    ))
     .bind_refs(bindings.iter())?
     .first::<RemoteStatusRecord>(None)
     .await
@@ -148,16 +159,9 @@ pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     }
 
     let values_json = crate::json_string_array(&values);
-    let in_list = crate::sql_in_json_each(1);
-    let sql = format!(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
-         FROM remote_statuses
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
-         WHERE object_uri {in_list}
-            OR url {in_list}"
-    );
+    let sql = remote_statuses_by_url_or_object_uris_sql();
     let binding = D1Type::Text(values_json.as_str());
-    let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
+    let result = db.prepare(sql).bind_refs(&binding)?.all().await?;
 
     crate::d1_results::<RemoteStatusRecord>(&result)?
         .into_iter()
@@ -1305,5 +1309,14 @@ mod tests {
         .expect("incoming status");
 
         assert_eq!(incoming.published_at(), "2026-05-10T04:05:06Z");
+    }
+
+    #[test]
+    fn remote_statuses_by_url_or_object_uris_sql_uses_union_not_or() {
+        let sql = remote_statuses_by_url_or_object_uris_sql();
+        assert!(sql.contains("UNION"));
+        assert!(!sql.contains(" OR "));
+        assert!(sql.contains("WHERE object_uri IN (SELECT value FROM json_each(?1))"));
+        assert!(sql.contains("WHERE url IN (SELECT value FROM json_each(?1))"));
     }
 }

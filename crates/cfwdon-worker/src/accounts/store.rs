@@ -69,12 +69,14 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
     let sql = match order {
         DirectoryOrder::Active => {
             "SELECT a.id, a.username, a.access_email, a.display_name, a.bio_html, a.bio_text, a.fields_json, a.locked, a.bot, a.discoverable, a.default_post_visibility, a.default_quote_policy, a.default_sensitive, a.default_language, a.avatar_object_key, a.avatar_content_type, a.header_object_key, a.header_content_type, a.public_key_pem, a.created_at,
-                    COALESCE(MAX(s.created_at), a.created_at) AS sort_key
+                    COALESCE(
+                      (SELECT MAX(s.created_at)
+                       FROM statuses s
+                       WHERE s.account_id = a.id),
+                      a.created_at
+                    ) AS sort_key
              FROM accounts a
-             LEFT JOIN statuses s
-               ON s.account_id = a.id
              WHERE a.discoverable = 1
-             GROUP BY a.id
              ORDER BY sort_key DESC, a.username ASC
              LIMIT ?1
              OFFSET ?2"

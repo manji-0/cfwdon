@@ -115,6 +115,36 @@ def seed(conn: sqlite3.Connection) -> None:
                 f"2026-02-{(index % 28) + 1:02d}T12:00:00Z",
             ),
         )
+    for index in range(1, 121):
+        conn.execute(
+            """INSERT INTO remote_statuses (
+                id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri,
+                quote_of_uri, content_html, visibility, published_at, raw_object_json
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                f"rs-{index}",
+                "https://remote.example/users/bob",
+                f"https://remote.example/statuses/{index}",
+                f"https://remote.example/@bob/{index}",
+                None if index == 1 else f"https://remote.example/statuses/{index - 1}",
+                None if index % 5 else f"https://remote.example/statuses/{index - 1}",
+                None if index % 7 else f"https://remote.example/statuses/{index - 1}",
+                "<p>x</p>",
+                "public",
+                f"2026-01-{(index % 28) + 1:02d}T12:00:00Z",
+                "{}",
+            ),
+        )
+    conn.execute(
+        """INSERT INTO followers (id, account_id, actor_uri, inbox_uri)
+           VALUES (?, ?, ?, ?)""",
+        (
+            "fl-1",
+            "acct-1",
+            "https://remote.example/users/bob",
+            "https://remote.example/inbox",
+        ),
+    )
     conn.execute("ANALYZE")
 
 
@@ -240,6 +270,55 @@ def main() -> int:
                  AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
                ORDER BY created_at ASC LIMIT ?""",
             (16,),
+            None,
+        ),
+        (
+            "remote status by object_uri",
+            """SELECT id FROM remote_statuses WHERE object_uri = ? LIMIT 1""",
+            ("https://remote.example/statuses/1",),
+            None,
+        ),
+        (
+            "remote status by url",
+            """SELECT id FROM remote_statuses WHERE url = ? LIMIT 1""",
+            ("https://remote.example/@bob/1",),
+            None,
+        ),
+        (
+            "remote status url or object_uri union",
+            """SELECT id FROM remote_statuses
+               WHERE object_uri IN (SELECT value FROM json_each(?))
+               UNION
+               SELECT id FROM remote_statuses
+               WHERE url IN (SELECT value FROM json_each(?))""",
+            (
+                '["https://remote.example/statuses/1"]',
+                '["https://remote.example/statuses/1"]',
+            ),
+            None,
+        ),
+        (
+            "remote status boost_of_uri lookup",
+            """SELECT id FROM remote_statuses WHERE boost_of_uri = ? LIMIT 1""",
+            ("https://remote.example/statuses/1",),
+            None,
+        ),
+        (
+            "remote status in_reply_to_uri lookup",
+            """SELECT id FROM remote_statuses WHERE in_reply_to_uri = ? LIMIT 1""",
+            ("https://remote.example/statuses/1",),
+            None,
+        ),
+        (
+            "followers by actor_uri",
+            """SELECT 1 FROM followers WHERE actor_uri = ? LIMIT 1""",
+            ("https://remote.example/users/bob",),
+            None,
+        ),
+        (
+            "directory remote actor last status",
+            """SELECT MAX(published_at) FROM remote_statuses WHERE actor_uri = ?""",
+            ("https://remote.example/users/bob",),
             None,
         ),
     ]

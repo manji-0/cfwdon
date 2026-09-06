@@ -253,7 +253,7 @@ pub(crate) async fn load_remote_actor_status_summary(
     Ok(db
         .prepare(
             "SELECT COUNT(*) AS statuses_count,
-                    MAX(substr(published_at, 1, 10)) AS last_status_at
+                    substr(MAX(published_at), 1, 10) AS last_status_at
              FROM remote_statuses
              WHERE actor_uri = ?1",
         )
@@ -286,7 +286,7 @@ pub(crate) async fn load_remote_actor_status_summaries(
     let sql = format!(
         "SELECT actor_uri,
                 COUNT(*) AS statuses_count,
-                MAX(substr(published_at, 1, 10)) AS last_status_at
+                substr(MAX(published_at), 1, 10) AS last_status_at
          FROM remote_statuses
          WHERE actor_uri {}
          GROUP BY actor_uri",
