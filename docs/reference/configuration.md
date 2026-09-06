@@ -22,6 +22,35 @@ If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `
 
 Do not set `[assets] not_found_handling` to `single-page-application`. Unmatched `/app` routes fall through to the Worker so ActivityPub and Mastodon API paths are not captured as HTML.
 
+## Worker And D1 Placement
+<!-- derived-from ../../wrangler.toml.example -->
+
+Mastodon API and inbox handlers issue several sequential D1 queries per request. Those round trips stay short only when the Worker runs next to the D1 primary. `wrangler d1 info` only reports a coarse region (`APAC`). The city is in each remote query's `meta.served_by_colo` (airport code). This instance's primary is `SIN`.
+
+Cloudflare has no `cf:sin` placement key, so pin the Worker to the AWS region whose nearest Cloudflare colo matches that colo. Pinning to Tokyo while the primary is Singapore leaves write latency unchanged: each sequential write still crosses Tokyo–Singapore.
+
+| D1 primary (`served_by_colo`) | Worker `[placement] region` | Typical audience |
+| --- | --- | --- |
+| `SIN` (usual `--location=apac`) | `aws:ap-southeast-1` | Writes next to APAC primary |
+| `NRT` / `KIX` | `aws:ap-northeast-1` | Japan, only if the primary actually landed there |
+| `SYD` (`--location=oc`) | `aws:ap-southeast-2` | Australia |
+| `LHR` (`--location=weur`) | `aws:eu-west-1` | Western Europe |
+| `FRA` (`--location=eeur`) | `aws:eu-central-1` | Central / Eastern Europe |
+| `EWR` / `IAD` (`--location=enam`) | `aws:us-east-1` | Eastern North America |
+| `SFO` / `LAX` (`--location=wnam`) | `aws:us-west-2` | Western North America |
+
+Check the live primary:
+
+```sh
+wrangler d1 execute cfwdon --remote --command="SELECT 1" --json
+```
+
+Look for `"served_by_primary": true` and `"served_by_colo": "SIN"`. D1 location is immutable after create.
+
+`[placement] mode = "smart"` and `region = "..."` are mutually exclusive. Prefer the explicit region: Smart Placement needs multi-location traffic, takes up to 15 minutes to decide, and can follow outbound ActivityPub fetches instead of D1.
+
+After deploy, responses include `cf-placement` (for example `remote-SIN`) when placement routed the `fetch` handler. Static assets still serve from the colo nearest the client. Cron and queue consumers are not placed by this setting.
+
 ## Public Instance Vars
 
 | Var | Required | Default / Behavior | Notes |

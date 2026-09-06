@@ -3,7 +3,7 @@
 This repository is configured to run as a single Cloudflare Worker backed by D1 and R2, with Web and admin UI files attached as Workers static assets.
 
 For local commands and CI gates, see [Development Workflow](../getting-started/development.md).
-For Worker bindings, environment variables, and secrets, see [Configuration Reference](../reference/configuration.md).
+For Worker bindings, environment variables, secrets, and D1/Worker placement, see [Configuration Reference](../reference/configuration.md).
 
 ## Required Cloudflare Resources
 <!-- constrained-by ../reference/configuration.md -->
@@ -16,12 +16,15 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 
 ## Provisioning Steps
 <!-- constrained-by ../reference/configuration.md#public-instance-vars -->
+<!-- constrained-by ../reference/configuration.md#worker-and-d1-placement -->
 
-1. Create the D1 database.
+1. Create the D1 database in the same region you will pin the Worker to. Location is fixed at create time and cannot be changed later.
 
    ```sh
-   wrangler d1 create cfwdon
+   wrangler d1 create cfwdon --location=apac
    ```
+
+   Confirm with `wrangler d1 info cfwdon` (`running_in_region` should be `APAC`) and a remote query's `meta.served_by_colo` (this instance's primary is `SIN`). Pair that with `[placement] region = "aws:ap-southeast-1"` in [`wrangler.toml`](../../wrangler.toml). See [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
 
 2. Create the R2 bucket.
 
@@ -137,6 +140,7 @@ For Worker bindings, environment variables, and secrets, see [Configuration Refe
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, and `APP_CACHE`
 - `wrangler.toml` `[assets] binding` is `ASSETS`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
+- `wrangler.toml` `[placement] region` matches the D1 primary colo from `served_by_colo` (this instance: `SIN` → `aws:ap-southeast-1`)
 - `migrations/` contains the schema required by the Worker code
 
 ## Current Caveat

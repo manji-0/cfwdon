@@ -3,6 +3,12 @@ main = "crates/cfwdon-worker/build/index.js"
 # Workers Cache requires a recent compatibility date.
 compatibility_date = "2026-07-07"
 
+# Create D1 with `--location=apac`, then pin the Worker to the primary colo.
+# This database family usually lands in Singapore (`served_by_colo` = SIN),
+# so default to AWS Singapore. `mode` and `region` are mutually exclusive.
+[placement]
+region = "aws:ap-southeast-1"
+
 [cache]
 enabled = true
 

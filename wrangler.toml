@@ -2,8 +2,12 @@ name = "cfwdon"
 main = "crates/cfwdon-worker/build/index.js"
 compatibility_date = "2026-04-13"
 
+# Pin the Worker next to the D1 primary (this database is APAC / SIN).
+# `mode` and `region` are mutually exclusive; Smart Placement can chase
+# ActivityPub origins instead of D1. Confirm colo with:
+# wrangler d1 execute cfwdon --remote --command="SELECT 1" --json
 [placement]
-mode = "smart"
+region = "aws:ap-southeast-1"
 
 [observability]
 enabled = true

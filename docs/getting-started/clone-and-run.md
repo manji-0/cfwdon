@@ -40,6 +40,7 @@ This starts `wrangler dev`. Public, unauthenticated routes are the easiest first
 ## Cloudflare Resource Template
 <!-- constrained-by ../operations/cloudflare-deploy.md#provisioning-steps -->
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
+<!-- constrained-by ../reference/configuration.md#worker-and-d1-placement -->
 
 Start from the example config instead of editing from memory:
 
@@ -51,9 +52,11 @@ Then create the required Cloudflare resources:
 
 ```sh
 wrangler login
-wrangler d1 create cfwdon
+wrangler d1 create cfwdon --location=apac
 wrangler r2 bucket create cfwdon-media
 ```
+
+`--location=apac` places the D1 primary in Asia-Pacific (often Singapore, not Tokyo). It cannot be moved later. Check `meta.served_by_colo` on a remote query, then keep `[placement] region` next to that colo (`SIN` → `aws:ap-southeast-1`). Other regions: [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
 
 Copy the D1 `database_id` into `wrangler.toml`, then replace the instance vars under `[vars]`. At minimum, set:
 

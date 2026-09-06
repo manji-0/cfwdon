@@ -11,7 +11,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 - [Clone And Run](getting-started/clone-and-run.md)
   Fresh clone bootstrap, `wrangler.toml.example` setup, Cloudflare resource creation, migrations, and first deploy steps.
 - [Configuration Reference](reference/configuration.md)
-  Cloudflare bindings, `wrangler.toml` vars, secrets, and runtime configuration behavior.
+  Cloudflare bindings, Worker/D1 placement, `wrangler.toml` vars, secrets, and runtime configuration behavior.
 - [Cloudflare Deploy Checklist](operations/cloudflare-deploy.md)
   D1, R2, Worker deploy, and pre-deploy verification steps.
 - [Auth0 Configuration Guide](operations/auth0-configuration.md)
