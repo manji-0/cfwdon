@@ -25,6 +25,8 @@ pub struct RemoteStatus {
     pub card_json: Option<String>,
     pub federated_emojis_json: String,
     pub in_reply_to_id: Option<String>,
+    /// Snapshot from a `remote_status_counts` join. `None` means the loader did not join.
+    pub interaction_counts: Option<(u64, u64)>,
 }
 
 impl RemoteStatus {
@@ -53,6 +55,10 @@ impl RemoteStatus {
                 record.federated_emojis_json
             },
             in_reply_to_id: record.in_reply_to_id,
+            interaction_counts: match (record.favourites_count, record.reblogs_count) {
+                (None, None) => None,
+                (favourites, reblogs) => Some((favourites.unwrap_or(0), reblogs.unwrap_or(0))),
+            },
         })
     }
 
@@ -81,6 +87,8 @@ impl RemoteStatus {
             card_json: self.card_json.clone(),
             federated_emojis_json: self.federated_emojis_json.clone(),
             in_reply_to_id: self.in_reply_to_id.clone(),
+            favourites_count: self.interaction_counts.map(|(favourites, _)| favourites),
+            reblogs_count: self.interaction_counts.map(|(_, reblogs)| reblogs),
         }
     }
 
@@ -120,6 +128,7 @@ fn strip_basic_html_tags(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::RemoteStatusRecord;
 
     #[test]
     fn remote_status_record_roundtrip_preserves_entity() {
@@ -143,9 +152,69 @@ mod tests {
             card_json: None,
             federated_emojis_json: "[]".to_owned(),
             in_reply_to_id: None,
+            interaction_counts: Some((3, 1)),
         };
 
         let restored = RemoteStatus::from_record(status.to_record());
         assert_eq!(status, restored);
+        assert_eq!(restored.interaction_counts, Some((3, 1)));
+    }
+
+    #[test]
+    fn missing_count_columns_leave_interaction_counts_unloaded() {
+        let record = RemoteStatusRecord {
+            id: "remote-1".to_owned(),
+            actor_uri: "https://remote.example/users/bob".to_owned(),
+            object_uri: "https://remote.example/users/bob/statuses/1".to_owned(),
+            url: None,
+            in_reply_to_uri: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>hello</p>".to_owned(),
+            text_content: "hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: None,
+            quote_state: "accepted".to_owned(),
+            published_at: "2026-01-01T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
+            favourites_count: None,
+            reblogs_count: None,
+        };
+        let status = RemoteStatus::from_record(record);
+        assert_eq!(status.interaction_counts, None);
+    }
+
+    #[test]
+    fn coalesced_zero_counts_are_treated_as_loaded() {
+        let record = RemoteStatusRecord {
+            id: "remote-1".to_owned(),
+            actor_uri: "https://remote.example/users/bob".to_owned(),
+            object_uri: "https://remote.example/users/bob/statuses/1".to_owned(),
+            url: None,
+            in_reply_to_uri: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>hello</p>".to_owned(),
+            text_content: "hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: "public".to_owned(),
+            sensitive: 0,
+            language: None,
+            quote_state: "accepted".to_owned(),
+            published_at: "2026-01-01T00:00:00Z".to_owned(),
+            edited_at: None,
+            card_json: None,
+            federated_emojis_json: "[]".to_owned(),
+            in_reply_to_id: None,
+            favourites_count: Some(0),
+            reblogs_count: Some(0),
+        };
+        let status = RemoteStatus::from_record(record);
+        assert_eq!(status.interaction_counts, Some((0, 0)));
     }
 }

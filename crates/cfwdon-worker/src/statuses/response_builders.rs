@@ -140,6 +140,7 @@ mod tests {
             card_json: None,
             federated_emojis_json: "[]".to_owned(),
             in_reply_to_id: None,
+            interaction_counts: None,
         }
     }
 

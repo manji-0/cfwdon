@@ -246,7 +246,7 @@ async fn build_remote_quoted_status_from_row(
     };
     response.mentions = build_status_mentions(db, config, &text_content).await?;
     let (favourites_count, reblogs_count) =
-        super::remote::remote_status_counts(db, counts_preload, &remote_status.id).await?;
+        super::remote::remote_status_counts(db, counts_preload, &remote_status).await?;
     response.favourites_count = favourites_count;
     response.reblogs_count = reblogs_count;
     let viewer_state = super::remote::remote_status_response_viewer_state(

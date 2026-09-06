@@ -225,6 +225,15 @@ def main() -> int:
             None,
         ),
         (
+            "remote status counts join seeks pk",
+            """SELECT rs.id, COALESCE(rsc.favourites_count, 0)
+               FROM remote_statuses rs
+               LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
+               WHERE rs.id = ?""",
+            ("id-1",),
+            None,
+        ),
+        (
             "outbox generic claim",
             """SELECT id FROM outbox_deliveries
                WHERE state = 'queued' AND target_inbox IS NULL

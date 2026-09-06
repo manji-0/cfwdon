@@ -5,7 +5,7 @@ use worker::d1::D1Type;
 use worker::kv::KvStore;
 use worker::{Env, Result};
 
-const ACCOUNT_CAPABILITIES_KEY_PREFIX: &str = "acctcap:v1:";
+const ACCOUNT_CAPABILITIES_KEY_PREFIX: &str = "acctcap:v2:";
 const ACCOUNT_CAPABILITIES_TTL_SECS: u64 = 3_600;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -14,6 +14,8 @@ pub(crate) struct AccountCapabilities {
     pub(crate) has_followed_tags: bool,
     pub(crate) has_filters: bool,
     pub(crate) has_domain_blocks: bool,
+    #[serde(default)]
+    pub(crate) has_bookmarks: bool,
 }
 
 thread_local! {
@@ -109,7 +111,7 @@ async fn probe_account_capabilities(
     db: &crate::D1Database,
     account_id: &str,
 ) -> Result<AccountCapabilities> {
-    let (has_thread_mutes, has_followed_tags, has_filters, has_domain_blocks) = futures_util::try_join!(
+    let (has_thread_mutes, has_followed_tags, has_filters, has_domain_blocks, has_bookmarks) = futures_util::try_join!(
         account_has_any_row(
             db,
             account_id,
@@ -142,12 +144,21 @@ async fn probe_account_capabilities(
              WHERE account_id = ?1
              LIMIT 1",
         ),
+        account_has_any_row(
+            db,
+            account_id,
+            "SELECT target_uri
+             FROM bookmarks
+             WHERE account_id = ?1
+             LIMIT 1",
+        ),
     )?;
     Ok(AccountCapabilities {
         has_thread_mutes,
         has_followed_tags,
         has_filters,
         has_domain_blocks,
+        has_bookmarks,
     })
 }
 
@@ -174,4 +185,23 @@ pub(crate) async fn load_account_capabilities(
 pub(crate) async fn invalidate_account_capabilities(account_id: &str) {
     l1_remove(account_id);
     kv_delete_account_capabilities(account_id).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_capabilities_key_is_versioned() {
+        assert_eq!(account_capabilities_key("acct-1"), "acctcap:v2:acct-1");
+    }
+
+    #[test]
+    fn account_capabilities_json_defaults_new_bits() {
+        let caps: AccountCapabilities =
+            serde_json::from_str(r#"{"has_thread_mutes":true,"has_followed_tags":false,"has_filters":false,"has_domain_blocks":false}"#)
+                .expect("legacy capabilities json");
+        assert!(caps.has_thread_mutes);
+        assert!(!caps.has_bookmarks);
+    }
 }

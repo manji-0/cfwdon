@@ -15,7 +15,7 @@ use crate::{
     load_remote_actor_social_counts_from_document_with_context, log_json_event,
     persist_remote_actor_social_counts, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_counts, preload_status_quote_counts, remote_account_rest_id,
+    preload_status_counts_for_remote_rows, preload_status_quote_counts, remote_account_rest_id,
     remote_actor_social_counts_are_fresh, remote_status_attachments_from_object,
     remote_status_from_record, sanitize_remote_http_url, sanitize_remote_plain_text,
     upsert_remote_actor, upsert_remote_status, visibility_from_activitypub_object,
@@ -277,6 +277,7 @@ async fn remote_account_statuses_json_response(
         .iter()
         .map(|status| (status, &actor))
         .collect::<Vec<_>>();
+    let statuses_for_counts = statuses.iter().collect::<Vec<_>>();
     let quote_uris = statuses
         .iter()
         .map(|status| status.object_uri.clone())
@@ -291,7 +292,7 @@ async fn remote_account_statuses_json_response(
         mut remote_attachments_by_status_id,
         remote_status_ids_with_media,
     ) = futures_util::try_join!(
-        preload_status_counts(db, &[], status_ids),
+        preload_status_counts_for_remote_rows(db, &[], &statuses_for_counts),
         preload_status_quote_counts(db, &quote_uris),
         async {
             match viewer {
@@ -810,6 +811,8 @@ fn remote_status_row_from_activitypub_object(
         card_json: None,
         federated_emojis_json: String::new(),
         in_reply_to_id: None,
+        favourites_count: None,
+        reblogs_count: None,
     })
 }
 

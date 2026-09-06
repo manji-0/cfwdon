@@ -59,6 +59,8 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<Re
         card_json: mention.card_json,
         federated_emojis_json: mention.federated_emojis_json,
         in_reply_to_id: mention.in_reply_to_id,
+        favourites_count: None,
+        reblogs_count: None,
     })
     .ok()
 }

@@ -40,9 +40,12 @@ const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
                 ra.locked,
                 ra.bot,
                 ra.discoverable,
-                ra.indexable
+                ra.indexable,
+                COALESCE(rsc.favourites_count, 0) AS favourites_count,
+                COALESCE(rsc.reblogs_count, 0) AS reblogs_count
              FROM remote_statuses rs
-             JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri";
+             JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+             LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id";
 
 const LOCAL_STATUS_SEARCH_COLUMNS: &[&str] = &["text_content", "spoiler_text"];
 const REMOTE_STATUS_SEARCH_COLUMNS: &[&str] = &["content_html", "spoiler_text"];
@@ -128,6 +131,14 @@ fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> 
         .map(ToOwned::to_owned)
 }
 
+fn json_optional_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|inner| {
+        inner
+            .as_u64()
+            .or_else(|| inner.as_i64().and_then(|n| u64::try_from(n).ok()))
+    })
+}
+
 fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {
     remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
@@ -156,6 +167,8 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<Remo
         card_json: None,
         federated_emojis_json: "[]".to_owned(),
         in_reply_to_id: None,
+        favourites_count: json_optional_u64(value, "favourites_count"),
+        reblogs_count: json_optional_u64(value, "reblogs_count"),
     })
 }
 

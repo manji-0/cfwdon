@@ -5,8 +5,8 @@
 
 use super::{
     AppConfig, LocalAccount, MastodonPollResponsePreload, RemoteActorRow, RemoteStatusRow,
-    StatusRow, account_has_thread_mutes, config_with_resolved_custom_emojis, count_rows,
-    find_oauth_app_by_id, find_oauth_apps_by_ids, find_statuses_by_ap_ids, find_statuses_by_ids,
+    StatusRow, config_with_resolved_custom_emojis, count_rows, find_oauth_app_by_id,
+    find_oauth_apps_by_ids, find_statuses_by_ap_ids, find_statuses_by_ids,
     load_mastodon_poll_response, load_status_updated_at, local_status_identity_from_uri,
     local_status_ids_thread_muted_by, local_status_target_uri,
 };
@@ -443,6 +443,7 @@ pub(crate) async fn preload_local_status_viewer_state(
         .filter(|id| seen_status_ids.insert(id.clone()))
         .collect::<Vec<_>>();
 
+    let caps = crate::load_account_capabilities(db, account_id).await?;
     let (
         favourited_target_uris,
         reblogged_target_uris,
@@ -452,12 +453,18 @@ pub(crate) async fn preload_local_status_viewer_state(
     ) = futures_util::try_join!(
         load_viewer_target_uri_set(db, "favourites", account_id, &target_uris,),
         load_viewer_target_uri_set(db, "reblogs", account_id, &target_uris),
-        load_viewer_target_uri_set(db, "bookmarks", account_id, &target_uris,),
+        async {
+            if caps.has_bookmarks {
+                load_viewer_target_uri_set(db, "bookmarks", account_id, &target_uris).await
+            } else {
+                Ok(HashSet::new())
+            }
+        },
         load_viewer_pinned_status_ids(db, account_id, &status_ids),
         async {
             match known_has_thread_mutes {
                 Some(value) => Ok(value),
-                None => account_has_thread_mutes(db, account_id).await,
+                None => Ok(caps.has_thread_mutes),
             }
         },
     )?;
@@ -495,10 +502,17 @@ pub(crate) async fn preload_remote_status_viewer_state(
         .filter(|uri| seen_actor_uris.insert(uri.clone()))
         .collect::<Vec<_>>();
 
+    let caps = crate::load_account_capabilities(db, account_id).await?;
     let (favourited_status_ids, reblogged_status_ids, bookmarked_status_ids, muted_actor_uris) = futures_util::try_join!(
         load_viewer_remote_status_id_set(db, "favourites", account_id, &status_ids),
         load_viewer_remote_status_id_set(db, "reblogs", account_id, &status_ids),
-        load_viewer_remote_status_id_set(db, "bookmarks", account_id, &status_ids),
+        async {
+            if caps.has_bookmarks {
+                load_viewer_remote_status_id_set(db, "bookmarks", account_id, &status_ids).await
+            } else {
+                Ok(HashSet::new())
+            }
+        },
         crate::list_active_muted_actor_uris(db, account_id, &actor_uris),
     )?;
 

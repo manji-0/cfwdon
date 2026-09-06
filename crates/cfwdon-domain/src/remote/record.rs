@@ -32,6 +32,12 @@ pub struct RemoteStatusRecord {
     pub federated_emojis_json: String,
     #[serde(default)]
     pub in_reply_to_id: Option<String>,
+    /// Present when the loader LEFT JOINed `remote_status_counts`.
+    #[serde(default)]
+    pub favourites_count: Option<u64>,
+    /// Present when the loader LEFT JOINed `remote_status_counts`.
+    #[serde(default)]
+    pub reblogs_count: Option<u64>,
 }
 
 fn default_quote_state() -> String {
@@ -86,6 +92,8 @@ mod tests {
             card_json: None,
             federated_emojis_json: "[]".to_owned(),
             in_reply_to_id: None,
+            favourites_count: None,
+            reblogs_count: None,
         }
     }
 

@@ -15,7 +15,8 @@ use crate::{
     find_remote_status_attachments_by_status_ids, preload_boost_targets,
     preload_mention_accounts_from_texts, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_federated_emojis,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    preload_status_applications, preload_status_counts_for_remote_rows,
+    preload_status_quote_counts,
 };
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -158,7 +159,7 @@ async fn preload_timeline_candidate_render_context(
         boost_remote_actors,
         remote_in_reply_to_preload,
     ) = futures_util::try_join!(
-        preload_status_counts(db, &boost_ids.local_ids, &boost_ids.remote_ids),
+        preload_status_counts_for_remote_rows(db, &boost_ids.local_ids, &boost_remote_status_refs),
         preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
         preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
         preload_remote_status_edit_updated_at(db, &boost_ids.remote_ids),

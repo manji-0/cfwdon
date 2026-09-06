@@ -55,8 +55,9 @@ pub(crate) async fn find_remote_status_by_id(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_id_bindings(status_id);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE id = ?1
          LIMIT 1",
     )
@@ -101,8 +102,9 @@ pub(crate) async fn find_remote_status_by_object_uri(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE object_uri = ?1
          LIMIT 1",
     )
@@ -118,8 +120,9 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
 ) -> Result<Option<RemoteStatusRow>> {
     let bindings = remote_status_lookup_value_bindings(value);
     db.prepare(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE object_uri = ?1
             OR url = ?1
          LIMIT 1",
@@ -147,8 +150,9 @@ pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     let values_json = crate::json_string_array(&values);
     let in_list = crate::sql_in_json_each(1);
     let sql = format!(
-        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE object_uri {in_list}
             OR url {in_list}"
     );
@@ -269,8 +273,11 @@ async fn find_remote_status_edit_state_by_object_uri(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri,
                 content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at,
                 edited_at, card_json, federated_emojis_json, in_reply_to_id,
+                COALESCE(rsc.favourites_count, 0) AS favourites_count,
+                COALESCE(rsc.reblogs_count, 0) AS reblogs_count,
                 raw_object_json
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE object_uri = ?1
          LIMIT 1",
     )

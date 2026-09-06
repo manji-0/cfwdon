@@ -156,3 +156,31 @@ pub(crate) async fn preload_status_counts(
 
     Ok(StatusCountsPreload { local, remote })
 }
+
+pub(crate) async fn preload_status_counts_for_remote_rows(
+    db: &D1Database,
+    local_status_ids: &[String],
+    remote_statuses: &[&crate::RemoteStatusRow],
+) -> Result<StatusCountsPreload> {
+    let mut seen = HashSet::new();
+    let mut missing = Vec::new();
+    let mut preload = StatusCountsPreload::default();
+    for status in remote_statuses {
+        if !seen.insert(status.id.as_str()) {
+            continue;
+        }
+        match status.interaction_counts {
+            Some(counts) => {
+                preload.remote.insert(status.id.clone(), counts);
+            }
+            None => missing.push(status.id.clone()),
+        }
+    }
+    let (local, fetched) = futures_util::try_join!(
+        load_local_status_counts_map(db, local_status_ids),
+        load_remote_status_counts_map(db, &missing),
+    )?;
+    preload.local = local;
+    preload.remote.extend(fetched);
+    Ok(preload)
+}

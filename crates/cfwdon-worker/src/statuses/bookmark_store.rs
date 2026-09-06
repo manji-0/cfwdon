@@ -46,6 +46,7 @@ pub(crate) async fn upsert_bookmark_local_status(
     .run()
     .await?;
 
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -85,6 +86,7 @@ pub(crate) async fn upsert_bookmark_remote_status(
     .run()
     .await?;
 
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -103,6 +105,7 @@ pub(crate) async fn delete_bookmark_by_target_uri(
     .run()
     .await?;
 
+    crate::invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -111,6 +114,9 @@ pub(crate) async fn is_local_status_bookmarked_by(
     account_id: &str,
     status: &StatusRow,
 ) -> Result<bool> {
+    if !account_has_bookmarks(db, account_id).await? {
+        return Ok(false);
+    }
     is_bookmark_target_for_account(db, account_id, &local_status_target_uri(status)).await
 }
 
@@ -119,6 +125,9 @@ pub(crate) async fn is_remote_status_bookmarked_by(
     account_id: &str,
     remote_status_id: &str,
 ) -> Result<bool> {
+    if !account_has_bookmarks(db, account_id).await? {
+        return Ok(false);
+    }
     let remote_status_id = D1Type::Text(remote_status_id);
     let account_id = D1Type::Text(account_id);
     let row = db
@@ -134,6 +143,12 @@ pub(crate) async fn is_remote_status_bookmarked_by(
         .await?;
 
     Ok(row.is_some())
+}
+
+pub(crate) async fn account_has_bookmarks(db: &D1Database, account_id: &str) -> Result<bool> {
+    Ok(crate::load_account_capabilities(db, account_id)
+        .await?
+        .has_bookmarks)
 }
 
 async fn is_bookmark_target_for_account(

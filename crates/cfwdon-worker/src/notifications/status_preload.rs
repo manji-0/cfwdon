@@ -10,7 +10,8 @@ use super::{
     preload_mastodon_poll_responses, preload_mention_accounts_from_texts,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    preload_status_applications, preload_status_counts_for_remote_rows,
+    preload_status_quote_counts,
 };
 use cfwdon_domain::LocalAccount;
 use std::collections::{HashMap, HashSet};
@@ -234,9 +235,11 @@ async fn load_notification_entity_preloads(
     config: &AppConfig,
     viewer: &LocalAccount,
     local_statuses: &[StatusRow],
+    remote_statuses: &[RemoteStatusRow],
     plan: &NotificationPreloadPlan,
 ) -> Result<NotificationEntityPreloads> {
     let local_status_refs = local_statuses.iter().collect::<Vec<_>>();
+    let remote_status_count_refs = remote_statuses.iter().collect::<Vec<_>>();
     let mention_text_refs = plan
         .mention_texts
         .iter()
@@ -264,7 +267,11 @@ async fn load_notification_entity_preloads(
         find_remote_actors_by_actor_uris(db, &plan.remote_actor_uris),
         find_remote_status_attachments_by_status_ids(db, &plan.remote_status_ids),
         load_in_reply_to_account_ids(db, local_statuses),
-        preload_status_counts(db, &plan.local_status_ids, &plan.remote_status_ids),
+        preload_status_counts_for_remote_rows(
+            db,
+            &plan.local_status_ids,
+            &remote_status_count_refs
+        ),
         preload_mastodon_poll_responses(db, &plan.local_status_ids, Some(viewer)),
         preload_local_status_viewer_state(db, viewer.id(), &local_status_refs, None),
         preload_remote_mastodon_poll_responses(db, &plan.remote_status_ids, Some(viewer)),
@@ -366,8 +373,15 @@ pub(crate) async fn preload_notification_statuses(
         additional_local_account_ids,
         additional_remote_actor_uris,
     );
-    let entity_preloads =
-        load_notification_entity_preloads(db, config, viewer, local_statuses, &plan).await?;
+    let entity_preloads = load_notification_entity_preloads(
+        db,
+        config,
+        viewer,
+        local_statuses,
+        remote_statuses,
+        &plan,
+    )
+    .await?;
 
     let remote_status_refs = remote_statuses
         .iter()

@@ -4420,6 +4420,7 @@ fn remote_status_quote_helpers_follow_quote_state() {
         card_json: None,
         federated_emojis_json: "[]".to_owned(),
         in_reply_to_id: None,
+        interaction_counts: None,
     };
 
     assert_eq!(effective_remote_status_quote_state(&status), "accepted");

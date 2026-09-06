@@ -39,7 +39,9 @@ const REMOTE_STATUS_WITH_ACTOR_SELECT: &str = "rs.id,
             ra.locked,
             ra.bot,
             ra.discoverable,
-            ra.indexable";
+            ra.indexable,
+            COALESCE(rsc.favourites_count, 0) AS favourites_count,
+            COALESCE(rsc.reblogs_count, 0) AS reblogs_count";
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RemoteAccountStatusListOptions<'a> {
@@ -77,6 +79,7 @@ fn remote_public_timeline_statuses_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'{cursor_predicates}
          ORDER BY rs.published_at DESC, rs.id DESC
          LIMIT ?{limit_slot}"
@@ -110,6 +113,7 @@ fn remote_home_timeline_statuses_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          JOIN follows f
            ON f.target_actor_uri = rs.actor_uri
           AND f.follower_account_id = ?1
@@ -142,6 +146,7 @@ fn remote_statuses_with_actors_by_ids_sql() -> String {
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.id {}",
         sql_in_json_each(1)
     )
@@ -238,6 +243,7 @@ fn remote_public_statuses_by_tags_indexed_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'
            AND rs.id IN (
                SELECT h.status_id
@@ -291,6 +297,7 @@ fn remote_public_statuses_by_tags_legacy_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'
            AND ({match_clause}){cursor_predicates}
          ORDER BY rs.published_at DESC, rs.id DESC
@@ -345,6 +352,7 @@ fn remote_public_statuses_by_link_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'
            AND ra.discoverable = 1
            AND ({match_clause}){cursor_predicates}
@@ -462,8 +470,9 @@ fn remote_actor_statuses_by_actor_uri_sql(
     let mut all_predicates = predicates.to_vec();
     all_predicates.extend(cursor_parts.predicates.clone());
     format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE {}
          ORDER BY published_at DESC, id DESC
          LIMIT ?{limit_binding}",
@@ -500,8 +509,9 @@ fn public_remote_statuses_by_actor_uri_sql<'a>(
     ];
     predicates.extend(cursor_parts.predicates);
     let sql = format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
          FROM remote_statuses
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE {}
          ORDER BY published_at DESC, id DESC
          LIMIT ?{limit_binding}",
@@ -546,6 +556,7 @@ fn remote_direct_statuses_mentioning_viewer_sql<'a>(
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'direct'
            AND (lower(rs.content_html) LIKE ?1 OR lower(rs.spoiler_text) LIKE ?1){cursor_predicates}
          ORDER BY rs.published_at DESC, rs.id DESC
@@ -564,6 +575,7 @@ fn direct_remote_replies_by_uri_sql() -> String {
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.in_reply_to_uri = ?1
          ORDER BY rs.published_at ASC"
     )
@@ -616,6 +628,8 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatu
         card_json: optional_json_string(value, "card_json"),
         federated_emojis_json: json_string_or(value, "federated_emojis_json", "[]"),
         in_reply_to_id: optional_json_string(value, "in_reply_to_id"),
+        favourites_count: json_optional_u64(value, "favourites_count"),
+        reblogs_count: json_optional_u64(value, "reblogs_count"),
     })
 }
 
@@ -643,6 +657,14 @@ fn json_i32(value: &serde_json::Value, key: &str) -> i32 {
         .get(key)
         .and_then(serde_json::Value::as_i64)
         .unwrap_or_default() as i32
+}
+
+fn json_optional_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|inner| {
+        inner
+            .as_u64()
+            .or_else(|| inner.as_i64().and_then(|n| u64::try_from(n).ok()))
+    })
 }
 
 #[cfg(test)]
@@ -890,6 +912,7 @@ mod tests {
         let sql = remote_actor_statuses_by_actor_uri_sql(&predicates, &cursor_parts, 3);
 
         assert!(sql.contains("WITH max_cursor AS"));
+        assert!(sql.contains("LEFT JOIN remote_status_counts rsc"));
         assert!(sql.contains("WHERE actor_uri = ?1\n           AND boost_of_uri IS NULL"));
         assert!(sql.contains("LIMIT ?3"));
         assert!(!sql.contains("?2 IS NULL"));
@@ -902,6 +925,7 @@ mod tests {
             public_remote_statuses_by_actor_uri_sql("actor", Some("max"), Some("min"), 20);
 
         assert!(sql.contains("WHERE actor_uri = ?1"));
+        assert!(sql.contains("LEFT JOIN remote_status_counts rsc"));
         assert!(sql.contains("max_cursor AS"));
         assert!(sql.contains("min_cursor AS"));
         assert!(sql.contains("visibility IN ('public', 'unlisted')"));

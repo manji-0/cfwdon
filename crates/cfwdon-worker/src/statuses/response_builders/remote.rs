@@ -284,7 +284,7 @@ async fn load_remote_status_response_details(
         build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?
     };
     let (favourites_count, reblogs_count) =
-        remote_status_counts(db, counts_preload, &status.id).await?;
+        remote_status_counts(db, counts_preload, status).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
     let viewer_state =
         remote_status_response_viewer_state(db, viewer, status, actor, viewer_state_preload)
@@ -440,11 +440,14 @@ pub(super) async fn remote_status_filtered_for_viewer(
 pub(super) async fn remote_status_counts(
     db: &D1Database,
     counts_preload: Option<&StatusCountsPreload>,
-    status_id: &str,
+    status: &RemoteStatusRow,
 ) -> Result<(u64, u64)> {
-    if let Some(counts) = counts_preload.and_then(|counts| counts.remote_counts(status_id)) {
+    if let Some(counts) = counts_preload.and_then(|counts| counts.remote_counts(&status.id)) {
+        return Ok(counts);
+    }
+    if let Some(counts) = status.interaction_counts {
         return Ok(counts);
     }
 
-    load_remote_status_counts(db, status_id).await
+    load_remote_status_counts(db, &status.id).await
 }

@@ -34,6 +34,8 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Optio
         card_json: status.card_json.clone(),
         federated_emojis_json: status.federated_emojis_json.clone(),
         in_reply_to_id: status.in_reply_to_id.clone(),
+        favourites_count: None,
+        reblogs_count: None,
     })
     .ok()
 }

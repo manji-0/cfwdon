@@ -47,7 +47,7 @@ use crate::{
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
     preload_remote_status_federated_emojis, preload_remote_status_viewer_state,
-    preload_status_counts, preload_status_quote_counts,
+    preload_status_quote_counts,
 };
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
@@ -178,15 +178,15 @@ async fn preload_public_timeline_candidate_counts(
     candidates: &[PublicTimelineCandidateEntry],
 ) -> Result<crate::StatusCountsPreload> {
     let mut local_ids = Vec::new();
-    let mut remote_ids = Vec::new();
+    let mut remote_statuses = Vec::new();
     for entry in candidates {
         match &entry.candidate {
             PublicTimelineCandidate::Local { status, .. } => local_ids.push(status.id.clone()),
-            PublicTimelineCandidate::Remote { status, .. } => remote_ids.push(status.id.clone()),
+            PublicTimelineCandidate::Remote { status, .. } => remote_statuses.push(status),
         }
     }
 
-    preload_status_counts(db, &local_ids, &remote_ids).await
+    crate::preload_status_counts_for_remote_rows(db, &local_ids, &remote_statuses).await
 }
 
 async fn preload_public_timeline_remote_attachments(

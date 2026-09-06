@@ -17,8 +17,9 @@ use crate::{
     preload_local_status_viewer_state, preload_mastodon_poll_responses,
     preload_mention_accounts_from_texts, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_federated_emojis,
-    preload_remote_status_viewer_state, preload_status_applications, preload_status_counts,
-    preload_status_quote_counts, streaming_batch_from_entries,
+    preload_remote_status_viewer_state, preload_status_applications,
+    preload_status_counts_for_remote_rows, preload_status_quote_counts,
+    streaming_batch_from_entries,
 };
 use cfwdon_core::AppConfig;
 use std::collections::{HashMap, HashSet};
@@ -243,6 +244,10 @@ async fn preload_streaming_home_context(
     candidates: &mut [PreparedStreamingHomeCandidate<'_>],
 ) -> Result<StreamingHomePreloads> {
     let (local_status_refs, remote_status_refs) = streaming_home_status_refs(candidates);
+    let remote_statuses_for_counts = remote_status_refs
+        .iter()
+        .map(|(status, _)| *status)
+        .collect::<Vec<_>>();
     let mention_text_refs = render_plan
         .mention_texts
         .iter()
@@ -264,10 +269,10 @@ async fn preload_streaming_home_context(
         emoji_resolved_config,
         boost_target_preload,
     ) = futures_util::try_join!(
-        preload_status_counts(
+        preload_status_counts_for_remote_rows(
             db,
             &render_plan.local_status_ids,
-            &render_plan.remote_status_ids,
+            &remote_statuses_for_counts,
         ),
         preload_status_quote_counts(db, &render_plan.quote_status_uris),
         preload_mastodon_poll_responses(db, &render_plan.local_status_ids, Some(viewer)),

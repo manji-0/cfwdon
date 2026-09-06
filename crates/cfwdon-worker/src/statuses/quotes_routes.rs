@@ -15,10 +15,10 @@ use super::{
     normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
     preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    queue_remote_actor_activity, quote_authorization_uri, quote_request_uri,
-    resolve_status_reference, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
-    update_local_status_quote_state, update_remote_status_quote_state,
+    preload_status_applications, preload_status_counts_for_remote_rows,
+    preload_status_quote_counts, queue_remote_actor_activity, quote_authorization_uri,
+    quote_request_uri, resolve_status_reference, resolve_timeline_cursor, timeline_fetch_limit,
+    timeline_limit, update_local_status_quote_state, update_remote_status_quote_state,
 };
 use crate::timelines::TimelinePaginationQuery;
 use crate::{
@@ -181,6 +181,7 @@ async fn preload_status_quotes(
         .chain(remote_quotes.iter().map(|quote| quote.object_uri.clone()))
         .collect::<Vec<_>>();
     let local_quote_refs = local_quotes.iter().collect::<Vec<_>>();
+    let remote_quotes_for_counts = remote_quotes.iter().collect::<Vec<_>>();
 
     let (
         local_accounts_by_id,
@@ -199,7 +200,7 @@ async fn preload_status_quotes(
         find_accounts_by_ids(db, &local_account_ids),
         find_media_attachments_by_status_ids(db, &local_status_ids),
         load_in_reply_to_account_ids(db, local_quotes),
-        preload_status_counts(db, &local_status_ids, &remote_status_ids),
+        preload_status_counts_for_remote_rows(db, &local_status_ids, &remote_quotes_for_counts),
         preload_status_quote_counts(db, &quote_uris),
         preload_mastodon_poll_responses(db, &local_status_ids, viewer),
         async {
