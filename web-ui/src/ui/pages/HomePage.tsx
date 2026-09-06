@@ -224,6 +224,7 @@ export const HomePage = () => {
           visibility: Visibility.toApi(input.visibility),
           spoilerText: input.spoilerText,
           sensitive: input.sensitive,
+          language: input.language,
           mediaIds: input.mediaIds,
           poll: input.poll,
           quotedStatusId: quoteId ?? input.quotedStatusId,
@@ -281,6 +282,7 @@ export const HomePage = () => {
         key={editId ?? quoteId ?? "compose"}
         ref={composerRef}
         submitLabel={editId ? "保存" : "投稿"}
+        applyPostingDefaults={!editId}
         initialText={editText}
         initialSpoilerText={editSpoiler}
         quotedStatusId={quoteId ?? undefined}

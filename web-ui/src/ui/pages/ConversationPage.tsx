@@ -125,6 +125,7 @@ export const ConversationPage = () => {
       visibility: Visibility.toApi(Visibility.direct()),
       spoilerText: input.spoilerText,
       sensitive: input.sensitive,
+      language: input.language,
       inReplyToId: latestStatusId,
       mediaIds: input.mediaIds,
     });

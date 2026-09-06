@@ -302,8 +302,23 @@ button {
   font-size: 0.9rem;
 }
 
-.composer-shortcut-hint {
+.composer-count {
   margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.composer-count.is-low {
+  color: var(--color-text);
+}
+
+.composer-count.is-over {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.composer-shortcut-hint {
   font-size: 0.85rem;
 }
 
@@ -955,6 +970,24 @@ button {
 .settings-field-inline {
   grid-template-columns: auto 1fr;
   align-items: center;
+}
+
+.settings-context-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+}
+
+.settings-filter-form-actions,
+.settings-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.settings-field legend {
+  margin-bottom: 0.35rem;
+  color: var(--color-muted);
 }
 
 .settings-moderation {

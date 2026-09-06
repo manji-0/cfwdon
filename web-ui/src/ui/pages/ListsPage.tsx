@@ -18,6 +18,7 @@ import {
   updateList,
 } from "@/infrastructure/api/lists";
 import { WebUiPhase } from "@/plan/phases";
+import { AccountSearchPicker } from "@/ui/components/AccountSearchPicker";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
@@ -65,7 +66,6 @@ export const ListsPage = () => {
     ListRepliesPolicy.defaultValue(),
   );
   const [editExclusive, setEditExclusive] = useState(false);
-  const [memberAccountId, setMemberAccountId] = useState("");
 
   const selectedList = lists.find((list) => list.id === selectedListId) ?? null;
 
@@ -264,11 +264,10 @@ export const ListsPage = () => {
     });
   };
 
-  const handleAddMember = async () => {
+  const handleAddMember = async (accountId: string) => {
     if (!selectedListId) {
       return;
     }
-    const accountId = memberAccountId.trim();
     if (!accountId || saving) {
       return;
     }
@@ -280,7 +279,6 @@ export const ListsPage = () => {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    setMemberAccountId("");
     try {
       await loadMembers(selectedListId);
     } catch (loadError) {
@@ -474,30 +472,12 @@ export const ListsPage = () => {
               {!loadingMembers && members.length === 0 ? (
                 <p className="app-muted">メンバーはまだいません。</p>
               ) : null}
-              <form
-                className="list-form list-form-inline"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleAddMember();
-                }}
-              >
-                <label className="list-form-field">
-                  <span className="app-muted">アカウント ID</span>
-                  <input
-                    value={memberAccountId}
-                    onChange={(event) => setMemberAccountId(event.target.value)}
-                    placeholder="例: アカウントID"
-                    disabled={saving}
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="app-button"
-                  disabled={saving || !memberAccountId.trim()}
-                >
-                  追加
-                </button>
-              </form>
+              <AccountSearchPicker
+                placeholder="アカウント名で検索して追加"
+                excludeIds={new Set(members.map((member) => member.id))}
+                disabled={saving}
+                onSelect={(account) => void handleAddMember(account.id)}
+              />
             </section>
           </>
         ) : null}

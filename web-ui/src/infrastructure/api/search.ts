@@ -10,6 +10,7 @@ export type SearchQuery = Readonly<{
   type?: "accounts" | "statuses" | "hashtags";
   limit?: number;
   offset?: number;
+  resolve?: boolean;
 }>;
 
 export const search = (query: SearchQuery): ResultAsync<SearchResults, MastodonFetchError> => {
@@ -21,6 +22,9 @@ export const search = (query: SearchQuery): ResultAsync<SearchResults, MastodonF
   }
   if (query.offset !== undefined) {
     params.set("offset", String(query.offset));
+  }
+  if (query.resolve) {
+    params.set("resolve", "true");
   }
   return mastodonFetchJson(`/api/v2/search?${params}`).andThen((raw) =>
     parseMastodon(parseSearchResults, raw),

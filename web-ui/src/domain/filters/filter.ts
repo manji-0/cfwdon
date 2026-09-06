@@ -5,6 +5,8 @@ export type FilterContext =
   | "thread"
   | "account";
 
+export type FilterAction = "warn" | "hide" | "blur";
+
 export type KeywordFilter = Readonly<{
   id: string;
   title: string;
@@ -31,6 +33,44 @@ export const FilterContext = {
         return "プロフィール";
       default:
         return context;
+    }
+  },
+
+  fromApiList: (values: ReadonlyArray<string>): ReadonlyArray<FilterContext> =>
+    FilterContext.values.filter((context) => values.includes(context)),
+
+  toggle: (
+    contexts: ReadonlyArray<FilterContext>,
+    context: FilterContext,
+  ): ReadonlyArray<FilterContext> =>
+    contexts.includes(context)
+      ? contexts.filter((item) => item !== context)
+      : [...contexts, context],
+} as const;
+
+export const FilterAction = {
+  values: ["warn", "hide", "blur"] as const satisfies ReadonlyArray<FilterAction>,
+
+  defaultValue: (): FilterAction => "warn",
+
+  fromApi: (value: string): FilterAction => {
+    switch (value) {
+      case "hide":
+      case "blur":
+        return value;
+      default:
+        return "warn";
+    }
+  },
+
+  label: (action: string): string => {
+    switch (action) {
+      case "hide":
+        return "隠す";
+      case "blur":
+        return "ぼかす";
+      default:
+        return "警告";
     }
   },
 } as const;

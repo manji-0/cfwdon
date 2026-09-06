@@ -3,9 +3,11 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { CustomEmoji } from "@/domain/emoji/custom-emoji";
 import { PollDraft } from "@/domain/status/poll";
 import type { QuotedStatusPreview } from "@/domain/status/quote";
+import { StatusCharacters } from "@/domain/status/character-limit";
 import type { Visibility } from "@/domain/status/visibility";
 import { Visibility as VisibilityModel } from "@/domain/status/visibility";
 import { fetchCustomEmojis } from "@/infrastructure/api/emojis";
+import { fetchAccountPreferences } from "@/infrastructure/api/settings";
 import { updateMediaDescription, uploadMedia } from "@/infrastructure/api/media";
 import { ComposerMediaPicker } from "@/ui/components/ComposerMediaPicker";
 import { ComposerMedia, type ComposerMediaItem } from "@/ui/composer/draft-media";
@@ -32,6 +34,7 @@ export type ComposerSubmitInput = Readonly<{
   visibility: Visibility;
   spoilerText: string;
   sensitive: boolean;
+  language: string | null;
   inReplyToId?: string;
   quotedStatusId?: string;
   mediaIds: ReadonlyArray<string>;
@@ -45,6 +48,7 @@ type ComposerProps = Readonly<{
   initialText?: string;
   initialSpoilerText?: string;
   lockVisibility?: boolean;
+  applyPostingDefaults?: boolean;
   inReplyToId?: string;
   quotedStatusId?: string;
   quotedPreview?: QuotedStatusPreview | null;
@@ -66,6 +70,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     initialText = "",
     initialSpoilerText = "",
     lockVisibility = false,
+    applyPostingDefaults = true,
     inReplyToId,
     quotedStatusId,
     quotedPreview = null,
@@ -88,6 +93,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [mediaAttachments, setMediaAttachments] = useState<ReadonlyArray<ComposerMediaItem>>([]);
   const [pollEnabled, setPollEnabled] = useState(false);
   const [poll, setPoll] = useState(PollDraft.empty);
+  const [language, setLanguage] = useState<string | null>(null);
   const [emojis, setEmojis] = useState<ReadonlyArray<CustomEmoji>>([]);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const mediaAttachmentsRef = useRef(mediaAttachments);
@@ -110,6 +116,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [initialText, initialSpoilerText]);
 
   useEffect(() => {
+    if (!applyPostingDefaults || lockVisibility) {
+      return;
+    }
+    let active = true;
+    void fetchAccountPreferences().then((result) => {
+      if (!active || result.isErr()) {
+        return;
+      }
+      setVisibility(VisibilityModel.fromApi(result.value.defaultVisibility));
+      if (result.value.defaultSensitive && initialSpoilerText.length === 0) {
+        setShowCw(true);
+      }
+      setLanguage(result.value.defaultLanguage);
+    });
+    return () => {
+      active = false;
+    };
+  }, [applyPostingDefaults, lockVisibility, initialSpoilerText]);
+
+  useEffect(() => {
     let active = true;
     void fetchCustomEmojis().then((result) => {
       if (active && result.isOk()) {
@@ -130,11 +156,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [],
   );
 
+  const remaining = StatusCharacters.remaining(text);
   const readyMediaIds = ComposerMedia.readyIds(mediaAttachments);
   const pollReady = pollEnabled && PollDraft.isReady(poll);
   const canSubmit =
     (text.trim().length > 0 || readyMediaIds.length > 0 || pollReady) &&
     (!pollEnabled || PollDraft.isReady(poll)) &&
+    StatusCharacters.isWithinLimit(text) &&
     !ComposerMedia.hasUploading(mediaAttachments) &&
     !submitting &&
     !disabled;
@@ -228,7 +256,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         text: text.trim(),
         visibility,
         spoilerText: showCw ? spoilerText.trim() : "",
-        sensitive: showCw && spoilerText.trim().length > 0,
+        sensitive: showCw,
+        language,
         inReplyToId,
         quotedStatusId,
         mediaIds: pollEnabled ? [] : readyMediaIds,
@@ -421,6 +450,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 絵文字
               </button>
             ) : null}
+            <span
+              className={`composer-count${remaining < 20 ? " is-low" : ""}${remaining < 0 ? " is-over" : ""}`}
+              aria-live="polite"
+            >
+              {remaining}
+            </span>
             <span className="composer-shortcut-hint app-muted" aria-hidden="true">
               {modKeyLabel()}↵ で{submitLabel}
             </span>

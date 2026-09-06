@@ -98,6 +98,7 @@ export const ThreadPage = () => {
       visibility: Visibility.toApi(input.visibility),
       spoilerText: input.spoilerText,
       sensitive: input.sensitive,
+      language: input.language,
       inReplyToId: statusId,
       mediaIds: input.mediaIds,
       poll: input.poll,
@@ -144,6 +145,7 @@ export const ThreadPage = () => {
             submitLabel={isDirectThread ? "送信" : "返信"}
             initialVisibility={isDirectThread ? Visibility.direct() : Visibility.public()}
             lockVisibility={isDirectThread}
+            applyPostingDefaults={!isDirectThread}
             allowPoll={!isDirectThread}
             inReplyToId={statusId}
             onSubmit={handleReply}

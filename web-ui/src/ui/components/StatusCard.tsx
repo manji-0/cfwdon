@@ -98,6 +98,16 @@ export const StatusCard = ({
     setTranslation(result.value);
   };
 
+  const handleCopyLink = async () => {
+    const permalink = `${window.location.origin}/app/status/${body.id}`;
+    try {
+      await navigator.clipboard.writeText(permalink);
+      setMenuOpen(false);
+    } catch {
+      window.prompt("リンクをコピーしてください", permalink);
+    }
+  };
+
   return (
     <article className={`status-card${compact ? " status-card-compact" : ""}`}>
       {boostedBy ? (
@@ -210,6 +220,9 @@ export const StatusCard = ({
               引用
             </button>
           ) : null}
+          <button type="button" onClick={() => void handleCopyLink()}>
+            リンクをコピー
+          </button>
           <button type="button" onClick={() => void handleTranslate()} disabled={translating}>
             {translation ? "原文を表示" : translating ? "翻訳中…" : "翻訳"}
           </button>

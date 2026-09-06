@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountRef } from "@/domain/account/account";
-import { FilterContext, type KeywordFilter } from "@/domain/filters/filter";
+import { FilterAction, FilterContext, type FilterContext as FilterContextValue, type KeywordFilter } from "@/domain/filters/filter";
 import type { NotificationPolicy, NotificationPolicyAction } from "@/domain/settings/notification-policy";
 import { NotificationPolicy as NotificationPolicyModel } from "@/domain/settings/notification-policy";
 import { SessionState } from "@/domain/session/session";
@@ -16,6 +16,7 @@ import {
   createKeywordFilter,
   deleteKeywordFilter,
   fetchKeywordFilters,
+  updateKeywordFilter,
 } from "@/infrastructure/api/filters";
 import { fetchBlockedAccounts, fetchMutedAccounts } from "@/infrastructure/api/moderation";
 import { unmuteAccount, unblockAccount } from "@/infrastructure/api/relationship";
@@ -27,9 +28,11 @@ import { fetchAccountPreferences, updatePostingPreferences } from "@/infrastruct
 import { fetchFollowedTags, unfollowTag } from "@/infrastructure/api/tags";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { usePwaInstall } from "@/ui/hooks/usePwaInstall";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 const POLICY_FIELDS = [
   { key: "forNotFollowing", label: "フォローしていないユーザー" },
@@ -97,7 +100,16 @@ export const SettingsPage = () => {
   const [followedTags, setFollowedTags] = useState<ReadonlyArray<FollowedTag>>([]);
   const [filterTitle, setFilterTitle] = useState("");
   const [filterKeywords, setFilterKeywords] = useState("");
+  const [filterContexts, setFilterContexts] = useState<ReadonlyArray<FilterContextValue>>([
+    ...FilterContext.values,
+  ]);
+  const [filterAction, setFilterAction] = useState(FilterAction.defaultValue());
+  const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
   const [domainInput, setDomainInput] = useState("");
+  const [mutesHasMore, setMutesHasMore] = useState(false);
+  const [blocksHasMore, setBlocksHasMore] = useState(false);
+  const [loadingMoreMutes, setLoadingMoreMutes] = useState(false);
+  const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
 
   const [displayName, setDisplayName] = useState("");
   const [note, setNote] = useState("");
@@ -126,8 +138,8 @@ export const SettingsPage = () => {
         fetchAccountCredentials(),
         fetchAccountPreferences(),
         fetchNotificationPolicy(),
-        fetchMutedAccounts(),
-        fetchBlockedAccounts(),
+        fetchMutedAccounts({ limit: TIMELINE_PAGE_LIMIT }),
+        fetchBlockedAccounts({ limit: TIMELINE_PAGE_LIMIT }),
         fetchKeywordFilters(),
         fetchDomainBlocks(),
         fetchFollowedTags(),
@@ -162,6 +174,8 @@ export const SettingsPage = () => {
     setNotificationPolicy(policyResult.value);
     setMutes(mutesResult.value);
     setBlocks(blocksResult.value);
+    setMutesHasMore(pageHasMore(mutesResult.value.length));
+    setBlocksHasMore(pageHasMore(blocksResult.value.length));
     setFilters(filtersResult.value);
     setDomainBlocks(domainsResult.value);
     setFollowedTags(tagsResult.value);
@@ -303,7 +317,15 @@ export const SettingsPage = () => {
     setSectionMessage("ブロックを解除しました");
   };
 
-  const handleCreateFilter = async () => {
+  const resetFilterForm = () => {
+    setEditingFilterId(null);
+    setFilterTitle("");
+    setFilterKeywords("");
+    setFilterContexts([...FilterContext.values]);
+    setFilterAction(FilterAction.defaultValue());
+  };
+
+  const handleSaveFilter = async () => {
     const title = filterTitle.trim();
     const keywords = filterKeywords
       .split(/[,\n]/)
@@ -313,22 +335,41 @@ export const SettingsPage = () => {
       setSectionMessage("タイトルとキーワードを入力してください");
       return;
     }
+    if (filterContexts.length === 0) {
+      setSectionMessage("適用する場所を1つ以上選んでください");
+      return;
+    }
     setSavingModeration(true);
-    const result = await createKeywordFilter({
+    const input = {
       title,
-      context: [...FilterContext.values],
+      context: filterContexts,
       keywords,
-      filterAction: "warn",
-    });
+      filterAction,
+    };
+    const result = editingFilterId
+      ? await updateKeywordFilter(editingFilterId, input)
+      : await createKeywordFilter(input);
     setSavingModeration(false);
     if (result.isErr()) {
       setSectionMessage(mastodonErrorMessage(result.error));
       return;
     }
-    setFilters((current) => [result.value, ...current]);
-    setFilterTitle("");
-    setFilterKeywords("");
-    setSectionMessage("フィルターを追加しました");
+    setFilters((current) =>
+      editingFilterId
+        ? current.map((item) => (item.id === result.value.id ? result.value : item))
+        : [result.value, ...current],
+    );
+    resetFilterForm();
+    setSectionMessage(editingFilterId ? "フィルターを更新しました" : "フィルターを追加しました");
+  };
+
+  const handleEditFilter = (item: KeywordFilter) => {
+    const contexts = FilterContext.fromApiList(item.context);
+    setEditingFilterId(item.id);
+    setFilterTitle(item.title);
+    setFilterKeywords(item.keywords.map((keyword) => keyword.keyword).join(", "));
+    setFilterContexts(contexts.length > 0 ? contexts : [...FilterContext.values]);
+    setFilterAction(FilterAction.fromApi(item.filterAction));
   };
 
   const handleDeleteFilter = async (filterId: string) => {
@@ -340,7 +381,42 @@ export const SettingsPage = () => {
       return;
     }
     setFilters((current) => current.filter((item) => item.id !== filterId));
+    if (editingFilterId === filterId) {
+      resetFilterForm();
+    }
     setSectionMessage("フィルターを削除しました");
+  };
+
+  const handleLoadMoreMutes = async () => {
+    const last = mutes.at(-1);
+    if (!last || loadingMoreMutes) {
+      return;
+    }
+    setLoadingMoreMutes(true);
+    const result = await fetchMutedAccounts({ maxId: last.id, limit: TIMELINE_PAGE_LIMIT });
+    setLoadingMoreMutes(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setMutesHasMore(pageHasMore(result.value.length));
+    setMutes((current) => [...current, ...result.value]);
+  };
+
+  const handleLoadMoreBlocks = async () => {
+    const last = blocks.at(-1);
+    if (!last || loadingMoreBlocks) {
+      return;
+    }
+    setLoadingMoreBlocks(true);
+    const result = await fetchBlockedAccounts({ maxId: last.id, limit: TIMELINE_PAGE_LIMIT });
+    setLoadingMoreBlocks(false);
+    if (result.isErr()) {
+      setSectionMessage(mastodonErrorMessage(result.error));
+      return;
+    }
+    setBlocksHasMore(pageHasMore(result.value.length));
+    setBlocks((current) => [...current, ...result.value]);
   };
 
   const handleBlockDomain = async () => {
@@ -538,14 +614,56 @@ export const SettingsPage = () => {
                   disabled={savingModeration}
                 />
               </label>
-              <button
-                type="button"
-                className="app-button"
-                onClick={() => void handleCreateFilter()}
-                disabled={savingModeration}
-              >
-                追加
-              </button>
+              <fieldset className="settings-field">
+                <legend>適用する場所</legend>
+                <div className="settings-context-list">
+                  {FilterContext.values.map((context) => (
+                    <label key={context} className="settings-field-inline">
+                      <input
+                        type="checkbox"
+                        checked={filterContexts.includes(context)}
+                        onChange={() => setFilterContexts(FilterContext.toggle(filterContexts, context))}
+                        disabled={savingModeration}
+                      />
+                      <span>{FilterContext.label(context)}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <label className="settings-field">
+                <span>動作</span>
+                <select
+                  value={filterAction}
+                  onChange={(event) => setFilterAction(FilterAction.fromApi(event.target.value))}
+                  disabled={savingModeration}
+                >
+                  {FilterAction.values.map((action) => (
+                    <option key={action} value={action}>
+                      {FilterAction.label(action)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="settings-filter-form-actions">
+                <button
+                  type="button"
+                  className="app-button"
+                  onClick={() => void handleSaveFilter()}
+                  disabled={savingModeration}
+                >
+                  {editingFilterId ? "更新" : "追加"}
+                </button>
+                {editingFilterId ? (
+                  <button
+                    type="button"
+                    className="app-button app-button-secondary"
+                    onClick={resetFilterForm}
+                    disabled={savingModeration}
+                  >
+                    キャンセル
+                  </button>
+                ) : null}
+              </div>
             </div>
             {filters.length === 0 ? (
               <p className="app-muted">キーワードフィルターはありません</p>
@@ -556,17 +674,31 @@ export const SettingsPage = () => {
                     <div>
                       <strong>{item.title}</strong>
                       <p className="app-muted">
+                        {FilterAction.label(item.filterAction)} ·{" "}
+                        {item.context.map((context) => FilterContext.label(context)).join("、")}
+                      </p>
+                      <p className="app-muted">
                         {item.keywords.map((keyword) => keyword.keyword).join(", ")}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="app-button app-button-secondary"
-                      disabled={savingModeration}
-                      onClick={() => void handleDeleteFilter(item.id)}
-                    >
-                      削除
-                    </button>
+                    <div className="settings-filter-actions">
+                      <button
+                        type="button"
+                        className="app-button app-button-secondary"
+                        disabled={savingModeration}
+                        onClick={() => handleEditFilter(item)}
+                      >
+                        編集
+                      </button>
+                      <button
+                        type="button"
+                        className="app-button app-button-secondary"
+                        disabled={savingModeration}
+                        onClick={() => void handleDeleteFilter(item.id)}
+                      >
+                        削除
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -658,6 +790,12 @@ export const SettingsPage = () => {
                     ))}
                   </div>
                 )}
+                <LoadMoreFooter
+                  hasMore={mutesHasMore}
+                  loading={loadingMoreMutes}
+                  observeKey={mutes.length}
+                  onLoadMore={() => void handleLoadMoreMutes()}
+                />
               </div>
               <div>
                 <h3>ブロック ({blocks.length})</h3>
@@ -676,6 +814,12 @@ export const SettingsPage = () => {
                     ))}
                   </div>
                 )}
+                <LoadMoreFooter
+                  hasMore={blocksHasMore}
+                  loading={loadingMoreBlocks}
+                  observeKey={blocks.length}
+                  onLoadMore={() => void handleLoadMoreBlocks()}
+                />
               </div>
             </div>
           </section>

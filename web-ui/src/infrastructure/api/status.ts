@@ -81,6 +81,7 @@ export type CreateStatusInput = Readonly<{
   visibility: string;
   spoilerText?: string;
   sensitive?: boolean;
+  language?: string | null;
   inReplyToId?: string;
   quotedStatusId?: string;
   mediaIds?: ReadonlyArray<string>;
@@ -98,6 +99,9 @@ export const createStatus = (
     in_reply_to_id: input.inReplyToId,
     quoted_status_id: input.quotedStatusId,
   };
+  if (input.language) {
+    body.language = input.language;
+  }
   if (input.mediaIds && input.mediaIds.length > 0) {
     body.media_ids = input.mediaIds;
   }
