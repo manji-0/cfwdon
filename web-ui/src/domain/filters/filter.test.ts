@@ -41,6 +41,17 @@ describe("FilterExpire", () => {
   it("maps duration presets to seconds", () => {
     expect(FilterExpire.seconds("30m")).toBe(1800);
     expect(FilterExpire.seconds("1h")).toBe(3600);
+    expect(FilterExpire.seconds("6h")).toBe(21600);
+    expect(FilterExpire.seconds("12h")).toBe(43200);
+    expect(FilterExpire.seconds("1d")).toBe(86400);
     expect(FilterExpire.seconds("7d")).toBe(604800);
+  });
+
+  it("labels create and edit presets", () => {
+    expect(FilterExpire.label("never")).toBe("期限なし");
+    expect(FilterExpire.label("keep")).toBe("期限を変更しない");
+    expect(FilterExpire.label("30m")).toBe("30分");
+    expect(FilterExpire.createPresets).not.toContain("keep");
+    expect(FilterExpire.editPresets).not.toContain("never");
   });
 });

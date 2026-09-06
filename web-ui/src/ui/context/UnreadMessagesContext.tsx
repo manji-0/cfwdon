@@ -5,13 +5,15 @@ import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
-type UnreadMessagesContextValue = Readonly<{
+export type UnreadMessagesContextValue = Readonly<{
   unreadCount: number;
   refreshUnreadCount: () => void;
   setUnreadCount: (count: number) => void;
 }>;
 
 const UnreadMessagesContext = createContext<UnreadMessagesContextValue | null>(null);
+
+export const UnreadMessagesContextProvider = UnreadMessagesContext.Provider;
 
 export const UnreadMessagesProvider = ({ children }: Readonly<{ children: ReactNode }>) => {
   const [unreadCount, setUnreadCount] = useState(0);

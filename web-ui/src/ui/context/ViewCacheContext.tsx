@@ -20,7 +20,7 @@ import {
 import type { Status } from "@/domain/status/status";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
-type ViewCacheContextValue = Readonly<{
+export type ViewCacheContextValue = Readonly<{
   getHome: () => CachedView<TimelineSnapshot>;
   getNotifications: () => CachedView<NotificationsSnapshot>;
   getProfile: (accountId: string) => CachedView<ProfileSnapshot>;
@@ -32,6 +32,8 @@ type ViewCacheContextValue = Readonly<{
 }>;
 
 const ViewCacheContext = createContext<ViewCacheContextValue | null>(null);
+
+export const ViewCacheContextProvider = ViewCacheContext.Provider;
 
 export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }>) => {
   const [state, setState] = useState<ViewCacheState>(ViewCache.empty);

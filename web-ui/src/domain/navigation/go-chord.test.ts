@@ -9,6 +9,10 @@ describe("GoChord", () => {
     expect(GoChord.pathFor("t")).toBe("/public/local");
     expect(GoChord.pathFor("f")).toBe("/public");
     expect(GoChord.pathFor("c")).toBe("/settings");
+    expect(GoChord.pathFor("p")).toBe("/profile");
+    expect(GoChord.pathFor("s")).toBe("/search");
+    expect(GoChord.pathFor("b")).toBe("/bookmarks");
+    expect(GoChord.pathFor("l")).toBe("/lists");
   });
 
   it("returns null for unknown keys", () => {

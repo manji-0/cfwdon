@@ -3,13 +3,15 @@ import type { ReactNode } from "react";
 import { fetchUnreadNotificationCount } from "@/infrastructure/api/notification";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 
-type UnreadNotificationsContextValue = Readonly<{
+export type UnreadNotificationsContextValue = Readonly<{
   unreadCount: number;
   refreshUnreadCount: () => void;
   clearUnreadCount: () => void;
 }>;
 
 const UnreadNotificationsContext = createContext<UnreadNotificationsContextValue | null>(null);
+
+export const UnreadNotificationsContextProvider = UnreadNotificationsContext.Provider;
 
 export const UnreadNotificationsProvider = ({ children }: Readonly<{ children: ReactNode }>) => {
   const [unreadCount, setUnreadCount] = useState(0);

@@ -11,7 +11,7 @@ import { parseTrendLinkList } from "@/infrastructure/mastodon/parsers/trend-link
 import { parseAccountProfile } from "@/infrastructure/mastodon/parsers/account";
 import { parseScheduledStatus } from "@/infrastructure/mastodon/parsers/scheduled";
 import { parseAnnouncement } from "@/infrastructure/mastodon/parsers/announcement";
-import { parseFeaturedTag } from "@/infrastructure/mastodon/parsers/featured-tag";
+import { parseFeaturedTag, parseFeaturedTagSuggestionList } from "@/infrastructure/mastodon/parsers/featured-tag";
 
 describe("high-priority Mastodon parsers", () => {
   it("parses status source and translation", () => {
@@ -182,5 +182,19 @@ describe("announcement and featured tag parsers", () => {
     }
     expect(result.name).toBe("cfwdon");
     expect(result.statusesCount).toBe(4);
+  });
+
+  it("parses featured tag suggestions without an id", () => {
+    const result = parseFeaturedTagSuggestionList([{ name: "rust" }]);
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(result[0]).toEqual({
+      id: "rust",
+      name: "rust",
+      statusesCount: 0,
+      lastStatusAt: null,
+    });
   });
 });

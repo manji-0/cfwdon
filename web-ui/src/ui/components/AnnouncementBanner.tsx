@@ -4,6 +4,10 @@ import { dismissAnnouncement, fetchAnnouncements } from "@/infrastructure/api/an
 
 let cachedAnnouncements: ReadonlyArray<Announcement> | null = null;
 
+export const resetAnnouncementBannerCache = (): void => {
+  cachedAnnouncements = null;
+};
+
 export const AnnouncementBanner = () => {
   const [items, setItems] = useState<ReadonlyArray<Announcement>>(cachedAnnouncements ?? []);
   const unread = items.filter(Announcement.isUnread);
