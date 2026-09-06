@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
@@ -8,7 +8,10 @@ import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 export const MessagesPage = () => {
@@ -17,29 +20,35 @@ export const MessagesPage = () => {
   const [conversations, setConversations] = useState(ConversationSet.empty);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
-
-  const loadConversations = useCallback(async (options?: { maxId?: string; replace?: boolean }) => {
-    const result = await fetchConversations({ maxId: options?.maxId, limit: 20 });
+  const loadingMoreRef = useRef(false);
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    const result = await fetchConversations({ maxId, limit: TIMELINE_PAGE_LIMIT });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    setConversations((current) => {
-      const next =
-        options?.replace || !options?.maxId
-          ? ConversationSet.replace(result.value)
-          : ConversationSet.appendPage(current, result.value);
-      if (options?.replace || !options?.maxId) {
-        setUnreadCount(ConversationSet.unreadCount(next));
-      }
-      return next;
-    });
-  }, [setUnreadCount]);
+    return result.value;
+  });
+
+  const loadConversations = useCallback(async () => {
+    const result = await fetchConversations({ limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    setHasMore(pageHasMore(result.value.length));
+    const next = ConversationSet.replace(result.value);
+    setUnreadCount(ConversationSet.unreadCount(next));
+    setConversations(next);
+    prefetch.prepareNext(next, result.value.length);
+  }, [prefetch, setUnreadCount]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    void loadConversations({ replace: true })
+    void loadConversations()
       .catch((loadError) => {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "メッセージの読み込みに失敗しました");
@@ -77,17 +86,29 @@ export const MessagesPage = () => {
   };
 
   const handleLoadMore = async () => {
-    const last = conversations.at(-1);
-    if (!last || loadingMore) {
+    const last = conversationsRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     setError("");
     try {
-      await loadConversations({ maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = ConversationSet.appendPage(conversationsRef.current, page);
+      setHasMore(pageHasMore(page.length));
+      setConversations(next);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -154,18 +175,12 @@ export const MessagesPage = () => {
           <p className="app-muted">ダイレクトメッセージはまだありません。</p>
         </div>
       ) : null}
-      {conversations.length > 0 ? (
-        <div className="timeline-footer">
-          <button
-            type="button"
-            className="app-button app-button-secondary"
-            onClick={() => void handleLoadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと見る"}
-          </button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={hasMore && !loading && conversations.length > 0}
+        loading={loadingMore}
+        observeKey={conversations.length}
+        onLoadMore={() => void handleLoadMore()}
+      />
     </AppShell>
   );
 };

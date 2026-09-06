@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountRef } from "@/domain/account/account";
 import type { AccountList } from "@/domain/lists/list";
@@ -19,9 +19,12 @@ import {
 } from "@/infrastructure/api/lists";
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 export const ListsPage = () => {
   const { session } = useSession();
@@ -34,8 +37,22 @@ export const ListsPage = () => {
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const loadingMoreRef = useRef(false);
+  const statusesRef = useRef(statuses);
+  statusesRef.current = statuses;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    if (!selectedListId) {
+      return [];
+    }
+    const result = await fetchListTimeline(selectedListId, { maxId, limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    return result.value;
+  });
 
   const [createTitle, setCreateTitle] = useState("");
   const [createPolicy, setCreatePolicy] = useState<ListRepliesPolicyValue>(
@@ -86,16 +103,16 @@ export const ListsPage = () => {
   }, [selectedList]);
 
   const loadTimeline = useCallback(
-    async (listId: string, options?: { maxId?: string; replace?: boolean }) => {
-      const result = await fetchListTimeline(listId, { maxId: options?.maxId, limit: 20 });
+    async (listId: string) => {
+      const result = await fetchListTimeline(listId, { limit: TIMELINE_PAGE_LIMIT });
       if (result.isErr()) {
         throw new Error(mastodonErrorMessage(result.error));
       }
-      setStatuses((current) =>
-        options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-      );
+      setHasMore(pageHasMore(result.value.length));
+      setStatuses(result.value);
+      prefetch.prepareNext(result.value, result.value.length);
     },
-    [],
+    [prefetch],
   );
 
   const loadMembers = useCallback(async (listId: string) => {
@@ -110,6 +127,7 @@ export const ListsPage = () => {
     if (!selectedListId) {
       setStatuses([]);
       setMembers([]);
+      prefetch.reset();
       return;
     }
     let active = true;
@@ -117,7 +135,7 @@ export const ListsPage = () => {
     setLoadingMembers(true);
     setError("");
     void Promise.all([
-      loadTimeline(selectedListId, { replace: true }),
+      loadTimeline(selectedListId),
       loadMembers(selectedListId),
     ])
       .catch((loadError) => {
@@ -134,7 +152,7 @@ export const ListsPage = () => {
     return () => {
       active = false;
     };
-  }, [selectedListId, loadTimeline, loadMembers]);
+  }, [selectedListId, loadTimeline, loadMembers, prefetch]);
 
   const actions = useStatusActions({
     selfAccountId,
@@ -147,17 +165,29 @@ export const ListsPage = () => {
     if (!selectedListId) {
       return;
     }
-    const last = statuses.at(-1);
-    if (!last || loadingMore) {
+    const last = statusesRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     setError("");
     try {
-      await loadTimeline(selectedListId, { maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = [...statusesRef.current, ...page];
+      setHasMore(pageHasMore(page.length));
+      setStatuses(next);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -482,18 +512,12 @@ export const ListsPage = () => {
             <p className="app-muted">このリストにはまだ投稿がありません。</p>
           </div>
         ) : null}
-        {statuses.length > 0 ? (
-          <div className="timeline-footer">
-            <button
-              type="button"
-              className="app-button app-button-secondary"
-              onClick={() => void handleLoadMore()}
-              disabled={loadingMore}
-            >
-              {loadingMore ? "読み込み中…" : "もっと見る"}
-            </button>
-          </div>
-        ) : null}
+        <LoadMoreFooter
+          hasMore={hasMore && !loadingTimeline && statuses.length > 0}
+          loading={loadingMore}
+          observeKey={statuses.length}
+          onLoadMore={() => void handleLoadMore()}
+        />
       </div>
     </AppShell>
   );

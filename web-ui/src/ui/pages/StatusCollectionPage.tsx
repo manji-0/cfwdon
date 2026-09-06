@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
 import type { TimelineQuery } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 import type { ResultAsync } from "neverthrow";
 
 type StatusCollectionPageProps = Readonly<{
@@ -29,26 +32,34 @@ export const StatusCollectionPage = ({
   const [statuses, setStatuses] = useState<ReadonlyArray<Status>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
+  const loadingMoreRef = useRef(false);
+  const statusesRef = useRef(statuses);
+  statusesRef.current = statuses;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    const result = await fetchPage({ maxId, limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    return result.value;
+  });
 
-  const loadPage = useCallback(
-    async (options?: { maxId?: string; replace?: boolean }) => {
-      const result = await fetchPage({ maxId: options?.maxId, limit: 20 });
-      if (result.isErr()) {
-        throw new Error(mastodonErrorMessage(result.error));
-      }
-      setStatuses((current) =>
-        options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-      );
-    },
-    [fetchPage],
-  );
+  const loadPage = useCallback(async () => {
+    const result = await fetchPage({ limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    setHasMore(pageHasMore(result.value.length));
+    setStatuses(result.value);
+    prefetch.prepareNext(result.value, result.value.length);
+  }, [fetchPage, prefetch]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
-    void loadPage({ replace: true })
+    void loadPage()
       .catch((loadError) => {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "読み込みに失敗しました");
@@ -72,17 +83,29 @@ export const StatusCollectionPage = ({
   });
 
   const handleLoadMore = async () => {
-    const last = statuses.at(-1);
-    if (!last || loadingMore) {
+    const last = statusesRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     setError("");
     try {
-      await loadPage({ maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = [...statusesRef.current, ...page];
+      setHasMore(pageHasMore(page.length));
+      setStatuses(next);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -102,18 +125,12 @@ export const StatusCollectionPage = ({
           <p className="app-muted">{emptyMessage}</p>
         </div>
       ) : null}
-      {statuses.length > 0 ? (
-        <div className="timeline-footer">
-          <button
-            type="button"
-            className="app-button app-button-secondary"
-            onClick={() => void handleLoadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと見る"}
-          </button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={hasMore && !loading && statuses.length > 0}
+        loading={loadingMore}
+        observeKey={statuses.length}
+        onLoadMore={() => void handleLoadMore()}
+      />
     </AppShell>
   );
 };

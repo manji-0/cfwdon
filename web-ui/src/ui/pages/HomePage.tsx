@@ -15,16 +15,19 @@ import {
 import { Visibility } from "@/domain/status/visibility";
 import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { AppShell } from "@/ui/components/AppShell";
-import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
-import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
-import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { SearchSidebar } from "@/ui/components/SearchSidebar";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { TimelineTabs } from "@/ui/components/TimelineTabs";
 import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
+import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
+import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
+import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 export const HomePage = () => {
   const composerRef = useRef<ComposerHandle>(null);
@@ -40,14 +43,23 @@ export const HomePage = () => {
   );
   const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
   const [quotedPreview, setQuotedPreview] = useState<QuotedStatusPreview | null>(null);
   const [editText, setEditText] = useState("");
   const [editSpoiler, setEditSpoiler] = useState("");
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const statusesRef = useRef(statuses);
+  const loadingMoreRef = useRef(false);
   const scrollYRef = useWindowScrollY();
   statusesRef.current = statuses;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    const result = await fetchHomeTimeline({ maxId, limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    return result.value;
+  });
 
   useStreamingTimeline(!loading, setStatuses);
 
@@ -107,29 +119,27 @@ export const HomePage = () => {
     [cache],
   );
 
-  const loadTimeline = useCallback(
-    async (options?: { maxId?: string; replace?: boolean }) => {
-      const result = await fetchHomeTimeline({ maxId: options?.maxId, limit: 20 });
-      if (result.isErr()) {
-        throw new Error(mastodonErrorMessage(result.error));
-      }
-      const replace = options?.replace || !options?.maxId;
-      const next = replace ? result.value : [...statusesRef.current, ...result.value];
-      if (replace) {
-        fetchedAtRef.current = Date.now();
-      }
-      setStatuses(next);
-      persist(next, fetchedAtRef.current);
-    },
-    [persist],
-  );
+  const loadTimeline = useCallback(async () => {
+    const result = await fetchHomeTimeline({ limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    const next = result.value;
+    fetchedAtRef.current = Date.now();
+    setHasMore(pageHasMore(next.length));
+    setStatuses(next);
+    persist(next, fetchedAtRef.current);
+    prefetch.prepareNext(next, next.length);
+  }, [persist, prefetch]);
 
   useEffect(() => {
     const snapshot = cache.getHome();
     if (snapshot.kind === "Present") {
       setStatuses(snapshot.value.statuses);
       fetchedAtRef.current = snapshot.value.fetchedAt;
+      setHasMore(pageHasMore(snapshot.value.statuses.length));
       setLoading(false);
+      prefetch.prepareNext(snapshot.value.statuses, snapshot.value.statuses.length);
       requestAnimationFrame(() => window.scrollTo(0, snapshot.value.scrollY));
     }
 
@@ -146,7 +156,7 @@ export const HomePage = () => {
       case "Revalidate":
         break;
     }
-    void loadTimeline({ replace: true })
+    void loadTimeline()
       .catch((loadError) => {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "タイムラインの読み込みに失敗しました");
@@ -161,29 +171,42 @@ export const HomePage = () => {
       active = false;
       persist(statusesRef.current, fetchedAtRef.current);
     };
-  }, [cache, loadTimeline, persist]);
+  }, [cache, loadTimeline, persist, prefetch]);
 
   const handleRefresh = async () => {
     setError("");
     try {
-      await loadTimeline({ replace: true });
+      await loadTimeline();
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "更新に失敗しました");
     }
   };
 
   const handleLoadMore = async () => {
-    const last = statuses.at(-1);
-    if (!last || loadingMore) {
+    const last = statusesRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     setError("");
     try {
-      await loadTimeline({ maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = [...statusesRef.current, ...page];
+      setHasMore(pageHasMore(page.length));
+      setStatuses(next);
+      persist(next, fetchedAtRef.current);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -277,18 +300,12 @@ export const HomePage = () => {
           <p className="app-muted">まだ投稿がありません。最初の投稿をしてみましょう。</p>
         </div>
       ) : null}
-      {statuses.length > 0 ? (
-        <div className="timeline-footer">
-          <button
-            type="button"
-            className="app-button app-button-secondary"
-            onClick={() => void handleLoadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと見る"}
-          </button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={hasMore && !loading && statuses.length > 0}
+        loading={loadingMore}
+        observeKey={statuses.length}
+        onLoadMore={() => void handleLoadMore()}
+      />
     </AppShell>
   );
 };

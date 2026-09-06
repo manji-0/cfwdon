@@ -385,9 +385,18 @@ button {
 }
 
 .timeline-footer {
+  position: relative;
   display: flex;
   justify-content: center;
   padding: 1rem 0 2rem;
+}
+
+.timeline-scroll-sentinel {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  pointer-events: none;
 }
 
 .status-card {

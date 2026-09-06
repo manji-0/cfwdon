@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
@@ -9,7 +9,10 @@ import {
 } from "@/infrastructure/api/account";
 import { AccountRow } from "@/ui/components/AccountRow";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { useSession } from "@/ui/context/SessionContext";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 type CollectionKind = "followers" | "following";
 
@@ -22,22 +25,36 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
   const [accounts, setAccounts] = useState<ReadonlyArray<AccountProfile>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
+  const loadingMoreRef = useRef(false);
+  const accountsRef = useRef(accounts);
+  accountsRef.current = accounts;
 
   const title = kind === "followers" ? "フォロワー" : "フォロー中";
   const fetchPage = kind === "followers" ? fetchAccountFollowers : fetchAccountFollowing;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    if (!accountId) {
+      return [];
+    }
+    const result = await fetchPage(accountId, { maxId, limit: TIMELINE_PAGE_LIMIT });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    return result.value;
+  });
 
   const load = useCallback(
-    async (id: string, options?: { maxId?: string; replace?: boolean }) => {
-      const result = await fetchPage(id, { maxId: options?.maxId, limit: 20 });
+    async (id: string) => {
+      const result = await fetchPage(id, { limit: TIMELINE_PAGE_LIMIT });
       if (result.isErr()) {
         throw new Error(mastodonErrorMessage(result.error));
       }
-      setAccounts((current) =>
-        options?.replace || !options?.maxId ? result.value : [...current, ...result.value],
-      );
+      setHasMore(pageHasMore(result.value.length));
+      setAccounts(result.value);
+      prefetch.prepareNext(result.value, result.value.length);
     },
-    [fetchPage],
+    [fetchPage, prefetch],
   );
 
   useEffect(() => {
@@ -47,7 +64,7 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
     let active = true;
     setLoading(true);
     setError("");
-    void Promise.all([fetchAccountProfile(accountId), load(accountId, { replace: true })])
+    void Promise.all([fetchAccountProfile(accountId), load(accountId)])
       .then(([profileResult]) => {
         if (!active) {
           return;
@@ -76,16 +93,28 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
     if (!accountId) {
       return;
     }
-    const last = accounts.at(-1);
-    if (!last || loadingMore) {
+    const last = accountsRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     try {
-      await load(accountId, { maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = [...accountsRef.current, ...page];
+      setHasMore(pageHasMore(page.length));
+      setAccounts(next);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -112,18 +141,12 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
           <p className="app-muted">{title}はまだいません。</p>
         </div>
       ) : null}
-      {accounts.length > 0 ? (
-        <div className="timeline-footer">
-          <button
-            type="button"
-            className="app-button app-button-secondary"
-            onClick={() => void handleLoadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと見る"}
-          </button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={hasMore && !loading && accounts.length > 0}
+        loading={loadingMore}
+        observeKey={accounts.length}
+        onLoadMore={() => void handleLoadMore()}
+      />
     </AppShell>
   );
 };

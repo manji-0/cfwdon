@@ -17,11 +17,14 @@ import {
   rejectFollowRequest,
 } from "@/infrastructure/api/relationship";
 import { AppShell } from "@/ui/components/AppShell";
+import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { NotificationCard } from "@/ui/components/NotificationCard";
 import { useUnreadNotifications } from "@/ui/context/UnreadNotificationsContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useStreamingNotifications } from "@/ui/hooks/useStreamingNotifications";
+import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
+import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 export const NotificationsPage = () => {
   const cache = useViewCache();
@@ -33,11 +36,24 @@ export const NotificationsPage = () => {
   const [filter, setFilter] = useState<NotificationFilterType | "all">("all");
   const [loading, setLoading] = useState(CachedView.isAbsent(cached));
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
   const fetchedAtRef = useRef(cached.kind === "Present" ? cached.value.fetchedAt : 0);
   const notificationsRef = useRef(notifications);
+  const loadingMoreRef = useRef(false);
   const scrollYRef = useWindowScrollY();
   notificationsRef.current = notifications;
+  const prefetch = usePagePrefetch(async (maxId: string) => {
+    const result = await fetchNotifications({
+      maxId,
+      limit: TIMELINE_PAGE_LIMIT,
+      types: filter === "all" ? undefined : [filter],
+    });
+    if (result.isErr()) {
+      throw new Error(mastodonErrorMessage(result.error));
+    }
+    return result.value;
+  });
 
   useStreamingNotifications(!loading && filter === "all", setNotifications);
 
@@ -56,24 +72,22 @@ export const NotificationsPage = () => {
   );
 
   const loadNotifications = useCallback(
-    async (options?: { maxId?: string; replace?: boolean }) => {
+    async () => {
       const result = await fetchNotifications({
-        maxId: options?.maxId,
-        limit: 20,
+        limit: TIMELINE_PAGE_LIMIT,
         types: filter === "all" ? undefined : [filter],
       });
       if (result.isErr()) {
         throw new Error(mastodonErrorMessage(result.error));
       }
-      const replace = options?.replace || !options?.maxId;
-      const next = replace ? result.value : [...notificationsRef.current, ...result.value];
-      if (replace) {
-        fetchedAtRef.current = Date.now();
-      }
+      const next = result.value;
+      fetchedAtRef.current = Date.now();
+      setHasMore(pageHasMore(next.length));
       setNotifications(next);
       persist(next, fetchedAtRef.current);
+      prefetch.prepareNext(next, next.length);
     },
-    [filter, persist],
+    [filter, persist, prefetch],
   );
 
   useEffect(() => {
@@ -81,10 +95,13 @@ export const NotificationsPage = () => {
     if (filter === "all" && snapshot.kind === "Present") {
       setNotifications(snapshot.value.notifications);
       fetchedAtRef.current = snapshot.value.fetchedAt;
+      setHasMore(pageHasMore(snapshot.value.notifications.length));
       setLoading(false);
+      prefetch.prepareNext(snapshot.value.notifications, snapshot.value.notifications.length);
       requestAnimationFrame(() => window.scrollTo(0, snapshot.value.scrollY));
     } else {
       setNotifications([]);
+      prefetch.reset();
       setLoading(true);
     }
 
@@ -102,7 +119,7 @@ export const NotificationsPage = () => {
       case "Revalidate":
         break;
     }
-    void loadNotifications({ replace: true })
+    void loadNotifications()
       .catch((loadError) => {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "通知の読み込みに失敗しました");
@@ -117,20 +134,33 @@ export const NotificationsPage = () => {
       active = false;
       persist(notificationsRef.current, fetchedAtRef.current);
     };
-  }, [cache, filter, loadNotifications, persist]);
+  }, [cache, filter, loadNotifications, persist, prefetch]);
 
   const handleLoadMore = async () => {
-    const last = notifications.at(-1);
-    if (!last || loadingMore) {
+    const last = notificationsRef.current.at(-1);
+    if (!last || loadingMoreRef.current) {
       return;
     }
-    setLoadingMore(true);
+    loadingMoreRef.current = true;
+    if (!prefetch.isReady()) {
+      setLoadingMore(true);
+    }
     setError("");
     try {
-      await loadNotifications({ maxId: last.id });
+      const page = await prefetch.takeNext(last.id);
+      if (page.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const next = [...notificationsRef.current, ...page];
+      setHasMore(pageHasMore(page.length));
+      setNotifications(next);
+      persist(next, fetchedAtRef.current);
+      prefetch.prepareNext(next, page.length);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -171,6 +201,8 @@ export const NotificationsPage = () => {
       return;
     }
     setNotifications([]);
+    prefetch.reset();
+    setHasMore(false);
     clearUnreadCount();
   };
 
@@ -223,18 +255,12 @@ export const NotificationsPage = () => {
           <p className="app-muted">通知はまだありません。</p>
         </div>
       ) : null}
-      {notifications.length > 0 ? (
-        <div className="timeline-footer">
-          <button
-            type="button"
-            className="app-button app-button-secondary"
-            onClick={() => void handleLoadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと見る"}
-          </button>
-        </div>
-      ) : null}
+      <LoadMoreFooter
+        hasMore={hasMore && !loading && notifications.length > 0}
+        loading={loadingMore}
+        observeKey={notifications.length}
+        onLoadMore={() => void handleLoadMore()}
+      />
     </AppShell>
   );
 };
