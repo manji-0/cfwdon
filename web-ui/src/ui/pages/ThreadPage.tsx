@@ -6,7 +6,6 @@ import { Visibility } from "@/domain/status/visibility";
 import { createStatus, fetchStatus, fetchStatusContext } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
 import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
-import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
@@ -83,14 +82,6 @@ export const ThreadPage = () => {
     },
     onError: setError,
   });
-
-  useKeyboardShortcuts([
-    {
-      key: "n",
-      handler: () => composerRef.current?.focus(),
-      when: () => Boolean(focus),
-    },
-  ]);
 
   const handleReply = async (input: ComposerSubmitInput) => {
     const result = await createStatus({

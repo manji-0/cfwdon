@@ -4,11 +4,10 @@ import { BottomNav, SidebarNav } from "@/ui/components/Navigation";
 
 type AppShellProps = Readonly<{
   title: string;
-  aside?: ReactNode;
   children: ReactNode;
 }>;
 
-export const AppShell = ({ title, aside, children }: AppShellProps) => (
+export const AppShell = ({ title, children }: AppShellProps) => (
   <div className="app-shell">
     <SidebarNav />
     <div className="app-main">
@@ -16,9 +15,6 @@ export const AppShell = ({ title, aside, children }: AppShellProps) => (
       <AnnouncementBanner />
       <div className="app-main-body">{children}</div>
     </div>
-    <aside className="app-aside" aria-label="サイドバー">
-      {aside}
-    </aside>
     <BottomNav />
   </div>
 );

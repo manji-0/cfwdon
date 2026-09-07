@@ -27,6 +27,8 @@ describe("ProfilePage", () => {
       expect(tag.getAttribute("href")).toBe("/tags/cfwdon");
       expect(screen.getByText("4")).toBeTruthy();
       expect(screen.getByRole("button", { name: "プロフィールを編集" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "ブックマーク" })).toBeTruthy();
+      expect(screen.getByRole("link", { name: "設定" })).toBeTruthy();
     } finally {
       restore();
     }

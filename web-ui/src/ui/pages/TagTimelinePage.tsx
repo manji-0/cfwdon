@@ -3,8 +3,6 @@ import { useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { fetchTagTimeline } from "@/infrastructure/api/status";
 import { fetchFollowedTags, followTag, unfollowTag } from "@/infrastructure/api/tags";
-import { SearchSidebar } from "@/ui/components/SearchSidebar";
-import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 
 export const TagTimelinePage = () => {
@@ -60,12 +58,6 @@ export const TagTimelinePage = () => {
           </button>
           {followError ? <p className="app-error">{followError}</p> : null}
         </div>
-      }
-      aside={
-        <>
-          <SearchSidebar />
-          <TrendsSidebar />
-        </>
       }
       fetchPage={fetchPage}
     />

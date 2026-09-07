@@ -22,6 +22,7 @@ import { createReport } from "@/infrastructure/api/report";
 import { fetchAccountFeaturedTags } from "@/infrastructure/api/tags";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
+import { MeHubNav } from "@/ui/components/MeHubNav";
 import { ProfileEditor } from "@/ui/components/ProfileEditor";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
@@ -500,6 +501,7 @@ export const ProfilePage = () => {
           </div>
         </header>
       ) : null}
+      {isSelf && !editing ? <MeHubNav /> : null}
       <nav className="timeline-tabs" aria-label="プロフィール投稿">
         {PROFILE_TABS.map((item) => (
           <button

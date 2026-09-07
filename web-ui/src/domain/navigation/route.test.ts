@@ -13,7 +13,7 @@ describe("AppRoute", () => {
     expect(AppRoute.fromPathname("/public")).toEqual({ kind: "PublicTimeline", local: false });
     expect(AppRoute.fromPathname("/public/local")).toEqual({ kind: "PublicTimeline", local: true });
     expect(AppRoute.fromPathname("/tags/fediverse")).toEqual({ kind: "Tag", name: "fediverse" });
-    expect(AppRoute.fromPathname("/explore")).toEqual({ kind: "Explore" });
+    expect(AppRoute.fromPathname("/explore")).toEqual({ kind: "Home" });
     expect(AppRoute.fromPathname("/lists")).toEqual({ kind: "Lists" });
     expect(AppRoute.fromPathname("/messages")).toEqual({ kind: "Messages" });
     expect(AppRoute.fromPathname("/messages/new")).toEqual({ kind: "NewMessage" });
@@ -31,7 +31,6 @@ describe("AppRoute", () => {
       AppRoute.scheduled(),
       AppRoute.publicTimeline(true),
       AppRoute.tag("fediverse"),
-      AppRoute.explore(),
       AppRoute.lists(),
       AppRoute.messages(),
       AppRoute.newMessage(),
@@ -39,5 +38,20 @@ describe("AppRoute", () => {
     ]) {
       expect(AppRoute.fromPathname(AppRoute.toPath(route))).toEqual(route);
     }
+  });
+
+  it("treats notifications and messages as the inbox hub", () => {
+    expect(AppRoute.isInboxPath("/notifications")).toBe(true);
+    expect(AppRoute.isInboxPath("/messages")).toBe(true);
+    expect(AppRoute.isInboxPath("/messages/new")).toBe(true);
+    expect(AppRoute.isInboxPath("/search")).toBe(false);
+  });
+
+  it("treats self surfaces as the me hub", () => {
+    expect(AppRoute.isMePath("/profile", "acct-1")).toBe(true);
+    expect(AppRoute.isMePath("/settings", "acct-1")).toBe(true);
+    expect(AppRoute.isMePath("/bookmarks", "acct-1")).toBe(true);
+    expect(AppRoute.isMePath("/profile/acct-1", "acct-1")).toBe(true);
+    expect(AppRoute.isMePath("/profile/other", "acct-1")).toBe(false);
   });
 });

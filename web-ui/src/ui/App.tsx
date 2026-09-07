@@ -5,6 +5,7 @@ import { SessionState } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
+import { ComposeProvider } from "@/ui/context/ComposeContext";
 import { ConfirmProvider } from "@/ui/context/ConfirmContext";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
@@ -15,7 +16,6 @@ import { HomePage } from "@/ui/pages/HomePage";
 import {
   BookmarksPage,
   ConversationPage,
-  ExplorePage,
   FavouritesPage,
   ListsPage,
   MessagesPage,
@@ -55,42 +55,44 @@ const AppRoutes = ({
     <SessionProvider value={createSessionContextValue(session, setSession)}>
       <ViewCacheProvider>
         <ConfirmProvider>
-          <SelfProfilePreloader />
-          <UnreadMessagesProvider>
-            <UnreadNotificationsProvider>
-              <KeyboardShortcutsHelp />
-              <AppKeyboard />
-              <Suspense fallback={<RouteFallback />}>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/public" element={<PublicTimelinePage />} />
-              <Route path="/public/local" element={<PublicTimelinePage />} />
-              <Route path="/tags/:tagName" element={<TagTimelinePage />} />
-              <Route path="/explore" element={<ExplorePage />} />
-              <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
-              <Route path="/status/:statusId/favourited-by" element={<StatusFavouritedByPage />} />
-              <Route path="/status/:statusId/reblogged-by" element={<StatusRebloggedByPage />} />
-              <Route path="/status/:statusId/quotes" element={<StatusQuotesPage />} />
-              <Route path="/status/:statusId" element={<ThreadPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
-              <Route path="/profile/:accountId/following" element={<AccountFollowingPage />} />
-              <Route path="/profile/:accountId" element={<ProfilePage />} />
-              <Route path="/notifications" element={<NotificationsPage />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/bookmarks" element={<BookmarksPage />} />
-              <Route path="/favourites" element={<FavouritesPage />} />
-              <Route path="/scheduled" element={<ScheduledStatusesPage />} />
-              <Route path="/lists" element={<ListsPage />} />
-              <Route path="/messages" element={<MessagesPage />} />
-              <Route path="/messages/new" element={<NewMessagePage />} />
-              <Route path="/messages/:conversationId" element={<ConversationPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-              </Suspense>
-            </UnreadNotificationsProvider>
-          </UnreadMessagesProvider>
+          <ComposeProvider>
+            <SelfProfilePreloader />
+            <UnreadMessagesProvider>
+              <UnreadNotificationsProvider>
+                <KeyboardShortcutsHelp />
+                <AppKeyboard />
+                <Suspense fallback={<RouteFallback />}>
+                  <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/public" element={<PublicTimelinePage />} />
+                    <Route path="/public/local" element={<PublicTimelinePage />} />
+                    <Route path="/tags/:tagName" element={<TagTimelinePage />} />
+                    <Route path="/explore" element={<Navigate to="/" replace />} />
+                    <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
+                    <Route path="/status/:statusId/favourited-by" element={<StatusFavouritedByPage />} />
+                    <Route path="/status/:statusId/reblogged-by" element={<StatusRebloggedByPage />} />
+                    <Route path="/status/:statusId/quotes" element={<StatusQuotesPage />} />
+                    <Route path="/status/:statusId" element={<ThreadPage />} />
+                    <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
+                    <Route path="/profile/:accountId/following" element={<AccountFollowingPage />} />
+                    <Route path="/profile/:accountId" element={<ProfilePage />} />
+                    <Route path="/notifications" element={<NotificationsPage />} />
+                    <Route path="/search" element={<SearchPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="/bookmarks" element={<BookmarksPage />} />
+                    <Route path="/favourites" element={<FavouritesPage />} />
+                    <Route path="/scheduled" element={<ScheduledStatusesPage />} />
+                    <Route path="/lists" element={<ListsPage />} />
+                    <Route path="/messages" element={<MessagesPage />} />
+                    <Route path="/messages/new" element={<NewMessagePage />} />
+                    <Route path="/messages/:conversationId" element={<ConversationPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
+              </UnreadNotificationsProvider>
+            </UnreadMessagesProvider>
+          </ComposeProvider>
         </ConfirmProvider>
       </ViewCacheProvider>
     </SessionProvider>

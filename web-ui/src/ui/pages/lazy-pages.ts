@@ -65,11 +65,6 @@ export const TagTimelinePage = lazy(async () => {
   return { default: module.TagTimelinePage };
 });
 
-export const ExplorePage = lazy(async () => {
-  const module = await import("@/ui/pages/ExplorePage");
-  return { default: module.ExplorePage };
-});
-
 export const StatusHistoryPage = lazy(async () => {
   const module = await import("@/ui/pages/StatusHistoryPage");
   return { default: module.StatusHistoryPage };

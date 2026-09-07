@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { ScheduledStatus } from "@/domain/status/scheduled";
-import { AppRoute } from "@/domain/navigation/route";
 import {
   cancelScheduledStatus,
   fetchScheduledStatuses,
 } from "@/infrastructure/api/scheduled";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
+import { MeBackLink } from "@/ui/components/MeHubNav";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { formatDateTime } from "@/ui/lib/time";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
@@ -101,9 +100,7 @@ export const ScheduledStatusesPage = () => {
 
   return (
     <AppShell title="予約投稿">
-      <p className="thread-back">
-        <Link to={AppRoute.toPath(AppRoute.home())}>← ホーム</Link>
-      </p>
+      <MeBackLink />
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
       <div className="timeline">

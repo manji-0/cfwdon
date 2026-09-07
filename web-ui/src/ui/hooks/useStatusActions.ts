@@ -21,6 +21,7 @@ import {
   unpinStatus,
   unreblogStatus,
 } from "@/infrastructure/api/status";
+import { useCompose } from "@/ui/context/ComposeContext";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 
 export type StatusActionHandlers = Readonly<{
@@ -48,6 +49,7 @@ export const useStatusActions = (options: {
   onError: (message: string) => void;
 }): StatusActionHandlers => {
   const navigate = useNavigate();
+  const { openQuote, openEdit } = useCompose();
   const { confirm, alert } = useConfirm();
   const selfAccountId = options.selfAccountId ?? null;
   const { onReplace, onRemove, onError } = options;
@@ -223,8 +225,14 @@ export const useStatusActions = (options: {
     onReport: (status, comment) => void handleReport(status, comment),
     onVotePoll: (status, choices) => void handleVotePoll(status, choices),
     onPin: (status) => void handlePin(status),
-    onQuote: (status) => navigate(`/?quote=${encodeURIComponent(status.id)}`),
-    onEdit: (status) => navigate(`/?edit=${encodeURIComponent(status.id)}`),
+    onQuote: (status) =>
+      openQuote({
+        id: status.id,
+        content: status.content,
+        spoilerText: status.spoilerText,
+        account: status.account,
+      }),
+    onEdit: (status) => openEdit(status.id),
     onHistory: (status) => navigate(`/status/${status.id}/history`),
     onMuteConversation: (status) => void handleMuteConversation(status),
   };

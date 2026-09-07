@@ -1,8 +1,5 @@
 import { useCallback } from "react";
 import { useLocation } from "react-router";
-import { SearchSidebar } from "@/ui/components/SearchSidebar";
-import { TimelineTabs } from "@/ui/components/TimelineTabs";
-import { TrendsSidebar } from "@/ui/components/TrendsSidebar";
 import { fetchPublicTimeline } from "@/infrastructure/api/status";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 
@@ -18,13 +15,6 @@ export const PublicTimelinePage = () => {
     <StatusCollectionPage
       title={local ? "ローカル" : "連合"}
       emptyMessage={local ? "ローカルの投稿はまだありません。" : "連合タイムラインはまだ空です。"}
-      header={<TimelineTabs />}
-      aside={
-        <>
-          <SearchSidebar />
-          <TrendsSidebar />
-        </>
-      }
       fetchPage={fetchPage}
     />
   );

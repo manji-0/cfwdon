@@ -17,6 +17,7 @@ import {
   rejectFollowRequest,
 } from "@/infrastructure/api/relationship";
 import { AppShell } from "@/ui/components/AppShell";
+import { InboxTabs } from "@/ui/components/InboxTabs";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { NotificationCard } from "@/ui/components/NotificationCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
@@ -214,7 +215,8 @@ export const NotificationsPage = () => {
   };
 
   return (
-    <AppShell title="通知">
+    <AppShell title="受信">
+      <InboxTabs />
       <div className="notification-toolbar">
         <nav className="timeline-tabs" aria-label="通知の種類">
           <button

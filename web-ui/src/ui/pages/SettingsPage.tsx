@@ -10,7 +10,6 @@ import { SessionState } from "@/domain/session/session";
 import { Visibility } from "@/domain/status/visibility";
 import { FeaturedTag } from "@/domain/tags/featured-tag";
 import type { FollowedTag } from "@/domain/tags/followed-tag";
-import { AppRoute } from "@/domain/navigation/route";
 import { fetchAccountCredentials, updateAccountProfile } from "@/infrastructure/api/credentials";
 import { blockDomain, fetchDomainBlocks, unblockDomain } from "@/infrastructure/api/domain-blocks";
 import {
@@ -37,8 +36,8 @@ import {
 import { WebUiPhase } from "@/plan/phases";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
+import { MeBackLink } from "@/ui/components/MeHubNav";
 import { useSession } from "@/ui/context/SessionContext";
-import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { usePwaInstall } from "@/ui/hooks/usePwaInstall";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 import { formatExpiry } from "@/ui/lib/time";
@@ -94,7 +93,6 @@ const ModerationAccountRow = ({
 
 export const SettingsPage = () => {
   const { session, setSession, clearSession } = useSession();
-  const { unreadCount } = useUnreadMessages();
   const { canInstall, installed, install } = usePwaInstall();
 
   const [loading, setLoading] = useState(true);
@@ -532,6 +530,7 @@ export const SettingsPage = () => {
 
   return (
     <AppShell title="設定">
+      <MeBackLink />
       {loading ? <div className="app-status">読み込み中…</div> : null}
       {error ? <p className="app-error">{error}</p> : null}
       {sectionMessage ? <p className="app-status">{sectionMessage}</p> : null}
@@ -624,7 +623,7 @@ export const SettingsPage = () => {
                 </select>
               </label>
               <p className="app-muted">
-                予約投稿の一覧は <Link to={AppRoute.toPath(AppRoute.scheduled())}>予約投稿</Link>{" "}
+                予約投稿の一覧は <Link to="/scheduled">予約投稿</Link>{" "}
                 から確認できます。
               </p>
               <button
@@ -967,41 +966,6 @@ export const SettingsPage = () => {
                   onLoadMore={() => void handleLoadMoreBlocks()}
                 />
               </div>
-            </div>
-          </section>
-
-          <section className="app-card settings-section" data-phase={WebUiPhase.collections}>
-            <h2>ライブラリ</h2>
-            <p className="app-muted">モバイルでもコレクションへ移動できます。</p>
-            <div className="settings-library-links">
-              {[
-                AppRoute.explore(),
-                AppRoute.bookmarks(),
-                AppRoute.favourites(),
-                AppRoute.scheduled(),
-                AppRoute.lists(),
-                AppRoute.messages(),
-              ].map((route) => {
-                const isMessages = route.kind === "Messages";
-                const label = AppRoute.label(route);
-                return (
-                  <Link
-                    key={route.kind}
-                    className="app-button app-button-secondary settings-library-link"
-                    to={AppRoute.toPath(route)}
-                    aria-label={
-                      isMessages && unreadCount > 0 ? `${label}（未読 ${unreadCount}）` : label
-                    }
-                  >
-                    <span>{label}</span>
-                    {isMessages && unreadCount > 0 ? (
-                      <span className="nav-unread-badge" aria-hidden="true">
-                        {unreadCount > 99 ? "99+" : unreadCount}
-                      </span>
-                    ) : null}
-                  </Link>
-                );
-              })}
             </div>
           </section>
 

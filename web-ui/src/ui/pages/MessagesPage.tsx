@@ -8,6 +8,7 @@ import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
 import { AppShell } from "@/ui/components/AppShell";
+import { InboxTabs } from "@/ui/components/InboxTabs";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
@@ -114,7 +115,8 @@ export const MessagesPage = () => {
   };
 
   return (
-    <AppShell title="メッセージ">
+    <AppShell title="受信">
+      <InboxTabs />
       <div className="messages-toolbar">
         <Link className="app-button" to="/messages/new">
           新しいメッセージ

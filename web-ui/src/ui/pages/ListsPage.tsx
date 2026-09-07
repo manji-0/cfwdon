@@ -21,6 +21,7 @@ import { WebUiPhase } from "@/plan/phases";
 import { AccountSearchPicker } from "@/ui/components/AccountSearchPicker";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
+import { MeBackLink } from "@/ui/components/MeHubNav";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
@@ -312,10 +313,9 @@ export const ListsPage = () => {
   };
 
   return (
-    <AppShell
-      title="リスト"
-      aside={
-        <div className="app-card" data-phase={WebUiPhase.collections}>
+    <AppShell title="リスト">
+      <MeBackLink />
+      <div className="app-card" data-phase={WebUiPhase.collections}>
           <h2>リスト</h2>
           {loadingLists ? <p className="app-muted">読み込み中…</p> : null}
           {!loadingLists && lists.length === 0 ? (
@@ -382,8 +382,6 @@ export const ListsPage = () => {
             </button>
           </form>
         </div>
-      }
-    >
       <div data-phase={WebUiPhase.collections}>
         {error ? <p className="app-error">{error}</p> : null}
         {selectedList ? (

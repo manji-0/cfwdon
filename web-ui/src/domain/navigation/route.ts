@@ -2,7 +2,6 @@ export type AppRoute =
   | Readonly<{ kind: "Home" }>
   | Readonly<{ kind: "PublicTimeline"; local: boolean }>
   | Readonly<{ kind: "Tag"; name: string }>
-  | Readonly<{ kind: "Explore" }>
   | Readonly<{ kind: "Notifications" }>
   | Readonly<{ kind: "Search" }>
   | Readonly<{ kind: "Profile" }>
@@ -15,11 +14,16 @@ export type AppRoute =
   | Readonly<{ kind: "NewMessage" }>
   | Readonly<{ kind: "Conversation"; conversationId: string }>;
 
+const normalizePath = (pathname: string): string =>
+  pathname
+    .replace(/^\/app\/?/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/$/, "");
+
 export const AppRoute = {
   home: (): AppRoute => ({ kind: "Home" }),
   publicTimeline: (local = false): AppRoute => ({ kind: "PublicTimeline", local }),
   tag: (name: string): AppRoute => ({ kind: "Tag", name }),
-  explore: (): AppRoute => ({ kind: "Explore" }),
   notifications: (): AppRoute => ({ kind: "Notifications" }),
   search: (): AppRoute => ({ kind: "Search" }),
   profile: (): AppRoute => ({ kind: "Profile" }),
@@ -33,10 +37,7 @@ export const AppRoute = {
   conversation: (conversationId: string): AppRoute => ({ kind: "Conversation", conversationId }),
 
   fromPathname: (pathname: string): AppRoute => {
-    const normalized = pathname
-      .replace(/^\/app\/?/, "")
-      .replace(/^\/+/, "")
-      .replace(/\/$/, "");
+    const normalized = normalizePath(pathname);
     const [head, ...rest] = normalized.split("/");
     switch (head) {
       case "":
@@ -46,7 +47,7 @@ export const AppRoute = {
       case "tags":
         return rest[0] ? AppRoute.tag(decodeURIComponent(rest[0])) : AppRoute.home();
       case "explore":
-        return AppRoute.explore();
+        return AppRoute.home();
       case "notifications":
         return AppRoute.notifications();
       case "search":
@@ -88,8 +89,6 @@ export const AppRoute = {
         return route.local ? "/public/local" : "/public";
       case "Tag":
         return `/tags/${encodeURIComponent(route.name)}`;
-      case "Explore":
-        return "/explore";
       case "Notifications":
         return "/notifications";
       case "Search":
@@ -115,6 +114,32 @@ export const AppRoute = {
     }
   },
 
+  isInboxPath: (pathname: string): boolean => {
+    const normalized = normalizePath(pathname);
+    return normalized === "notifications" || normalized.startsWith("messages");
+  },
+
+  isMePath: (pathname: string, selfAccountId: string | null): boolean => {
+    const normalized = normalizePath(pathname);
+    if (
+      normalized === "profile" ||
+      normalized === "settings" ||
+      normalized === "bookmarks" ||
+      normalized === "scheduled" ||
+      normalized === "lists" ||
+      normalized === "favourites"
+    ) {
+      return true;
+    }
+    if (!selfAccountId) {
+      return false;
+    }
+    return (
+      normalized === `profile/${selfAccountId}` ||
+      normalized.startsWith(`profile/${selfAccountId}/`)
+    );
+  },
+
   label: (route: AppRoute): string => {
     switch (route.kind) {
       case "Home":
@@ -123,14 +148,12 @@ export const AppRoute = {
         return route.local ? "ローカル" : "連合";
       case "Tag":
         return `#${route.name}`;
-      case "Explore":
-        return "探索";
       case "Notifications":
-        return "通知";
+        return "受信";
       case "Search":
         return "検索";
       case "Profile":
-        return "プロフィール";
+        return "自分";
       case "Settings":
         return "設定";
       case "Bookmarks":

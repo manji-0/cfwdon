@@ -10,8 +10,6 @@ export const GoChord = {
         return "/notifications";
       case "s":
         return "/search";
-      case "e":
-        return "/explore";
       case "p":
         return "/profile";
       case "t":

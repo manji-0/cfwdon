@@ -3,13 +3,13 @@ import { isHelpShortcut, isTypingTarget, modKeyLabel } from "@/ui/lib/keyboard";
 
 const SHORTCUTS = [
   { keys: `${modKeyLabel()} + Enter`, description: "投稿 / 返信を送信" },
-  { keys: "n", description: "投稿欄にフォーカス" },
+  { keys: "n", description: "投稿シートを開く" },
   { keys: "r", description: "ホームタイムラインを更新" },
   { keys: "j / k", description: "投稿を次 / 前へ" },
   { keys: "o / Enter", description: "フォーカス中の投稿を開く" },
-  { keys: "g のあと", description: "h ホーム / n 通知 / s 検索 / e 探索 / p プロフィール" },
+  { keys: "g のあと", description: "h ホーム / n 受信 / s 検索 / p 自分" },
   { keys: "?", description: "ショートカット一覧を表示" },
-  { keys: "Esc", description: "投稿欄のフォーカスを外す / この一覧を閉じる" },
+  { keys: "Esc", description: "投稿シートを閉じる / この一覧を閉じる" },
 ] as const;
 
 export const KeyboardShortcutsHelp = () => {

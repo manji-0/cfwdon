@@ -1,40 +1,47 @@
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { AppRoute } from "@/domain/navigation/route";
 import {
   IconBell,
-  IconBookmark,
   IconBrand,
-  IconCompass,
-  IconGear,
-  IconHeart,
   IconHome,
-  IconList,
-  IconMessage,
+  IconPen,
   IconSearch,
   IconUser,
 } from "@/ui/components/icons";
+import { useCompose } from "@/ui/context/ComposeContext";
+import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 import { useUnreadNotifications } from "@/ui/context/UnreadNotificationsContext";
 
-const PRIMARY_NAV_ITEMS = [
-  { route: AppRoute.home(), icon: IconHome, end: true },
-  { route: AppRoute.notifications(), icon: IconBell, end: false },
-  { route: AppRoute.search(), icon: IconSearch, end: false },
-  { route: AppRoute.profile(), icon: IconUser, end: false },
-  { route: AppRoute.settings(), icon: IconGear, end: false },
-] as const;
+const unreadLabel = (count: number): string => (count > 99 ? "99+" : String(count));
 
-const LIBRARY_NAV_ITEMS = [
-  { route: AppRoute.explore(), icon: IconCompass },
-  { route: AppRoute.bookmarks(), icon: IconBookmark },
-  { route: AppRoute.favourites(), icon: IconHeart },
-  { route: AppRoute.lists(), icon: IconList },
-  { route: AppRoute.messages(), icon: IconMessage },
-] as const;
+const useInboxUnread = (): number => {
+  const { unreadCount: messages } = useUnreadMessages();
+  const { unreadCount: notifications } = useUnreadNotifications();
+  return messages + notifications;
+};
+
+const useNavIdentity = () => {
+  const { pathname } = useLocation();
+  const { session } = useSession();
+  const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
+  return {
+    inboxActive: AppRoute.isInboxPath(pathname),
+    meActive: AppRoute.isMePath(pathname, selfAccountId),
+  };
+};
+
+const UnreadBadge = ({ count }: Readonly<{ count: number }>) =>
+  count > 0 ? (
+    <span className="nav-unread-badge" aria-hidden="true">
+      {unreadLabel(count)}
+    </span>
+  ) : null;
 
 export const SidebarNav = () => {
-  const { unreadCount } = useUnreadMessages();
-  const { unreadCount: unreadNotifications } = useUnreadNotifications();
+  const { openNew } = useCompose();
+  const inboxUnread = useInboxUnread();
+  const { inboxActive, meActive } = useNavIdentity();
 
   return (
     <nav className="app-nav" aria-label="メイン">
@@ -48,86 +55,93 @@ export const SidebarNav = () => {
           <IconBrand />
         </span>
       </NavLink>
-      {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => {
-        const isNotifications = route.kind === "Notifications";
-        const label = AppRoute.label(route);
-        return (
-          <NavLink
-            key={route.kind}
-            to={AppRoute.toPath(route)}
-            end={end}
-            className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
-            aria-label={
-              isNotifications && unreadNotifications > 0
-                ? `${label}（未読 ${unreadNotifications}）`
-                : label
-            }
-          >
-            <Icon aria-hidden="true" />
-            {isNotifications && unreadNotifications > 0 ? (
-              <span className="nav-unread-badge" aria-hidden="true">
-                {unreadNotifications > 99 ? "99+" : unreadNotifications}
-              </span>
-            ) : null}
-          </NavLink>
-        );
-      })}
-      <div className="app-nav-library" aria-label="ライブラリ">
-        {LIBRARY_NAV_ITEMS.map(({ route, icon: Icon }) => {
-          const isMessages = route.kind === "Messages";
-          const label = AppRoute.label(route);
-          return (
-            <NavLink
-              key={route.kind}
-              to={AppRoute.toPath(route)}
-              className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
-              aria-label={
-                isMessages && unreadCount > 0 ? `${label}（未読 ${unreadCount}）` : label
-              }
-            >
-              <Icon aria-hidden="true" />
-              {isMessages && unreadCount > 0 ? (
-                <span className="nav-unread-badge" aria-hidden="true">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              ) : null}
-            </NavLink>
-          );
-        })}
-      </div>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.home())}
+        end
+        className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
+        aria-label="ホーム"
+      >
+        <IconHome aria-hidden="true" />
+      </NavLink>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.notifications())}
+        className={`app-nav-link${inboxActive ? " is-active" : ""}`}
+        aria-label={inboxUnread > 0 ? `受信（未読 ${inboxUnread}）` : "受信"}
+      >
+        <IconBell aria-hidden="true" />
+        <UnreadBadge count={inboxUnread} />
+      </NavLink>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.search())}
+        className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}
+        aria-label="検索"
+      >
+        <IconSearch aria-hidden="true" />
+      </NavLink>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.profile())}
+        className={`app-nav-link${meActive ? " is-active" : ""}`}
+        aria-label="自分"
+      >
+        <IconUser aria-hidden="true" />
+      </NavLink>
+      <button
+        type="button"
+        className="app-nav-link app-nav-compose"
+        aria-label="投稿"
+        onClick={() => openNew()}
+      >
+        <IconPen aria-hidden="true" />
+      </button>
     </nav>
   );
 };
 
 export const BottomNav = () => {
-  const { unreadCount: unreadNotifications } = useUnreadNotifications();
+  const { openNew } = useCompose();
+  const inboxUnread = useInboxUnread();
+  const { inboxActive, meActive } = useNavIdentity();
+
   return (
-  <nav className="app-bottom-nav" aria-label="モバイルナビ">
-    {PRIMARY_NAV_ITEMS.map(({ route, icon: Icon, end }) => {
-      const isNotifications = route.kind === "Notifications";
-      const label = AppRoute.label(route);
-      return (
+    <nav className="app-bottom-nav" aria-label="モバイルナビ">
       <NavLink
-        key={route.kind}
-        to={AppRoute.toPath(route)}
-        end={end}
+        to={AppRoute.toPath(AppRoute.home())}
+        end
         className={({ isActive }) => (isActive ? "is-active" : undefined)}
-        aria-label={
-          isNotifications && unreadNotifications > 0
-            ? `${label}（未読 ${unreadNotifications}）`
-            : label
-        }
+        aria-label="ホーム"
       >
-        <Icon aria-hidden="true" />
-        <span>{label}</span>
-        {isNotifications && unreadNotifications > 0 ? (
-          <span className="nav-unread-badge" aria-hidden="true">
-            {unreadNotifications > 99 ? "99+" : unreadNotifications}
-          </span>
-        ) : null}
+        <IconHome aria-hidden="true" />
+        <span>ホーム</span>
       </NavLink>
-      );
-    })}
-  </nav>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.notifications())}
+        className={inboxActive ? "is-active" : undefined}
+        aria-label={inboxUnread > 0 ? `受信（未読 ${inboxUnread}）` : "受信"}
+      >
+        <IconBell aria-hidden="true" />
+        <span>受信</span>
+        <UnreadBadge count={inboxUnread} />
+      </NavLink>
+      <button type="button" aria-label="投稿" onClick={() => openNew()}>
+        <IconPen aria-hidden="true" />
+        <span>投稿</span>
+      </button>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.search())}
+        className={({ isActive }) => (isActive ? "is-active" : undefined)}
+        aria-label="検索"
+      >
+        <IconSearch aria-hidden="true" />
+        <span>検索</span>
+      </NavLink>
+      <NavLink
+        to={AppRoute.toPath(AppRoute.profile())}
+        className={meActive ? "is-active" : undefined}
+        aria-label="自分"
+      >
+        <IconUser aria-hidden="true" />
+        <span>自分</span>
+      </NavLink>
+    </nav>
   );
 };

@@ -16,7 +16,6 @@ type StatusCollectionPageProps = Readonly<{
   title: string;
   emptyMessage: string;
   header?: ReactNode;
-  aside?: ReactNode;
   fetchPage: (query: TimelineQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
 }>;
 
@@ -24,7 +23,6 @@ export const StatusCollectionPage = ({
   title,
   emptyMessage,
   header,
-  aside,
   fetchPage,
 }: StatusCollectionPageProps) => {
   const { session } = useSession();
@@ -111,7 +109,7 @@ export const StatusCollectionPage = ({
   };
 
   return (
-    <AppShell title={title} aside={aside}>
+    <AppShell title={title}>
       {header}
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
