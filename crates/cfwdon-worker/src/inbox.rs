@@ -61,8 +61,9 @@ fn inbox_signature_failure_is_expected_noise(activity_type: &str, error: &Error)
         return false;
     }
     let message = error.to_string();
+    // Remote Delete waves often fail actor fetch with 401/403/404/410/503.
     message.contains("Signature keyId missing")
-        || ["HTTP 403", "HTTP 404", "HTTP 410"]
+        || ["HTTP 401", "HTTP 403", "HTTP 404", "HTTP 410", "HTTP 503"]
             .iter()
             .any(|status| message.contains(status))
 }
@@ -469,20 +470,27 @@ mod tests {
 
     #[test]
     fn delete_signature_noise_is_rejected_not_unauthorized() {
-        let gone = Error::RustError(
-            "failed to fetch remote document https://remote.example/users/bob: HTTP 410".to_owned(),
-        );
         let missing_key = Error::RustError("Signature keyId missing".to_owned());
         let other = Error::RustError("invalid Signature header encoding".to_owned());
 
-        assert_eq!(inbox_signature_failure_outcome("Delete", &gone), "rejected");
+        for status in ["HTTP 401", "HTTP 403", "HTTP 404", "HTTP 410", "HTTP 503"] {
+            let error = Error::RustError(format!(
+                "failed to fetch remote document https://remote.example/users/bob: {status}"
+            ));
+            assert_eq!(
+                inbox_signature_failure_outcome("Delete", &error),
+                "rejected",
+                "{status}"
+            );
+            assert_eq!(
+                inbox_signature_failure_outcome("Create", &error),
+                "unauthorized",
+                "{status}"
+            );
+        }
         assert_eq!(
             inbox_signature_failure_outcome("Delete", &missing_key),
             "rejected"
-        );
-        assert_eq!(
-            inbox_signature_failure_outcome("Create", &gone),
-            "unauthorized"
         );
         assert_eq!(
             inbox_signature_failure_outcome("Delete", &other),
