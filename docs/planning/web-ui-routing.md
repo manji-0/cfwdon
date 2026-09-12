@@ -15,7 +15,7 @@ The previous gap was **three competing sources of truth** for paths:
 2. The typed `AppRoute` ADT in `web-ui/src/domain/navigation/route.ts`
 3. String literals in `Link`, `navigate(...)`, `GoChord`, and mention HTML
 
-Phase 0 collapsed (2) and (3). Phase 1 replaced (1) with the TanStack tree. `AppRoute.path` / `toLink` are the remaining adapter between the domain ADT and router `to` / `params` / `search`.
+Phase 0 collapsed (2) and (3). Phase 1 replaced (1) with the TanStack tree. Phase 2 types `toLink` as a discriminated `AppLinkTarget` and dispatches it onto literal TanStack `Link` / `navigate` calls. `AppRoute` stays the domain helper (`fromPathname`, `label`, hubs, mention hrefs).
 
 **Preferred destination (reached for the library swap):** TanStack Router in SPA library mode, with a **code-based** route tree. Keep the Rust Worker as the HTTP server. Do not adopt React Router Framework Mode, TanStack Start, Next.js, or Remix.
 
@@ -165,14 +165,11 @@ Proved:
 - `React.lazy` page split still emits `ThreadPage-*.js` and `SearchPage-*.js`
 - `react-router` removed; `react-vendor` now groups `@tanstack/react-router` with React
 
-`AppLink` still casts through the router `Link` types. That is leftover Phase 2 polish, not a blocker for the swap.
+`AppLink` and `useAppNavigate` dispatch through `matchAppLinkTarget` onto literal TanStack `to` / `params` / `search` values. `AppRoute` stays a domain helper for `fromPathname`, `label`, hub tests, and mention hrefs.
 
 ### Phase 2 — remaining polish
 
-The route table and `react-router` deletion landed with Phase 1. Left:
-
-- Tighten `AppLink` / `useAppNavigate` so they do not need an adapter cast
-- Keep `AppRoute` as a domain helper (`label`, hub tests, `fromPathname`) sitting on top of the router tree, or fold labels into route static data
+**Status:** done. Route-tree path literals are preserved (`createRoute` is generic over `TPath`), so `Link` and `navigate` type-check without adapter casts. Functional `className` maps to `activeProps` / `inactiveProps`. Search reads `q` / `type` from the `/search` route. `AppRoute` remains the domain ADT.
 
 ### Phase 3 — optional later
 

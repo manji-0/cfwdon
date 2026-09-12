@@ -88,10 +88,11 @@ The generated compatibility inventory currently maps all tracked upstream routes
 ## Web UI Follow-Up
 <!-- derived-from web-ui-routing.md -->
 
-The Vite SPA under `/app` now uses TanStack Router in SPA library mode with a code-based route tree. See [Web UI Routing Modernization](web-ui-routing.md) for the inventory, rejected full-stack options, and remaining polish.
+The Vite SPA under `/app` now uses TanStack Router in SPA library mode with a code-based route tree. See [Web UI Routing Modernization](web-ui-routing.md) for the inventory, rejected full-stack options, and later optional polish.
 
 - Finish `AppRoute` coverage for status, profile-by-id, collection, and search-query paths before swapping libraries. **Done:** `AppRoute` is the path helper; `router.tsx` uses `AppRoute.path`.
 - Spike TanStack Router in SPA library mode. **Done:** the full tree moved with the spike (two routers cannot coexist); `react-router` is gone; `ViewCache` and Worker `/app` fallback are unchanged.
+- Tighten typed `Link` / `navigate` without adapter casts. **Done:** `matchAppLinkTarget` plus a discriminated `AppLinkTarget`; `AppRoute` stays the domain helper.
 - Do not adopt React Router Framework Mode, TanStack Start, or a JS SSR runtime next to the Rust Worker.
 
 ## Durable Objects Follow-Up
