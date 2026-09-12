@@ -85,6 +85,15 @@ The generated compatibility inventory currently maps all tracked upstream routes
 - Compatibility fixtures and e2e API tests.
 - Federation interop tests.
 
+## Web UI Follow-Up
+<!-- derived-from web-ui-routing.md -->
+
+The Vite SPA under `/app` still uses React Router 8 Declarative Mode (`BrowserRouter` + a flat `<Routes>` table) plus an incomplete typed `AppRoute` ADT. See [Web UI Routing Modernization](web-ui-routing.md) for the inventory, rejected full-stack options, and a TanStack Router spike plan.
+
+- Finish `AppRoute` coverage for status, profile-by-id, collection, and search-query paths before swapping libraries.
+- Spike TanStack Router in SPA library mode on home, thread, and search only; keep `ViewCache` and Worker `/app` fallback.
+- Do not adopt React Router Framework Mode, TanStack Start, or a JS SSR runtime next to the Rust Worker.
+
 ## Durable Objects Follow-Up
 <!-- derived-from durable-objects-candidates.md -->
 
