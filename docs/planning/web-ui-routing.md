@@ -7,17 +7,19 @@ Investigation of how `web-ui` uses React Router today, and whether a more modern
 
 ## Summary
 
-`web-ui` already depends on **React Router 8.3**, but it uses that library in **Declarative Mode**: `BrowserRouter` plus a flat `<Routes>` table. That is the oldest React Router 8 surface. The app is a Vite SPA under `/app`, served by the Rust Worker. Mastodon API calls, Auth0 login/logout, streaming, and view caching all live outside the router.
+`web-ui` now uses **TanStack Router 1.x in SPA library mode**: a code-based `routeTree` in `web-ui/src/ui/router.tsx`, `basepath: "/app"`, and `AppRoute` as the typed path helper. The app is still a Vite SPA under `/app`, served by the Rust Worker. Mastodon API calls, Auth0 login/logout, streaming, and view caching all live outside the router.
 
-The real gap is not “an old package.” It is **three competing sources of truth** for paths:
+The previous gap was **three competing sources of truth** for paths:
 
 1. The JSX route table in `web-ui/src/ui/App.tsx`
 2. The typed `AppRoute` ADT in `web-ui/src/domain/navigation/route.ts`
 3. String literals in `Link`, `navigate(...)`, `GoChord`, and mention HTML
 
-**Preferred destination:** TanStack Router in SPA library mode, with a **code-based** route tree. Keep the Rust Worker as the HTTP server. Do not adopt React Router Framework Mode, TanStack Start, Next.js, or Remix.
+Phase 0 collapsed (2) and (3). Phase 1 replaced (1) with the TanStack tree. `AppRoute.path` / `toLink` are the remaining adapter between the domain ADT and router `to` / `params` / `search`.
 
-**No-regret first step, independent of library choice:** finish `AppRoute` so every in-app path has a typed constructor, then stop writing raw path strings.
+**Preferred destination (reached for the library swap):** TanStack Router in SPA library mode, with a **code-based** route tree. Keep the Rust Worker as the HTTP server. Do not adopt React Router Framework Mode, TanStack Start, Next.js, or Remix.
+
+**No-regret first step, independent of library choice:** finish `AppRoute` so every in-app path has a typed constructor, then stop writing raw path strings. **Done.**
 
 ## Current Baseline
 
@@ -25,7 +27,7 @@ The real gap is not “an old package.” It is **three competing sources of tru
 
 Vite builds the SPA with `base: "/app/"`. The Worker serves hashed assets from disk and falls every other `/app/*` path back to `index.html`. Login and logout stay on the Worker (`/app/login`, `/app/logout`). Client history is therefore a SPA concern; deep links work because the Worker already rewrites them.
 
-React Router usage today:
+React Router usage before Phase 1 (historical):
 
 | Surface | Where | Role |
 | --- | --- | --- |
@@ -147,29 +149,30 @@ Lowest churn. The package is already current. The incomplete `AppRoute` and stri
 
 ### Phase 0 — typed paths, same library
 
-**Status:** done in this repository. `AppRoute` now covers status, profile-by-id, collections, and search query/type. `App.tsx` reads `AppRoute.pattern`. Call sites use `toPath` / `absoluteHref` instead of string literals. `route.test.ts` fails if `App.tsx` adds a `path="..."` other than `*`.
+**Status:** done. `AppRoute` covers status, profile-by-id, collections, and search query/type. Call sites use `toPath` / `absoluteHref` / `toLink` instead of string literals.
 
-Keep React Router until Phase 1.
+### Phase 1 — library spike
 
-### Phase 1 — library spike on three routes
+**Status:** done. Two routers cannot coexist, so the spike replaced the full table rather than three routes only.
 
-Spike TanStack Router for `/`, `/status/$statusId`, and `/search` only, behind a branch.
+`@tanstack/react-router` owns history. `web-ui/src/ui/router.tsx` builds a code-based tree from `AppRoute.path`. `AuthenticatedLayout` wraps providers and `<Outlet />`. Anonymous sessions still render `LoginPanel` and never mount the router. Auth0 stays on Worker `/app/login` and `/app/logout`.
 
-Prove:
+Proved:
 
-- `basepath: "/app"` still matches Worker fallback and the service worker
-- Root providers (session, view cache, compose, unread) still wrap the outlet
-- Anonymous session still renders `LoginPanel` instead of app routes
-- Typed `Link` to a thread and typed search `q` / `type`
-- Vitest can mount those routes with memory history
-- Bundle split for the thread page still works
-- Mention HTML continues to land on `/app/search?q=`
+- `basepath: "/app"` — `AppLink` hrefs under `/app`, mention HTML still `/app/search?q=`
+- Typed status params (`$statusId`) and search `q` / `type`
+- Vitest mounts routes with `createMemoryHistory` after `router.load()`
+- `React.lazy` page split still emits `ThreadPage-*.js` and `SearchPage-*.js`
+- `react-router` removed; `react-vendor` now groups `@tanstack/react-router` with React
 
-Stop the spike if basename, session gating, or test harness cost more than the type-safety gain.
+`AppLink` still casts through the router `Link` types. That is leftover Phase 2 polish, not a blocker for the swap.
 
-### Phase 2 — remaining routes
+### Phase 2 — remaining polish
 
-Migrate the rest of the table, then delete `react-router`. Re-express inbox/me active states. Keep `AppRoute` only if it still adds value as a domain helper (`label`, hub tests) sitting *on top of* the router tree; otherwise fold labels into route static data.
+The route table and `react-router` deletion landed with Phase 1. Left:
+
+- Tighten `AppLink` / `useAppNavigate` so they do not need an adapter cast
+- Keep `AppRoute` as a domain helper (`label`, hub tests, `fromPathname`) sitting on top of the router tree, or fold labels into route static data
 
 ### Phase 3 — optional later
 
@@ -185,6 +188,6 @@ Typed search for more query flags, route-level pending UI, scroll restoration. S
 
 ## Impact Sketch
 
-About 26 `web-ui` files import `react-router` today. Tests that wrap `MemoryRouter` (`render-page.tsx`, `useAppKeyboard.test.tsx`, `AccountRow.test.tsx`) must follow. Worker routing, `wrangler.toml` assets, and `admin-ui` stay out of scope.
+Phase 1 touched the previous `react-router` import surface (pages, nav, cards, keyboard, `render-page.tsx`). Worker routing, `wrangler.toml` assets, and `admin-ui` stay out of scope.
 
-`vite.config.ts` currently groups `react-router` into the `react-vendor` chunk. A TanStack swap should update that test regex so the vendor split stays one React family chunk.
+`vite.config.ts` groups `@tanstack/react-router` into the `react-vendor` chunk so the vendor split stays one React family chunk.
