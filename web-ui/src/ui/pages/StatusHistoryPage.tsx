@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { AppRoute } from "@/domain/navigation/route";
 import type { StatusEdit } from "@/domain/status/edit";
 import { fetchStatusHistory } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
@@ -38,7 +39,7 @@ export const StatusHistoryPage = () => {
   return (
     <AppShell title="編集履歴">
       <p className="thread-back">
-        <Link to={`/status/${statusId}`}>← 投稿に戻る</Link>
+        <Link to={AppRoute.toPath(AppRoute.status(statusId))}>← 投稿に戻る</Link>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

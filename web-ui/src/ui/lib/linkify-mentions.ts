@@ -1,5 +1,4 @@
-/** Must match `BrowserRouter` basename in `App`. */
-const APP_BASENAME = "/app";
+import { AppRoute } from "@/domain/navigation/route";
 
 const TAG_OR_TEXT = /(<[^>]+>)/;
 
@@ -11,7 +10,7 @@ const MENTION_PATTERN =
 const HTTPS_URL_PATTERN = /https:\/\/[\w\-._~:/?#[\]@!$&'()*+,;=%]+/gi;
 
 const mentionHref = (acct: string): string =>
-  `${APP_BASENAME}/search?q=${encodeURIComponent(`@${acct}`)}`;
+  AppRoute.absoluteHref(AppRoute.search(`@${acct}`));
 
 const escapeHtmlAttr = (value: string): string =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");

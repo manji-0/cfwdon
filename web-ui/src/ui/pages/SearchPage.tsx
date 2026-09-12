@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   SearchType,
   emptySearchResults,
@@ -129,27 +130,15 @@ export const SearchPage = () => {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) {
-      setSearchParams({});
+      setSearchParams(AppRoute.toSearchParams("", "all"));
       return;
     }
-    const next = new URLSearchParams();
-    next.set("q", trimmed);
-    if (typeFromUrl !== "all") {
-      next.set("type", typeFromUrl);
-    }
-    setSearchParams(next);
+    setSearchParams(AppRoute.toSearchParams(trimmed, typeFromUrl));
   };
 
   const handleTypeChange = (type: SearchTypeValue) => {
     const trimmed = (queryFromUrl || query).trim();
-    const next = new URLSearchParams();
-    if (trimmed) {
-      next.set("q", trimmed);
-    }
-    if (type !== "all") {
-      next.set("type", type);
-    }
-    setSearchParams(next);
+    setSearchParams(AppRoute.toSearchParams(trimmed, type));
   };
 
   const handleLoadMore = async () => {
@@ -264,7 +253,7 @@ export const SearchPage = () => {
           <ul className="search-hashtags">
             {results.hashtags.map((tag) => (
               <li key={tag.id}>
-                <Link className="search-hashtag" to={`/tags/${encodeURIComponent(tag.name)}`}>
+                <Link className="search-hashtag" to={AppRoute.toPath(AppRoute.tag(tag.name))}>
                   #{tag.name}
                 </Link>
               </li>

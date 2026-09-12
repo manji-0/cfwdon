@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router";
+import { AppRoute } from "@/domain/navigation/route";
 import { Notification } from "@/domain/notification/notification";
 import { Status } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
@@ -27,7 +28,7 @@ export const NotificationCard = ({
   return (
     <article className="notification-card">
       <header className="notification-card-header">
-        <Link to={`/profile/${notification.account.id}`} className="notification-actor">
+        <Link to={AppRoute.toPath(AppRoute.account(notification.account.id))} className="notification-actor">
           <img className="status-avatar" src={notification.account.avatar} alt="" loading="lazy" />
           <div>
             <p className="notification-summary">{Notification.label(notification)}</p>
@@ -73,7 +74,7 @@ export const NotificationCard = ({
             if ((event.target as HTMLElement).closest("a")) {
               return;
             }
-            navigate(`/status/${body.id}`);
+            navigate(AppRoute.toPath(AppRoute.status(body.id)));
           }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") {
@@ -83,7 +84,7 @@ export const NotificationCard = ({
               return;
             }
             event.preventDefault();
-            navigate(`/status/${body.id}`);
+            navigate(AppRoute.toPath(AppRoute.status(body.id)));
           }}
         >
           {body.spoilerText ? <p className="app-muted">CW: {body.spoilerText}</p> : null}

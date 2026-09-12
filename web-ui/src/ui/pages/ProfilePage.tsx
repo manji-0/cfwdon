@@ -6,6 +6,7 @@ import type { AccountProfile } from "@/domain/account/account";
 import { Relationship } from "@/domain/account/relationship";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import type { FeaturedTag } from "@/domain/tags/featured-tag";
 import { fetchAccountStatuses } from "@/infrastructure/api/account";
@@ -367,9 +368,9 @@ export const ProfilePage = () => {
       <AppShell title="プロフィール">
         <div className="app-card">
           <p className="app-muted">ログインするとプロフィールを表示できます。</p>
-          <Link className="app-button" to="/login">
+          <a className="app-button" href={AppRoute.loginHref}>
             ログイン
-          </Link>
+          </a>
         </div>
       </AppShell>
     );
@@ -485,7 +486,7 @@ export const ProfilePage = () => {
               <ul className="profile-featured-tags">
                 {featuredTags.map((tag) => (
                   <li key={tag.id}>
-                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>#{tag.name}</Link>
+                    <Link to={AppRoute.toPath(AppRoute.tag(tag.name))}>#{tag.name}</Link>
                     <span className="app-muted">{tag.statusesCount}</span>
                   </li>
                 ))}
@@ -493,8 +494,10 @@ export const ProfilePage = () => {
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>
-              <Link to={`/profile/${profile.id}/following`}>{profile.followingCount} フォロー</Link>
-              <Link to={`/profile/${profile.id}/followers`}>
+              <Link to={AppRoute.toPath(AppRoute.accountFollowing(profile.id))}>
+                {profile.followingCount} フォロー
+              </Link>
+              <Link to={AppRoute.toPath(AppRoute.accountFollowers(profile.id))}>
                 {profile.followersCount} フォロワー
               </Link>
             </p>

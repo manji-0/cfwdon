@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import type { AccountProfile } from "@/domain/account/account";
+import { AppRoute } from "@/domain/navigation/route";
 
 type AccountRowProps = Readonly<{
   account: AccountProfile;
@@ -15,7 +16,7 @@ export const AccountRow = ({
   actionDisabled = false,
 }: AccountRowProps) => (
   <div className="account-row-wrap">
-    <Link className="account-row" to={`/profile/${account.id}`}>
+    <Link className="account-row" to={AppRoute.toPath(AppRoute.account(account.id))}>
       <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
       <div className="account-row-meta">
         <span className="status-display-name">{account.displayName || account.username}</span>

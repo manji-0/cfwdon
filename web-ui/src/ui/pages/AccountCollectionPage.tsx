@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   fetchAccountFollowers,
   fetchAccountFollowing,
@@ -122,7 +123,15 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
   return (
     <AppShell title={title}>
       <p className="thread-back">
-        <Link to={accountId ? `/profile/${accountId}` : "/profile"}>← プロフィールに戻る</Link>
+        <Link
+          to={
+            accountId
+              ? AppRoute.toPath(AppRoute.account(accountId))
+              : AppRoute.toPath(AppRoute.profile())
+          }
+        >
+          ← プロフィールに戻る
+        </Link>
       </p>
       {profile ? (
         <p className="app-muted">

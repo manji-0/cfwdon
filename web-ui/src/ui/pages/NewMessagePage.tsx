@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
+import { AppRoute } from "@/domain/navigation/route";
 import { Visibility } from "@/domain/status/visibility";
 import { findConversationByStatusId } from "@/infrastructure/api/conversations";
 import { createStatus } from "@/infrastructure/api/status";
@@ -46,16 +47,16 @@ export const NewMessagePage = () => {
     }
     const conversation = await findConversationByStatusId(result.value.id);
     if (conversation.isOk()) {
-      navigate(`/messages/${conversation.value.id}`);
+      navigate(AppRoute.toPath(AppRoute.conversation(conversation.value.id)));
       return;
     }
-    navigate("/messages");
+    navigate(AppRoute.toPath(AppRoute.messages()));
   };
 
   return (
     <AppShell title="新しいメッセージ">
       <p className="thread-back">
-        <Link to="/messages">← メッセージに戻る</Link>
+        <Link to={AppRoute.toPath(AppRoute.messages())}>← メッセージに戻る</Link>
       </p>
       <AccountSearchPicker
         placeholder="アカウントを検索"

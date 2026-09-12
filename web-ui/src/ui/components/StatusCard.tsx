@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import type { AccountRef } from "@/domain/account/account";
 import type { AccountList } from "@/domain/lists/list";
 import { MediaAttachment } from "@/domain/media/attachment";
+import { AppRoute } from "@/domain/navigation/route";
 import { StatusQuote } from "@/domain/status/quote";
 import { Status } from "@/domain/status/status";
 import type { StatusTranslation } from "@/domain/status/translation";
@@ -37,7 +38,7 @@ const AccountHeader = ({
   <div className="status-card-header">
     <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
     <div className="status-card-meta">
-      <Link className="status-display-name" to={`/profile/${account.id}`}>
+      <Link className="status-display-name" to={AppRoute.toPath(AppRoute.account(account.id))}>
         {account.displayName || account.username}
       </Link>
       <span className="status-acct">@{account.acct}</span>
@@ -113,7 +114,7 @@ export const StatusCard = ({
   };
 
   const handleCopyLink = async () => {
-    const permalink = `${window.location.origin}/app/status/${body.id}`;
+    const permalink = `${window.location.origin}${AppRoute.absoluteHref(AppRoute.status(body.id))}`;
     try {
       await navigator.clipboard.writeText(permalink);
       setMenuOpen(false);
@@ -236,7 +237,7 @@ export const StatusCard = ({
           ) : null}
           {card ? <LinkPreviewCard card={card} /> : null}
           {quote ? (
-            <Link className="status-quote" to={`/status/${quote.id}`}>
+            <Link className="status-quote" to={AppRoute.toPath(AppRoute.status(quote.id))}>
               <span className="status-quote-acct">@{quote.account.acct}</span>
               {quote.spoilerText ? (
                 <span className="app-muted">CW: {quote.spoilerText}</span>
@@ -253,7 +254,7 @@ export const StatusCard = ({
             ↩
           </button>
           {body.repliesCount > 0 ? (
-            <Link className="status-action-count" to={`/status/${body.id}`}>
+            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.status(body.id))}>
               {body.repliesCount}
             </Link>
           ) : null}
@@ -268,7 +269,7 @@ export const StatusCard = ({
             ↻
           </button>
           {body.reblogsCount > 0 ? (
-            <Link className="status-action-count" to={`/status/${body.id}/reblogged-by`}>
+            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.statusRebloggedBy(body.id))}>
               {body.reblogsCount}
             </Link>
           ) : null}
@@ -283,7 +284,7 @@ export const StatusCard = ({
             ♥
           </button>
           {body.favouritesCount > 0 ? (
-            <Link className="status-action-count" to={`/status/${body.id}/favourited-by`}>
+            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.statusFavouritedBy(body.id))}>
               {body.favouritesCount}
             </Link>
           ) : null}
@@ -298,7 +299,7 @@ export const StatusCard = ({
             {body.bookmarked ? "★" : "☆"}
           </button>
         ) : null}
-        <Link className="status-action" to={`/status/${body.id}`} aria-label="スレッドを開く">
+        <Link className="status-action" to={AppRoute.toPath(AppRoute.status(body.id))} aria-label="スレッドを開く">
           ⧉
         </Link>
         <button
@@ -321,7 +322,7 @@ export const StatusCard = ({
           <button type="button" onClick={() => void handleCopyLink()}>
             リンクをコピー
           </button>
-          <Link className="status-menu-link" to={`/status/${body.id}/quotes`} onClick={() => setMenuOpen(false)}>
+          <Link className="status-menu-link" to={AppRoute.toPath(AppRoute.statusQuotes(body.id))} onClick={() => setMenuOpen(false)}>
             引用一覧
           </Link>
           {onMuteConversation ? (

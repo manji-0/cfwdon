@@ -1,11 +1,12 @@
 import { useCallback } from "react";
 import { useLocation } from "react-router";
+import { AppRoute } from "@/domain/navigation/route";
 import { fetchPublicTimeline } from "@/infrastructure/api/status";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 
 export const PublicTimelinePage = () => {
   const { pathname } = useLocation();
-  const local = pathname.endsWith("/local");
+  const local = AppRoute.isLocalPublicTimeline(pathname);
   const fetchPage = useCallback(
     (query: { maxId?: string; limit?: number }) => fetchPublicTimeline({ ...query, local }),
     [local],

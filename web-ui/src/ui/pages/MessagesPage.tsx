@@ -4,6 +4,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { conversationTitle } from "@/domain/conversations/participants";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
@@ -83,7 +84,7 @@ export const MessagesPage = () => {
   }, [setUnreadCount]);
 
   const openConversation = (conversation: Conversation) => {
-    navigate(`/messages/${conversation.id}`);
+    navigate(AppRoute.toPath(AppRoute.conversation(conversation.id)));
   };
 
   const handleLoadMore = async () => {
@@ -118,7 +119,7 @@ export const MessagesPage = () => {
     <AppShell title="受信">
       <InboxTabs />
       <div className="messages-toolbar">
-        <Link className="app-button" to="/messages/new">
+        <Link className="app-button" to={AppRoute.toPath(AppRoute.newMessage())}>
           新しいメッセージ
         </Link>
       </div>

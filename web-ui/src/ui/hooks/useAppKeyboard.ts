@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { GoChord } from "@/domain/navigation/go-chord";
+import { AppRoute } from "@/domain/navigation/route";
 import { isOverlayOpen, isTypingTarget } from "@/ui/lib/keyboard";
 
 const statusCards = (): HTMLElement[] =>
@@ -88,7 +89,7 @@ export const useAppKeyboard = () => {
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        navigate(`/status/${statusId}`);
+        navigate(AppRoute.toPath(AppRoute.status(statusId)));
         return;
       }
 
@@ -107,7 +108,7 @@ export const useAppKeyboard = () => {
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        navigate(`/status/${statusId}`);
+        navigate(AppRoute.toPath(AppRoute.status(statusId)));
       }
     };
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   fetchStatusFavouritedBy,
   fetchStatusRebloggedBy,
@@ -100,7 +101,9 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
   return (
     <AppShell title={title}>
       <p className="thread-back">
-        <Link to={statusId ? `/status/${statusId}` : "/"}>← 投稿に戻る</Link>
+        <Link to={statusId ? AppRoute.toPath(AppRoute.status(statusId)) : AppRoute.toPath(AppRoute.home())}>
+          ← 投稿に戻る
+        </Link>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

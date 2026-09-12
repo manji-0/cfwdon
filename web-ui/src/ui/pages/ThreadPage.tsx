@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 import { createStatus, fetchStatus, fetchStatusContext } from "@/infrastructure/api/status";
@@ -74,7 +75,7 @@ export const ThreadPage = () => {
     onReplace: replaceStatus,
     onRemove: (removedId) => {
       if (removedId === statusId) {
-        navigate("/");
+        navigate(AppRoute.toPath(AppRoute.home()));
         return;
       }
       setAncestors((current) => Status.removeById(current, removedId));
@@ -106,7 +107,13 @@ export const ThreadPage = () => {
   return (
     <AppShell title={isDirectThread ? "ダイレクトメッセージ" : "スレッド"}>
       <p className="thread-back">
-        <Link to={isDirectThread ? "/messages" : "/"}>
+        <Link
+          to={
+            isDirectThread
+              ? AppRoute.toPath(AppRoute.messages())
+              : AppRoute.toPath(AppRoute.home())
+          }
+        >
           ← {isDirectThread ? "メッセージに戻る" : "ホームに戻る"}
         </Link>
       </p>
@@ -117,7 +124,7 @@ export const ThreadPage = () => {
           {isDirectThread ? (
             <p className="app-muted thread-dm-hint">
               ダイレクト返信は相手にのみ届きます。会話画面は{" "}
-              <Link to="/messages">メッセージ</Link> から開けます。
+              <Link to={AppRoute.toPath(AppRoute.messages())}>メッセージ</Link> から開けます。
             </p>
           ) : null}
           <div className="timeline">

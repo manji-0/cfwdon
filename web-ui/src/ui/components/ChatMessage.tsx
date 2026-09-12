@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
@@ -16,14 +17,14 @@ export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => {
   return (
     <article className={`chat-row${isOwn ? " is-own" : ""}`}>
       {isOwn ? null : (
-        <Link className="chat-author" to={`/profile/${body.account.id}`}>
+        <Link className="chat-author" to={AppRoute.toPath(AppRoute.account(body.account.id))}>
           <img className="status-avatar" src={body.account.avatar} alt="" loading="lazy" />
         </Link>
       )}
       <div className="chat-bubble">
         <div className="chat-meta">
           {isOwn ? null : (
-            <Link className="status-display-name" to={`/profile/${body.account.id}`}>
+            <Link className="status-display-name" to={AppRoute.toPath(AppRoute.account(body.account.id))}>
               {body.account.displayName || body.account.username}
             </Link>
           )}

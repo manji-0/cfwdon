@@ -147,12 +147,9 @@ Lowest churn. The package is already current. The incomplete `AppRoute` and stri
 
 ### Phase 0 — typed paths, same library
 
-Expand `AppRoute` (or a successor ADT) to cover status, profile-by-id, collection, and search-query variants. Point `GoChord`, `MeHubNav`, `InboxTabs`, `StatusCard`, and `useStatusActions` at `AppRoute.toPath`. Keep React Router. This is useful even if the library never changes.
+**Status:** done in this repository. `AppRoute` now covers status, profile-by-id, collections, and search query/type. `App.tsx` reads `AppRoute.pattern`. Call sites use `toPath` / `absoluteHref` instead of string literals. `route.test.ts` fails if `App.tsx` adds a `path="..."` other than `*`.
 
-Acceptance:
-
-- `fromPathname(toPath(route)) === route` for every kind, including `/status/:id` and `/profile/:id/followers`
-- `route.test.ts` fails if `App.tsx` grows a path the ADT does not know (or the route table is generated from the ADT)
+Keep React Router until Phase 1.
 
 ### Phase 1 — library spike on three routes
 

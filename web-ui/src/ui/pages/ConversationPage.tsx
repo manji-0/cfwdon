@@ -4,6 +4,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
 import { conversationAcctsLabel, conversationTitle } from "@/domain/conversations/participants";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   appendConversationStatus,
   flattenConversationStatuses,
@@ -154,13 +155,13 @@ export const ConversationPage = () => {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    navigate("/messages");
+    navigate(AppRoute.toPath(AppRoute.messages()));
   };
 
   return (
     <AppShell title={conversation ? conversationTitle(conversation.accounts) : "メッセージ"}>
       <p className="thread-back">
-        <Link to="/messages">← メッセージに戻る</Link>
+        <Link to={AppRoute.toPath(AppRoute.messages())}>← メッセージに戻る</Link>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

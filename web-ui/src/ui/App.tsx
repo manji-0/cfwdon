@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { loadSession } from "@/application/load-session";
+import { AppRoute } from "@/domain/navigation/route";
 import { SessionState } from "@/domain/session/session";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
@@ -63,31 +64,49 @@ const AppRoutes = ({
                 <AppKeyboard />
                 <Suspense fallback={<RouteFallback />}>
                   <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/public" element={<PublicTimelinePage />} />
-                    <Route path="/public/local" element={<PublicTimelinePage />} />
-                    <Route path="/tags/:tagName" element={<TagTimelinePage />} />
-                    <Route path="/explore" element={<Navigate to="/" replace />} />
-                    <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
-                    <Route path="/status/:statusId/favourited-by" element={<StatusFavouritedByPage />} />
-                    <Route path="/status/:statusId/reblogged-by" element={<StatusRebloggedByPage />} />
-                    <Route path="/status/:statusId/quotes" element={<StatusQuotesPage />} />
-                    <Route path="/status/:statusId" element={<ThreadPage />} />
-                    <Route path="/profile" element={<ProfilePage />} />
-                    <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
-                    <Route path="/profile/:accountId/following" element={<AccountFollowingPage />} />
-                    <Route path="/profile/:accountId" element={<ProfilePage />} />
-                    <Route path="/notifications" element={<NotificationsPage />} />
-                    <Route path="/search" element={<SearchPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                    <Route path="/bookmarks" element={<BookmarksPage />} />
-                    <Route path="/favourites" element={<FavouritesPage />} />
-                    <Route path="/scheduled" element={<ScheduledStatusesPage />} />
-                    <Route path="/lists" element={<ListsPage />} />
-                    <Route path="/messages" element={<MessagesPage />} />
-                    <Route path="/messages/new" element={<NewMessagePage />} />
-                    <Route path="/messages/:conversationId" element={<ConversationPage />} />
-                    <Route path="*" element={<Navigate to="/" replace />} />
+                    <Route path={AppRoute.pattern.home} element={<HomePage />} />
+                    <Route path={AppRoute.pattern.publicTimeline} element={<PublicTimelinePage />} />
+                    <Route
+                      path={AppRoute.pattern.publicTimelineLocal}
+                      element={<PublicTimelinePage />}
+                    />
+                    <Route path={AppRoute.pattern.tag} element={<TagTimelinePage />} />
+                    <Route
+                      path={AppRoute.pattern.explore}
+                      element={<Navigate to={AppRoute.toPath(AppRoute.home())} replace />}
+                    />
+                    <Route path={AppRoute.pattern.statusHistory} element={<StatusHistoryPage />} />
+                    <Route
+                      path={AppRoute.pattern.statusFavouritedBy}
+                      element={<StatusFavouritedByPage />}
+                    />
+                    <Route
+                      path={AppRoute.pattern.statusRebloggedBy}
+                      element={<StatusRebloggedByPage />}
+                    />
+                    <Route path={AppRoute.pattern.statusQuotes} element={<StatusQuotesPage />} />
+                    <Route path={AppRoute.pattern.status} element={<ThreadPage />} />
+                    <Route path={AppRoute.pattern.profile} element={<ProfilePage />} />
+                    <Route
+                      path={AppRoute.pattern.accountFollowers}
+                      element={<AccountFollowersPage />}
+                    />
+                    <Route
+                      path={AppRoute.pattern.accountFollowing}
+                      element={<AccountFollowingPage />}
+                    />
+                    <Route path={AppRoute.pattern.account} element={<ProfilePage />} />
+                    <Route path={AppRoute.pattern.notifications} element={<NotificationsPage />} />
+                    <Route path={AppRoute.pattern.search} element={<SearchPage />} />
+                    <Route path={AppRoute.pattern.settings} element={<SettingsPage />} />
+                    <Route path={AppRoute.pattern.bookmarks} element={<BookmarksPage />} />
+                    <Route path={AppRoute.pattern.favourites} element={<FavouritesPage />} />
+                    <Route path={AppRoute.pattern.scheduled} element={<ScheduledStatusesPage />} />
+                    <Route path={AppRoute.pattern.lists} element={<ListsPage />} />
+                    <Route path={AppRoute.pattern.messages} element={<MessagesPage />} />
+                    <Route path={AppRoute.pattern.newMessage} element={<NewMessagePage />} />
+                    <Route path={AppRoute.pattern.conversation} element={<ConversationPage />} />
+                    <Route path="*" element={<Navigate to={AppRoute.toPath(AppRoute.home())} replace />} />
                   </Routes>
                 </Suspense>
               </UnreadNotificationsProvider>
@@ -117,7 +136,7 @@ export const App = () => {
   }, []);
 
   return (
-    <BrowserRouter basename="/app">
+    <BrowserRouter basename={AppRoute.basename}>
       <AppRoutes session={session} setSession={setSession} />
     </BrowserRouter>
   );

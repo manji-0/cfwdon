@@ -1,10 +1,15 @@
+import { SearchType } from "@/domain/search/search";
+
 export type AppRoute =
   | Readonly<{ kind: "Home" }>
   | Readonly<{ kind: "PublicTimeline"; local: boolean }>
   | Readonly<{ kind: "Tag"; name: string }>
   | Readonly<{ kind: "Notifications" }>
-  | Readonly<{ kind: "Search" }>
+  | Readonly<{ kind: "Search"; query: string; type: SearchType }>
   | Readonly<{ kind: "Profile" }>
+  | Readonly<{ kind: "Account"; accountId: string }>
+  | Readonly<{ kind: "AccountFollowers"; accountId: string }>
+  | Readonly<{ kind: "AccountFollowing"; accountId: string }>
   | Readonly<{ kind: "Settings" }>
   | Readonly<{ kind: "Bookmarks" }>
   | Readonly<{ kind: "Favourites" }>
@@ -12,7 +17,12 @@ export type AppRoute =
   | Readonly<{ kind: "Lists" }>
   | Readonly<{ kind: "Messages" }>
   | Readonly<{ kind: "NewMessage" }>
-  | Readonly<{ kind: "Conversation"; conversationId: string }>;
+  | Readonly<{ kind: "Conversation"; conversationId: string }>
+  | Readonly<{ kind: "Status"; statusId: string }>
+  | Readonly<{ kind: "StatusHistory"; statusId: string }>
+  | Readonly<{ kind: "StatusFavouritedBy"; statusId: string }>
+  | Readonly<{ kind: "StatusRebloggedBy"; statusId: string }>
+  | Readonly<{ kind: "StatusQuotes"; statusId: string }>;
 
 const normalizePath = (pathname: string): string =>
   pathname
@@ -20,13 +30,67 @@ const normalizePath = (pathname: string): string =>
     .replace(/^\/+/, "")
     .replace(/\/$/, "");
 
+const splitHref = (href: string): Readonly<{ pathname: string; search: string }> => {
+  const queryIndex = href.indexOf("?");
+  if (queryIndex === -1) {
+    return { pathname: href, search: "" };
+  }
+  return { pathname: href.slice(0, queryIndex), search: href.slice(queryIndex + 1) };
+};
+
+const searchParams = (query: string, type: SearchType): URLSearchParams => {
+  const params = new URLSearchParams();
+  if (query !== "") {
+    params.set("q", query);
+  }
+  if (type !== "all") {
+    params.set("type", type);
+  }
+  return params;
+};
+
 export const AppRoute = {
+  basename: "/app",
+  loginHref: "/app/login",
+  logoutHref: "/app/logout",
+
+  /** React Router `path` values, in match order. */
+  pattern: {
+    home: "/",
+    publicTimeline: "/public",
+    publicTimelineLocal: "/public/local",
+    tag: "/tags/:tagName",
+    explore: "/explore",
+    statusHistory: "/status/:statusId/history",
+    statusFavouritedBy: "/status/:statusId/favourited-by",
+    statusRebloggedBy: "/status/:statusId/reblogged-by",
+    statusQuotes: "/status/:statusId/quotes",
+    status: "/status/:statusId",
+    profile: "/profile",
+    accountFollowers: "/profile/:accountId/followers",
+    accountFollowing: "/profile/:accountId/following",
+    account: "/profile/:accountId",
+    notifications: "/notifications",
+    search: "/search",
+    settings: "/settings",
+    bookmarks: "/bookmarks",
+    favourites: "/favourites",
+    scheduled: "/scheduled",
+    lists: "/lists",
+    messages: "/messages",
+    newMessage: "/messages/new",
+    conversation: "/messages/:conversationId",
+  },
+
   home: (): AppRoute => ({ kind: "Home" }),
   publicTimeline: (local = false): AppRoute => ({ kind: "PublicTimeline", local }),
   tag: (name: string): AppRoute => ({ kind: "Tag", name }),
   notifications: (): AppRoute => ({ kind: "Notifications" }),
-  search: (): AppRoute => ({ kind: "Search" }),
+  search: (query = "", type: SearchType = "all"): AppRoute => ({ kind: "Search", query, type }),
   profile: (): AppRoute => ({ kind: "Profile" }),
+  account: (accountId: string): AppRoute => ({ kind: "Account", accountId }),
+  accountFollowers: (accountId: string): AppRoute => ({ kind: "AccountFollowers", accountId }),
+  accountFollowing: (accountId: string): AppRoute => ({ kind: "AccountFollowing", accountId }),
   settings: (): AppRoute => ({ kind: "Settings" }),
   bookmarks: (): AppRoute => ({ kind: "Bookmarks" }),
   favourites: (): AppRoute => ({ kind: "Favourites" }),
@@ -35,9 +99,16 @@ export const AppRoute = {
   messages: (): AppRoute => ({ kind: "Messages" }),
   newMessage: (): AppRoute => ({ kind: "NewMessage" }),
   conversation: (conversationId: string): AppRoute => ({ kind: "Conversation", conversationId }),
+  status: (statusId: string): AppRoute => ({ kind: "Status", statusId }),
+  statusHistory: (statusId: string): AppRoute => ({ kind: "StatusHistory", statusId }),
+  statusFavouritedBy: (statusId: string): AppRoute => ({ kind: "StatusFavouritedBy", statusId }),
+  statusRebloggedBy: (statusId: string): AppRoute => ({ kind: "StatusRebloggedBy", statusId }),
+  statusQuotes: (statusId: string): AppRoute => ({ kind: "StatusQuotes", statusId }),
 
   fromPathname: (pathname: string): AppRoute => {
-    const normalized = normalizePath(pathname);
+    const { pathname: pathPart, search } = splitHref(pathname);
+    const normalized = normalizePath(pathPart);
+    const params = new URLSearchParams(search);
     const [head, ...rest] = normalized.split("/");
     switch (head) {
       case "":
@@ -51,9 +122,20 @@ export const AppRoute = {
       case "notifications":
         return AppRoute.notifications();
       case "search":
-        return AppRoute.search();
-      case "profile":
-        return AppRoute.profile();
+        return AppRoute.search(params.get("q") ?? "", SearchType.fromParam(params.get("type")));
+      case "profile": {
+        const accountId = rest[0];
+        if (!accountId) {
+          return AppRoute.profile();
+        }
+        if (rest.length === 2 && rest[1] === "followers") {
+          return AppRoute.accountFollowers(accountId);
+        }
+        if (rest.length === 2 && rest[1] === "following") {
+          return AppRoute.accountFollowing(accountId);
+        }
+        return AppRoute.account(accountId);
+      }
       case "settings":
         return AppRoute.settings();
       case "bookmarks":
@@ -64,6 +146,25 @@ export const AppRoute = {
         return AppRoute.scheduled();
       case "lists":
         return AppRoute.lists();
+      case "status": {
+        const statusId = rest[0];
+        if (!statusId) {
+          return AppRoute.home();
+        }
+        if (rest.length === 2 && rest[1] === "history") {
+          return AppRoute.statusHistory(statusId);
+        }
+        if (rest.length === 2 && rest[1] === "favourited-by") {
+          return AppRoute.statusFavouritedBy(statusId);
+        }
+        if (rest.length === 2 && rest[1] === "reblogged-by") {
+          return AppRoute.statusRebloggedBy(statusId);
+        }
+        if (rest.length === 2 && rest[1] === "quotes") {
+          return AppRoute.statusQuotes(statusId);
+        }
+        return AppRoute.status(statusId);
+      }
       case "messages": {
         if (rest.length === 0) {
           return AppRoute.messages();
@@ -91,10 +192,18 @@ export const AppRoute = {
         return `/tags/${encodeURIComponent(route.name)}`;
       case "Notifications":
         return "/notifications";
-      case "Search":
-        return "/search";
+      case "Search": {
+        const query = searchParams(route.query, route.type).toString();
+        return query.length > 0 ? `/search?${query}` : "/search";
+      }
       case "Profile":
         return "/profile";
+      case "Account":
+        return `/profile/${route.accountId}`;
+      case "AccountFollowers":
+        return `/profile/${route.accountId}/followers`;
+      case "AccountFollowing":
+        return `/profile/${route.accountId}/following`;
       case "Settings":
         return "/settings";
       case "Bookmarks":
@@ -111,16 +220,31 @@ export const AppRoute = {
         return "/messages/new";
       case "Conversation":
         return `/messages/${route.conversationId}`;
+      case "Status":
+        return `/status/${route.statusId}`;
+      case "StatusHistory":
+        return `/status/${route.statusId}/history`;
+      case "StatusFavouritedBy":
+        return `/status/${route.statusId}/favourited-by`;
+      case "StatusRebloggedBy":
+        return `/status/${route.statusId}/reblogged-by`;
+      case "StatusQuotes":
+        return `/status/${route.statusId}/quotes`;
     }
   },
 
+  toSearchParams: (query: string, type: SearchType = "all"): URLSearchParams =>
+    searchParams(query, type),
+
+  absoluteHref: (route: AppRoute): string => `${AppRoute.basename}${AppRoute.toPath(route)}`,
+
   isInboxPath: (pathname: string): boolean => {
-    const normalized = normalizePath(pathname);
+    const normalized = normalizePath(splitHref(pathname).pathname);
     return normalized === "notifications" || normalized.startsWith("messages");
   },
 
   isMePath: (pathname: string, selfAccountId: string | null): boolean => {
-    const normalized = normalizePath(pathname);
+    const normalized = normalizePath(splitHref(pathname).pathname);
     if (
       normalized === "profile" ||
       normalized === "settings" ||
@@ -140,6 +264,11 @@ export const AppRoute = {
     );
   },
 
+  isLocalPublicTimeline: (pathname: string): boolean => {
+    const route = AppRoute.fromPathname(pathname);
+    return route.kind === "PublicTimeline" && route.local;
+  },
+
   label: (route: AppRoute): string => {
     switch (route.kind) {
       case "Home":
@@ -154,6 +283,12 @@ export const AppRoute = {
         return "検索";
       case "Profile":
         return "自分";
+      case "Account":
+        return "プロフィール";
+      case "AccountFollowers":
+        return "フォロワー";
+      case "AccountFollowing":
+        return "フォロー中";
       case "Settings":
         return "設定";
       case "Bookmarks":
@@ -168,6 +303,16 @@ export const AppRoute = {
       case "NewMessage":
       case "Conversation":
         return "メッセージ";
+      case "Status":
+        return "スレッド";
+      case "StatusHistory":
+        return "編集履歴";
+      case "StatusFavouritedBy":
+        return "いいねした人";
+      case "StatusRebloggedBy":
+        return "ブーストした人";
+      case "StatusQuotes":
+        return "引用";
     }
   },
 } as const;
