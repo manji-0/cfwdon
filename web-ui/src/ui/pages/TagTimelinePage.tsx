@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { fetchTagTimeline } from "@/infrastructure/api/status";
 import { fetchFollowedTags, followTag, unfollowTag } from "@/infrastructure/api/tags";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 
 export const TagTimelinePage = () => {
-  const { tagName = "" } = useParams();
+  const { tagName = "" } = useAppParams();
   const tag = decodeURIComponent(tagName).replace(/^#/, "");
   const [following, setFollowing] = useState(false);
   const [saving, setSaving] = useState(false);

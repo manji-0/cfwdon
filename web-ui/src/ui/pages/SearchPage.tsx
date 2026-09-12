@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearch } from "@tanstack/react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { AppRoute } from "@/domain/navigation/route";
 import {
@@ -15,7 +15,9 @@ import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { AppLink } from "@/ui/lib/app-link";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 
 const typedCount = (results: SearchResults, type: SearchTypeValue): number => {
@@ -51,9 +53,12 @@ const mergeResults = (
 export const SearchPage = () => {
   const { session } = useSession();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
-  const [searchParams, setSearchParams] = useSearchParams();
-  const queryFromUrl = searchParams.get("q") ?? "";
-  const typeFromUrl = SearchType.fromParam(searchParams.get("type"));
+  const navigate = useAppNavigate();
+  const searchState = useSearch({ strict: false }) as Readonly<{ q?: string; type?: string }>;
+  const queryFromUrl = typeof searchState.q === "string" ? searchState.q : "";
+  const typeFromUrl = SearchType.fromParam(
+    typeof searchState.type === "string" ? searchState.type : null,
+  );
   const [query, setQuery] = useState(queryFromUrl);
   const [results, setResults] = useState<SearchResults>(emptySearchResults());
   const [loading, setLoading] = useState(false);
@@ -130,15 +135,15 @@ export const SearchPage = () => {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) {
-      setSearchParams(AppRoute.toSearchParams("", "all"));
+      navigate(AppRoute.search("", "all"));
       return;
     }
-    setSearchParams(AppRoute.toSearchParams(trimmed, typeFromUrl));
+    navigate(AppRoute.search(trimmed, typeFromUrl));
   };
 
   const handleTypeChange = (type: SearchTypeValue) => {
     const trimmed = (queryFromUrl || query).trim();
-    setSearchParams(AppRoute.toSearchParams(trimmed, type));
+    navigate(AppRoute.search(trimmed, type));
   };
 
   const handleLoadMore = async () => {
@@ -253,9 +258,9 @@ export const SearchPage = () => {
           <ul className="search-hashtags">
             {results.hashtags.map((tag) => (
               <li key={tag.id}>
-                <Link className="search-hashtag" to={AppRoute.toPath(AppRoute.tag(tag.name))}>
+                <AppLink className="search-hashtag" to={AppRoute.tag(tag.name)}>
                   #{tag.name}
-                </Link>
+                </AppLink>
               </li>
             ))}
           </ul>

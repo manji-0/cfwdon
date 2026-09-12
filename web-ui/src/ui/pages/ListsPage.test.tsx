@@ -23,7 +23,7 @@ describe("ListsPage", () => {
     const user = userEvent.setup();
     const { recorded, restore } = stubFetch(listRoutes);
     try {
-      renderPage(<ListsPage />, { path: "/lists" });
+      await renderPage(<ListsPage />, { path: "/lists" });
       await screen.findByRole("button", { name: "Friends" });
       await user.click(screen.getByRole("button", { name: "削除" }));
       const dialog = screen.getByRole("dialog");
@@ -44,7 +44,7 @@ describe("ListsPage", () => {
       "DELETE /api/v1/lists/list-1": () => emptyResponse(),
     });
     try {
-      renderPage(<ListsPage />, { path: "/lists" });
+      await renderPage(<ListsPage />, { path: "/lists" });
       await screen.findByRole("button", { name: "Friends" });
       await user.click(screen.getByRole("button", { name: "削除" }));
       await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }));

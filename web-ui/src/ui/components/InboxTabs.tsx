@@ -1,20 +1,20 @@
-import { NavLink } from "react-router";
 import { AppRoute } from "@/domain/navigation/route";
+import { AppLink } from "@/ui/lib/app-link";
 
 export const InboxTabs = () => (
   <nav className="timeline-tabs" aria-label="受信">
-    <NavLink
-      to={AppRoute.toPath(AppRoute.notifications())}
+    <AppLink
+      to={AppRoute.notifications()}
       end
       className={({ isActive }) => (isActive ? "is-active" : undefined)}
     >
       通知
-    </NavLink>
-    <NavLink
-      to={AppRoute.toPath(AppRoute.messages())}
+    </AppLink>
+    <AppLink
+      to={AppRoute.messages()}
       className={({ isActive }) => (isActive ? "is-active" : undefined)}
     >
       メッセージ
-    </NavLink>
+    </AppLink>
   </nav>
 );

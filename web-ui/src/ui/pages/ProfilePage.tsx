@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
@@ -70,7 +71,7 @@ const emptyMessageForTab = (tab: ProfileTab): string => {
 };
 
 export const ProfilePage = () => {
-  const { accountId: routeAccountId } = useParams();
+  const { accountId: routeAccountId } = useAppParams();
   const { session } = useSession();
   const { prompt, alert } = useConfirm();
   const cache = useViewCache();
@@ -486,7 +487,7 @@ export const ProfilePage = () => {
               <ul className="profile-featured-tags">
                 {featuredTags.map((tag) => (
                   <li key={tag.id}>
-                    <Link to={AppRoute.toPath(AppRoute.tag(tag.name))}>#{tag.name}</Link>
+                    <AppLink to={AppRoute.tag(tag.name)}>#{tag.name}</AppLink>
                     <span className="app-muted">{tag.statusesCount}</span>
                   </li>
                 ))}
@@ -494,12 +495,12 @@ export const ProfilePage = () => {
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>
-              <Link to={AppRoute.toPath(AppRoute.accountFollowing(profile.id))}>
+              <AppLink to={AppRoute.accountFollowing(profile.id)}>
                 {profile.followingCount} フォロー
-              </Link>
-              <Link to={AppRoute.toPath(AppRoute.accountFollowers(profile.id))}>
+              </AppLink>
+              <AppLink to={AppRoute.accountFollowers(profile.id)}>
                 {profile.followersCount} フォロワー
-              </Link>
+              </AppLink>
             </p>
           </div>
         </header>

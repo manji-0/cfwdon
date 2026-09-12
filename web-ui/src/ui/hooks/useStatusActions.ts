@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useNavigate } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { AppRoute } from "@/domain/navigation/route";
 import { Status, type OriginalStatus } from "@/domain/status/status";
@@ -49,7 +49,7 @@ export const useStatusActions = (options: {
   onRemove?: (statusId: string) => void;
   onError: (message: string) => void;
 }): StatusActionHandlers => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { openQuote, openEdit } = useCompose();
   const { confirm, alert } = useConfirm();
   const selfAccountId = options.selfAccountId ?? null;
@@ -219,7 +219,7 @@ export const useStatusActions = (options: {
     onFavourite: (status) => void handleFavourite(status),
     onReblog: (status) => void handleReblog(status),
     onBookmark: (status) => void handleBookmark(status),
-    onReply: (status) => navigate(AppRoute.toPath(AppRoute.status(status.id))),
+    onReply: (status) => navigate(AppRoute.status(status.id)),
     onDelete: (status) => void handleDelete(status),
     onMute: (status) => void handleMute(status),
     onBlock: (status) => void handleBlock(status),
@@ -234,7 +234,7 @@ export const useStatusActions = (options: {
         account: status.account,
       }),
     onEdit: (status) => openEdit(status.id),
-    onHistory: (status) => navigate(AppRoute.toPath(AppRoute.statusHistory(status.id))),
+    onHistory: (status) => navigate(AppRoute.statusHistory(status.id)),
     onMuteConversation: (status) => void handleMuteConversation(status),
   };
 };

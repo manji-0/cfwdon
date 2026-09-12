@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { AppRoute } from "@/domain/navigation/route";
@@ -18,7 +19,7 @@ import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 type CollectionKind = "followers" | "following";
 
 export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind }>) => {
-  const { accountId: routeAccountId } = useParams();
+  const { accountId: routeAccountId } = useAppParams();
   const { session } = useSession();
   const selfId = session.kind === "Authenticated" ? session.account.id : null;
   const accountId = routeAccountId ?? selfId;
@@ -123,15 +124,15 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
   return (
     <AppShell title={title}>
       <p className="thread-back">
-        <Link
+        <AppLink
           to={
             accountId
-              ? AppRoute.toPath(AppRoute.account(accountId))
-              : AppRoute.toPath(AppRoute.profile())
+              ? AppRoute.account(accountId)
+              : AppRoute.profile()
           }
         >
           ← プロフィールに戻る
-        </Link>
+        </AppLink>
       </p>
       {profile ? (
         <p className="app-muted">

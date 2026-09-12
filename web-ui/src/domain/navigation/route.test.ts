@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppRoute } from "@/domain/navigation/route";
-import appSource from "@/ui/App.tsx?raw";
+import routerSource from "@/ui/router.tsx?raw";
 
 describe("AppRoute", () => {
   it("maps pathnames to routes", () => {
@@ -115,11 +115,24 @@ describe("AppRoute", () => {
     expect(AppRoute.isMePath("/profile/other", "acct-1")).toBe(false);
   });
 
-  it("keeps App.tsx route paths on AppRoute.pattern", () => {
-    for (const key of Object.keys(AppRoute.pattern)) {
-      expect(appSource).toContain(`AppRoute.pattern.${key}`);
+  it("round-trips through toLink", () => {
+    expect(AppRoute.toLink(AppRoute.home())).toEqual({ to: AppRoute.path.home });
+    expect(AppRoute.toLink(AppRoute.status("s1"))).toEqual({
+      to: AppRoute.path.status,
+      params: { statusId: "s1" },
+    });
+    expect(AppRoute.toLink(AppRoute.search("hello", "accounts"))).toEqual({
+      to: AppRoute.path.search,
+      search: { q: "hello", type: "accounts" },
+    });
+  });
+
+  it("keeps router.tsx paths on AppRoute.path", () => {
+    for (const key of Object.keys(AppRoute.path)) {
+      expect(routerSource).toContain(`AppRoute.path.${key}`);
     }
-    const pathLiterals = [...appSource.matchAll(/path="([^"]*)"/g)].map((match) => match[1]);
-    expect(pathLiterals).toEqual(["*"]);
+    const pathLiterals = [...routerSource.matchAll(/path:\s*"([^"]*)"/g)].map((match) => match[1]);
+    expect(pathLiterals).toEqual([]);
+    expect(routerSource).toContain("lazy-pages");
   });
 });

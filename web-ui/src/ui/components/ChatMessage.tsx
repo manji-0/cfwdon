@@ -1,6 +1,6 @@
-import { Link } from "react-router";
 import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
+import { AppLink } from "@/ui/lib/app-link";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { formatRelativeTime } from "@/ui/lib/time";
@@ -17,16 +17,16 @@ export const ChatMessage = ({ status, isOwn }: ChatMessageProps) => {
   return (
     <article className={`chat-row${isOwn ? " is-own" : ""}`}>
       {isOwn ? null : (
-        <Link className="chat-author" to={AppRoute.toPath(AppRoute.account(body.account.id))}>
+        <AppLink className="chat-author" to={AppRoute.account(body.account.id)}>
           <img className="status-avatar" src={body.account.avatar} alt="" loading="lazy" />
-        </Link>
+        </AppLink>
       )}
       <div className="chat-bubble">
         <div className="chat-meta">
           {isOwn ? null : (
-            <Link className="status-display-name" to={AppRoute.toPath(AppRoute.account(body.account.id))}>
+            <AppLink className="status-display-name" to={AppRoute.account(body.account.id)}>
               {body.account.displayName || body.account.username}
-            </Link>
+            </AppLink>
           )}
           <span className="app-muted">{formatRelativeTime(body.createdAt)}</span>
         </div>

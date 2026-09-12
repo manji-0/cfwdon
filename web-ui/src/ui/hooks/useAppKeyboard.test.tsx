@@ -1,24 +1,25 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
-import { MemoryRouter, useLocation } from "react-router";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { AppKeyboard } from "@/ui/hooks/useAppKeyboard";
+import { useAppPathname } from "@/ui/hooks/useAppPathname";
+import { renderWithRouter } from "@/ui/test/render-page";
 
 const LocationProbe = () => {
-  const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+  const pathname = useAppPathname();
+  return <div data-testid="location">{pathname}</div>;
 };
 
 const renderKeyboard = (overlay = false) =>
-  render(
-    <MemoryRouter>
+  renderWithRouter(
+    <>
       <AppKeyboard />
       <LocationProbe />
       {overlay ? <div data-app-overlay="true">overlay</div> : null}
       <article data-status-id="s1">one</article>
       <article data-status-id="s2">two</article>
       <input data-testid="composer" />
-    </MemoryRouter>,
+    </>,
   );
 
 const press = (key: string, target: EventTarget = window): void => {
@@ -33,7 +34,7 @@ describe("useAppKeyboard", () => {
   });
 
   it("moves j/k focus across status cards and opens the focused status", async () => {
-    renderKeyboard();
+    await renderKeyboard();
     press("j");
     expect(document.querySelector('[data-status-id="s1"]')?.classList.contains("is-focused")).toBe(true);
     press("j");
@@ -47,7 +48,7 @@ describe("useAppKeyboard", () => {
   });
 
   it("navigates with a g chord", async () => {
-    renderKeyboard();
+    await renderKeyboard();
     press("g");
     press("n");
     await waitFor(() => {
@@ -55,14 +56,14 @@ describe("useAppKeyboard", () => {
     });
   });
 
-  it("ignores j while an overlay is open", () => {
-    renderKeyboard(true);
+  it("ignores j while an overlay is open", async () => {
+    await renderKeyboard(true);
     press("j");
     expect(document.querySelector('[data-status-id="s1"]')?.classList.contains("is-focused")).toBe(false);
   });
 
-  it("ignores j while the user is typing", () => {
-    renderKeyboard();
+  it("ignores j while the user is typing", async () => {
+    await renderKeyboard();
     press("j", screen.getByTestId("composer"));
     expect(document.querySelector('[data-status-id="s1"]')?.classList.contains("is-focused")).toBe(false);
   });

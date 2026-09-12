@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
@@ -13,8 +15,8 @@ import { useSession } from "@/ui/context/SessionContext";
 
 export const ThreadPage = () => {
   const composerRef = useRef<ComposerHandle>(null);
-  const { statusId = "" } = useParams();
-  const navigate = useNavigate();
+  const { statusId = "" } = useAppParams();
+  const navigate = useAppNavigate();
   const { session } = useSession();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const [focus, setFocus] = useState<Status | null>(null);
@@ -75,7 +77,7 @@ export const ThreadPage = () => {
     onReplace: replaceStatus,
     onRemove: (removedId) => {
       if (removedId === statusId) {
-        navigate(AppRoute.toPath(AppRoute.home()));
+        navigate(AppRoute.home());
         return;
       }
       setAncestors((current) => Status.removeById(current, removedId));
@@ -107,15 +109,15 @@ export const ThreadPage = () => {
   return (
     <AppShell title={isDirectThread ? "ダイレクトメッセージ" : "スレッド"}>
       <p className="thread-back">
-        <Link
+        <AppLink
           to={
             isDirectThread
-              ? AppRoute.toPath(AppRoute.messages())
-              : AppRoute.toPath(AppRoute.home())
+              ? AppRoute.messages()
+              : AppRoute.home()
           }
         >
           ← {isDirectThread ? "メッセージに戻る" : "ホームに戻る"}
-        </Link>
+        </AppLink>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}
@@ -124,7 +126,7 @@ export const ThreadPage = () => {
           {isDirectThread ? (
             <p className="app-muted thread-dm-hint">
               ダイレクト返信は相手にのみ届きます。会話画面は{" "}
-              <Link to={AppRoute.toPath(AppRoute.messages())}>メッセージ</Link> から開けます。
+              <AppLink to={AppRoute.messages()}>メッセージ</AppLink> から開けます。
             </p>
           ) : null}
           <div className="timeline">

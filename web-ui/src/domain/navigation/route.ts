@@ -49,27 +49,33 @@ const searchParams = (query: string, type: SearchType): URLSearchParams => {
   return params;
 };
 
+export type AppLinkTarget = Readonly<{
+  to: string;
+  params?: Readonly<Record<string, string>>;
+  search?: Readonly<{ q?: string; type?: Exclude<SearchType, "all"> }>;
+}>;
+
 export const AppRoute = {
   basename: "/app",
   loginHref: "/app/login",
   logoutHref: "/app/logout",
 
-  /** React Router `path` values, in match order. */
-  pattern: {
+  /** TanStack Router `path` values, in match order. */
+  path: {
     home: "/",
     publicTimeline: "/public",
     publicTimelineLocal: "/public/local",
-    tag: "/tags/:tagName",
+    tag: "/tags/$tagName",
     explore: "/explore",
-    statusHistory: "/status/:statusId/history",
-    statusFavouritedBy: "/status/:statusId/favourited-by",
-    statusRebloggedBy: "/status/:statusId/reblogged-by",
-    statusQuotes: "/status/:statusId/quotes",
-    status: "/status/:statusId",
+    statusHistory: "/status/$statusId/history",
+    statusFavouritedBy: "/status/$statusId/favourited-by",
+    statusRebloggedBy: "/status/$statusId/reblogged-by",
+    statusQuotes: "/status/$statusId/quotes",
+    status: "/status/$statusId",
     profile: "/profile",
-    accountFollowers: "/profile/:accountId/followers",
-    accountFollowing: "/profile/:accountId/following",
-    account: "/profile/:accountId",
+    accountFollowers: "/profile/$accountId/followers",
+    accountFollowing: "/profile/$accountId/following",
+    account: "/profile/$accountId",
     notifications: "/notifications",
     search: "/search",
     settings: "/settings",
@@ -79,7 +85,7 @@ export const AppRoute = {
     lists: "/lists",
     messages: "/messages",
     newMessage: "/messages/new",
-    conversation: "/messages/:conversationId",
+    conversation: "/messages/$conversationId",
   },
 
   home: (): AppRoute => ({ kind: "Home" }),
@@ -235,6 +241,63 @@ export const AppRoute = {
 
   toSearchParams: (query: string, type: SearchType = "all"): URLSearchParams =>
     searchParams(query, type),
+
+  toLink: (route: AppRoute): AppLinkTarget => {
+    switch (route.kind) {
+      case "Home":
+        return { to: AppRoute.path.home };
+      case "PublicTimeline":
+        return {
+          to: route.local ? AppRoute.path.publicTimelineLocal : AppRoute.path.publicTimeline,
+        };
+      case "Tag":
+        return { to: AppRoute.path.tag, params: { tagName: route.name } };
+      case "Notifications":
+        return { to: AppRoute.path.notifications };
+      case "Search":
+        return {
+          to: AppRoute.path.search,
+          search: {
+            q: route.query === "" ? undefined : route.query,
+            type: route.type === "all" ? undefined : route.type,
+          },
+        };
+      case "Profile":
+        return { to: AppRoute.path.profile };
+      case "Account":
+        return { to: AppRoute.path.account, params: { accountId: route.accountId } };
+      case "AccountFollowers":
+        return { to: AppRoute.path.accountFollowers, params: { accountId: route.accountId } };
+      case "AccountFollowing":
+        return { to: AppRoute.path.accountFollowing, params: { accountId: route.accountId } };
+      case "Settings":
+        return { to: AppRoute.path.settings };
+      case "Bookmarks":
+        return { to: AppRoute.path.bookmarks };
+      case "Favourites":
+        return { to: AppRoute.path.favourites };
+      case "Scheduled":
+        return { to: AppRoute.path.scheduled };
+      case "Lists":
+        return { to: AppRoute.path.lists };
+      case "Messages":
+        return { to: AppRoute.path.messages };
+      case "NewMessage":
+        return { to: AppRoute.path.newMessage };
+      case "Conversation":
+        return { to: AppRoute.path.conversation, params: { conversationId: route.conversationId } };
+      case "Status":
+        return { to: AppRoute.path.status, params: { statusId: route.statusId } };
+      case "StatusHistory":
+        return { to: AppRoute.path.statusHistory, params: { statusId: route.statusId } };
+      case "StatusFavouritedBy":
+        return { to: AppRoute.path.statusFavouritedBy, params: { statusId: route.statusId } };
+      case "StatusRebloggedBy":
+        return { to: AppRoute.path.statusRebloggedBy, params: { statusId: route.statusId } };
+      case "StatusQuotes":
+        return { to: AppRoute.path.statusQuotes, params: { statusId: route.statusId } };
+    }
+  },
 
   absoluteHref: (route: AppRoute): string => `${AppRoute.basename}${AppRoute.toPath(route)}`,
 

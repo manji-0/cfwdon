@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { AppLink } from "@/ui/lib/app-link";
 import type { AccountRef } from "@/domain/account/account";
 import type { AccountList } from "@/domain/lists/list";
 import { MediaAttachment } from "@/domain/media/attachment";
@@ -38,9 +38,9 @@ const AccountHeader = ({
   <div className="status-card-header">
     <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
     <div className="status-card-meta">
-      <Link className="status-display-name" to={AppRoute.toPath(AppRoute.account(account.id))}>
+      <AppLink className="status-display-name" to={AppRoute.account(account.id)}>
         {account.displayName || account.username}
-      </Link>
+      </AppLink>
       <span className="status-acct">@{account.acct}</span>
       <span className="status-time">· {formatRelativeTime(createdAt)}</span>
       {editedAt ? <span className="status-time">· 編集済み</span> : null}
@@ -237,14 +237,14 @@ export const StatusCard = ({
           ) : null}
           {card ? <LinkPreviewCard card={card} /> : null}
           {quote ? (
-            <Link className="status-quote" to={AppRoute.toPath(AppRoute.status(quote.id))}>
+            <AppLink className="status-quote" to={AppRoute.status(quote.id)}>
               <span className="status-quote-acct">@{quote.account.acct}</span>
               {quote.spoilerText ? (
                 <span className="app-muted">CW: {quote.spoilerText}</span>
               ) : (
                 <StatusContent html={quote.content} />
               )}
-            </Link>
+            </AppLink>
           ) : null}
         </>
       ) : null}
@@ -254,9 +254,9 @@ export const StatusCard = ({
             ↩
           </button>
           {body.repliesCount > 0 ? (
-            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.status(body.id))}>
+            <AppLink className="status-action-count" to={AppRoute.status(body.id)}>
               {body.repliesCount}
-            </Link>
+            </AppLink>
           ) : null}
         </span>
         <span className="status-action-group">
@@ -269,9 +269,9 @@ export const StatusCard = ({
             ↻
           </button>
           {body.reblogsCount > 0 ? (
-            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.statusRebloggedBy(body.id))}>
+            <AppLink className="status-action-count" to={AppRoute.statusRebloggedBy(body.id)}>
               {body.reblogsCount}
-            </Link>
+            </AppLink>
           ) : null}
         </span>
         <span className="status-action-group">
@@ -284,9 +284,9 @@ export const StatusCard = ({
             ♥
           </button>
           {body.favouritesCount > 0 ? (
-            <Link className="status-action-count" to={AppRoute.toPath(AppRoute.statusFavouritedBy(body.id))}>
+            <AppLink className="status-action-count" to={AppRoute.statusFavouritedBy(body.id)}>
               {body.favouritesCount}
-            </Link>
+            </AppLink>
           ) : null}
         </span>
         {onBookmark ? (
@@ -299,9 +299,9 @@ export const StatusCard = ({
             {body.bookmarked ? "★" : "☆"}
           </button>
         ) : null}
-        <Link className="status-action" to={AppRoute.toPath(AppRoute.status(body.id))} aria-label="スレッドを開く">
+        <AppLink className="status-action" to={AppRoute.status(body.id)} aria-label="スレッドを開く">
           ⧉
-        </Link>
+        </AppLink>
         <button
           type="button"
           className={`status-action${menuOpen ? " is-active" : ""}`}
@@ -322,9 +322,9 @@ export const StatusCard = ({
           <button type="button" onClick={() => void handleCopyLink()}>
             リンクをコピー
           </button>
-          <Link className="status-menu-link" to={AppRoute.toPath(AppRoute.statusQuotes(body.id))} onClick={() => setMenuOpen(false)}>
+          <AppLink className="status-menu-link" to={AppRoute.statusQuotes(body.id)} onClick={() => setMenuOpen(false)}>
             引用一覧
-          </Link>
+          </AppLink>
           {onMuteConversation ? (
             <button type="button" onClick={() => onMuteConversation(body)}>
               {body.muted ? "会話のミュートを解除" : "会話をミュート"}
