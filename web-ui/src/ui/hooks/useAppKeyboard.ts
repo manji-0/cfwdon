@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useNavigate } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
 import { GoChord } from "@/domain/navigation/go-chord";
+import { AppRoute } from "@/domain/navigation/route";
 import { isOverlayOpen, isTypingTarget } from "@/ui/lib/keyboard";
 
 const statusCards = (): HTMLElement[] =>
@@ -23,7 +24,7 @@ const focusedStatusId = (cards: ReadonlyArray<HTMLElement>, index: number): stri
   cards[index]?.dataset.statusId ?? null;
 
 export const useAppKeyboard = () => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const indexRef = useRef(-1);
   const pendingGAtRef = useRef(0);
 
@@ -39,12 +40,12 @@ export const useAppKeyboard = () => {
 
       const now = Date.now();
       if (pendingGAtRef.current > 0 && now - pendingGAtRef.current <= GoChord.timeoutMs) {
-        const path = GoChord.pathFor(event.key);
+        const route = GoChord.routeFor(event.key);
         pendingGAtRef.current = 0;
-        if (path) {
+        if (route) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          navigate(path);
+          navigate(route);
         }
         return;
       }
@@ -88,7 +89,7 @@ export const useAppKeyboard = () => {
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        navigate(`/status/${statusId}`);
+        navigate(AppRoute.status(statusId));
         return;
       }
 
@@ -107,7 +108,7 @@ export const useAppKeyboard = () => {
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        navigate(`/status/${statusId}`);
+        navigate(AppRoute.status(statusId));
       }
     };
 

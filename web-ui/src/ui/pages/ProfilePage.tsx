@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { Relationship } from "@/domain/account/relationship";
 import { CachedView } from "@/domain/cache/cached-view";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import type { FeaturedTag } from "@/domain/tags/featured-tag";
 import { fetchAccountStatuses } from "@/infrastructure/api/account";
@@ -69,7 +71,7 @@ const emptyMessageForTab = (tab: ProfileTab): string => {
 };
 
 export const ProfilePage = () => {
-  const { accountId: routeAccountId } = useParams();
+  const { accountId: routeAccountId } = useAppParams();
   const { session } = useSession();
   const { prompt, alert } = useConfirm();
   const cache = useViewCache();
@@ -367,9 +369,9 @@ export const ProfilePage = () => {
       <AppShell title="プロフィール">
         <div className="app-card">
           <p className="app-muted">ログインするとプロフィールを表示できます。</p>
-          <Link className="app-button" to="/login">
+          <a className="app-button" href={AppRoute.loginHref}>
             ログイン
-          </Link>
+          </a>
         </div>
       </AppShell>
     );
@@ -485,7 +487,7 @@ export const ProfilePage = () => {
               <ul className="profile-featured-tags">
                 {featuredTags.map((tag) => (
                   <li key={tag.id}>
-                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>#{tag.name}</Link>
+                    <AppLink to={AppRoute.tag(tag.name)}>#{tag.name}</AppLink>
                     <span className="app-muted">{tag.statusesCount}</span>
                   </li>
                 ))}
@@ -493,10 +495,12 @@ export const ProfilePage = () => {
             ) : null}
             <p className="profile-stats app-muted">
               <span>{profile.statusesCount} 投稿</span>
-              <Link to={`/profile/${profile.id}/following`}>{profile.followingCount} フォロー</Link>
-              <Link to={`/profile/${profile.id}/followers`}>
+              <AppLink to={AppRoute.accountFollowing(profile.id)}>
+                {profile.followingCount} フォロー
+              </AppLink>
+              <AppLink to={AppRoute.accountFollowers(profile.id)}>
                 {profile.followersCount} フォロワー
-              </Link>
+              </AppLink>
             </p>
           </div>
         </header>

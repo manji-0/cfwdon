@@ -1,6 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
-import { MemoryRouter } from "react-router";
-import { cleanup, render, type RenderResult } from "@testing-library/react";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import { act, cleanup, render, type RenderResult } from "@testing-library/react";
 import { SessionState } from "@/domain/session/session";
 import { ViewCache } from "@/domain/cache/view-cache";
 import { ProfileSet } from "@/domain/cache/profile-set";
@@ -21,6 +21,7 @@ import {
 } from "@/ui/context/ViewCacheContext";
 import { resetAnnouncementBannerCache } from "@/ui/components/AnnouncementBanner";
 import type { AccountSummary } from "@/domain/session/account";
+import { createAppRouter } from "@/ui/router";
 
 export const TEST_ACCOUNT = {
   id: "acct-1",
@@ -86,15 +87,26 @@ const AppTestProviders = ({ children }: Readonly<{ children: ReactNode }>) => {
   );
 };
 
+export const renderWithRouter = async (
+  ui: ReactElement,
+  options: Readonly<{ path?: string }> = {},
+): Promise<RenderResult> => {
+  const Root = () => <AppTestProviders>{ui}</AppTestProviders>;
+  const router = createAppRouter({
+    history: createMemoryHistory({ initialEntries: [options.path ?? "/"] }),
+    basepath: "/",
+    RootComponent: Root,
+  });
+  await act(async () => {
+    await router.load();
+  });
+  return render(<RouterProvider router={router} />);
+};
+
 export const renderPage = (
   ui: ReactElement,
   options: Readonly<{ path?: string }> = {},
-): RenderResult =>
-  render(
-    <MemoryRouter initialEntries={[options.path ?? "/"]}>
-      <AppTestProviders>{ui}</AppTestProviders>
-    </MemoryRouter>,
-  );
+): Promise<RenderResult> => renderWithRouter(ui, options);
 
 export const cleanupPage = (): void => {
   cleanup();

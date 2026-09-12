@@ -17,7 +17,7 @@ describe("AppShell navigation", () => {
       "GET /api/v1/announcements": [],
     });
     try {
-      renderPage(
+      await renderPage(
         <AppShell title="ホーム">
           <p>feed</p>
         </AppShell>,

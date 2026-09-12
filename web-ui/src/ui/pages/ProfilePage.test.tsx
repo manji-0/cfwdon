@@ -19,7 +19,7 @@ describe("ProfilePage", () => {
       "GET /api/v1/announcements": [],
     });
     try {
-      renderPage(<ProfilePage />, { path: "/profile" });
+      await renderPage(<ProfilePage />, { path: "/profile" });
       await screen.findByRole("heading", { name: "Alice" });
       expect(screen.getByText("site")).toBeTruthy();
       expect(screen.getByText("https://example.test")).toBeTruthy();

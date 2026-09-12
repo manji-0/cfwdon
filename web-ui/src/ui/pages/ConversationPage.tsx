@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
 import { conversationAcctsLabel, conversationTitle } from "@/domain/conversations/participants";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   appendConversationStatus,
   flattenConversationStatuses,
@@ -25,8 +28,8 @@ import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
 
 export const ConversationPage = () => {
-  const { conversationId = "" } = useParams();
-  const navigate = useNavigate();
+  const { conversationId = "" } = useAppParams();
+  const navigate = useAppNavigate();
   const { session } = useSession();
   const { confirm } = useConfirm();
   const { refreshUnreadCount } = useUnreadMessages();
@@ -154,13 +157,13 @@ export const ConversationPage = () => {
       setError(mastodonErrorMessage(result.error));
       return;
     }
-    navigate("/messages");
+    navigate(AppRoute.messages());
   };
 
   return (
     <AppShell title={conversation ? conversationTitle(conversation.accounts) : "メッセージ"}>
       <p className="thread-back">
-        <Link to="/messages">← メッセージに戻る</Link>
+        <AppLink to={AppRoute.messages()}>← メッセージに戻る</AppLink>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

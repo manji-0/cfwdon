@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountCredentials } from "@/domain/account/credentials";
 import type { AccountRef } from "@/domain/account/account";
+import { AppRoute } from "@/domain/navigation/route";
 import { FilterAction, FilterContext, FilterExpire, type FilterContext as FilterContextValue, type FilterExpirePreset, type KeywordFilter } from "@/domain/filters/filter";
 import type { NotificationPolicy, NotificationPolicyAction } from "@/domain/settings/notification-policy";
 import { NotificationPolicy as NotificationPolicyModel } from "@/domain/settings/notification-policy";
@@ -78,13 +79,13 @@ const ModerationAccountRow = ({
   disabled: boolean;
 }>) => (
   <div className="account-row settings-moderation-row">
-    <Link className="settings-moderation-link" to={`/profile/${account.id}`}>
+    <AppLink className="settings-moderation-link" to={AppRoute.account(account.id)}>
       <img className="status-avatar" src={account.avatar} alt="" loading="lazy" />
       <div className="account-row-meta">
         <span className="status-display-name">{account.displayName || account.username}</span>
         <span className="status-acct">@{account.acct}</span>
       </div>
-    </Link>
+    </AppLink>
     <button type="button" className="app-button app-button-secondary" onClick={onAction} disabled={disabled}>
       {actionLabel}
     </button>
@@ -525,7 +526,7 @@ export const SettingsPage = () => {
 
   const handleLogout = () => {
     clearSession();
-    window.location.assign("/app/logout");
+    window.location.assign(AppRoute.logoutHref);
   };
 
   return (
@@ -559,7 +560,7 @@ export const SettingsPage = () => {
               </label>
               <p className="app-muted">
                 アイコンと背景画像は{" "}
-                <Link to="/profile">プロフィールページ</Link>
+                <AppLink to={AppRoute.profile()}>プロフィールページ</AppLink>
                 から変更できます。
               </p>
               <button
@@ -623,7 +624,7 @@ export const SettingsPage = () => {
                 </select>
               </label>
               <p className="app-muted">
-                予約投稿の一覧は <Link to="/scheduled">予約投稿</Link>{" "}
+                予約投稿の一覧は <AppLink to={AppRoute.scheduled()}>予約投稿</AppLink>{" "}
                 から確認できます。
               </p>
               <button
@@ -874,10 +875,10 @@ export const SettingsPage = () => {
               <div className="settings-account-list">
                 {featuredTags.map((tag) => (
                   <div key={tag.id} className="settings-moderation-row">
-                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>
+                    <AppLink to={AppRoute.tag(tag.name)}>
                       #{tag.name}
                       <span className="app-muted"> · {tag.statusesCount} 投稿</span>
-                    </Link>
+                    </AppLink>
                     <button
                       type="button"
                       className="app-button app-button-secondary"
@@ -900,7 +901,7 @@ export const SettingsPage = () => {
               <div className="settings-account-list">
                 {followedTags.map((tag) => (
                   <div key={tag.id} className="settings-moderation-row">
-                    <Link to={`/tags/${encodeURIComponent(tag.name)}`}>#{tag.name}</Link>
+                    <AppLink to={AppRoute.tag(tag.name)}>#{tag.name}</AppLink>
                     <button
                       type="button"
                       className="app-button app-button-secondary"

@@ -1,25 +1,26 @@
-import { Link } from "react-router";
+import { AppRoute } from "@/domain/navigation/route";
+import { AppLink } from "@/ui/lib/app-link";
 
 const ME_LINKS = [
-  { to: "/bookmarks", label: "ブックマーク" },
-  { to: "/favourites", label: "お気に入り" },
-  { to: "/scheduled", label: "予約投稿" },
-  { to: "/lists", label: "リスト" },
-  { to: "/settings", label: "設定" },
+  AppRoute.bookmarks(),
+  AppRoute.favourites(),
+  AppRoute.scheduled(),
+  AppRoute.lists(),
+  AppRoute.settings(),
 ] as const;
 
 export const MeHubNav = () => (
   <nav className="me-hub-nav" aria-label="自分">
     {ME_LINKS.map((item) => (
-      <Link key={item.to} className="app-button app-button-secondary" to={item.to}>
-        {item.label}
-      </Link>
+      <AppLink key={item.kind} className="app-button app-button-secondary" to={item}>
+        {AppRoute.label(item)}
+      </AppLink>
     ))}
   </nav>
 );
 
 export const MeBackLink = () => (
   <p className="thread-back">
-    <Link to="/profile">← 自分</Link>
+    <AppLink to={AppRoute.profile()}>← 自分</AppLink>
   </p>
 );

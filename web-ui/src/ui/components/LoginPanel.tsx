@@ -1,3 +1,4 @@
+import { AppRoute } from "@/domain/navigation/route";
 import type { SessionState } from "@/domain/session/session";
 
 type LoginPanelProps = Readonly<{
@@ -19,7 +20,7 @@ export const LoginPanel = ({ session }: LoginPanelProps) => {
     <section className="app-login-panel">
       <h1>cfwdon へようこそ</h1>
       <p className="app-muted">ログインしてタイムラインを見たり投稿したりできます。</p>
-      <a className="app-button" href="/app/login">
+      <a className="app-button" href={AppRoute.loginHref}>
         ログイン
       </a>
     </section>

@@ -1,4 +1,6 @@
-import { Link, useNavigate } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { AppLink } from "@/ui/lib/app-link";
+import { AppRoute } from "@/domain/navigation/route";
 import { Notification } from "@/domain/notification/notification";
 import { Status } from "@/domain/status/status";
 import { LinkPreviewCard } from "@/ui/components/LinkPreviewCard";
@@ -18,7 +20,7 @@ export const NotificationCard = ({
   onRejectFollow,
   onDismiss,
 }: NotificationCardProps) => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const status = Notification.status(notification);
   const body = status ? Status.displayBody(status) : null;
   const card = status ? Status.visibleCard(status) : null;
@@ -27,7 +29,7 @@ export const NotificationCard = ({
   return (
     <article className="notification-card">
       <header className="notification-card-header">
-        <Link to={`/profile/${notification.account.id}`} className="notification-actor">
+        <AppLink to={AppRoute.account(notification.account.id)} className="notification-actor">
           <img className="status-avatar" src={notification.account.avatar} alt="" loading="lazy" />
           <div>
             <p className="notification-summary">{Notification.label(notification)}</p>
@@ -35,7 +37,7 @@ export const NotificationCard = ({
               {formatRelativeTime(notification.createdAt)}
             </time>
           </div>
-        </Link>
+        </AppLink>
         {onDismiss ? (
           <button
             type="button"
@@ -73,7 +75,7 @@ export const NotificationCard = ({
             if ((event.target as HTMLElement).closest("a")) {
               return;
             }
-            navigate(`/status/${body.id}`);
+            navigate(AppRoute.status(body.id));
           }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") {
@@ -83,7 +85,7 @@ export const NotificationCard = ({
               return;
             }
             event.preventDefault();
-            navigate(`/status/${body.id}`);
+            navigate(AppRoute.status(body.id));
           }}
         >
           {body.spoilerText ? <p className="app-muted">CW: {body.spoilerText}</p> : null}

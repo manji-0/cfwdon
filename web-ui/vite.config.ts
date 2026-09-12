@@ -52,7 +52,7 @@ export default defineConfig(({ mode }) => {
               { name: "arktype", test: /node_modules[/\\]arktype(?:[/\\]|$)/ },
               {
                 name: "react-vendor",
-                test: /node_modules[/\\](?:react-router|react-dom|react)(?:[/\\]|$)/,
+                test: /node_modules[/\\](?:@tanstack[/\\]react-router|react-dom|react)(?:[/\\]|$)/,
               },
             ],
           },

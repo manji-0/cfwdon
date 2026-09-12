@@ -14,11 +14,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tanstack/react-router": "^1.170.35",
     "arktype": "^2.2.3",
     "neverthrow": "^8.2.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router": "^8.3.1"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@testing-library/dom": "10.4.1",

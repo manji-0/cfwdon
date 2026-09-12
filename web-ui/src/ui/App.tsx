@@ -1,103 +1,13 @@
-import { Suspense, useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { useEffect, useState } from "react";
+import { RouterProvider } from "@tanstack/react-router";
 import { loadSession } from "@/application/load-session";
 import { SessionState } from "@/domain/session/session";
-import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { LoginPanel } from "@/ui/components/LoginPanel";
-import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
-import { ComposeProvider } from "@/ui/context/ComposeContext";
-import { ConfirmProvider } from "@/ui/context/ConfirmContext";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
-import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
-import { UnreadNotificationsProvider } from "@/ui/context/UnreadNotificationsContext";
-import { ViewCacheProvider } from "@/ui/context/ViewCacheContext";
-import { AppKeyboard } from "@/ui/hooks/useAppKeyboard";
-import { HomePage } from "@/ui/pages/HomePage";
-import {
-  BookmarksPage,
-  ConversationPage,
-  FavouritesPage,
-  ListsPage,
-  MessagesPage,
-  NewMessagePage,
-  NotificationsPage,
-  ProfilePage,
-  PublicTimelinePage,
-  SearchPage,
-  SettingsPage,
-  StatusHistoryPage,
-  TagTimelinePage,
-  ThreadPage,
-  AccountFollowersPage,
-  AccountFollowingPage,
-  StatusFavouritedByPage,
-  StatusRebloggedByPage,
-  StatusQuotesPage,
-  ScheduledStatusesPage,
-} from "@/ui/pages/lazy-pages";
+import { appRouter } from "@/ui/router";
 import "@/ui/styles/app.css";
 
 const RouteFallback = () => <div className="app-status">読み込み中…</div>;
-
-const AppRoutes = ({
-  session,
-  setSession,
-}: Readonly<{ session: SessionState; setSession: (session: SessionState) => void }>) => {
-  if (session.kind === "Anonymous" || session.kind === "Failed") {
-    return <LoginPanel session={session} />;
-  }
-
-  if (session.kind === "Loading") {
-    return <RouteFallback />;
-  }
-
-  return (
-    <SessionProvider value={createSessionContextValue(session, setSession)}>
-      <ViewCacheProvider>
-        <ConfirmProvider>
-          <ComposeProvider>
-            <SelfProfilePreloader />
-            <UnreadMessagesProvider>
-              <UnreadNotificationsProvider>
-                <KeyboardShortcutsHelp />
-                <AppKeyboard />
-                <Suspense fallback={<RouteFallback />}>
-                  <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/public" element={<PublicTimelinePage />} />
-                    <Route path="/public/local" element={<PublicTimelinePage />} />
-                    <Route path="/tags/:tagName" element={<TagTimelinePage />} />
-                    <Route path="/explore" element={<Navigate to="/" replace />} />
-                    <Route path="/status/:statusId/history" element={<StatusHistoryPage />} />
-                    <Route path="/status/:statusId/favourited-by" element={<StatusFavouritedByPage />} />
-                    <Route path="/status/:statusId/reblogged-by" element={<StatusRebloggedByPage />} />
-                    <Route path="/status/:statusId/quotes" element={<StatusQuotesPage />} />
-                    <Route path="/status/:statusId" element={<ThreadPage />} />
-                    <Route path="/profile" element={<ProfilePage />} />
-                    <Route path="/profile/:accountId/followers" element={<AccountFollowersPage />} />
-                    <Route path="/profile/:accountId/following" element={<AccountFollowingPage />} />
-                    <Route path="/profile/:accountId" element={<ProfilePage />} />
-                    <Route path="/notifications" element={<NotificationsPage />} />
-                    <Route path="/search" element={<SearchPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                    <Route path="/bookmarks" element={<BookmarksPage />} />
-                    <Route path="/favourites" element={<FavouritesPage />} />
-                    <Route path="/scheduled" element={<ScheduledStatusesPage />} />
-                    <Route path="/lists" element={<ListsPage />} />
-                    <Route path="/messages" element={<MessagesPage />} />
-                    <Route path="/messages/new" element={<NewMessagePage />} />
-                    <Route path="/messages/:conversationId" element={<ConversationPage />} />
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </Suspense>
-              </UnreadNotificationsProvider>
-            </UnreadMessagesProvider>
-          </ComposeProvider>
-        </ConfirmProvider>
-      </ViewCacheProvider>
-    </SessionProvider>
-  );
-};
 
 export const App = () => {
   const [session, setSession] = useState<SessionState>(SessionState.loading());
@@ -116,9 +26,17 @@ export const App = () => {
     };
   }, []);
 
+  if (session.kind === "Anonymous" || session.kind === "Failed") {
+    return <LoginPanel session={session} />;
+  }
+
+  if (session.kind === "Loading") {
+    return <RouteFallback />;
+  }
+
   return (
-    <BrowserRouter basename="/app">
-      <AppRoutes session={session} setSession={setSession} />
-    </BrowserRouter>
+    <SessionProvider value={createSessionContextValue(session, setSession)}>
+      <RouterProvider router={appRouter} />
+    </SessionProvider>
   );
 };

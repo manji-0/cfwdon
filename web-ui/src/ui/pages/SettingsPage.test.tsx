@@ -35,7 +35,7 @@ describe("SettingsPage", () => {
   it("shows filter expiry, existing expiry copy, and featured tags", async () => {
     const { restore } = stubFetch(settingsRoutes);
     try {
-      renderPage(<SettingsPage />, { path: "/settings" });
+      await renderPage(<SettingsPage />, { path: "/settings" });
       await screen.findByRole("heading", { name: "キーワードフィルター" });
       expect(screen.getByText("期限切れ")).toBeTruthy();
       const filterSection = screen.getByRole("heading", { name: "キーワードフィルター" }).closest("section");
@@ -73,7 +73,7 @@ describe("SettingsPage", () => {
       },
     });
     try {
-      renderPage(<SettingsPage />, { path: "/settings" });
+      await renderPage(<SettingsPage />, { path: "/settings" });
       const filterSection = (await screen.findByRole("heading", { name: "キーワードフィルター" })).closest(
         "section",
       );
@@ -104,7 +104,7 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     const { restore } = stubFetch(settingsRoutes);
     try {
-      renderPage(<SettingsPage />, { path: "/settings" });
+      await renderPage(<SettingsPage />, { path: "/settings" });
       const filterSection = (await screen.findByRole("heading", { name: "キーワードフィルター" })).closest(
         "section",
       );
@@ -130,7 +130,7 @@ describe("SettingsPage", () => {
       },
     });
     try {
-      renderPage(<SettingsPage />, { path: "/settings" });
+      await renderPage(<SettingsPage />, { path: "/settings" });
       const featuredSection = (await screen.findByRole("heading", { name: "注目タグ" })).closest("section");
       const section = within(featuredSection!);
       await user.type(section.getByLabelText("ハッシュタグ"), "rust");

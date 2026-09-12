@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
 import { ensureDirectMentions } from "@/domain/conversations/mentions";
+import { AppRoute } from "@/domain/navigation/route";
 import { Visibility } from "@/domain/status/visibility";
 import { findConversationByStatusId } from "@/infrastructure/api/conversations";
 import { createStatus } from "@/infrastructure/api/status";
@@ -12,7 +14,7 @@ import { Composer, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { useSession } from "@/ui/context/SessionContext";
 
 export const NewMessagePage = () => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { session } = useSession();
   const selfId = session.kind === "Authenticated" ? session.account.id : "";
   const [selected, setSelected] = useState<ReadonlyArray<AccountProfile>>([]);
@@ -46,16 +48,16 @@ export const NewMessagePage = () => {
     }
     const conversation = await findConversationByStatusId(result.value.id);
     if (conversation.isOk()) {
-      navigate(`/messages/${conversation.value.id}`);
+      navigate(AppRoute.conversation(conversation.value.id));
       return;
     }
-    navigate("/messages");
+    navigate(AppRoute.messages());
   };
 
   return (
     <AppShell title="新しいメッセージ">
       <p className="thread-back">
-        <Link to="/messages">← メッセージに戻る</Link>
+        <AppLink to={AppRoute.messages()}>← メッセージに戻る</AppLink>
       </p>
       <AccountSearchPicker
         placeholder="アカウントを検索"

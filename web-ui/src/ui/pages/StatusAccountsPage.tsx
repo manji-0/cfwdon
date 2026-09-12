@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountProfile } from "@/domain/account/account";
+import { AppRoute } from "@/domain/navigation/route";
 import {
   fetchStatusFavouritedBy,
   fetchStatusRebloggedBy,
@@ -15,7 +17,7 @@ import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 type InteractionKind = "favourited-by" | "reblogged-by";
 
 export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>) => {
-  const { statusId } = useParams();
+  const { statusId } = useAppParams();
   const [accounts, setAccounts] = useState<ReadonlyArray<AccountProfile>>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -100,7 +102,9 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
   return (
     <AppShell title={title}>
       <p className="thread-back">
-        <Link to={statusId ? `/status/${statusId}` : "/"}>← 投稿に戻る</Link>
+        <AppLink to={statusId ? AppRoute.status(statusId) : AppRoute.home()}>
+          ← 投稿に戻る
+        </AppLink>
       </p>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

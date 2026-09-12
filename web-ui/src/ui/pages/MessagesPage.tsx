@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { Conversation } from "@/domain/conversations/conversation";
 import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { conversationTitle } from "@/domain/conversations/participants";
+import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
@@ -16,7 +18,7 @@ import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 export const MessagesPage = () => {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { setUnreadCount, refreshUnreadCount } = useUnreadMessages();
   const [conversations, setConversations] = useState(ConversationSet.empty);
   const [loading, setLoading] = useState(true);
@@ -83,7 +85,7 @@ export const MessagesPage = () => {
   }, [setUnreadCount]);
 
   const openConversation = (conversation: Conversation) => {
-    navigate(`/messages/${conversation.id}`);
+    navigate(AppRoute.conversation(conversation.id));
   };
 
   const handleLoadMore = async () => {
@@ -118,9 +120,9 @@ export const MessagesPage = () => {
     <AppShell title="受信">
       <InboxTabs />
       <div className="messages-toolbar">
-        <Link className="app-button" to="/messages/new">
+        <AppLink className="app-button" to={AppRoute.newMessage()}>
           新しいメッセージ
-        </Link>
+        </AppLink>
       </div>
       {error ? <p className="app-error">{error}</p> : null}
       {loading ? <div className="app-status">読み込み中…</div> : null}

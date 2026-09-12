@@ -46,6 +46,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
   Bootstrap-era implementation plan and compatibility slice notes.
 - [Durable Objects Candidates](planning/durable-objects-candidates.md)
   Where Durable Objects help (timeline streaming hubs, keyed rate limits, per-entity alarms) versus Queues/D1, and when the Agents SDK is a better adjacent fit.
+- [Web UI Routing Modernization](planning/web-ui-routing.md)
+  How `web-ui` uses React Router Declarative Mode today, why TanStack Router in SPA mode is the preferred replacement, and a phased spike that keeps the Rust Worker as the HTTP server.
 
 ## Generated Documents
 <!-- derived-from mastodon-api-compat/README.md -->

@@ -1,10 +1,12 @@
 import { useCallback } from "react";
-import { Link, useParams } from "react-router";
+import { useAppParams } from "@/ui/hooks/useAppParams";
+import { AppLink } from "@/ui/lib/app-link";
+import { AppRoute } from "@/domain/navigation/route";
 import { fetchStatusQuotes } from "@/infrastructure/api/status";
 import { StatusCollectionPage } from "@/ui/pages/StatusCollectionPage";
 
 export const StatusQuotesPage = () => {
-  const { statusId } = useParams();
+  const { statusId } = useAppParams();
   const fetchPage = useCallback(
     (query: { maxId?: string; limit?: number }) => fetchStatusQuotes(statusId ?? "", query),
     [statusId],
@@ -16,7 +18,9 @@ export const StatusQuotesPage = () => {
       emptyMessage="この投稿への引用はまだありません。"
       header={
         <p className="thread-back">
-          <Link to={statusId ? `/status/${statusId}` : "/"}>← 投稿に戻る</Link>
+          <AppLink to={statusId ? AppRoute.status(statusId) : AppRoute.home()}>
+            ← 投稿に戻る
+          </AppLink>
         </p>
       }
       fetchPage={fetchPage}
