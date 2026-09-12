@@ -125,6 +125,10 @@ describe("AppRoute", () => {
       to: AppRoute.path.search,
       search: { q: "hello", type: "accounts" },
     });
+    expect(AppRoute.toLink(AppRoute.search())).toEqual({
+      to: AppRoute.path.search,
+      search: { q: "", type: "all" },
+    });
   });
 
   it("keeps router.tsx paths on AppRoute.path", () => {

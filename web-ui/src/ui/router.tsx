@@ -5,7 +5,6 @@ import {
   createRoute,
   createRouter,
   redirect,
-  type AnyRouter,
   type RouteComponent,
 } from "@tanstack/react-router";
 import { AppRoute } from "@/domain/navigation/route";
@@ -35,7 +34,12 @@ import {
   ThreadPage,
 } from "@/ui/pages/lazy-pages";
 
-const parseSearch = (search: Record<string, unknown>) => ({
+export type SearchQuery = Readonly<{
+  q: string;
+  type: ReturnType<typeof SearchType.fromParam>;
+}>;
+
+const parseSearch = (search: Record<string, unknown>): SearchQuery => ({
   q: typeof search.q === "string" ? search.q : "",
   type: SearchType.fromParam(typeof search.type === "string" ? search.type : null),
 });
@@ -50,7 +54,7 @@ export const buildRouteTree = (RootComponent: RouteComponent) => {
     component: RootComponent,
   });
 
-  const child = (path: string, component: RouteComponent) =>
+  const child = <const TPath extends string>(path: TPath, component: RouteComponent) =>
     createRoute({
       getParentRoute: () => rootRoute,
       path,
@@ -100,11 +104,13 @@ export const buildRouteTree = (RootComponent: RouteComponent) => {
   ]);
 };
 
-export const createAppRouter = (options: {
-  history?: ReturnType<typeof createMemoryHistory>;
-  basepath?: string;
-  RootComponent?: RouteComponent;
-} = {}): AnyRouter =>
+export const createAppRouter = (
+  options: {
+    history?: ReturnType<typeof createMemoryHistory>;
+    basepath?: string;
+    RootComponent?: RouteComponent;
+  } = {},
+) =>
   createRouter({
     routeTree: buildRouteTree(options.RootComponent ?? AuthenticatedLayout),
     history: options.history,

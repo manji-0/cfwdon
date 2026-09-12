@@ -1,9 +1,10 @@
 /** @vitest-environment happy-dom */
-import { describe, expect, it } from "vitest";
-import { RouterProvider, createMemoryHistory, useSearch } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { AppRoute } from "@/domain/navigation/route";
 import { useAppParams } from "@/ui/hooks/useAppParams";
+import { useAppSearch } from "@/ui/hooks/useAppSearch";
 import { AppLink } from "@/ui/lib/app-link";
 import { createAppRouter } from "@/ui/router";
 
@@ -13,8 +14,8 @@ const StatusProbe = () => {
 };
 
 const SearchProbe = () => {
-  const search = useSearch({ strict: false }) as Readonly<{ q?: string; type?: string }>;
-  return <div data-testid="search">{`${search.q ?? ""}:${search.type ?? ""}`}</div>;
+  const search = useAppSearch();
+  return <div data-testid="search">{`${search.q}:${search.type}`}</div>;
 };
 
 const HomeLinkProbe = () => (
@@ -22,6 +23,9 @@ const HomeLinkProbe = () => (
 );
 
 describe("TanStack spike routes", () => {
+  afterEach(() => {
+    cleanup();
+  });
   it("reads typed status params under the /app basepath", async () => {
     const router = createAppRouter({
       history: createMemoryHistory({ initialEntries: [`${AppRoute.basename}/status/s1`] }),
@@ -59,6 +63,28 @@ describe("TanStack spike routes", () => {
     render(<RouterProvider router={router} />);
     await waitFor(() => {
       expect(screen.getByRole("link").getAttribute("href")).toBe("/app/status/s1");
+    });
+  });
+
+  it("maps function className onto TanStack activeProps", async () => {
+    const Probe = () => (
+      <AppLink
+        to={AppRoute.home()}
+        end
+        className={({ isActive }) => (isActive ? "is-active" : "idle")}
+      >
+        home
+      </AppLink>
+    );
+    const router = createAppRouter({
+      history: createMemoryHistory({ initialEntries: [`${AppRoute.basename}/`] }),
+      basepath: AppRoute.basename,
+      RootComponent: Probe,
+    });
+    await router.load();
+    render(<RouterProvider router={router} />);
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "home" }).className).toBe("is-active");
     });
   });
 

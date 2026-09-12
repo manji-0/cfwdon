@@ -49,44 +49,69 @@ const searchParams = (query: string, type: SearchType): URLSearchParams => {
   return params;
 };
 
-export type AppLinkTarget = Readonly<{
-  to: string;
-  params?: Readonly<Record<string, string>>;
-  search?: Readonly<{ q?: string; type?: Exclude<SearchType, "all"> }>;
+/** TanStack Router `path` values, in match order. */
+export const appRoutePath = {
+  home: "/",
+  publicTimeline: "/public",
+  publicTimelineLocal: "/public/local",
+  tag: "/tags/$tagName",
+  explore: "/explore",
+  statusHistory: "/status/$statusId/history",
+  statusFavouritedBy: "/status/$statusId/favourited-by",
+  statusRebloggedBy: "/status/$statusId/reblogged-by",
+  statusQuotes: "/status/$statusId/quotes",
+  status: "/status/$statusId",
+  profile: "/profile",
+  accountFollowers: "/profile/$accountId/followers",
+  accountFollowing: "/profile/$accountId/following",
+  account: "/profile/$accountId",
+  notifications: "/notifications",
+  search: "/search",
+  settings: "/settings",
+  bookmarks: "/bookmarks",
+  favourites: "/favourites",
+  scheduled: "/scheduled",
+  lists: "/lists",
+  messages: "/messages",
+  newMessage: "/messages/new",
+  conversation: "/messages/$conversationId",
+} as const;
+
+type SearchLink = Readonly<{
+  q: string;
+  type: SearchType;
 }>;
+
+export type AppLinkTarget =
+  | Readonly<{ to: typeof appRoutePath.home }>
+  | Readonly<{ to: typeof appRoutePath.publicTimeline }>
+  | Readonly<{ to: typeof appRoutePath.publicTimelineLocal }>
+  | Readonly<{ to: typeof appRoutePath.tag; params: Readonly<{ tagName: string }> }>
+  | Readonly<{ to: typeof appRoutePath.notifications }>
+  | Readonly<{ to: typeof appRoutePath.search; search: SearchLink }>
+  | Readonly<{ to: typeof appRoutePath.profile }>
+  | Readonly<{ to: typeof appRoutePath.account; params: Readonly<{ accountId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.accountFollowers; params: Readonly<{ accountId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.accountFollowing; params: Readonly<{ accountId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.settings }>
+  | Readonly<{ to: typeof appRoutePath.bookmarks }>
+  | Readonly<{ to: typeof appRoutePath.favourites }>
+  | Readonly<{ to: typeof appRoutePath.scheduled }>
+  | Readonly<{ to: typeof appRoutePath.lists }>
+  | Readonly<{ to: typeof appRoutePath.messages }>
+  | Readonly<{ to: typeof appRoutePath.newMessage }>
+  | Readonly<{ to: typeof appRoutePath.conversation; params: Readonly<{ conversationId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.status; params: Readonly<{ statusId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.statusHistory; params: Readonly<{ statusId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.statusFavouritedBy; params: Readonly<{ statusId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.statusRebloggedBy; params: Readonly<{ statusId: string }> }>
+  | Readonly<{ to: typeof appRoutePath.statusQuotes; params: Readonly<{ statusId: string }> }>;
 
 export const AppRoute = {
   basename: "/app",
   loginHref: "/app/login",
   logoutHref: "/app/logout",
-
-  /** TanStack Router `path` values, in match order. */
-  path: {
-    home: "/",
-    publicTimeline: "/public",
-    publicTimelineLocal: "/public/local",
-    tag: "/tags/$tagName",
-    explore: "/explore",
-    statusHistory: "/status/$statusId/history",
-    statusFavouritedBy: "/status/$statusId/favourited-by",
-    statusRebloggedBy: "/status/$statusId/reblogged-by",
-    statusQuotes: "/status/$statusId/quotes",
-    status: "/status/$statusId",
-    profile: "/profile",
-    accountFollowers: "/profile/$accountId/followers",
-    accountFollowing: "/profile/$accountId/following",
-    account: "/profile/$accountId",
-    notifications: "/notifications",
-    search: "/search",
-    settings: "/settings",
-    bookmarks: "/bookmarks",
-    favourites: "/favourites",
-    scheduled: "/scheduled",
-    lists: "/lists",
-    messages: "/messages",
-    newMessage: "/messages/new",
-    conversation: "/messages/$conversationId",
-  },
+  path: appRoutePath,
 
   home: (): AppRoute => ({ kind: "Home" }),
   publicTimeline: (local = false): AppRoute => ({ kind: "PublicTimeline", local }),
@@ -257,10 +282,7 @@ export const AppRoute = {
       case "Search":
         return {
           to: AppRoute.path.search,
-          search: {
-            q: route.query === "" ? undefined : route.query,
-            type: route.type === "all" ? undefined : route.type,
-          },
+          search: { q: route.query, type: route.type },
         };
       case "Profile":
         return { to: AppRoute.path.profile };

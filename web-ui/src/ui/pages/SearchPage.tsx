@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { useSearch } from "@tanstack/react-router";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { AppRoute } from "@/domain/navigation/route";
 import {
@@ -16,6 +15,7 @@ import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
+import { useAppSearch } from "@/ui/hooks/useAppSearch";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
 import { AppLink } from "@/ui/lib/app-link";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
@@ -54,11 +54,7 @@ export const SearchPage = () => {
   const { session } = useSession();
   const selfAccountId = session.kind === "Authenticated" ? session.account.id : null;
   const navigate = useAppNavigate();
-  const searchState = useSearch({ strict: false }) as Readonly<{ q?: string; type?: string }>;
-  const queryFromUrl = typeof searchState.q === "string" ? searchState.q : "";
-  const typeFromUrl = SearchType.fromParam(
-    typeof searchState.type === "string" ? searchState.type : null,
-  );
+  const { q: queryFromUrl, type: typeFromUrl } = useAppSearch();
   const [query, setQuery] = useState(queryFromUrl);
   const [results, setResults] = useState<SearchResults>(emptySearchResults());
   const [loading, setLoading] = useState(false);
