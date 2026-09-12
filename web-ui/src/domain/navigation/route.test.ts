@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AppRoute } from "@/domain/navigation/route";
-
-const appSource = readFileSync(new URL("../../ui/App.tsx", import.meta.url), "utf8");
+import appSource from "@/ui/App.tsx?raw";
 
 describe("AppRoute", () => {
   it("maps pathnames to routes", () => {
@@ -121,6 +119,7 @@ describe("AppRoute", () => {
     for (const key of Object.keys(AppRoute.pattern)) {
       expect(appSource).toContain(`AppRoute.pattern.${key}`);
     }
-    expect(appSource.match(/path="/g)).toEqual(['path="*"']);
+    const pathLiterals = [...appSource.matchAll(/path="([^"]*)"/g)].map((match) => match[1]);
+    expect(pathLiterals).toEqual(["*"]);
   });
 });
