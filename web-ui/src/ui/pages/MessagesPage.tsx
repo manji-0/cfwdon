@@ -9,6 +9,7 @@ import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { AppShell } from "@/ui/components/AppShell";
 import { InboxTabs } from "@/ui/components/InboxTabs";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
@@ -47,6 +48,14 @@ export const MessagesPage = () => {
     setConversations(next);
     prefetch.prepareNext(next, result.value.length);
   }, [prefetch, setUnreadCount]);
+
+  const catchUpConversations = useCallback(() => {
+    setError("");
+    void loadConversations().catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "メッセージの読み込みに失敗しました");
+    });
+  }, [loadConversations]);
+  useForegroundCatchUp(catchUpConversations);
 
   useEffect(() => {
     let active = true;

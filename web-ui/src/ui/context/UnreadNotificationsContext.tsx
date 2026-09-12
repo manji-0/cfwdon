@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import { fetchUnreadNotificationCount } from "@/infrastructure/api/notification";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 
 export type UnreadNotificationsContextValue = Readonly<{
   unreadCount: number;
@@ -27,6 +28,8 @@ export const UnreadNotificationsProvider = ({ children }: Readonly<{ children: R
   useEffect(() => {
     refreshUnreadCount();
   }, [refreshUnreadCount]);
+
+  useForegroundCatchUp(refreshUnreadCount);
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {

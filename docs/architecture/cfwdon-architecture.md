@@ -96,9 +96,11 @@ ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, 
 
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
+<!-- constrained-by ./web-ui-foreground-resume.md -->
 
 - Deploy as a single Cloudflare Worker.
 - Attach Vite `web-ui` and `admin-ui` builds as Workers static assets under `/app` and `/admin`.
+- The `/app` SPA reconnects streaming and REST-catches up after a long-backgrounded tab returns; see [Web UI Foreground Resume](web-ui-foreground-resume.md).
 - Configure D1 and R2 bindings in `wrangler.toml`.
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.

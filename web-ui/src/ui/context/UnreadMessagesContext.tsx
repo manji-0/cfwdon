@@ -4,6 +4,7 @@ import { ConversationSet } from "@/domain/conversations/conversation-set";
 import { Status } from "@/domain/status/status";
 import { fetchConversations } from "@/infrastructure/api/conversations";
 import { StreamingUser } from "@/infrastructure/streaming/mastodon-stream";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 
 export type UnreadMessagesContextValue = Readonly<{
   unreadCount: number;
@@ -29,6 +30,8 @@ export const UnreadMessagesProvider = ({ children }: Readonly<{ children: ReactN
   useEffect(() => {
     refreshUnreadCount();
   }, [refreshUnreadCount]);
+
+  useForegroundCatchUp(refreshUnreadCount);
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {

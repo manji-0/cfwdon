@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
+import { ForegroundResume } from "@/domain/cache/foreground-resume";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
 import {
   NotificationFilter,
@@ -23,6 +24,7 @@ import { NotificationCard } from "@/ui/components/NotificationCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useUnreadNotifications } from "@/ui/context/UnreadNotificationsContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { useStreamingNotifications } from "@/ui/hooks/useStreamingNotifications";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
@@ -92,6 +94,17 @@ export const NotificationsPage = () => {
     },
     [filter, persist, prefetch],
   );
+
+  const catchUpNotifications = useCallback(() => {
+    if (!ForegroundResume.shouldRefreshVisibleList(window.scrollY)) {
+      return;
+    }
+    setError("");
+    void loadNotifications().catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "通知の読み込みに失敗しました");
+    });
+  }, [loadNotifications]);
+  useForegroundCatchUp(catchUpNotifications);
 
   useEffect(() => {
     const snapshot = cache.getNotifications();

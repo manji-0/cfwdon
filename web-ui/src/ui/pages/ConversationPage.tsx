@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
 import { useAppParams } from "@/ui/hooks/useAppParams";
 import { AppLink } from "@/ui/lib/app-link";
@@ -26,6 +26,7 @@ import { Composer, type ComposerSubmitInput } from "@/ui/components/Composer";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
 import { useUnreadMessages } from "@/ui/context/UnreadMessagesContext";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 
 export const ConversationPage = () => {
   const { conversationId = "" } = useAppParams();
@@ -40,6 +41,53 @@ export const ConversationPage = () => {
 
   const selfId = session.kind === "Authenticated" ? session.account.id : "";
 
+  const loadConversation = useCallback(async () => {
+    if (!conversationId) {
+      return;
+    }
+    const found = await findConversationById(conversationId);
+    if (found.isErr()) {
+      throw new Error(mastodonErrorMessage(found.error));
+    }
+    setConversation(found.value);
+    if (Conversation.isUnread(found.value)) {
+      const read = await markConversationRead(conversationId);
+      if (read.isOk()) {
+        setConversation(read.value);
+        refreshUnreadCount();
+      }
+    }
+    if (!found.value.lastStatus) {
+      setStatuses([]);
+      return;
+    }
+    const [statusResult, contextResult] = await Promise.all([
+      fetchStatus(found.value.lastStatus.id),
+      fetchStatusContext(found.value.lastStatus.id),
+    ]);
+    if (statusResult.isErr()) {
+      throw new Error(mastodonErrorMessage(statusResult.error));
+    }
+    if (contextResult.isErr()) {
+      throw new Error(mastodonErrorMessage(contextResult.error));
+    }
+    setStatuses(
+      flattenConversationStatuses(
+        contextResult.value.ancestors,
+        statusResult.value,
+        contextResult.value.descendants,
+      ),
+    );
+  }, [conversationId, refreshUnreadCount]);
+
+  const catchUpConversation = useCallback(() => {
+    setError("");
+    void loadConversation().catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "会話の読み込みに失敗しました");
+    });
+  }, [loadConversation]);
+  useForegroundCatchUp(catchUpConversation);
+
   useEffect(() => {
     if (!conversationId) {
       return;
@@ -47,47 +95,7 @@ export const ConversationPage = () => {
     let active = true;
     setLoading(true);
     setError("");
-    void (async () => {
-      const found = await findConversationById(conversationId);
-      if (!active) {
-        return;
-      }
-      if (found.isErr()) {
-        throw new Error(mastodonErrorMessage(found.error));
-      }
-      setConversation(found.value);
-      if (Conversation.isUnread(found.value)) {
-        const read = await markConversationRead(conversationId);
-        if (read.isOk() && active) {
-          setConversation(read.value);
-          refreshUnreadCount();
-        }
-      }
-      if (!found.value.lastStatus) {
-        setStatuses([]);
-        return;
-      }
-      const [statusResult, contextResult] = await Promise.all([
-        fetchStatus(found.value.lastStatus.id),
-        fetchStatusContext(found.value.lastStatus.id),
-      ]);
-      if (!active) {
-        return;
-      }
-      if (statusResult.isErr()) {
-        throw new Error(mastodonErrorMessage(statusResult.error));
-      }
-      if (contextResult.isErr()) {
-        throw new Error(mastodonErrorMessage(contextResult.error));
-      }
-      setStatuses(
-        flattenConversationStatuses(
-          contextResult.value.ancestors,
-          statusResult.value,
-          contextResult.value.descendants,
-        ),
-      );
-    })()
+    void loadConversation()
       .catch((loadError) => {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "会話の読み込みに失敗しました");
@@ -101,7 +109,7 @@ export const ConversationPage = () => {
     return () => {
       active = false;
     };
-  }, [conversationId, refreshUnreadCount]);
+  }, [conversationId, loadConversation]);
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {

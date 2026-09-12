@@ -20,6 +20,8 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
   Cloudflare Access edge gating, policy scope, service tokens, and Auth0 coexistence notes.
 - [Architecture](architecture/cfwdon-architecture.md)
   Worker, D1, R2, Mastodon API, and ActivityPub design boundaries.
+- [Web UI Foreground Resume](architecture/web-ui-foreground-resume.md)
+  What the `/app` SPA does when a tab returns from the background.
 - [ActivityPub → X Mirror](../workers/ap-x-mirror/README.md)
   Optional misc Worker that mirrors allowlisted ActivityPub notes to a fixed X account.
 - [Mastodon API Compatibility](mastodon-api-compat/README.md)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { CachedView } from "@/domain/cache/cached-view";
+import { ForegroundResume } from "@/domain/cache/foreground-resume";
 import { ViewReadiness } from "@/domain/cache/view-readiness";
 import { Status } from "@/domain/status/status";
 import { fetchHomeTimeline, fetchPublicTimeline } from "@/infrastructure/api/status";
@@ -13,6 +14,7 @@ import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
@@ -97,6 +99,17 @@ export const HomePage = () => {
     persist(next, fetchedAtRef.current);
     prefetch.prepareNext(next, next.length);
   }, [feed, persist, prefetch]);
+
+  const catchUpTimeline = useCallback(() => {
+    if (!ForegroundResume.shouldRefreshVisibleList(window.scrollY)) {
+      return;
+    }
+    setError("");
+    void loadTimeline().catch((refreshError) => {
+      setError(refreshError instanceof Error ? refreshError.message : "更新に失敗しました");
+    });
+  }, [loadTimeline]);
+  useForegroundCatchUp(catchUpTimeline);
 
   useEffect(() => {
     const snapshot = feed === "home" ? cache.getHome() : CachedView.absent();
