@@ -7,7 +7,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 <!-- constrained-by ../workers/ap-x-mirror/README.md -->
 
 - [Development Workflow](getting-started/development.md)
-  Local environment setup, common validation commands, local Worker execution, and compatibility document refresh steps.
+  Local environment setup, common validation commands, local Worker execution, dagayn knowledge-graph commands, and compatibility document refresh steps.
 - [Clone And Run](getting-started/clone-and-run.md)
   Fresh clone bootstrap, `wrangler.toml.example` setup, Cloudflare resource creation, migrations, and first deploy steps.
 - [Configuration Reference](reference/configuration.md)

@@ -180,6 +180,20 @@ Generated files live under `docs/mastodon-api-compat/`. Regenerate them whenever
 - `docs/mastodon-api-compat/todo-unimplemented.md`
 - `docs/mastodon-api-compat/todo-compat.md`
 
+## Knowledge Graph
+<!-- constrained-by ../../AGENTS.md#required-first-step -->
+<!-- constrained-by ../../AGENTS.md#cloud-agent-environment -->
+
+`dagayn` indexes this repository into a local SQLite graph under `.dagayn/` (gitignored). Cloud Agent install/start uses **FTS-only** mode: no embedding sidecar, no model download, `search_mode: fts_only`.
+
+```sh
+dagayn build
+dagayn status
+dagayn tool get_minimal_context_tool --arg task='"your task"'
+```
+
+The committed MCP server is `.cursor/mcp.json` → `dagayn serve`. That is the Cloud Agent path. A local Mac that already uses `dagayn serve --local-embedding` can keep the sidecar in a user-level `~/.cursor/mcp.json`; do not add `--local-embedding` back to the project file.
+
 ## Git Notes
 
 Use conventional commit messages, for example:

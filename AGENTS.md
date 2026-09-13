@@ -42,10 +42,18 @@ devbox run worker:dev
 
 Cloud Agent VMs are provisioned by [`.cursor/environment.json`](.cursor/environment.json):
 
-- [`.cursor/install.sh`](.cursor/install.sh) installs devbox + Nix (if missing), syncs the pinned devbox packages, and warms the Rust toolchain and build caches.
-- [`.cursor/start.sh`](.cursor/start.sh) starts the `nix-daemon` on every boot. It runs on each boot because these VMs have no systemd to supervise multi-user Nix, and every `devbox run ...` call needs the daemon socket.
+- [`.cursor/install.sh`](.cursor/install.sh) installs devbox + Nix (if missing), syncs the pinned devbox packages, warms the Rust toolchain and build caches, and installs pinned `dagayn` with an FTS-only graph (no embedding sidecar or model download).
+- [`.cursor/start.sh`](.cursor/start.sh) starts the `nix-daemon` on every boot and runs `dagayn session prepare --embedding skip`. It runs on each boot because these VMs have no systemd to supervise multi-user Nix, and every `devbox run ...` call needs the daemon socket.
 
 If a `devbox` command fails with a Nix daemon socket or permission error, run `bash .cursor/start.sh` to bring the daemon back up.
+
+Cloud Agent dagayn is FTS-only. The project MCP server is `.cursor/mcp.json` (`dagayn serve`, no `--local-embedding`). Prefer MCP tools (`get_minimal_context_tool`, `query_graph_tool`, `architecture_analysis_tool`, …). If the `dagayn` MCP namespace is missing, invoke the same tools via CLI:
+
+```sh
+dagayn tool get_minimal_context_tool --arg task='"your task"'
+dagayn tool query_graph_tool --json-args '{"pattern":"callers_of","target":"qualified::name"}'
+dagayn tool architecture_analysis_tool --json-args '{"mode":"overview","detail_level":"minimal"}'
+```
 
 ## Setup And Deployment Docs
 

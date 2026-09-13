@@ -3,10 +3,10 @@
     "dagayn": {
       "command": "dagayn",
       "args": [
-        "serve",
-        "--local-embedding"
+        "serve"
       ],
-      "type": "stdio"
+      "type": "stdio",
+      "cwd": "${workspaceFolder}"
     }
   }
 }
