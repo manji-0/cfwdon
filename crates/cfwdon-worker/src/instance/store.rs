@@ -1,15 +1,26 @@
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
 use super::{
     AppConfig, InstanceCapabilities, InstanceSummary, SoftwareInfo, build_metadata, instance_host,
     normalize_instance_domain, peer_authority_from_uri,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use worker::Result;
 use worker::d1::D1Type;
 
 use crate::D1Database;
-#[derive(Debug, Deserialize)]
+use crate::app_cache::app_cache_kv;
+
+const INSTANCE_SETTINGS_KV_KEY: &str = "instance_settings:v1";
+/// Settings change only via migration/ops; keep KV past a missed hourly window.
+const INSTANCE_SETTINGS_TTL_SECS: u64 = 21_600;
+
+thread_local! {
+    static INSTANCE_SETTINGS_L1: RefCell<Option<InstanceSettingsRow>> = const { RefCell::new(None) };
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct InstanceSettingsRow {
     pub(crate) domain: String,
     pub(crate) title: String,
@@ -27,11 +38,47 @@ struct WeekOffsetCountRow {
     count: u64,
 }
 
-pub(crate) async fn load_instance_summary(
-    db: &D1Database,
-    config: AppConfig,
-) -> Result<InstanceSummary> {
-    let build = build_metadata();
+fn instance_settings_from_l1() -> Option<InstanceSettingsRow> {
+    INSTANCE_SETTINGS_L1.with(|slot| slot.borrow().clone())
+}
+
+fn store_instance_settings_l1(settings: InstanceSettingsRow) {
+    INSTANCE_SETTINGS_L1.with(|slot| {
+        *slot.borrow_mut() = Some(settings);
+    });
+}
+
+async fn kv_get_instance_settings() -> Option<InstanceSettingsRow> {
+    let kv = app_cache_kv()?;
+    let text = kv.get(INSTANCE_SETTINGS_KV_KEY).text().await.ok()??;
+    serde_json::from_str(&text).ok()
+}
+
+async fn kv_put_instance_settings(settings: &InstanceSettingsRow) {
+    let Some(kv) = app_cache_kv() else {
+        return;
+    };
+    let Ok(body) = serde_json::to_string(settings) else {
+        return;
+    };
+    let Ok(putter) = kv.put(INSTANCE_SETTINGS_KV_KEY, body) else {
+        return;
+    };
+    let _ = putter
+        .expiration_ttl(INSTANCE_SETTINGS_TTL_SECS)
+        .execute()
+        .await;
+}
+
+async fn load_instance_settings_row(db: &D1Database) -> Result<Option<InstanceSettingsRow>> {
+    if let Some(settings) = instance_settings_from_l1() {
+        return Ok(Some(settings));
+    }
+    if let Some(settings) = kv_get_instance_settings().await {
+        store_instance_settings_l1(settings.clone());
+        return Ok(Some(settings));
+    }
+
     let settings = db
         .prepare(
             "SELECT domain, title, description
@@ -41,6 +88,19 @@ pub(crate) async fn load_instance_summary(
         )
         .first::<InstanceSettingsRow>(None)
         .await?;
+    if let Some(settings) = settings.as_ref() {
+        store_instance_settings_l1(settings.clone());
+        kv_put_instance_settings(settings).await;
+    }
+    Ok(settings)
+}
+
+pub(crate) async fn load_instance_summary(
+    db: &D1Database,
+    config: AppConfig,
+) -> Result<InstanceSummary> {
+    let build = build_metadata();
+    let settings = load_instance_settings_row(db).await?;
 
     let (domain, title, description) = match settings {
         Some(settings) => (settings.domain, settings.title, settings.description),
@@ -223,4 +283,45 @@ pub(crate) async fn load_known_peer_domains(
     }
 
     Ok(peers.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_settings_kv_key_is_versioned() {
+        assert_eq!(INSTANCE_SETTINGS_KV_KEY, "instance_settings:v1");
+    }
+
+    #[test]
+    fn instance_settings_ttl_covers_several_hours() {
+        assert_eq!(INSTANCE_SETTINGS_TTL_SECS, 21_600);
+    }
+
+    #[test]
+    fn instance_settings_row_round_trips_json() {
+        let settings = InstanceSettingsRow {
+            domain: "fedi.example".to_owned(),
+            title: "Example".to_owned(),
+            description: "hello".to_owned(),
+        };
+        let encoded = serde_json::to_string(&settings).expect("encode");
+        let decoded: InstanceSettingsRow = serde_json::from_str(&encoded).expect("decode");
+        assert_eq!(decoded, settings);
+    }
+
+    #[test]
+    fn instance_settings_l1_round_trips() {
+        INSTANCE_SETTINGS_L1.with(|slot| *slot.borrow_mut() = None);
+        assert!(instance_settings_from_l1().is_none());
+        let settings = InstanceSettingsRow {
+            domain: "fedi.example".to_owned(),
+            title: "Example".to_owned(),
+            description: "hello".to_owned(),
+        };
+        store_instance_settings_l1(settings.clone());
+        assert_eq!(instance_settings_from_l1(), Some(settings));
+        INSTANCE_SETTINGS_L1.with(|slot| *slot.borrow_mut() = None);
+    }
 }
