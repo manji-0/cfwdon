@@ -685,6 +685,96 @@ fn stream_hub_binding_name(env: &Env) -> String {
         .unwrap_or_else(|| STREAM_HUB_DEFAULT_BINDING.to_owned())
 }
 
+/// Initial connect plus one retry when the target DO was hibernated/evicted.
+const STREAM_HUB_INACTIVE_FETCH_ATTEMPTS: u8 = 2;
+
+fn stream_hub_error_is_inactive_instance(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("no longer active")
+}
+
+fn log_stream_hub_connect_event(operation: &str, outcome: &str, attempt: u8, detail: Option<&str>) {
+    let level = match outcome {
+        "inactive_retry" | "inactive_retry_exhausted" => "warn",
+        _ => "info",
+    };
+    let message = match (outcome, detail) {
+        ("inactive_retry", Some(detail)) => {
+            format!(
+                "Stream Hub {operation} retrying inactive Durable Object (attempt {attempt}): {detail}"
+            )
+        }
+        ("inactive_retry_ok", _) => {
+            format!("Stream Hub {operation} succeeded after inactive Durable Object retry")
+        }
+        ("inactive_retry_exhausted", Some(detail)) => {
+            format!(
+                "Stream Hub {operation} exhausted inactive Durable Object retries (attempt {attempt}): {detail}"
+            )
+        }
+        (_, Some(detail)) => format!("Stream Hub {operation} {outcome}: {detail}"),
+        (_, None) => format!("Stream Hub {operation} {outcome}"),
+    };
+    log_json_event(add_log_message(
+        serde_json::json!({
+            "event": "stream_hub_websocket",
+            "component": "stream_hub",
+            "handler": operation,
+            "outcome": outcome,
+            "level": level,
+            "attempt": attempt,
+            "inactive_instance": true,
+        }),
+        message,
+    ));
+}
+
+async fn fetch_stream_hub_with_inactive_retry(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    operation: &'static str,
+    build_request: impl Fn() -> Result<Request>,
+) -> Result<Response> {
+    for attempt in 1..=STREAM_HUB_INACTIVE_FETCH_ATTEMPTS {
+        let namespace = env.durable_object(binding)?;
+        let stub = namespace.get_by_name(hub_name)?;
+        let request = build_request()?;
+        match stub.fetch_with_request(request).await {
+            Ok(response) => {
+                if attempt > 1 {
+                    log_stream_hub_connect_event(operation, "inactive_retry_ok", attempt, None);
+                }
+                return Ok(response);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                if !stream_hub_error_is_inactive_instance(&message) {
+                    return Err(error);
+                }
+                if attempt < STREAM_HUB_INACTIVE_FETCH_ATTEMPTS {
+                    log_stream_hub_connect_event(
+                        operation,
+                        "inactive_retry",
+                        attempt,
+                        Some(&message),
+                    );
+                    continue;
+                }
+                log_stream_hub_connect_event(
+                    operation,
+                    "inactive_retry_exhausted",
+                    attempt,
+                    Some(&message),
+                );
+                return Err(error);
+            }
+        }
+    }
+    Err(worker::Error::RustError(
+        "stream hub inactive retry loop exited without a response".to_owned(),
+    ))
+}
+
 async fn post_json_to_stream_hub(
     env: &Env,
     binding: &str,
@@ -692,23 +782,24 @@ async fn post_json_to_stream_hub(
     path: &str,
     body: &serde_json::Value,
 ) -> Result<Response> {
-    let namespace = env.durable_object(binding)?;
-    let stub = namespace.get_by_name(hub_name)?;
     let body_json = serde_json::to_string(body).map_err(|error| {
         worker::Error::RustError(format!("failed to encode stream hub request body: {error}"))
     })?;
+    let path = path.to_owned();
 
-    let headers = worker::Headers::new();
-    headers.set("Content-Type", "application/json")?;
+    fetch_stream_hub_with_inactive_retry(env, binding, hub_name, "publish", || {
+        let headers = worker::Headers::new();
+        headers.set("Content-Type", "application/json")?;
 
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(wasm_bindgen::JsValue::from_str(&body_json)));
+        let mut init = RequestInit::new();
+        init.with_method(Method::Post)
+            .with_headers(headers)
+            .with_body(Some(wasm_bindgen::JsValue::from_str(&body_json)));
 
-    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{path}");
-    let request = Request::new_with_init(&url, &init)?;
-    stub.fetch_with_request(request).await
+        let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{path}");
+        Request::new_with_init(&url, &init)
+    })
+    .await
 }
 
 /// Publishes to one hub and reports how many subscribers received the event.
@@ -783,26 +874,30 @@ pub(crate) async fn connect_stream_hub_websocket(
     list: Option<&str>,
     account_id: Option<&str>,
 ) -> Result<WebSocket> {
-    let namespace = env.durable_object(binding)?;
-    let stub = namespace.get_by_name(hub_name)?;
+    let stream = stream.to_owned();
+    let tag = tag.map(str::to_owned);
+    let list = list.map(str::to_owned);
+    let account_id = account_id.map(str::to_owned);
 
-    let headers = worker::Headers::new();
-    headers.set("Upgrade", "websocket")?;
-    set_stream_hub_subscription_headers(
-        &headers,
-        &StreamHubUpgradeParams {
-            stream: Some(stream),
-            tag,
-            list,
-            account_id,
-        },
-    )?;
+    let response = fetch_stream_hub_with_inactive_retry(env, binding, hub_name, "connect", || {
+        let headers = worker::Headers::new();
+        headers.set("Upgrade", "websocket")?;
+        set_stream_hub_subscription_headers(
+            &headers,
+            &StreamHubUpgradeParams {
+                stream: Some(stream.as_str()),
+                tag: tag.as_deref(),
+                list: list.as_deref(),
+                account_id: account_id.as_deref(),
+            },
+        )?;
 
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
-    let request = Request::new_with_init(&url, &init)?;
-    let response = stub.fetch_with_request(request).await?;
+        let mut init = RequestInit::new();
+        init.with_method(Method::Get).with_headers(headers);
+        let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
+        Request::new_with_init(&url, &init)
+    })
+    .await?;
     let websocket = response.websocket().ok_or_else(|| {
         worker::Error::RustError("stream hub websocket upgrade did not return a socket".to_owned())
     })?;
@@ -858,35 +953,47 @@ pub(crate) async fn upgrade_stream_hub_websocket(
     req: Request,
     params: &StreamHubUpgradeParams<'_>,
 ) -> Result<Response> {
-    let namespace = env.durable_object(binding)?;
-    let stub = namespace.get_by_name(hub_name)?;
-
     let query = req
         .url()?
         .query()
         .map(|query| format!("?{query}"))
         .unwrap_or_default();
     let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}{query}");
+    let header_pairs: Vec<(String, String)> = req.headers().entries().collect();
+    let stream = params.stream.map(str::to_owned);
+    let tag = params.tag.map(str::to_owned);
+    let list = params.list.map(str::to_owned);
+    let account_id = params.account_id.map(str::to_owned);
 
-    let headers = worker::Headers::new();
-    for (name, value) in req.headers().entries() {
-        if is_internal_stream_hub_header(&name) {
-            continue;
+    fetch_stream_hub_with_inactive_retry(env, binding, hub_name, "upgrade", || {
+        let headers = worker::Headers::new();
+        for (name, value) in &header_pairs {
+            if is_internal_stream_hub_header(name) {
+                continue;
+            }
+            headers.set(name, value)?;
         }
-        headers.set(&name, &value)?;
-    }
-    set_stream_hub_subscription_headers(&headers, params)?;
-    if !headers
-        .get("Upgrade")?
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
-    {
-        headers.set("Upgrade", "websocket")?;
-    }
+        set_stream_hub_subscription_headers(
+            &headers,
+            &StreamHubUpgradeParams {
+                stream: stream.as_deref(),
+                tag: tag.as_deref(),
+                list: list.as_deref(),
+                account_id: account_id.as_deref(),
+            },
+        )?;
+        if !headers
+            .get("Upgrade")?
+            .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+        {
+            headers.set("Upgrade", "websocket")?;
+        }
 
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let request = Request::new_with_init(&url, &init)?;
-    stub.fetch_with_request(request).await
+        let mut init = RequestInit::new();
+        init.with_method(Method::Get).with_headers(headers);
+        Request::new_with_init(&url, &init)
+    })
+    .await
 }
 
 fn stream_hub_stream_labels(
@@ -1096,6 +1203,20 @@ mod tests {
         assert!(!stream_hub_error_is_deploy_reset(
             "failed to forward stream hub event"
         ));
+    }
+
+    #[test]
+    fn inactive_instance_errors_are_retried() {
+        assert!(stream_hub_error_is_inactive_instance(
+            "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request."
+        ));
+        assert!(stream_hub_error_is_inactive_instance(
+            "Error: this Durable Object instance is no longer active"
+        ));
+        assert!(!stream_hub_error_is_inactive_instance(
+            "Durable Object reset because its code was updated."
+        ));
+        assert!(!stream_hub_error_is_inactive_instance("websocket closed"));
     }
 
     #[test]
