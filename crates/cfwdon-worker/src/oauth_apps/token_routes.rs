@@ -235,7 +235,7 @@ async fn oauth_authorization_code_token_response(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OAuthPostBodyKind {
-    FormUrlencoded,
+    Form,
     Json,
 }
 
@@ -249,10 +249,14 @@ fn classify_oauth_post_content_type(
     if content_type.starts_with("application/json") {
         return Ok(OAuthPostBodyKind::Json);
     }
-    if content_type.starts_with("application/x-www-form-urlencoded") {
-        return Ok(OAuthPostBodyKind::FormUrlencoded);
+    if content_type.starts_with("application/x-www-form-urlencoded")
+        || content_type.starts_with("multipart/form-data")
+    {
+        return Ok(OAuthPostBodyKind::Form);
     }
-    Err("Content-Type must be application/x-www-form-urlencoded.")
+    Err(
+        "Content-Type must be application/x-www-form-urlencoded, multipart/form-data, or application/json.",
+    )
 }
 
 async fn parse_oauth_token_request(
@@ -269,7 +273,7 @@ async fn parse_oauth_token_request(
             .json::<OAuthTokenRequest>()
             .await
             .map_err(|error| format!("invalid JSON token payload: {error}")),
-        Ok(OAuthPostBodyKind::FormUrlencoded) => {
+        Ok(OAuthPostBodyKind::Form) => {
             let form = req
                 .form_data()
                 .await
@@ -462,7 +466,7 @@ async fn parse_oauth_revoke_request(
             .json::<OAuthRevokeRequest>()
             .await
             .map_err(|error| format!("invalid JSON revoke payload: {error}")),
-        Ok(OAuthPostBodyKind::FormUrlencoded) => {
+        Ok(OAuthPostBodyKind::Form) => {
             let form = req
                 .form_data()
                 .await
@@ -649,11 +653,15 @@ mod tests {
     fn classify_oauth_post_content_type_requires_form_or_json() {
         assert_eq!(
             classify_oauth_post_content_type("application/x-www-form-urlencoded"),
-            Ok(OAuthPostBodyKind::FormUrlencoded)
+            Ok(OAuthPostBodyKind::Form)
         );
         assert_eq!(
             classify_oauth_post_content_type("application/x-www-form-urlencoded; charset=UTF-8"),
-            Ok(OAuthPostBodyKind::FormUrlencoded)
+            Ok(OAuthPostBodyKind::Form)
+        );
+        assert_eq!(
+            classify_oauth_post_content_type("multipart/form-data; boundary=----kmastodon"),
+            Ok(OAuthPostBodyKind::Form)
         );
         assert_eq!(
             classify_oauth_post_content_type("application/json"),
@@ -665,7 +673,9 @@ mod tests {
         );
         assert_eq!(
             classify_oauth_post_content_type("text/plain"),
-            Err("Content-Type must be application/x-www-form-urlencoded.")
+            Err(
+                "Content-Type must be application/x-www-form-urlencoded, multipart/form-data, or application/json."
+            )
         );
     }
 
