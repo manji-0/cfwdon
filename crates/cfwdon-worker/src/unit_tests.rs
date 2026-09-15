@@ -11,23 +11,23 @@ use super::{
     SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow, StreamingChannelValidationError,
     TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery, TranslationProviderLanguageRow,
     account_matches_search_terms, account_relationship_rank, account_search_is_complete_handle,
-    account_search_non_exact_limit, account_search_rank, account_search_sort_key,
-    account_search_term, account_search_terms, activitypub_audiences_for_visibility,
-    activitypub_media_attachment_type, activitypub_profile_attachments,
-    apply_activitypub_poll_fields, apply_html_preview_metadata, auth0_login_url, auth0_logout_url,
-    authorize_interaction_document, authorize_interaction_url_from_base,
-    build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
-    build_add_featured_activity_with_id, build_announcements_document,
-    build_app_verify_credentials_document, build_app_verify_credentials_document_from_parts,
-    build_deepl_request_body, build_deepl_translation_languages_document,
-    build_delete_quote_authorization_activity, build_donation_campaign_document,
-    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
-    build_email_confirmation_url, build_instance_v1_document, build_instance_v2_document,
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    build_libretranslate_request_payload, build_nodeinfo_document_with_halfyear,
-    build_nodeinfo_links_document, build_notifications_v2_document,
-    build_oauth_authorization_server_document, build_oauth_token_document,
-    build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
+    account_search_non_exact_limit, account_search_rank, account_search_resolve_enabled,
+    account_search_sort_key, account_search_term, account_search_terms,
+    activitypub_audiences_for_visibility, activitypub_media_attachment_type,
+    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
+    auth0_login_url, auth0_logout_url, authorize_interaction_document,
+    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
+    build_activitypub_actor_document, build_add_featured_activity_with_id,
+    build_announcements_document, build_app_verify_credentials_document,
+    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
+    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
+    build_donation_campaign_document, build_email_confirmation_html,
+    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
+    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
+    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
+    build_notifications_v2_document, build_oauth_authorization_server_document,
+    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
     build_quote_authorization_object, build_quote_request_object,
     build_reject_quote_request_activity_with_id, build_remote_status_card_value,
     build_remove_featured_activity_with_id, build_status_card_value,
@@ -2757,6 +2757,23 @@ fn account_search_is_complete_handle_requires_domain_form() {
         "alice @remote.example",
         &config
     ));
+}
+
+#[test]
+fn account_search_resolve_enabled_defaults_complete_handles() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    assert!(account_search_resolve_enabled(
+        None,
+        "@alice@remote.example",
+        &config
+    ));
+    assert!(!account_search_resolve_enabled(
+        Some(false),
+        "@alice@remote.example",
+        &config
+    ));
+    assert!(account_search_resolve_enabled(Some(true), "alice", &config));
+    assert!(!account_search_resolve_enabled(None, "alice", &config));
 }
 
 #[test]

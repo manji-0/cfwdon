@@ -5,7 +5,7 @@ use crate::tags::{resolve_search_tag, search_tags_for_v2};
 use crate::{
     LocalAccount, MastodonAccountResponse, MastodonStatusResponse, MastodonTagResponse,
     SearchCategoryFlags, SearchUrlQueryMode, SearchV2ExecutionPlan, SearchV2Query,
-    account_search_non_exact_limit, effective_search_v2_following,
+    account_search_non_exact_limit, account_search_resolve_enabled, effective_search_v2_following,
     oauth_access_token_has_any_scope, resolve_cached_exact_search_account,
     resolve_search_account_with_viewer, resolve_search_status, search_cached_accounts,
     search_statuses_for_v2, search_v2_type_allows_url_resource, search_v2_unauthenticated_error,
@@ -249,7 +249,8 @@ async fn search_accounts_for_response(
         accounts.insert(0, account);
     }
     accounts.truncate(plan.limit as usize);
-    if plan.resolve_enabled
+    if viewer.is_some()
+        && account_search_resolve_enabled(query.resolve, query_text, config)
         && accounts.is_empty()
         && let Some(account) =
             resolve_search_account_with_viewer(db, config, query_text, viewer).await?

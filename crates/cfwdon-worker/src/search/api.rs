@@ -1,5 +1,6 @@
 use super::accounts::{
-    account_search_non_exact_limit, resolve_cached_exact_search_account, search_cached_accounts,
+    account_search_non_exact_limit, account_search_resolve_enabled,
+    resolve_cached_exact_search_account, search_cached_accounts,
 };
 use crate::accounts::{
     DirectoryOrder, directory_order, list_discoverable_accounts_with_sort_key, load_account_stats,
@@ -124,7 +125,7 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
     }
     results.truncate(limit as usize);
 
-    if query.resolve.unwrap_or(false)
+    if account_search_resolve_enabled(query.resolve, q, &config)
         && results.is_empty()
         && let Some(account) =
             resolve_search_account_with_viewer(&db, &config, q, Some(&viewer)).await?

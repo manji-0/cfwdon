@@ -153,6 +153,17 @@ pub(crate) fn account_search_is_complete_handle(query: &str, config: &AppConfig)
         && parse_lookup_handle(query, config).is_ok()
 }
 
+/// Clients such as Planetlink/kmastodon look up `@user@host` via search and omit
+/// `resolve=true`. When the parameter is absent, treat a complete handle as a
+/// resolve request. An explicit `resolve=false` stays local-only.
+pub(crate) fn account_search_resolve_enabled(
+    resolve: Option<bool>,
+    query: &str,
+    config: &AppConfig,
+) -> bool {
+    resolve.unwrap_or_else(|| account_search_is_complete_handle(query, config))
+}
+
 pub(crate) fn account_search_non_exact_limit(
     query: &str,
     viewer: Option<&LocalAccount>,
