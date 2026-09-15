@@ -39,6 +39,7 @@ struct ListRequest {
 
 #[derive(Debug, Default, Deserialize)]
 struct ListAccountsRequest {
+    #[serde(default, alias = "accountIds")]
     account_ids: Option<Vec<String>>,
 }
 
@@ -78,6 +79,30 @@ fn parse_form_bool(value: Option<String>) -> Option<bool> {
         Some("false" | "0" | "off") => Some(false),
         _ => None,
     }
+}
+
+fn form_string_list(entries: Option<Vec<worker::FormEntry>>) -> Option<Vec<String>> {
+    entries.map(|ids| {
+        ids.into_iter()
+            .filter_map(|entry| match entry {
+                worker::FormEntry::Field(value) => {
+                    let value = value.trim().to_owned();
+                    (!value.is_empty()).then_some(value)
+                }
+                worker::FormEntry::File(_) => None,
+            })
+            .collect()
+    })
+}
+
+fn list_account_ids_from_form_fields(
+    snake_case: Option<Vec<String>>,
+    camel_case: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    [snake_case, camel_case]
+        .into_iter()
+        .flatten()
+        .find(|ids| !ids.is_empty())
 }
 
 async fn parse_list_request(req: &mut Request) -> std::result::Result<ListRequest, String> {
@@ -134,14 +159,10 @@ async fn parse_list_accounts_request(
             .await
             .map_err(|error| format!("invalid list accounts form payload: {error}"))?;
         Ok(ListAccountsRequest {
-            account_ids: form.get_all("account_ids[]").map(|ids| {
-                ids.into_iter()
-                    .filter_map(|entry| match entry {
-                        worker::FormEntry::Field(value) => Some(value),
-                        worker::FormEntry::File(_) => None,
-                    })
-                    .collect()
-            }),
+            account_ids: list_account_ids_from_form_fields(
+                form_string_list(form.get_all("account_ids[]")),
+                form_string_list(form.get_all("accountIds[]")),
+            ),
         })
     }
 }
@@ -547,6 +568,44 @@ mod tests {
 
         let document = list_document(&row);
         assert_eq!(document["exclusive"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn list_account_ids_accept_kmastodon_camel_case_form_keys() {
+        assert_eq!(
+            list_account_ids_from_form_fields(None, Some(vec!["acct-1".to_owned()])),
+            Some(vec!["acct-1".to_owned()])
+        );
+        assert_eq!(
+            list_account_ids_from_form_fields(
+                Some(vec!["acct-snake".to_owned()]),
+                Some(vec!["acct-camel".to_owned()])
+            ),
+            Some(vec!["acct-snake".to_owned()])
+        );
+        assert_eq!(
+            list_account_ids_from_form_fields(Some(Vec::new()), Some(vec!["acct-1".to_owned()])),
+            Some(vec!["acct-1".to_owned()])
+        );
+        assert_eq!(
+            list_account_ids_from_form_fields(None, Some(Vec::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn list_accounts_json_accepts_account_ids_alias() {
+        let snake: ListAccountsRequest = serde_json::from_value(serde_json::json!({
+            "account_ids": ["acct-1"]
+        }))
+        .expect("snake_case account_ids");
+        let camel: ListAccountsRequest = serde_json::from_value(serde_json::json!({
+            "accountIds": ["acct-2"]
+        }))
+        .expect("camelCase accountIds");
+
+        assert_eq!(snake.account_ids, Some(vec!["acct-1".to_owned()]));
+        assert_eq!(camel.account_ids, Some(vec!["acct-2".to_owned()]));
     }
 
     #[test]
