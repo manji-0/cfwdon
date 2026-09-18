@@ -7,7 +7,16 @@ pub(crate) const D1_SLOW_QUERY_MS: u64 = 500;
 /// Previous-request D1 SQL budget that triggers 503 load-shedding on heavy public reads.
 pub(crate) const D1_LOAD_SHED_SQL_MS: u64 = 8_000;
 const D1_LOAD_SHED_RETRY_AFTER_SECS: u32 = 5;
+/// One retry after the first transient D1 platform error (`Network connection lost`).
+pub(crate) const D1_TRANSIENT_RETRY_ATTEMPTS: u8 = 2;
 const D1_STATEMENT_FAMILY_MAX_LEN: usize = 160;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum D1TransientRetryAction {
+    Retry,
+    Exhausted,
+    Propagate,
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct D1RequestMetrics {
@@ -361,21 +370,133 @@ pub(crate) fn last_request_d1_sql_ms() -> u64 {
     LAST_REQUEST_D1_SQL_MS.with(|slot| slot.get())
 }
 
+pub(crate) fn d1_error_is_transient(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("network connection lost")
+        || message.contains("network connection reset")
+        || (message.contains("d1") && message.contains("connection lost"))
+}
+
+pub(crate) fn d1_transient_retry_action(
+    attempt: u8,
+    max_attempts: u8,
+    error: &str,
+) -> D1TransientRetryAction {
+    if !d1_error_is_transient(error) {
+        return D1TransientRetryAction::Propagate;
+    }
+    if attempt < max_attempts {
+        D1TransientRetryAction::Retry
+    } else {
+        D1TransientRetryAction::Exhausted
+    }
+}
+
+fn log_d1_transient_retry(operation: &str, outcome: &str, attempt: u8, detail: Option<&str>) {
+    let level = match outcome {
+        "transient_retry" | "transient_retry_exhausted" => "warn",
+        _ => "info",
+    };
+    let message = match (outcome, detail) {
+        ("transient_retry", Some(detail)) => {
+            format!("D1 {operation} retrying transient error (attempt {attempt}): {detail}")
+        }
+        ("transient_retry_ok", _) => {
+            format!("D1 {operation} succeeded after transient error retry")
+        }
+        ("transient_retry_exhausted", Some(detail)) => {
+            format!(
+                "D1 {operation} exhausted transient error retries (attempt {attempt}): {detail}"
+            )
+        }
+        (_, Some(detail)) => format!("D1 {operation} {outcome}: {detail}"),
+        (_, None) => format!("D1 {operation} {outcome}"),
+    };
+    let payload = serde_json::json!({
+        "event": "d1_transient_retry",
+        "component": "d1",
+        "handler": operation,
+        "outcome": outcome,
+        "level": level,
+        "attempt": attempt,
+    });
+    #[cfg(target_arch = "wasm32")]
+    crate::log_json_event(crate::add_log_message(payload, message));
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (payload, message);
+}
+
+pub(crate) async fn run_d1_with_transient_retry<T>(
+    operation: &'static str,
+    mut action: impl AsyncFnMut() -> Result<T>,
+) -> Result<T> {
+    for attempt in 1..=D1_TRANSIENT_RETRY_ATTEMPTS {
+        match action().await {
+            Ok(value) => {
+                if attempt > 1 {
+                    log_d1_transient_retry(operation, "transient_retry_ok", attempt, None);
+                }
+                return Ok(value);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                match d1_transient_retry_action(attempt, D1_TRANSIENT_RETRY_ATTEMPTS, &message) {
+                    D1TransientRetryAction::Retry => {
+                        log_d1_transient_retry(
+                            operation,
+                            "transient_retry",
+                            attempt,
+                            Some(&message),
+                        );
+                    }
+                    D1TransientRetryAction::Exhausted => {
+                        log_d1_transient_retry(
+                            operation,
+                            "transient_retry_exhausted",
+                            attempt,
+                            Some(&message),
+                        );
+                        return Err(error);
+                    }
+                    D1TransientRetryAction::Propagate => return Err(error),
+                }
+            }
+        }
+    }
+    Err(worker::Error::RustError(
+        "D1 transient retry loop exited without a result".to_owned(),
+    ))
+}
+
+fn d1_unavailable_error_body(error_description: &str) -> serde_json::Value {
+    serde_json::json!({
+        "error": "Service temporarily unavailable",
+        "error_description": error_description,
+    })
+}
+
+fn d1_unavailable_response(error_description: &str) -> Result<Response> {
+    let mut response =
+        Response::from_json(&d1_unavailable_error_body(error_description))?.with_status(503);
+    response
+        .headers_mut()
+        .set("Retry-After", &D1_LOAD_SHED_RETRY_AFTER_SECS.to_string())?;
+    Ok(response)
+}
+
 pub(crate) fn d1_pressure_load_shed_response() -> Result<Option<Response>> {
     let previous_sql_ms = last_request_d1_sql_ms();
     if previous_sql_ms < D1_LOAD_SHED_SQL_MS {
         return Ok(None);
     }
 
-    let mut response = Response::from_json(&serde_json::json!({
-        "error": "Service temporarily unavailable",
-        "error_description": "D1 latency pressure; retry shortly",
-    }))?
-    .with_status(503);
-    response
-        .headers_mut()
-        .set("Retry-After", &D1_LOAD_SHED_RETRY_AFTER_SECS.to_string())?;
-    Ok(Some(response))
+    Ok(Some(d1_unavailable_response(
+        "D1 latency pressure; retry shortly",
+    )?))
+}
+
+pub(crate) fn d1_transient_exhausted_response() -> Result<Response> {
+    d1_unavailable_response("D1 connection lost; retry shortly")
 }
 
 #[cfg(test)]
@@ -544,5 +665,85 @@ mod tests {
             d1_request_route("GET", "/api/v1/timelines/tag/rust"),
             "GET /api/v1/timelines/tag/rust"
         );
+    }
+
+    #[test]
+    fn d1_transient_error_matches_production_network_connection_lost() {
+        assert!(d1_error_is_transient(
+            "request handler failed: D1: D1Error { cause: Error: Network connection lost. at D1DatabaseSessionAlwaysPrimary._sendOrThrow }"
+        ));
+        assert!(d1_error_is_transient("Error: Network connection lost."));
+        assert!(d1_error_is_transient("D1 network connection reset"));
+        assert!(!d1_error_is_transient(
+            "UNIQUE constraint failed: oauth_apps.client_id"
+        ));
+        assert!(!d1_error_is_transient(
+            "D1 query select:oauth_apps exceeded 500ms threshold"
+        ));
+    }
+
+    #[test]
+    fn d1_transient_retry_action_retries_once_then_exhausts() {
+        let error = "D1Error: Network connection lost.";
+        assert_eq!(
+            d1_transient_retry_action(1, D1_TRANSIENT_RETRY_ATTEMPTS, error),
+            D1TransientRetryAction::Retry
+        );
+        assert_eq!(
+            d1_transient_retry_action(2, D1_TRANSIENT_RETRY_ATTEMPTS, error),
+            D1TransientRetryAction::Exhausted
+        );
+        assert_eq!(
+            d1_transient_retry_action(1, D1_TRANSIENT_RETRY_ATTEMPTS, "syntax error"),
+            D1TransientRetryAction::Propagate
+        );
+    }
+
+    #[test]
+    fn d1_transient_retry_loop_succeeds_on_second_attempt() {
+        let mut attempts = 0_u8;
+        let mut outcome = None;
+        for attempt in 1..=D1_TRANSIENT_RETRY_ATTEMPTS {
+            attempts += 1;
+            let result: Result<()> = if attempt == 1 {
+                Err(worker::Error::RustError(
+                    "Error: Network connection lost.".to_owned(),
+                ))
+            } else {
+                Ok(())
+            };
+            match result {
+                Ok(value) => {
+                    outcome = Some(Ok(value));
+                    break;
+                }
+                Err(error) => match d1_transient_retry_action(
+                    attempt,
+                    D1_TRANSIENT_RETRY_ATTEMPTS,
+                    &error.to_string(),
+                ) {
+                    D1TransientRetryAction::Retry => {}
+                    D1TransientRetryAction::Exhausted | D1TransientRetryAction::Propagate => {
+                        outcome = Some(Err(error));
+                        break;
+                    }
+                },
+            }
+        }
+        assert_eq!(attempts, 2);
+        assert!(outcome.expect("retry outcome").is_ok());
+    }
+
+    #[test]
+    fn d1_transient_exhausted_body_matches_load_shed_shape() {
+        let body = d1_unavailable_error_body("D1 connection lost; retry shortly");
+        assert_eq!(body["error"], "Service temporarily unavailable");
+        assert_eq!(
+            body["error_description"],
+            "D1 connection lost; retry shortly"
+        );
+        let pressure = d1_unavailable_error_body("D1 latency pressure; retry shortly");
+        assert_eq!(pressure["error"], body["error"]);
+        assert_eq!(D1_LOAD_SHED_RETRY_AFTER_SECS, 5);
     }
 }

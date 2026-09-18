@@ -235,8 +235,9 @@ async fn insert_oauth_app(
         D1Type::Text(client_id.as_str()),
         D1Type::Text(client_secret.as_str()),
     ];
-    db.prepare(
-        "INSERT INTO oauth_apps (
+    crate::run_d1_with_transient_retry("oauth_apps.insert", async || {
+        db.prepare(
+            "INSERT INTO oauth_apps (
             name,
             website,
             scopes_json,
@@ -255,21 +256,26 @@ async fn insert_oauth_app(
             ?7,
             0
         )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
+        )
+        .bind_refs(bindings.iter())?
+        .run()
+        .await
+    })
     .await?;
 
     let client_id_binding = D1Type::Text(client_id.as_str());
-    db.prepare(
-        "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
+    crate::run_d1_with_transient_retry("oauth_apps.reload", async || {
+        db.prepare(
+            "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
                 client_id, client_secret, client_secret_expires_at
          FROM oauth_apps
          WHERE client_id = ?1
          LIMIT 1",
-    )
-    .bind_refs(&client_id_binding)?
-    .first::<OAuthAppRow>(None)
+        )
+        .bind_refs(&client_id_binding)?
+        .first::<OAuthAppRow>(None)
+        .await
+    })
     .await?
     .ok_or_else(|| worker::Error::RustError("created app could not be reloaded".to_owned()))
 }
@@ -284,7 +290,13 @@ pub(crate) async fn create_app_response(
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
     };
-    let app = insert_oauth_app(&db, &request).await?;
+    let app = match insert_oauth_app(&db, &request).await {
+        Ok(app) => app,
+        Err(error) if crate::d1_error_is_transient(&error.to_string()) => {
+            return crate::d1_transient_exhausted_response();
+        }
+        Err(error) => return Err(error),
+    };
     Response::from_json(&app_document(&app, &config))
 }
 
