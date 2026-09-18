@@ -20,9 +20,10 @@ use crate::{
     list_remote_public_statuses_by_tag, list_remote_public_timeline_statuses, list_row_by_id,
     load_announcement_reaction_state, load_config, load_in_reply_to_account_id,
     load_latest_filter_updated_at, load_remote_status_updated_at, load_status_updated_at,
-    now_iso_string, oauth_access_token_has_any_scope, remote_status_has_media,
-    snapshot_d1_request_metrics, stream_hub_channel_id_name, stream_hub_session_id_name,
-    streaming_batch_from_entries, streaming_home_batch, upgrade_stream_hub_websocket,
+    log_stream_hub_connect_event, now_iso_string, oauth_access_token_has_any_scope,
+    remote_status_has_media, snapshot_d1_request_metrics, stream_hub_channel_id_name,
+    stream_hub_session_id_name, stream_hub_sse_should_reconnect, streaming_batch_from_entries,
+    streaming_home_batch, upgrade_stream_hub_websocket,
 };
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
@@ -1657,6 +1658,7 @@ fn build_streaming_event_stream(
             None
         };
 
+        let mut hub_reconnects = 0_u8;
         let mut hub_events = hub_socket.as_ref().and_then(CloseWebSocketOnDrop::events);
         while hub_events.is_some() {
             let backup_tick =
@@ -1676,28 +1678,80 @@ fn build_streaming_event_stream(
                                 yield bytes;
                             }
                         }
-                        Some(Ok(WebsocketEvent::Close(_))) | None => {
-                            if let Some((hub_name, _)) = hub_target.as_ref() {
-                                console_log!(
-                                    "stream hub sse websocket closed for hub {}; falling back to d1 poll",
-                                    hub_name
-                                );
-                            }
+                        Some(Ok(WebsocketEvent::Close(_))) | None | Some(Err(_)) => {
+                            let error_detail = match &event {
+                                Some(Err(error)) => Some(error.to_string()),
+                                _ => None,
+                            };
+                            let should_reconnect = stream_hub_sse_should_reconnect(
+                                error_detail.as_deref(),
+                                hub_reconnects,
+                            );
                             // Drop listeners before closing the socket (EventStream panics if
                             // the websocket is already gone).
                             hub_events = None;
                             drop(hub_socket.take());
-                        }
-                        Some(Err(error)) => {
-                            if let Some((hub_name, _)) = hub_target.as_ref() {
-                                console_error!(
-                                    "stream hub sse websocket error for hub {}: {}",
-                                    hub_name,
-                                    error
-                                );
+                            if should_reconnect {
+                                if let (Some(env), Some((hub_name, account_id))) =
+                                    (env.as_ref(), hub_target.as_ref())
+                                {
+                                    hub_reconnects = hub_reconnects.saturating_add(1);
+                                    log_stream_hub_connect_event(
+                                        "sse",
+                                        "inactive_retry",
+                                        hub_reconnects,
+                                        error_detail.as_deref(),
+                                    );
+                                    match connect_stream_hub_websocket(
+                                        env,
+                                        &config.stream_hub_binding,
+                                        hub_name,
+                                        &stream_name,
+                                        tag.as_deref(),
+                                        list.as_deref(),
+                                        account_id.as_deref(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(websocket) => {
+                                            log_stream_hub_connect_event(
+                                                "sse",
+                                                "inactive_retry_ok",
+                                                hub_reconnects,
+                                                None,
+                                            );
+                                            hub_socket = Some(CloseWebSocketOnDrop::new(websocket));
+                                            hub_events = hub_socket
+                                                .as_ref()
+                                                .and_then(CloseWebSocketOnDrop::events);
+                                        }
+                                        Err(error) => {
+                                            log_stream_hub_connect_event(
+                                                "sse",
+                                                "inactive_retry_exhausted",
+                                                hub_reconnects,
+                                                Some(&error.to_string()),
+                                            );
+                                            console_log!(
+                                                "stream hub sse reconnect failed for hub {}; falling back to d1 poll",
+                                                hub_name
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if let Some((hub_name, _)) = hub_target.as_ref() {
+                                match error_detail {
+                                    Some(detail) => console_error!(
+                                        "stream hub sse websocket error for hub {}: {}",
+                                        hub_name,
+                                        detail
+                                    ),
+                                    None => console_log!(
+                                        "stream hub sse websocket closed for hub {}; falling back to d1 poll",
+                                        hub_name
+                                    ),
+                                }
                             }
-                            hub_events = None;
-                            drop(hub_socket.take());
                         }
                     }
                 }

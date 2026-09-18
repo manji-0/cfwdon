@@ -252,7 +252,9 @@ impl DurableObject for StreamHub {
         reason: String,
         _was_clean: bool,
     ) -> Result<()> {
-        if stream_hub_error_is_deploy_reset(&reason) {
+        if stream_hub_error_is_deploy_reset(&reason)
+            || stream_hub_error_is_inactive_instance(&reason)
+        {
             log_stream_hub_websocket_event("close", &reason);
         }
         let close_code = u16::try_from(code).ok();
@@ -262,7 +264,8 @@ impl DurableObject for StreamHub {
 
     async fn websocket_error(&self, _ws: WebSocket, error: worker::Error) -> Result<()> {
         // worker-rs defaults this to `unimplemented!`, which turns deploy-time
-        // Durable Object resets into `$workers.outcome=exception`.
+        // Durable Object resets into `$workers.outcome=exception`. Inactive
+        // instance errors after hibernation are the same class (#73 residual).
         log_stream_hub_websocket_event("error", &error.to_string());
         Ok(())
     }
@@ -687,12 +690,30 @@ fn stream_hub_binding_name(env: &Env) -> String {
 
 /// Initial connect plus one retry when the target DO was hibernated/evicted.
 const STREAM_HUB_INACTIVE_FETCH_ATTEMPTS: u8 = 2;
+/// After a live Worker↔DO websocket dies, reconnect this many times before D1 poll.
+pub(crate) const STREAM_HUB_INACTIVE_SSE_RECONNECTS: u8 = 2;
 
-fn stream_hub_error_is_inactive_instance(message: &str) -> bool {
-    message.to_ascii_lowercase().contains("no longer active")
+pub(crate) fn stream_hub_error_is_inactive_instance(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("no longer active")
 }
 
-fn log_stream_hub_connect_event(operation: &str, outcome: &str, attempt: u8, detail: Option<&str>) {
+pub(crate) fn stream_hub_sse_should_reconnect(detail: Option<&str>, reconnects_used: u8) -> bool {
+    if reconnects_used >= STREAM_HUB_INACTIVE_SSE_RECONNECTS {
+        return false;
+    }
+    match detail {
+        None => true,
+        Some(message) => stream_hub_error_is_inactive_instance(message),
+    }
+}
+
+pub(crate) fn log_stream_hub_connect_event(
+    operation: &str,
+    outcome: &str,
+    attempt: u8,
+    detail: Option<&str>,
+) {
     let level = match outcome {
         "inactive_retry" | "inactive_retry_exhausted" => "warn",
         _ => "info",
@@ -735,16 +756,32 @@ async fn fetch_stream_hub_with_inactive_retry(
     operation: &'static str,
     build_request: impl Fn() -> Result<Request>,
 ) -> Result<Response> {
+    fetch_stream_hub_with_inactive_retry_map(env, binding, hub_name, operation, build_request, Ok)
+        .await
+}
+
+async fn fetch_stream_hub_with_inactive_retry_map<T>(
+    env: &Env,
+    binding: &str,
+    hub_name: &str,
+    operation: &'static str,
+    build_request: impl Fn() -> Result<Request>,
+    map_response: impl Fn(Response) -> Result<T>,
+) -> Result<T> {
     for attempt in 1..=STREAM_HUB_INACTIVE_FETCH_ATTEMPTS {
         let namespace = env.durable_object(binding)?;
         let stub = namespace.get_by_name(hub_name)?;
         let request = build_request()?;
-        match stub.fetch_with_request(request).await {
-            Ok(response) => {
+        let mapped = match stub.fetch_with_request(request).await {
+            Ok(response) => map_response(response),
+            Err(error) => Err(error),
+        };
+        match mapped {
+            Ok(value) => {
                 if attempt > 1 {
                     log_stream_hub_connect_event(operation, "inactive_retry_ok", attempt, None);
                 }
-                return Ok(response);
+                return Ok(value);
             }
             Err(error) => {
                 let message = error.to_string();
@@ -879,30 +916,40 @@ pub(crate) async fn connect_stream_hub_websocket(
     let list = list.map(str::to_owned);
     let account_id = account_id.map(str::to_owned);
 
-    let response = fetch_stream_hub_with_inactive_retry(env, binding, hub_name, "connect", || {
-        let headers = worker::Headers::new();
-        headers.set("Upgrade", "websocket")?;
-        set_stream_hub_subscription_headers(
-            &headers,
-            &StreamHubUpgradeParams {
-                stream: Some(stream.as_str()),
-                tag: tag.as_deref(),
-                list: list.as_deref(),
-                account_id: account_id.as_deref(),
-            },
-        )?;
+    fetch_stream_hub_with_inactive_retry_map(
+        env,
+        binding,
+        hub_name,
+        "connect",
+        || {
+            let headers = worker::Headers::new();
+            headers.set("Upgrade", "websocket")?;
+            set_stream_hub_subscription_headers(
+                &headers,
+                &StreamHubUpgradeParams {
+                    stream: Some(stream.as_str()),
+                    tag: tag.as_deref(),
+                    list: list.as_deref(),
+                    account_id: account_id.as_deref(),
+                },
+            )?;
 
-        let mut init = RequestInit::new();
-        init.with_method(Method::Get).with_headers(headers);
-        let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
-        Request::new_with_init(&url, &init)
-    })
-    .await?;
-    let websocket = response.websocket().ok_or_else(|| {
-        worker::Error::RustError("stream hub websocket upgrade did not return a socket".to_owned())
-    })?;
-    websocket.accept()?;
-    Ok(websocket)
+            let mut init = RequestInit::new();
+            init.with_method(Method::Get).with_headers(headers);
+            let url = format!("{STREAM_HUB_INTERNAL_ORIGIN}{STREAM_HUB_WEBSOCKET_PATH}");
+            Request::new_with_init(&url, &init)
+        },
+        |response| {
+            let websocket = response.websocket().ok_or_else(|| {
+                worker::Error::RustError(
+                    "stream hub websocket upgrade did not return a socket".to_owned(),
+                )
+            })?;
+            websocket.accept()?;
+            Ok(websocket)
+        },
+    )
+    .await
 }
 
 /// Subscription the Worker authorised for a hub connection.
@@ -1049,17 +1096,28 @@ fn stream_hub_error_is_deploy_reset(message: &str) -> bool {
     message.contains("durable object reset") && message.contains("updated")
 }
 
-fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
-    let deploy_reset = stream_hub_error_is_deploy_reset(detail);
-    let (level, outcome) = if deploy_reset {
+fn stream_hub_websocket_log_class(handler: &str, detail: &str) -> (&'static str, &'static str) {
+    if stream_hub_error_is_deploy_reset(detail) {
         ("info", "deploy_reset")
+    } else if stream_hub_error_is_inactive_instance(detail) {
+        ("warn", "inactive_instance")
     } else if handler == "error" {
         ("warn", "error")
     } else {
         ("info", "closed")
-    };
+    }
+}
+
+fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
+    let deploy_reset = stream_hub_error_is_deploy_reset(detail);
+    let inactive_instance = stream_hub_error_is_inactive_instance(detail);
+    let (level, outcome) = stream_hub_websocket_log_class(handler, detail);
     let message = if deploy_reset {
         "Stream Hub websocket closed because Durable Object code was updated".to_owned()
+    } else if inactive_instance {
+        format!(
+            "Stream Hub websocket {handler} because Durable Object instance is no longer active"
+        )
     } else {
         format!("Stream Hub websocket {handler}: {detail}")
     };
@@ -1071,6 +1129,7 @@ fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
             "outcome": outcome,
             "level": level,
             "deploy_reset": deploy_reset,
+            "inactive_instance": inactive_instance,
         }),
         message,
     ));
@@ -1217,6 +1276,49 @@ mod tests {
             "Durable Object reset because its code was updated."
         ));
         assert!(!stream_hub_error_is_inactive_instance("websocket closed"));
+    }
+
+    #[test]
+    fn inactive_sse_reconnects_on_close_or_inactive_error() {
+        assert!(stream_hub_sse_should_reconnect(None, 0));
+        assert!(stream_hub_sse_should_reconnect(
+            Some(
+                "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request."
+            ),
+            1
+        ));
+        assert!(!stream_hub_sse_should_reconnect(
+            Some(
+                "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request."
+            ),
+            STREAM_HUB_INACTIVE_SSE_RECONNECTS
+        ));
+        assert!(!stream_hub_sse_should_reconnect(
+            Some("websocket closed"),
+            0
+        ));
+    }
+
+    #[test]
+    fn inactive_websocket_errors_are_operational_not_exceptions() {
+        assert_eq!(
+            stream_hub_websocket_log_class(
+                "error",
+                "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request."
+            ),
+            ("warn", "inactive_instance")
+        );
+        assert_eq!(
+            stream_hub_websocket_log_class("error", "socket failed"),
+            ("warn", "error")
+        );
+        assert_eq!(
+            stream_hub_websocket_log_class(
+                "close",
+                "Durable Object reset because its code was updated."
+            ),
+            ("info", "deploy_reset")
+        );
     }
 
     #[test]
