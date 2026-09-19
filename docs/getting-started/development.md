@@ -56,7 +56,19 @@ devbox run ci:server
 devbox run ci:wrangler-dry-run
 ```
 
-GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success. Pull requests run `devbox run ci:server`, which includes `cargo clippy --workspace --target wasm32-unknown-unknown`. `wrangler deploy --dry-run` runs on `main` and on `workflow_dispatch`, not on pull requests.
+GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success.
+
+| Event | `web-ui` | `server` (`ci:server`) | `wrangler deploy --dry-run` |
+| --- | --- | --- | --- |
+| Pull request to `main` | yes | yes | no |
+| Push to `main` | yes | yes | yes |
+| `workflow_dispatch` | yes | yes | yes |
+
+`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python migration/query-plan checks. `web-ui` is pnpm check/test/build plus `node --test scripts/lib/*.test.mjs`. `wrangler deploy --dry-run` stays off pull requests.
+
+Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
+
+**Required status check:** require the aggregator **`CI / ci`** (workflow `CI`, job `ci`) in branch protection or a ruleset. This repository workflow cannot set that. Do not require a check named Wrangler dry-run; that is a step of `server`, not a job. Do not require `web-ui` and `server` separately unless skipped jobs are also treated as passing.
 
 `devbox run ci` currently runs:
 
