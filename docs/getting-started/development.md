@@ -143,6 +143,12 @@ devbox run worker:dev
 
 This starts `wrangler dev`, rebuilds `web-ui/dist`, stages UI files into `assets/`, and applies pending local D1 migrations before boot. The Worker build copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
 
+Local `wrangler dev` uses `worker-build --dev` (no wasm-opt) via `WRANGLER_DEV=1` / `WORKER_BUILD_PROFILE=dev`. `wrangler deploy` and CI `wrangler deploy --dry-run` stay on `worker-build --release`. Force a release wasm under `wrangler dev` with `WORKER_BUILD_PROFILE=release`. Bare `wrangler dev` (not `devbox run worker:dev`) needs the same env:
+
+```sh
+WRANGLER_DEV=1 wrangler dev
+```
+
 ### Connect to a specific instance
 
 ```sh
