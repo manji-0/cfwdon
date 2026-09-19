@@ -28,6 +28,8 @@
       "rustup component list --toolchain \"${RUSTUP_TOOLCHAIN}\" --installed | grep -Eq '^rustfmt' || rustup component add rustfmt --toolchain \"${RUSTUP_TOOLCHAIN}\"",
       "rustup component list --toolchain \"${RUSTUP_TOOLCHAIN}\" --installed | grep -Eq '^clippy' || rustup component add clippy --toolchain \"${RUSTUP_TOOLCHAIN}\"",
       "export PATH=\"$(dirname \"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" cargo)\"):$(dirname \"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" rustc)\"):${CARGO_HOME}/bin:${PATH}\"",
+      "export RUSTC=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" rustc)\"",
+      "export CARGO=\"$(rustup which --toolchain \"${RUSTUP_TOOLCHAIN}\" cargo)\"",
       "export WASM_BINDGEN_BIN=\"$(command -v wasm-bindgen)\"",
       "export WASM_OPT_BIN=\"$(command -v wasm-opt)\""
     ],
