@@ -62,10 +62,11 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 
 - `web-ui`: `pnpm run check`, `pnpm test`, and `pnpm run build`
 - `cargo fmt --all --check`
-- `cargo check --workspace --target wasm32-unknown-unknown`
 - `cargo clippy` native `--all-targets` and wasm32
 - `cargo test --workspace`
 - `WRANGLER_LOG=error wrangler deploy --dry-run`
+
+`devbox run check` remains a local wasm `cargo check`. CI does not run it before wasm clippy.
 
 Use `devbox run ci` as the minimum local gate before sending a change. GitHub PR CI does not run the wrangler dry-run; run `devbox run ci:wrangler-dry-run` locally if the Worker build command or `wrangler.toml` changed.
 
