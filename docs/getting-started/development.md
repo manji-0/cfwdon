@@ -22,6 +22,7 @@ For a fresh clone and first deploy path, see [Clone And Run](clone-and-run.md).
 - `jq`
 
 ## Common Commands
+<!-- constrained-by ../../.github/workflows/ci.yml -->
 
 ```sh
 devbox shell
@@ -52,19 +53,21 @@ devbox run ci
 ```sh
 devbox run ci:web-ui
 devbox run ci:server
+devbox run ci:wrangler-dry-run
 ```
 
-GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success.
+GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success. Pull requests run `devbox run ci:server`, which includes `cargo clippy --workspace --target wasm32-unknown-unknown`. `wrangler deploy --dry-run` runs on `main` and on `workflow_dispatch`, not on pull requests.
 
 `devbox run ci` currently runs:
 
 - `web-ui`: `pnpm run check`, `pnpm test`, and `pnpm run build`
 - `cargo fmt --all --check`
 - `cargo check --workspace --target wasm32-unknown-unknown`
+- `cargo clippy` native `--all-targets` and wasm32
 - `cargo test --workspace`
 - `WRANGLER_LOG=error wrangler deploy --dry-run`
 
-Use `devbox run ci` as the minimum gate before sending a change.
+Use `devbox run ci` as the minimum local gate before sending a change. GitHub PR CI does not run the wrangler dry-run; run `devbox run ci:wrangler-dry-run` locally if the Worker build command or `wrangler.toml` changed.
 
 ## Wrangler rustc PATH
 <!-- constrained-by ./clone-and-run.md#deploy -->

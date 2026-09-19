@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -125,6 +126,13 @@ jobs:
 
       - name: Run server CI
         run: devbox run ci:server
+
+      # wasm clippy stays in ci:server (PRs included). worker-build --release
+      # dry-run is ~3 min and only needs to catch wrangler.toml / wasm-opt
+      # breakage on main, or on-demand via workflow_dispatch.
+      - name: Wrangler dry-run
+        if: github.event_name != 'pull_request'
+        run: devbox run ci:wrangler-dry-run
 
   ci:
     name: ci
