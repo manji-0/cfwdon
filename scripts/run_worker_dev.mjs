@@ -79,4 +79,9 @@ if (parsed.instance) {
   printLocalAuth0Setup();
 }
 
-run("wrangler", wranglerArgs);
+run("wrangler", wranglerArgs, {
+  env: {
+    WRANGLER_DEV: process.env.WRANGLER_DEV || "1",
+    WORKER_BUILD_PROFILE: process.env.WORKER_BUILD_PROFILE || "dev",
+  },
+});

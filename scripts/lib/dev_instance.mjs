@@ -73,6 +73,8 @@ Options:
   --instance <domain-or-url>  Override INSTANCE_DOMAIN (and related Auth0 vars)
   --remote                    Use remote Cloudflare bindings (D1/KV/R2)
   --skip-web-ui-build         Skip rebuilding web-ui/dist before start
+
+The Worker compile uses worker-build --dev. wrangler deploy stays --release.
 `;
 }
 

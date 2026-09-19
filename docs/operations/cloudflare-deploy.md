@@ -131,7 +131,7 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
     wrangler deploy
     ```
 
-    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
+    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc and uses `worker-build --release` (wasm-opt). `devbox run worker:dev` is the only path that switches to `--dev`. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
 
     A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
     Clients reconnect; this is expected and is logged as
