@@ -123,10 +123,15 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
     `wrangler deploy` stages `web-ui/dist` into `assets/app` and `admin-ui/dist` into `assets/admin`. Missing dist directories fall back to placeholder HTML.
 
 13. Deploy the Worker.
+<!-- derived-from ../getting-started/development.md#wrangler-rustc-path -->
+
+    From `devbox shell`, or after `eval "$(devbox shellenv)"`:
 
     ```sh
     wrangler deploy
     ```
+
+    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
 
     A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
     Clients reconnect; this is expected and is logged as

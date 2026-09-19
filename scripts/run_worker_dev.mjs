@@ -9,15 +9,32 @@ import {
   workerDevUsage,
 } from "./lib/dev_instance.mjs";
 import { printLocalAuth0Setup } from "./lib/dev_auth0.mjs";
+import { wasmRustcEnv } from "./lib/wasm_rustc_env.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+let cachedWorkerEnv;
+
+function workerEnv() {
+  if (!cachedWorkerEnv) {
+    try {
+      cachedWorkerEnv = wasmRustcEnv({ repoRoot });
+    } catch (error) {
+      process.stderr.write(`${error.message}\n`);
+      process.exit(1);
+    }
+  }
+  return cachedWorkerEnv;
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env,
     ...options,
+    env: {
+      ...workerEnv(),
+      ...options.env,
+    },
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);

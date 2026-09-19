@@ -66,6 +66,27 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 
 Use `devbox run ci` as the minimum gate before sending a change.
 
+## Wrangler rustc PATH
+<!-- constrained-by ./clone-and-run.md#deploy -->
+
+`wrangler` and `worker-build` spawn `rustc` from `PATH`. A host or Nix `rustc` without `wasm32-unknown-unknown` will fail the Worker compile even when repo rustup has the target.
+
+`scripts/build_worker.mjs` (the `[build]` command in `wrangler.toml`) and `devbox run worker:dev` pin `RUSTC` / `PATH` to the repo rustup toolchain under `.devbox/.rustup`. `devbox shell` also exports `RUSTC` and `CARGO` from `rustup which`.
+
+Deploy from `devbox shell`, or after `eval "$(devbox shellenv)"`:
+
+```sh
+wrangler deploy
+```
+
+If `PATH` rustc is still the host compiler, wrap the command:
+
+```sh
+node scripts/with_wasm_rustc.mjs wrangler deploy
+```
+
+On macOS do **not** use `devbox run -- wrangler deploy`. That wraps `git` and hits the unsigned Xcode license. `devbox run worker:dev` is fine: it runs Node, not a `devbox run -- wrangler` git wrapper.
+
 ## Model Checking
 <!-- constrained-by ../../crates/cfwdon-models/src/quote.rs -->
 

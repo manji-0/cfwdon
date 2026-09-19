@@ -96,6 +96,7 @@ For local iteration, use `wrangler d1 migrations apply DB --local` if you want t
 
 ## Deploy
 <!-- constrained-by ../operations/cloudflare-deploy.md#verification-gates -->
+<!-- derived-from ./development.md#wrangler-rustc-path -->
 
 Before deploying:
 
@@ -103,11 +104,19 @@ Before deploying:
 devbox run ci
 ```
 
-Then deploy:
+Then deploy from `devbox shell` (or after `eval "$(devbox shellenv)"`):
 
 ```sh
 wrangler deploy
 ```
+
+`scripts/build_worker.mjs` pins repo rustup `wasm32-unknown-unknown` rustc. If PATH rustc is still a host or Nix compiler without wasm32:
+
+```sh
+node scripts/with_wasm_rustc.mjs wrangler deploy
+```
+
+On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
 
 After deployment, verify that public instance endpoints return your configured domain, media URLs use `MEDIA_PUBLIC_BASE_URL`, protected routes accept Auth0-issued access tokens, and browser login returns through `/oauth/auth0/callback`.
 
@@ -138,6 +147,7 @@ python3 scripts/generate_mastodon_api_compat.py
 - Browser login does not return from Auth0: confirm the Auth0 application allows `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`.
 - Media URLs point at the wrong host: set `MEDIA_PUBLIC_BASE_URL` to the public R2 custom domain.
 - `wasm-bindgen` version errors: leave and re-enter `devbox shell`; the init hook installs the pinned `wasm-bindgen-cli` version.
+- `wrangler` / `worker-build` fail with a missing `wasm32-unknown-unknown` target: a host or Nix `rustc` is ahead of repo rustup. Use `devbox shell` then `wrangler deploy`, or `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler`.
 
 ## Summary
 <!-- derived-from #repository-bootstrap -->
