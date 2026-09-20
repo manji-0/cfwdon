@@ -9,6 +9,13 @@ on:
       - main
   workflow_dispatch:
 
+# Do not add path filters on web-ui/server. The aggregator `ci` requires both
+# jobs to report success; a skipped job is not success, so path skips would
+# fail the required `CI / ci` check on docs-only or crate-only PRs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   actions: write
@@ -17,6 +24,7 @@ jobs:
   web-ui:
     name: web-ui
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web-ui
@@ -48,9 +56,14 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Worker script unit tests
+        working-directory: ${{ github.workspace }}
+        run: node --test scripts/lib/*.test.mjs
+
   server:
     name: server
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       RUSTUP_HOME: ${{ github.workspace }}/.devbox/.rustup
       CARGO_HOME: ${{ github.workspace }}/.devbox/.cargo
@@ -115,6 +128,8 @@ jobs:
           export PATH="${GITHUB_WORKSPACE}/.devbox/nix/profile/default/bin:${PATH}"
           rustc -vV
 
+      # Keep shared-key ci-server-v2. Do not restore the poison prefix
+      # v0-rust-ci-server-Linux-x64-e96c609d.
       - name: Cache cargo build
         uses: swatinem/rust-cache@v2
         with:
@@ -129,7 +144,8 @@ jobs:
 
       # wasm clippy stays in ci:server (PRs included). worker-build --release
       # dry-run is ~3 min and only needs to catch wrangler.toml / wasm-opt
-      # breakage on main, or on-demand via workflow_dispatch.
+      # breakage on main, or on-demand via workflow_dispatch. Do not run
+      # wrangler deploy --dry-run on pull_request.
       - name: Wrangler dry-run
         if: github.event_name != 'pull_request'
         run: devbox run ci:wrangler-dry-run
@@ -137,6 +153,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
       - web-ui
       - server
