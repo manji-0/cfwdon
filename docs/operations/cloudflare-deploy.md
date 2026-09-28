@@ -137,6 +137,15 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
     Clients reconnect; this is expected and is logged as
     `stream_hub_websocket` with `outcome=deploy_reset`, not as an application 5xx.
 
+## Stream Hub hibernation exceptions
+<!-- derived-from #provisioning-steps -->
+
+Hibernation eviction delivers `webSocketClose` with code 1006 and reason `this Durable Object instance is no longer active`. StreamHub does not echo that close. workerd rejects codes 1004, 1005, 1006, and 1015, and a close queued onto an already-dead hibernatable socket fails in the output pump after the handler has returned `Ok`. `HibernatableWebSocketCustomEvent::run` records that rejection as `$workers.outcome=exception` with `$metadata.origin=hibernatableWebSocket`. Swallowing the synchronous `WebSocket.close` error does not stop the pump.
+
+Handled cases log `event=stream_hub_websocket` with `handled=true`, `outcome=inactive_instance` or `deploy_reset`, and `close_reply=skipped`. SSE reconnect and the D1 poll fallback are unchanged.
+
+If the actor IoContext is already aborted when the event is delivered, the runtime still writes `$metadata.error` before user code runs. No handler return value clears that field or rewrites `$workers.outcome`. Alert on hibernatable exceptions that do not have the handled `stream_hub_websocket` log beside them.
+
 ## Verification Gates
 
 - `devbox run ci`
