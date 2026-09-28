@@ -4,7 +4,7 @@ use super::client::{
 use super::fanout::{stream_hub_fanout_message, stream_hub_websocket_error_message};
 use super::logging::{
     log_stream_hub_websocket_event, stream_hub_error_is_deploy_reset,
-    stream_hub_error_is_inactive_instance,
+    stream_hub_error_is_inactive_instance, stream_hub_websocket_close_reply_code,
 };
 use super::messages::{
     ForwardRegisterRequest, ForwardTarget, SocketSubscriptionState, StreamHubPublishRequest,
@@ -132,21 +132,33 @@ impl DurableObject for StreamHub {
         reason: String,
         _was_clean: bool,
     ) -> Result<()> {
+        // Eviction arrives as 1006 / "no longer active". Echoing that close
+        // either throws immediately or fails the hibernatable output pump
+        // after this function returns Ok, and workerd then sets
+        // `$workers.outcome=exception`. `let _ = ws.close()` only catches the
+        // synchronous error. Skip the reply instead.
+        let close_reply = match stream_hub_websocket_close_reply_code(code, &reason) {
+            Some(close_code) => {
+                let _ = ws.close(Some(close_code), Some(reason.as_str()));
+                "sent"
+            }
+            None => "skipped",
+        };
         if stream_hub_error_is_deploy_reset(&reason)
             || stream_hub_error_is_inactive_instance(&reason)
         {
-            log_stream_hub_websocket_event("close", &reason);
+            log_stream_hub_websocket_event("close", &reason, Some(close_reply));
         }
-        let close_code = u16::try_from(code).ok();
-        let _ = ws.close(close_code, Some(reason.as_str()));
         Ok(())
     }
 
     async fn websocket_error(&self, _ws: WebSocket, error: worker::Error) -> Result<()> {
         // worker-rs defaults this to `unimplemented!`, which turns deploy-time
-        // Durable Object resets into `$workers.outcome=exception`. Inactive
-        // instance errors after hibernation are the same class (#73 residual).
-        log_stream_hub_websocket_event("error", &error.to_string());
+        // Durable Object resets into `$workers.outcome=exception`. Returning
+        // Ok handles the error when the handler actually runs. It does not
+        // clear `$metadata.error` if the runtime aborted the IoContext before
+        // this method was entered (#96).
+        log_stream_hub_websocket_event("error", &error.to_string(), None);
         Ok(())
     }
 }

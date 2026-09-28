@@ -10,6 +10,27 @@ pub(super) fn stream_hub_error_is_deploy_reset(message: &str) -> bool {
     message.contains("durable object reset") && message.contains("updated")
 }
 
+/// Close code to echo from `webSocketClose`, if echoing is safe.
+///
+/// Hibernation eviction is delivered as code 1006 with an inactive-instance
+/// reason. workerd rejects 1004/1005/1006/1015 in `WebSocket.close`, and a
+/// close queued onto an already-dead hibernatable socket fails in the output
+/// pump after this handler has returned. That rejection is what
+/// `HibernatableWebSocketCustomEvent::run` records as
+/// `$workers.outcome=exception`. Skipping the reply lets the handler resolve.
+/// Compatibility date `2026-04-13` auto-replies to ordinary Close frames, so
+/// the skipped cases do not need an application close.
+pub(super) fn stream_hub_websocket_close_reply_code(code: usize, reason: &str) -> Option<u16> {
+    if stream_hub_error_is_deploy_reset(reason) || stream_hub_error_is_inactive_instance(reason) {
+        return None;
+    }
+    let code = u16::try_from(code).ok()?;
+    if !(1000..5000).contains(&code) || matches!(code, 1004 | 1005 | 1006 | 1015) {
+        return None;
+    }
+    Some(code)
+}
+
 pub(super) fn stream_hub_websocket_log_class(
     handler: &str,
     detail: &str,
@@ -66,7 +87,11 @@ pub(crate) fn log_stream_hub_connect_event(
     ));
 }
 
-pub(super) fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
+pub(super) fn log_stream_hub_websocket_event(
+    handler: &str,
+    detail: &str,
+    close_reply: Option<&str>,
+) {
     let deploy_reset = stream_hub_error_is_deploy_reset(detail);
     let inactive_instance = stream_hub_error_is_inactive_instance(detail);
     let (level, outcome) = stream_hub_websocket_log_class(handler, detail);
@@ -79,18 +104,27 @@ pub(super) fn log_stream_hub_websocket_event(handler: &str, detail: &str) {
     } else {
         format!("Stream Hub websocket {handler}: {detail}")
     };
-    log_json_event(add_log_message(
-        serde_json::json!({
-            "event": "stream_hub_websocket",
-            "component": "stream_hub",
-            "handler": handler,
-            "outcome": outcome,
-            "level": level,
-            "deploy_reset": deploy_reset,
-            "inactive_instance": inactive_instance,
-        }),
-        message,
-    ));
+    // `handled` marks an application log. It does not clear Workers
+    // `$metadata.error`: that field is written by the runtime when the
+    // hibernatable event's IoContext is already aborted, and no handler
+    // return value rewrites `$workers.outcome`.
+    let mut payload = serde_json::json!({
+        "event": "stream_hub_websocket",
+        "component": "stream_hub",
+        "handler": handler,
+        "outcome": outcome,
+        "level": level,
+        "handled": true,
+        "deploy_reset": deploy_reset,
+        "inactive_instance": inactive_instance,
+    });
+    if let (Some(close_reply), Some(object)) = (close_reply, payload.as_object_mut()) {
+        object.insert(
+            "close_reply".to_owned(),
+            serde_json::Value::String(close_reply.to_owned()),
+        );
+    }
+    log_json_event(add_log_message(payload, message));
 }
 
 #[cfg(test)]
@@ -144,6 +178,33 @@ mod tests {
                 "Durable Object reset because its code was updated."
             ),
             ("info", "deploy_reset")
+        );
+    }
+
+    #[test]
+    fn inactive_and_illegal_close_codes_are_not_echoed() {
+        let inactive = "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.";
+        assert_eq!(stream_hub_websocket_close_reply_code(1006, inactive), None);
+        assert_eq!(stream_hub_websocket_close_reply_code(1000, inactive), None);
+        assert_eq!(
+            stream_hub_websocket_close_reply_code(
+                1006,
+                "Durable Object reset because its code was updated."
+            ),
+            None
+        );
+        assert_eq!(stream_hub_websocket_close_reply_code(1006, ""), None);
+        assert_eq!(stream_hub_websocket_close_reply_code(1005, ""), None);
+        assert_eq!(stream_hub_websocket_close_reply_code(1004, ""), None);
+        assert_eq!(stream_hub_websocket_close_reply_code(1015, ""), None);
+        assert_eq!(stream_hub_websocket_close_reply_code(999, ""), None);
+        assert_eq!(
+            stream_hub_websocket_close_reply_code(1000, "client closed"),
+            Some(1000)
+        );
+        assert_eq!(
+            stream_hub_websocket_close_reply_code(1001, "going away"),
+            Some(1001)
         );
     }
 }
