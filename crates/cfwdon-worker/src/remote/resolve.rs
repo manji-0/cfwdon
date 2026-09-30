@@ -95,15 +95,6 @@ async fn materialize_remote_account_reference(
         .map(AccountReference::Remote))
 }
 
-#[allow(dead_code)]
-pub(crate) async fn resolve_lookup_account(
-    db: &D1Database,
-    config: &AppConfig,
-    acct: &str,
-) -> Result<MastodonAccountResponse> {
-    resolve_lookup_account_with_viewer(db, config, acct, None).await
-}
-
 pub(crate) async fn resolve_lookup_account_with_viewer(
     db: &D1Database,
     config: &AppConfig,

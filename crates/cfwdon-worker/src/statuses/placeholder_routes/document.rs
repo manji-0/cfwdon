@@ -78,7 +78,7 @@ pub(crate) fn build_translation_document_for_language(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn build_translation_document(status: &serde_json::Value) -> serde_json::Value {
     let source_language = status
         .get("language")

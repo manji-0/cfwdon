@@ -11,8 +11,9 @@ use crate::meta_placeholder_routes::{
     build_oauth_authorization_server_document, build_oauth_userinfo_document,
 };
 use crate::policy_documents::build_default_terms_of_service_document;
+use crate::profile::build_preferences_document;
 use crate::relationships::RelationshipResponse;
-use crate::response::{MastodonSearchResponse, build_preferences_document};
+use crate::response::MastodonSearchResponse;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::scheduled_statuses::scheduled_status_document;
 use crate::statuses::build_translation_document;
@@ -303,7 +304,7 @@ fn compatibility_relationship_shape_is_stable() {
 
 #[test]
 fn compatibility_preferences_shape_is_stable() {
-    let value = build_preferences_document(&fixture_account());
+    let value = build_preferences_document(&fixture_account(), false, false);
 
     for pointer in [
         "/posting:default:visibility",
@@ -315,8 +316,6 @@ fn compatibility_preferences_shape_is_stable() {
     ] {
         assert_has_pointer(&value, pointer);
     }
-    assert_eq!(value.pointer("/posting:default:privacy"), None);
-    assert_eq!(value.pointer("/web:theme"), None);
 }
 
 #[test]
@@ -325,7 +324,7 @@ fn compatibility_quote_policy_reflects_account_default() {
     record.default_quote_policy = "followers".to_owned();
     let account = LocalAccount::from_record(record);
 
-    let preferences = build_preferences_document(&account);
+    let preferences = build_preferences_document(&account, false, false);
     assert_eq!(
         preferences.pointer("/posting:default:quote_policy"),
         Some(&serde_json::json!("followers"))

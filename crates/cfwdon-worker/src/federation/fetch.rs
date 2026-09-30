@@ -38,14 +38,6 @@ pub(crate) struct FetchedRemoteActorProfile {
     pub(crate) profile: RemoteActorProfile,
 }
 
-#[allow(dead_code)]
-pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
-    handle: &AccountHandle,
-) -> Result<FetchedRemoteActorProfile> {
-    let actor_uri = resolve_webfinger_actor_uri(handle).await?;
-    fetch_remote_actor_profile_with_document(&actor_uri).await
-}
-
 pub(crate) async fn resolve_webfinger_actor_uri(handle: &AccountHandle) -> Result<String> {
     let domain = handle
         .domain

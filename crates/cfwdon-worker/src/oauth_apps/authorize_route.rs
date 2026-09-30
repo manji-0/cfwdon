@@ -1,4 +1,4 @@
-use super::authorize_validation::{code_challenge_method_is_supported, validate_authorize_request};
+use super::authorize_validation::validate_authorize_request;
 use super::{
     OAUTH_AUTHORIZE_CSRF_COOKIE, OAuthAuthorizeFailure, OAuthAuthorizeRequest,
     auth0_login_configured, auth0_login_redirect_response, auth0_logout_url,
@@ -329,11 +329,6 @@ fn build_oauth_authorize_error_redirect_url(
     Ok(url.to_string())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn authorize_failure_should_use_html_page(failure: &OAuthAuthorizeFailure) -> bool {
-    matches!(failure, OAuthAuthorizeFailure::Html { .. })
-}
-
 fn access_authorize_get_action(
     has_authenticated_local_account: bool,
     has_authenticated_access_user_without_account: bool,
@@ -452,51 +447,6 @@ fn oauth_login_page(
     error: Option<&str>,
 ) -> Result<Response> {
     oauth_authorize_consent_response(request, app, error, true, error.map(|_| 401).unwrap_or(200))
-}
-#[cfg_attr(not(test), allow(dead_code))]
-fn normalize_authorize_request(
-    request: OAuthAuthorizeRequest,
-) -> std::result::Result<OAuthAuthorizeRequest, String> {
-    let response_type = request
-        .response_type
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "code".to_owned());
-    if response_type != "code" {
-        return Err("Only response_type=code is supported".to_owned());
-    }
-    let client_id = request
-        .client_id
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "client_id is required".to_owned())?;
-    let redirect_uri = request
-        .redirect_uri
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "redirect_uri is required".to_owned())?;
-    let code_challenge_method = request
-        .code_challenge_method
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let code_challenge = request
-        .code_challenge
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    if code_challenge.is_some()
-        && !code_challenge_method_is_supported(code_challenge_method.as_deref())
-    {
-        return Err("unsupported code_challenge_method".to_owned());
-    }
-    Ok(OAuthAuthorizeRequest {
-        response_type: Some(response_type),
-        client_id: Some(client_id),
-        redirect_uri: Some(redirect_uri),
-        scope: request.scope.map(|value| value.trim().to_owned()),
-        state: request.state.map(|value| value.trim().to_owned()),
-        code_challenge,
-        code_challenge_method,
-    })
 }
 
 async fn parse_oauth_authorize_login_request(
@@ -794,23 +744,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_authorize_request_rejects_plain_pkce() {
-        let error = normalize_authorize_request(OAuthAuthorizeRequest {
-            response_type: Some("code".to_owned()),
-            client_id: Some("client".to_owned()),
-            redirect_uri: Some("https://client.example/callback".to_owned()),
-            code_challenge: Some("challenge".to_owned()),
-            code_challenge_method: Some("plain".to_owned()),
-            ..OAuthAuthorizeRequest::default()
-        })
-        .expect_err("plain pkce");
-
-        assert_eq!(error, "unsupported code_challenge_method");
-        assert!(!code_challenge_method_is_supported(Some("plain")));
-        assert!(code_challenge_method_is_supported(Some("S256")));
-    }
-
-    #[test]
     fn authorize_error_redirect_includes_state() {
         let location = build_oauth_authorize_error_redirect_url(
             "https://client.example/callback",
@@ -824,21 +757,5 @@ mod tests {
         assert!(location.contains("error=invalid_scope"));
         assert!(location.contains("state=state-123"));
         assert!(location.contains("error_description="));
-    }
-
-    #[test]
-    fn authorize_failure_keeps_html_for_invalid_redirect() {
-        let failure = OAuthAuthorizeFailure::Html {
-            message: "Redirect URI is not registered for this OAuth client".to_owned(),
-        };
-        assert!(authorize_failure_should_use_html_page(&failure));
-
-        let redirect_failure = OAuthAuthorizeFailure::Redirect {
-            redirect_uri: "https://client.example/callback".to_owned(),
-            state: Some("abc".to_owned()),
-            error: "invalid_request",
-            description: "unsupported code_challenge_method".to_owned(),
-        };
-        assert!(!authorize_failure_should_use_html_page(&redirect_failure));
     }
 }

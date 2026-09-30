@@ -59,7 +59,6 @@ struct Auth0AuthorizeStateCookie {
     return_url: String,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_oauth_token_document(access_token: &str, scope: &str) -> serde_json::Value {
     serde_json::json!({
         "access_token": access_token,
@@ -641,11 +640,6 @@ enum OAuthAuthorizeFailure {
     },
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn oauth_access_token_is_unexpired(expires_at: Option<i64>, now: i64) -> bool {
-    expires_at.is_none_or(|expires_at| expires_at > now)
-}
-
 fn pkce_code_challenge(verifier: &str, method: Option<&str>) -> String {
     match method {
         Some("S256") => URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
@@ -761,19 +755,6 @@ mod tests {
         assert!(LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL.contains("access_token_hash = ?1"));
         assert!(LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL.contains("access_token = ?2"));
         assert!(LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL.contains("access_token_hash IS NULL"));
-    }
-
-    #[test]
-    fn oauth_access_token_expiry_null_means_no_expiry() {
-        assert!(oauth_access_token_is_unexpired(None, 1_700_000_000));
-        assert!(oauth_access_token_is_unexpired(
-            Some(1_700_000_001),
-            1_700_000_000
-        ));
-        assert!(!oauth_access_token_is_unexpired(
-            Some(1_699_999_999),
-            1_700_000_000
-        ));
     }
 }
 

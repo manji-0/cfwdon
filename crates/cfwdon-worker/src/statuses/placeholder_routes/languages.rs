@@ -80,38 +80,6 @@ pub(super) fn translation_language_code_variants(value: &str) -> Vec<String> {
     variants
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn translation_provider_language_matches(
-    supported_languages: &serde_json::Value,
-    source_language: &str,
-    target_language: &str,
-) -> bool {
-    let source_keys = translation_language_code_variants(source_language);
-    let target_keys = translation_language_code_variants(target_language);
-    if source_keys.is_empty() || target_keys.is_empty() {
-        return false;
-    }
-
-    for source_key in &source_keys {
-        let Some(targets) = supported_languages
-            .get(source_key.as_str())
-            .and_then(serde_json::Value::as_array)
-        else {
-            continue;
-        };
-        for target_key in &target_keys {
-            if targets
-                .iter()
-                .any(|value| value.as_str() == Some(target_key.as_str()))
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
 pub(crate) fn translation_provider_supported_target_language(
     supported_languages: &serde_json::Value,
     source_language: &str,

@@ -278,10 +278,20 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
         Some(subject) => subject,
         None => return Response::error("Auth0 authentication required", 401),
     };
-    let account = &subject.account;
-    let settings = &subject.settings;
+    Response::from_json(&build_preferences_document(
+        &subject.account,
+        subject.settings.show_media,
+        subject.settings.show_media_replies,
+    ))
+}
 
-    Response::from_json(&serde_json::json!({
+/// `GET /api/v1/preferences` document for an account and its media display settings.
+pub(crate) fn build_preferences_document(
+    account: &LocalAccount,
+    show_media: bool,
+    show_media_replies: bool,
+) -> serde_json::Value {
+    serde_json::json!({
         "posting:default:visibility": account.default_visibility().as_str(),
         "posting:default:sensitive": account.default_sensitive(),
         "posting:default:language": account.default_language(),
@@ -289,11 +299,11 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
         "posting:default:privacy": account.default_visibility().as_str(),
         "posting:default:media_sensitive": account.default_sensitive(),
         "posting:default:content_type": "text/plain",
-        "reading:expand:media": if settings.show_media { "show_all" } else { "hide_all" },
+        "reading:expand:media": if show_media { "show_all" } else { "hide_all" },
         "reading:expand:spoilers": false,
         "reading:autoplay:gifs": true,
-        "reading:display:media": if settings.show_media_replies { "show_all" } else { "hide_all" },
-        "reading:display:expand_media": if settings.show_media { "show_all" } else { "hide_all" },
+        "reading:display:media": if show_media_replies { "show_all" } else { "hide_all" },
+        "reading:display:expand_media": if show_media { "show_all" } else { "hide_all" },
         "reading:display:expand_spoilers": false,
         "notifications:follow": true,
         "notifications:favourite": true,
@@ -301,7 +311,7 @@ pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) ->
         "notifications:mention": true,
         "notifications:poll": true,
         "web:theme": "default",
-    }))
+    })
 }
 
 async fn find_authenticated_preferences_subject(

@@ -6,7 +6,7 @@ use cfwdon_core::AppConfig;
 use cfwdon_domain::StatusDraft;
 use worker::Result;
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn scheduled_status_document(id: &str) -> serde_json::Value {
     scheduled_status_document_with_params(id, "2099-01-01T00:00:00.000Z", None)
 }

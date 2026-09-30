@@ -8,8 +8,8 @@ use crate::statuses::{
     normalize_quote_approval_policy, normalize_scheduled_at, normalize_status_history_entry,
     normalized_action_uri, pending_quote_document, quote_document_with_state,
     quote_placeholder_document, status_has_active_quote, translation_provider_language_code,
-    translation_provider_language_matches, translation_provider_supported_target_language,
-    translation_target_language, validate_scheduled_at_minimum_offset,
+    translation_provider_supported_target_language, translation_target_language,
+    validate_scheduled_at_minimum_offset,
 };
 use cfwdon_domain::LocalStatus;
 
@@ -223,16 +223,10 @@ fn translation_language_pair_support_uses_source_or_auto_detection() {
         "und": ["de", "es"]
     });
 
-    assert!(translation_provider_language_matches(&document, "en", "de"));
-    assert!(translation_provider_language_matches(
-        &document, "en-US", "de-DE"
-    ));
-    assert!(translation_provider_language_matches(
-        &document, "und", "es"
-    ));
-    assert!(!translation_provider_language_matches(
-        &document, "fr", "es"
-    ));
+    assert!(translation_provider_supported_target_language(&document, "en", "de").is_some());
+    assert!(translation_provider_supported_target_language(&document, "en-US", "de-DE").is_some());
+    assert!(translation_provider_supported_target_language(&document, "und", "es").is_some());
+    assert!(!translation_provider_supported_target_language(&document, "fr", "es").is_some());
 }
 
 #[test]

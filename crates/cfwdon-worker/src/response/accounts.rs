@@ -281,14 +281,11 @@ async fn remote_actor_collection_count(
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Option<u64> {
     let value = actor_document.get(field)?;
-    if let Some(count) = activitypub_collection_total_items(value) {
+    if let Some(count) = activitypub_collection_count(value) {
         return Some(count);
     }
     if value.get("first").is_some() {
         return resolve_collection_count_via_first(value, fetch_context).await;
-    }
-    if let Some(count) = activitypub_collection_items_len(value) {
-        return Some(count);
     }
     let collection_uri = activitypub_reference_uri(value)?;
     if let Some(count) = remote_actor_collection_count_cache_hit(&collection_uri) {
@@ -306,14 +303,13 @@ async fn resolve_fetched_collection_count(
     collection: &serde_json::Value,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Option<u64> {
-    if let Some(count) = activitypub_collection_total_items(collection) {
+    if let Some(count) = activitypub_collection_count(collection) {
         return Some(count);
     }
     if collection.get("first").is_some() {
         return resolve_collection_count_via_first(collection, fetch_context).await;
     }
-    // Fully embedded collection with no pagination link: items length is the total.
-    activitypub_collection_items_len(collection)
+    None
 }
 
 async fn resolve_collection_count_via_first(
@@ -403,8 +399,9 @@ fn activitypub_collection_items_len(collection: &serde_json::Value) -> Option<u6
         .map(|items| items.len() as u64)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn activitypub_collection_count(collection: &serde_json::Value) -> Option<u64> {
+/// Collection size known without fetching: `totalItems`, else the embedded item
+/// count for a fully embedded collection (no `first` page link).
+fn activitypub_collection_count(collection: &serde_json::Value) -> Option<u64> {
     activitypub_collection_total_items(collection).or_else(|| {
         if collection.get("first").is_some() {
             None
@@ -471,18 +468,6 @@ pub(crate) fn render_profile_field_value_html(value: &str) -> String {
         );
     }
     escape_html(trimmed)
-}
-
-#[allow(dead_code)]
-pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::Value {
-    serde_json::json!({
-        "posting:default:visibility": account.default_visibility().as_str(),
-        "posting:default:sensitive": account.default_sensitive(),
-        "posting:default:language": account.default_language(),
-        "posting:default:quote_policy": account.default_quote_policy().as_str(),
-        "reading:expand:media": "default",
-        "reading:expand:spoilers": false,
-    })
 }
 
 fn account_emojis(account: &LocalAccount, config: &AppConfig) -> Vec<serde_json::Value> {

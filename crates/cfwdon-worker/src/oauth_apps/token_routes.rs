@@ -98,18 +98,6 @@ fn with_oauth_token_cache_headers(mut response: Response) -> Result<Response> {
     Ok(response)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn oauth_token_error_code(status: u16, error: &str) -> &'static str {
-    match (status, error) {
-        (401, "invalid_client") => "invalid_client",
-        (400, "invalid_grant") => "invalid_grant",
-        (400, "invalid_scope") => "invalid_scope",
-        (400, "unsupported_grant_type") => "unsupported_grant_type",
-        (400, "invalid_request") => "invalid_request",
-        _ => "invalid_request",
-    }
-}
-
 #[derive(Clone, Debug)]
 struct OAuthAuthorizationCodeTokenInput {
     client_id: String,
@@ -679,19 +667,5 @@ mod tests {
                 "Content-Type must be application/x-www-form-urlencoded, multipart/form-data, or application/json."
             )
         );
-    }
-
-    #[test]
-    fn invalid_grant_maps_to_http_400() {
-        assert_eq!(
-            oauth_token_error_code(400, "invalid_grant"),
-            "invalid_grant"
-        );
-        assert_eq!(
-            oauth_token_error_code(401, "invalid_client"),
-            "invalid_client"
-        );
-        assert_eq!(oauth_invalid_grant_status(), 400);
-        assert_eq!(oauth_invalid_client_status(), 401);
     }
 }

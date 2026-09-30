@@ -19,7 +19,6 @@ use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
 use crate::inbox::{delete_follower_by_actor, find_follower_follow_activity_id};
 use crate::media::find_media_attachments_by_status_id;
 use crate::oauth_apps::{
-    build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_oauth_token_document,
     find_oauth_app_id_by_bearer_token, issue_oauth_access_token, oauth_app_has_any_scope,
     oauth_app_scopes, store_account_password,
@@ -366,11 +365,11 @@ fn build_oembed_document(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn build_app_verify_credentials_document(
     config: &cfwdon_core::AppConfig,
 ) -> serde_json::Value {
-    build_app_verify_credentials_document_from_parts(
+    crate::oauth_apps::build_app_verify_credentials_document_from_parts(
         "0",
         &config.instance_name,
         None,

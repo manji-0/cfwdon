@@ -16,20 +16,6 @@ use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
 use worker::d1::D1Type;
-#[allow(dead_code)]
-pub(crate) async fn resolve_inbox_target_account(
-    db: &D1Database,
-    config: &AppConfig,
-    username: Option<&str>,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(
-        resolve_shared_inbox_target_accounts(db, config, username, activity)
-            .await?
-            .into_iter()
-            .next(),
-    )
-}
 
 pub(crate) async fn resolve_shared_inbox_target_accounts(
     db: &D1Database,
@@ -146,19 +132,6 @@ async fn resolve_local_interaction_target_account(
     Ok(None)
 }
 
-#[allow(dead_code)]
-pub(crate) async fn resolve_remote_status_activity_target_account(
-    db: &D1Database,
-    config: &AppConfig,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(
-        resolve_remote_status_activity_target_accounts(db, config, activity)
-            .await?
-            .and_then(|accounts| accounts.into_iter().next()),
-    )
-}
-
 pub(crate) async fn resolve_remote_status_activity_target_accounts(
     db: &D1Database,
     config: &AppConfig,
@@ -233,16 +206,6 @@ pub(crate) async fn resolve_remote_actor_update_target_account(
     };
 
     first_local_follower_for_remote_actor(db, actor_uri).await
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_remote_actor_announce_target_account(
-    db: &D1Database,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(resolve_remote_actor_announce_target_accounts(db, activity)
-        .await?
-        .and_then(|accounts| accounts.into_iter().next()))
 }
 
 pub(crate) async fn resolve_remote_actor_announce_target_accounts(
