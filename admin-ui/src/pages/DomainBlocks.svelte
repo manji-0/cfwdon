@@ -6,12 +6,14 @@
     type AdminDomainBlock,
   } from "../lib/api";
   import { confirmAction } from "../lib/confirm";
+  import Time from "../lib/Time.svelte";
 
   let blocks: AdminDomainBlock[] = [];
   let domain = "";
   let loading = true;
   let error = "";
   let actionError = "";
+  let notice = "";
   let saving = false;
 
   async function loadBlocks() {
@@ -34,9 +36,12 @@
     }
     saving = true;
     actionError = "";
+    notice = "";
+    const target = domain.trim();
     try {
-      await createDomainBlock(domain.trim());
+      await createDomainBlock(target);
       domain = "";
+      notice = `${target} をブロックしました。`;
       await loadBlocks();
     } catch (err) {
       actionError = err instanceof Error ? err.message : "failed to create domain block";
@@ -54,9 +59,11 @@
       return;
     }
     actionError = "";
+    notice = "";
     try {
       await deleteDomainBlock(block.domain);
       blocks = blocks.filter((entry) => entry.id !== block.id);
+      notice = `${block.domain} のブロックを解除しました。`;
     } catch (err) {
       actionError = err instanceof Error ? err.message : "failed to delete domain block";
     }
@@ -69,83 +76,58 @@
   <h2>ドメインブロック</h2>
   <p class="muted">インスタンス全体で連合配信を拒否するドメインです。</p>
 
-  <form class="form" on:submit|preventDefault={submitBlock}>
-    <input bind:value={domain} placeholder="example.com" />
-    <button class="primary" type="submit" disabled={saving}>
-      {saving ? "追加中…" : "追加"}
+  <form class="inline-form" on:submit|preventDefault={submitBlock}>
+    <label class="field">
+      ブロックするドメイン
+      <input
+        bind:value={domain}
+        placeholder="example.com"
+        inputmode="url"
+        autocapitalize="off"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+    <button class="btn btn-primary" type="submit" disabled={saving}>
+      {saving ? "追加中…" : "ブロック"}
     </button>
   </form>
 
   {#if actionError}
-    <p class="error" role="alert">{actionError}</p>
+    <p class="notice error" role="alert">{actionError}</p>
+  {/if}
+  {#if notice}
+    <p class="notice ok" role="status">{notice}</p>
   {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>
   {:else if error}
-    <p class="error">{error}</p>
+    <p class="notice error" role="alert">{error}</p>
   {:else if blocks.length === 0}
     <div class="empty">ブロック中のドメインはありません。</div>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>ドメイン</th>
-          <th>追加日時</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each blocks as block}
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td class="mono">{block.domain}</td>
-            <td>{block.created_at}</td>
-            <td>
-              <button class="danger" on:click={() => removeBlock(block)}>解除</button>
-            </td>
+            <th>ドメイン</th>
+            <th>追加日時</th>
+            <th><span class="visually-hidden">操作</span></th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each blocks as block (block.id)}
+            <tr>
+              <td class="mono">{block.domain}</td>
+              <td><Time value={block.created_at} /></td>
+              <td>
+                <button type="button" class="btn btn-danger" on:click={() => removeBlock(block)}>解除</button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </section>
-
-<style>
-  .form {
-    display: flex;
-    gap: 0.5rem;
-    margin: 1rem 0;
-  }
-
-  input {
-    flex: 1;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    border-radius: 0.5rem;
-    padding: 0.55rem 0.75rem;
-  }
-
-  .primary,
-  .danger {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    border-radius: 0.5rem;
-    padding: 0.45rem 0.75rem;
-  }
-
-  .primary {
-    background: rgba(79, 140, 255, 0.18);
-    border-color: rgba(79, 140, 255, 0.45);
-  }
-
-  .danger {
-    background: rgba(255, 107, 107, 0.12);
-    border-color: rgba(255, 107, 107, 0.35);
-  }
-
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-</style>

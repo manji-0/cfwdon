@@ -7,12 +7,16 @@
     type AdminRelay,
   } from "../lib/api";
   import { confirmAction } from "../lib/confirm";
+  import { relayState } from "../lib/format";
+  import StatusBadge from "../lib/StatusBadge.svelte";
+  import Time from "../lib/Time.svelte";
 
   let relays: AdminRelay[] = [];
   let inboxUrl = "";
   let loading = true;
   let error = "";
   let actionError = "";
+  let notice = "";
   let saving = false;
   let actingId = "";
 
@@ -36,9 +40,11 @@
     }
     saving = true;
     actionError = "";
+    notice = "";
     try {
       await createRelay(inboxUrl.trim());
       inboxUrl = "";
+      notice = "リレーに購読リクエストを送りました。承認されると「有効」になります。";
       await loadRelays();
     } catch (err) {
       actionError = err instanceof Error ? err.message : "failed to create relay";
@@ -87,116 +93,88 @@
     }
   }
 
-  function stateLabel(state: string): string {
-    switch (state) {
-      case "accepted":
-        return "有効";
-      case "pending":
-        return "承認待ち";
-      case "rejected":
-        return "拒否";
-      default:
-        return "無効";
-    }
-  }
-
   loadRelays();
 </script>
 
 <section class="panel">
   <h2>連合リレー</h2>
   <p class="muted">
-    Mastodon 互換リレーに購読し、公開投稿の送受信を行います。URL は
-    <code>https://relay.example/inbox</code> 形式を指定してください。リレー由来の
-    public remote 投稿は 7 日で自動削除されます（フォロー/フォロワー関係のあるアカウントは除く）。
+    Mastodon 互換リレーに購読し、公開投稿の送受信を行います。リレー由来の public remote
+    投稿は 7 日で自動削除されます（フォロー/フォロワー関係のあるアカウントは除く）。
   </p>
 
-  <form class="form" on:submit|preventDefault={submitRelay}>
-    <input bind:value={inboxUrl} placeholder="https://relay.example/inbox" />
-    <button class="primary" type="submit" disabled={saving}>
+  <form class="inline-form" on:submit|preventDefault={submitRelay}>
+    <label class="field">
+      リレーの inbox URL
+      <input
+        type="url"
+        bind:value={inboxUrl}
+        placeholder="https://relay.example/inbox"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+    <button class="btn btn-primary" type="submit" disabled={saving}>
       {saving ? "追加中…" : "追加して有効化"}
     </button>
   </form>
 
   {#if actionError}
-    <p class="error" role="alert">{actionError}</p>
+    <p class="notice error" role="alert">{actionError}</p>
+  {/if}
+  {#if notice}
+    <p class="notice ok" role="status">{notice}</p>
   {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>
   {:else if error}
-    <p class="error">{error}</p>
+    <p class="notice error" role="alert">{error}</p>
   {:else if relays.length === 0}
     <div class="empty">接続中のリレーはありません。</div>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>inbox URL</th>
-          <th>状態</th>
-          <th>更新</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each relays as relay}
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td><code>{relay.inbox_url}</code></td>
-            <td>{stateLabel(relay.state)}</td>
-            <td>{relay.updated_at}</td>
-            <td class="actions">
-              {#if relay.state === "accepted" || relay.state === "pending"}
-                <button
-                  type="button"
-                  disabled={actingId === relay.id}
-                  on:click={() => disable(relay)}
-                >
-                  無効化
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="danger"
-                disabled={actingId === relay.id}
-                on:click={() => remove(relay)}
-              >
-                削除
-              </button>
-            </td>
+            <th>inbox URL</th>
+            <th>状態</th>
+            <th>更新</th>
+            <th><span class="visually-hidden">操作</span></th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each relays as relay (relay.id)}
+            <tr>
+              <td class="mono">{relay.inbox_url}</td>
+              <td><StatusBadge status={relayState(relay.state)} /></td>
+              <td><Time value={relay.updated_at} /></td>
+              <td>
+                <div class="row-actions">
+                  {#if relay.state === "accepted" || relay.state === "pending"}
+                    <button
+                      type="button"
+                      class="btn"
+                      disabled={actingId === relay.id}
+                      on:click={() => disable(relay)}
+                    >
+                      無効化
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    disabled={actingId === relay.id}
+                    on:click={() => remove(relay)}
+                  >
+                    削除
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </section>
-
-<style>
-  .primary,
-  .actions button {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    border-radius: 0.5rem;
-    padding: 0.45rem 0.75rem;
-  }
-
-  .primary {
-    background: rgba(79, 140, 255, 0.18);
-    border-color: rgba(79, 140, 255, 0.45);
-  }
-
-  .actions .danger {
-    background: rgba(255, 107, 107, 0.12);
-    border-color: rgba(255, 107, 107, 0.35);
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  code {
-    word-break: break-all;
-  }
-</style>

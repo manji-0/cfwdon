@@ -4,10 +4,26 @@
     retryDelivery,
     type AdminDelivery,
   } from "../lib/api";
+  import { deliveryState } from "../lib/format";
+  import StatusBadge from "../lib/StatusBadge.svelte";
+  import Time from "../lib/Time.svelte";
+  import TruncationNote from "../lib/TruncationNote.svelte";
+
+  const filters = [
+    { value: "", label: "要対応" },
+    { value: "failed", label: "失敗" },
+    { value: "queued", label: "待機" },
+    { value: "in_flight", label: "送信中" },
+  ];
+  const sourceLabels: Record<AdminDelivery["source"], string> = {
+    outbound: "個別配信",
+    outbox: "outbox",
+  };
 
   let deliveries: AdminDelivery[] = [];
   let loading = true;
   let error = "";
+  let actionError = "";
   let stateFilter = "";
   let retryingKey = "";
 
@@ -27,7 +43,7 @@
   async function retry(delivery: AdminDelivery) {
     const key = `${delivery.source}:${delivery.id}`;
     retryingKey = key;
-    error = "";
+    actionError = "";
     try {
       await retryDelivery(delivery.id, delivery.source);
       deliveries = deliveries.map((entry) =>
@@ -36,7 +52,7 @@
           : entry,
       );
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to retry delivery";
+      actionError = err instanceof Error ? err.message : "failed to retry delivery";
     } finally {
       retryingKey = "";
     }
@@ -47,147 +63,83 @@
     loadDeliveries();
   }
 
+  // Each source is capped separately by the API, so check the larger one.
+  $: largestSource = Math.max(
+    deliveries.filter((entry) => entry.source === "outbound").length,
+    deliveries.filter((entry) => entry.source === "outbox").length,
+  );
+
   loadDeliveries();
 </script>
 
 <section class="panel">
   <div class="toolbar">
     <h2>配信キュー</h2>
-    <div class="filters">
-      <button
-        class="filter-btn"
-        class:active={stateFilter === ""}
-        on:click={() => setStateFilter("")}
-      >
-        要対応
-      </button>
-      <button
-        class="filter-btn"
-        class:active={stateFilter === "failed"}
-        on:click={() => setStateFilter("failed")}
-      >
-        失敗
-      </button>
-      <button
-        class="filter-btn"
-        class:active={stateFilter === "queued"}
-        on:click={() => setStateFilter("queued")}
-      >
-        待機
-      </button>
-      <button
-        class="filter-btn"
-        class:active={stateFilter === "in_flight"}
-        on:click={() => setStateFilter("in_flight")}
-      >
-        実行中
-      </button>
+    <div class="filters" role="group" aria-label="配信の状態">
+      {#each filters as option (option.value)}
+        <button
+          type="button"
+          class="filter-btn"
+          aria-pressed={stateFilter === option.value}
+          on:click={() => setStateFilter(option.value)}
+        >
+          {option.label}
+        </button>
+      {/each}
     </div>
   </div>
+
+  {#if actionError}
+    <p class="notice error" role="alert">{actionError}</p>
+  {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>
   {:else if error}
-    <p class="error">{error}</p>
+    <p class="notice error" role="alert">{error}</p>
   {:else if deliveries.length === 0}
     <div class="empty">該当する配信はありません。</div>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>更新</th>
-          <th>種別</th>
-          <th>状態</th>
-          <th>Activity</th>
-          <th>宛先</th>
-          <th>試行</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each deliveries as delivery}
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td>{delivery.updated_at}</td>
-            <td>
-              <span class="badge">{delivery.source}</span>
-            </td>
-            <td>
-              <span
-                class="badge"
-                class:warn={delivery.state === "failed"}
-                class:ok={delivery.state === "delivered"}
-              >
-                {delivery.state}
-              </span>
-            </td>
-            <td>{delivery.activity_type}</td>
-            <td class="mono">{delivery.target_inbox ?? "—"}</td>
-            <td>{delivery.attempt_count}</td>
-            <td>
-              {#if delivery.state === "failed"}
-                <button
-                  class="primary"
-                  disabled={retryingKey === `${delivery.source}:${delivery.id}`}
-                  on:click={() => retry(delivery)}
-                >
-                  {retryingKey === `${delivery.source}:${delivery.id}`
-                    ? "再試行中…"
-                    : "再試行"}
-                </button>
-              {/if}
-            </td>
+            <th>更新</th>
+            <th>種別</th>
+            <th>状態</th>
+            <th>Activity</th>
+            <th>宛先</th>
+            <th>試行</th>
+            <th><span class="visually-hidden">操作</span></th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each deliveries as delivery (`${delivery.source}:${delivery.id}`)}
+            {@const key = `${delivery.source}:${delivery.id}`}
+            <tr>
+              <td><Time value={delivery.updated_at} /></td>
+              <td><span class="badge neutral">{sourceLabels[delivery.source] ?? delivery.source}</span></td>
+              <td><StatusBadge status={deliveryState(delivery.state)} /></td>
+              <td>{delivery.activity_type}</td>
+              <td class="mono">{delivery.target_inbox ?? "—"}</td>
+              <td>{delivery.attempt_count}</td>
+              <td>
+                {#if delivery.state === "failed"}
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={retryingKey === key}
+                    on:click={() => retry(delivery)}
+                  >
+                    {retryingKey === key ? "再試行中…" : "再試行"}
+                  </button>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+    <TruncationNote count={largestSource} />
   {/if}
 </section>
-
-<style>
-  .toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .toolbar h2 {
-    margin: 0;
-  }
-
-  .filters {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .filter-btn,
-  .primary {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    border-radius: 0.5rem;
-    padding: 0.45rem 0.75rem;
-  }
-
-  .filter-btn.active,
-  .primary {
-    background: rgba(79, 140, 255, 0.18);
-    border-color: rgba(79, 140, 255, 0.45);
-  }
-
-  .badge.warn {
-    background: rgba(255, 107, 107, 0.18);
-  }
-
-  .badge.ok {
-    background: rgba(62, 207, 142, 0.18);
-  }
-
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.82rem;
-    word-break: break-all;
-  }
-</style>

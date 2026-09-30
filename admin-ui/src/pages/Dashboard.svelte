@@ -4,6 +4,7 @@
     type AdminDashboard,
     type AdminSession,
   } from "../lib/api";
+  import { hrefFor, navigate, type Page } from "../lib/nav";
 
   export let session: AdminSession;
 
@@ -24,6 +25,18 @@
     }
   }
 
+  type Card = { label: string; value: number; page: Page | null; warn: boolean };
+
+  // Highlight counts that need an admin's attention.
+  const cards = (value: AdminDashboard): Card[] => [
+    { label: "未対応レポート", value: value.pending_reports, page: "reports", warn: value.pending_reports > 0 },
+    { label: "配信失敗", value: value.failed_deliveries, page: "deliveries", warn: value.failed_deliveries > 0 },
+    { label: "配信キュー", value: value.queued_deliveries, page: "deliveries", warn: false },
+    { label: "バックグラウンドジョブ", value: value.pending_background_jobs, page: "system", warn: false },
+    { label: "詰まった inbox", value: value.stuck_inbox_activities, page: "system", warn: value.stuck_inbox_activities > 0 },
+    { label: "直近7日の新規登録", value: value.recent_signups, page: null, warn: false },
+  ];
+
   load();
 </script>
 
@@ -34,33 +47,29 @@
   {#if loading}
     <div class="loading">読み込み中…</div>
   {:else if error}
-    <p class="error">{error}</p>
+    <p class="notice error" role="alert">{error}</p>
+    <button type="button" class="btn" on:click={load}>再試行</button>
   {:else if stats}
     <div class="stats">
-      <div class="stat">
-        <span class="label">未対応レポート</span>
-        <span class="value">{stats.pending_reports}</span>
-      </div>
-      <div class="stat">
-        <span class="label">配信失敗</span>
-        <span class="value">{stats.failed_deliveries}</span>
-      </div>
-      <div class="stat">
-        <span class="label">配信キュー</span>
-        <span class="value">{stats.queued_deliveries}</span>
-      </div>
-      <div class="stat">
-        <span class="label">バックグラウンドジョブ</span>
-        <span class="value">{stats.pending_background_jobs}</span>
-      </div>
-      <div class="stat" class:warn={stats.stuck_inbox_activities > 0}>
-        <span class="label">詰まった inbox</span>
-        <span class="value">{stats.stuck_inbox_activities}</span>
-      </div>
-      <div class="stat">
-        <span class="label">直近7日の新規登録</span>
-        <span class="value">{stats.recent_signups}</span>
-      </div>
+      {#each cards(stats) as card (card.label)}
+        {#if card.page}
+          {@const target = card.page}
+          <a
+            class="stat is-link"
+            class:warn={card.warn}
+            href={hrefFor(target)}
+            on:click={(event) => navigate(event, target)}
+          >
+            <span class="label">{card.label}</span>
+            <span class="value">{card.value.toLocaleString("ja-JP")}</span>
+          </a>
+        {:else}
+          <div class="stat" class:warn={card.warn}>
+            <span class="label">{card.label}</span>
+            <span class="value">{card.value.toLocaleString("ja-JP")}</span>
+          </div>
+        {/if}
+      {/each}
     </div>
   {/if}
 </section>
@@ -75,16 +84,26 @@
 
   .stat {
     border: 1px solid var(--border);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-lg);
     padding: 0.85rem 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+    color: var(--text);
+  }
+
+  .stat.is-link:hover {
+    background: var(--panel-hover);
+    text-decoration: none;
   }
 
   .stat.warn {
-    border-color: rgba(255, 180, 80, 0.55);
-    background: rgba(255, 180, 80, 0.08);
+    border-color: var(--warn-border);
+    background: var(--warn-soft);
+  }
+
+  .stat.warn .value {
+    color: var(--warn);
   }
 
   .label {

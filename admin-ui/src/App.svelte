@@ -8,32 +8,8 @@
   import System from "./pages/System.svelte";
   import { fetchSession, type AdminSession } from "./lib/api";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
+  import { currentPage as page, labelFor, navigate, navItems, syncFromLocation } from "./lib/nav";
 
-  type Page =
-    | "dashboard"
-    | "reports"
-    | "emojis"
-    | "deliveries"
-    | "relays"
-    | "domain-blocks"
-    | "system";
-
-  const navItems: ReadonlyArray<{ page: Page; href: string; label: string }> = [
-    { page: "dashboard", href: "/admin", label: "ダッシュボード" },
-    { page: "reports", href: "/admin/reports", label: "レポート" },
-    { page: "emojis", href: "/admin/emojis", label: "カスタム絵文字" },
-    { page: "deliveries", href: "/admin/deliveries", label: "配信キュー" },
-    { page: "relays", href: "/admin/relays", label: "リレー" },
-    { page: "domain-blocks", href: "/admin/domain-blocks", label: "ドメインブロック" },
-    { page: "system", href: "/admin/system", label: "システム" },
-  ];
-
-  function pageFromPath(pathname: string): Page {
-    const normalized = pathname.replace(/\/+$/, "") || "/admin";
-    return navItems.find((item) => item.href === normalized)?.page ?? "dashboard";
-  }
-
-  let page: Page = pageFromPath(window.location.pathname);
   let session: AdminSession | null = null;
   let error = "";
   let loading = true;
@@ -51,36 +27,30 @@
     }
   }
 
-  function navigate(event: MouseEvent, item: (typeof navItems)[number]) {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-      return;
-    }
-    event.preventDefault();
-    if (page !== item.page) {
-      history.pushState(null, "", item.href);
-      page = item.page;
-    }
-  }
-
-  function onPopState() {
-    page = pageFromPath(window.location.pathname);
-  }
+  $: document.title = `${labelFor($page)} - cfwdon Admin`;
 
   loadSession();
 </script>
 
-<svelte:window on:popstate={onPopState} />
+<svelte:window on:popstate={syncFromLocation} />
 
 {#if loading}
   <div class="loading">読み込み中…</div>
 {:else if error}
-  <div class="content">
+  <main class="content session-error">
     <div class="panel">
-      <h2>管理画面</h2>
-      <p class="error">{error}</p>
-      <p class="muted">管理者としてログインしているか確認してください。</p>
+      <h2>管理画面を開けませんでした</h2>
+      <p>管理者アカウントでログインしているか確認してください。セッションが切れている場合は再ログインで復帰できます。</p>
+      <div class="row-actions">
+        <button type="button" class="btn btn-primary" on:click={loadSession}>再試行</button>
+        <a class="btn" href="/admin/relogin">再ログイン</a>
+      </div>
+      <details>
+        <summary class="muted">エラーの詳細</summary>
+        <pre class="mono">{error}</pre>
+      </details>
     </div>
-  </div>
+  </main>
 {:else if session}
   <div class="layout">
     <aside class="sidebar">
@@ -90,31 +60,32 @@
         {#each navItems as item (item.page)}
           <a
             class="nav-link"
-            class:active={page === item.page}
-            aria-current={page === item.page ? "page" : undefined}
+            aria-current={$page === item.page ? "page" : undefined}
             href={item.href}
-            on:click={(event) => navigate(event, item)}
+            on:click={(event) => navigate(event, item.page)}
           >
             {item.label}
           </a>
         {/each}
       </nav>
-      <p class="muted" style="margin-top: 1.5rem; font-size: 0.85rem;">
-        {session.username} ({session.email})
-      </p>
+      <div class="account">
+        <div>{session.username}</div>
+        <div>{session.email}</div>
+        <a href="/admin/logout">ログアウト</a>
+      </div>
     </aside>
     <main class="content">
-      {#if page === "dashboard"}
+      {#if $page === "dashboard"}
         <Dashboard {session} />
-      {:else if page === "reports"}
+      {:else if $page === "reports"}
         <Reports />
-      {:else if page === "emojis"}
+      {:else if $page === "emojis"}
         <Emojis />
-      {:else if page === "relays"}
+      {:else if $page === "relays"}
         <Relays />
-      {:else if page === "domain-blocks"}
+      {:else if $page === "domain-blocks"}
         <DomainBlocks />
-      {:else if page === "system"}
+      {:else if $page === "system"}
         <System />
       {:else}
         <Deliveries />
@@ -124,3 +95,19 @@
 {/if}
 
 <ConfirmDialog />
+
+<style>
+  .session-error {
+    max-width: 40rem;
+    margin: 3rem auto;
+  }
+
+  .session-error details {
+    margin-top: 1rem;
+  }
+
+  .session-error pre {
+    white-space: pre-wrap;
+    margin: 0.5rem 0 0;
+  }
+</style>
