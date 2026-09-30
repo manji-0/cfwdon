@@ -272,6 +272,7 @@ export const StatusCard = ({
             className={`status-action${body.reblogged ? " is-active" : ""}`}
             onClick={() => onReblog?.(body)}
             aria-label="ブースト"
+            aria-pressed={body.reblogged}
           >
             ↻
           </button>
@@ -287,6 +288,7 @@ export const StatusCard = ({
             className={`status-action${body.favourited ? " is-active" : ""}`}
             onClick={() => onFavourite?.(body)}
             aria-label="いいね"
+            aria-pressed={body.favourited}
           >
             ♥
           </button>
@@ -302,6 +304,7 @@ export const StatusCard = ({
             className={`status-action${body.bookmarked ? " is-active" : ""}`}
             onClick={() => onBookmark(body)}
             aria-label="ブックマーク"
+            aria-pressed={body.bookmarked}
           >
             {body.bookmarked ? "★" : "☆"}
           </button>

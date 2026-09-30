@@ -5,12 +5,24 @@
   --color-surface: #181b20;
   --color-surface-hover: rgba(255, 255, 255, 0.06);
   --color-border: #2a2f38;
+  /* Form-control borders need 3:1 against surface/bg (WCAG 1.4.11). */
+  --color-border-strong: #626b7c;
   --color-text: #f2f4f8;
   --color-text-muted: #9aa3b2;
   --color-accent: #1185fe;
   --color-danger: #ff6b6b;
+  --color-on-accent: #071018;
+  --color-on-danger: #1a0606;
   --nav-width: 5.5rem;
   --radius-sm: 0.4rem;
   --radius-md: 0.65rem;
   --radius-lg: 1rem;
+  --radius-pill: 999px;
+  /* Minimum hit area for icon-only buttons. */
+  --touch-target: 2.75rem;
+  --z-sticky: 2;
+  --z-nav: 3;
+  --z-lightbox: 40;
+  --z-modal: 100;
+  --z-toast: 110;
 }
