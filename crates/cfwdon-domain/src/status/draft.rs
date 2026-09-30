@@ -380,4 +380,66 @@ mod tests {
             StatusDraftError::EmptyPayload
         );
     }
+
+    #[test]
+    fn initial_local_quote_approval_policy_forces_private_and_direct_to_nobody() {
+        let mut record = crate::LocalAccountRecord::test_fixture("acct-1", "alice");
+        record.default_quote_policy = "public".to_owned();
+        let account = crate::LocalAccount::from_record(record);
+        let private_draft = crate::StatusDraft::try_from_persisted(
+            "hello".to_owned(),
+            crate::Visibility::FollowersOnly,
+            String::new(),
+            false,
+            Some("en".to_owned()),
+            Some(crate::QuoteApprovalPolicy::Public),
+            None,
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        let direct_draft = crate::StatusDraft::try_from_persisted(
+            private_draft.text().to_owned(),
+            crate::Visibility::Direct,
+            private_draft.spoiler_text().to_owned(),
+            private_draft.sensitive(),
+            private_draft.language().map(str::to_owned),
+            private_draft.quote_approval_policy(),
+            private_draft.in_reply_to_id().map(str::to_owned),
+            private_draft.media_ids().to_vec(),
+            private_draft.poll().cloned(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            private_draft.effective_quote_policy(&account).as_str(),
+            "nobody"
+        );
+        assert_eq!(
+            direct_draft.effective_quote_policy(&account).as_str(),
+            "nobody"
+        );
+    }
+
+    #[test]
+    fn initial_local_quote_approval_policy_uses_account_default_when_request_omits_it() {
+        let mut record = crate::LocalAccountRecord::test_fixture("acct-1", "alice");
+        record.default_quote_policy = "followers".to_owned();
+        record.default_language = Some("en".to_owned());
+        let account = crate::LocalAccount::from_record(record);
+        let draft = crate::StatusDraft::try_from_persisted(
+            "hello".to_owned(),
+            crate::Visibility::Public,
+            String::new(),
+            false,
+            Some("en".to_owned()),
+            None,
+            None,
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(draft.effective_quote_policy(&account).as_str(), "followers");
+    }
 }

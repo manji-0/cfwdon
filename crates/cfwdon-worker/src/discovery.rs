@@ -141,3 +141,6 @@ pub(crate) async fn tag_response(ctx: RouteContext<()>) -> Result<Response> {
         CACHE_TTL_TRENDS,
     )
 }
+
+#[cfg(test)]
+mod unit_tests;

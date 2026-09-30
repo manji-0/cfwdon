@@ -4,3 +4,6 @@ mod poll_store;
 pub(crate) use actor_profile_store::*;
 pub(crate) use actor_store::*;
 pub(crate) use poll_store::*;
+
+#[cfg(test)]
+mod unit_tests;

@@ -468,3 +468,6 @@ mod tests {
         assert_eq!(from_lookup.domain.as_deref(), Some("xn--wgv71a.example"));
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

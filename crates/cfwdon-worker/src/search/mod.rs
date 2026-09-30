@@ -10,3 +10,6 @@ pub(crate) use api::*;
 pub(crate) use helpers::*;
 pub(crate) use status_v2::*;
 pub(crate) use statuses::*;
+
+#[cfg(test)]
+mod unit_tests;

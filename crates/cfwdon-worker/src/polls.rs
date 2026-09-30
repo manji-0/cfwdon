@@ -137,3 +137,6 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
     let summary = process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
     Response::from_json(&summary)
 }
+
+#[cfg(test)]
+mod unit_tests;

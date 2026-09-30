@@ -264,4 +264,76 @@ mod tests {
             QuoteState::Rejected
         );
     }
+
+    #[test]
+    fn remote_quote_state_for_local_target_matches_policy_rules() {
+        use crate::QuoteState;
+
+        fn remote_quote_state_for_local_target(
+            status: &crate::LocalStatus,
+            remote_actor_follows_owner: bool,
+            blocked_by_owner: bool,
+        ) -> &'static str {
+            let policy = status.effective_quote_approval_policy();
+            QuoteState::remote_for_target(
+                blocked_by_owner,
+                policy.allows_quote(false, remote_actor_follows_owner),
+            )
+            .as_str()
+        }
+
+        let mut status = crate::LocalStatus {
+            id: "status-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            ap_id: None,
+            in_reply_to_id: None,
+            in_reply_to_account_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>hello</p>".to_owned(),
+            text: "hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: crate::Visibility::Public,
+            sensitive: false,
+            language: Some("en".to_owned()),
+            quote_approval_policy: Some(crate::QuoteApprovalPolicy::Public),
+            quote_state: crate::QuoteState::Accepted,
+            application_id: None,
+            card_json: None,
+            created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+            updated_at: None,
+        };
+
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, false, false),
+            "accepted"
+        );
+
+        status.quote_approval_policy = Some(crate::QuoteApprovalPolicy::Followers);
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, true, false),
+            "accepted"
+        );
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, false, false),
+            "pending"
+        );
+
+        status.quote_approval_policy = Some(crate::QuoteApprovalPolicy::Nobody);
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, true, false),
+            "pending"
+        );
+
+        status.visibility = crate::Visibility::FollowersOnly;
+        status.quote_approval_policy = Some(crate::QuoteApprovalPolicy::Public);
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, true, false),
+            "pending"
+        );
+        assert_eq!(
+            remote_quote_state_for_local_target(&status, true, true),
+            "rejected"
+        );
+    }
 }

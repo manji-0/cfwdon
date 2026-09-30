@@ -1016,3 +1016,6 @@ mod tests {
         assert!(link.contains("min_id=newer"), "{link}");
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

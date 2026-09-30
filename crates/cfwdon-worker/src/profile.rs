@@ -974,3 +974,6 @@ struct FeaturedTagMetricsRow {
     statuses_count: u64,
     last_status_at: Option<String>,
 }
+
+#[cfg(test)]
+mod unit_tests;

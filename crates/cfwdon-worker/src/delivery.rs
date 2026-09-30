@@ -579,3 +579,6 @@ mod tests {
         assert_eq!(without_targets, vec!["delivery-2", "delivery-3"]);
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

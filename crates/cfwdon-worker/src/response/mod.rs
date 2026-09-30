@@ -9,3 +9,6 @@ pub(crate) use collections::*;
 pub(crate) use media::*;
 pub(crate) use reports::*;
 pub(crate) use statuses::*;
+
+#[cfg(test)]
+mod unit_tests;

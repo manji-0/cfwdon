@@ -198,3 +198,6 @@ pub(crate) async fn delete_media_attachment(
     delete_media_attachment_row(&db, &media.id).await?;
     Response::from_json(&serde_json::json!({}))
 }
+
+#[cfg(test)]
+mod unit_tests;

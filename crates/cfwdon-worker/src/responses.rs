@@ -136,3 +136,6 @@ pub(crate) struct MastodonTagHistoryEntry {
     pub(crate) uses: String,
     pub(crate) accounts: String,
 }
+
+#[cfg(test)]
+mod unit_tests;

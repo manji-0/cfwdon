@@ -112,3 +112,6 @@ pub(crate) async fn streaming_placeholder_response(
         authenticated,
     )
 }
+
+#[cfg(test)]
+mod unit_tests;

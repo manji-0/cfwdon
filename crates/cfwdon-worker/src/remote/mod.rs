@@ -15,3 +15,6 @@ pub(crate) use polls::*;
 pub(crate) use resolve::*;
 pub(crate) use status_edits::*;
 pub(crate) use store::*;
+
+#[cfg(test)]
+mod unit_tests;

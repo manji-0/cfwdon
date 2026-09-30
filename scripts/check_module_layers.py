@@ -69,12 +69,16 @@ def top_module(path: Path) -> str:
     return rel.parts[0].removesuffix(".rs")
 
 
+def is_test_file(path: Path) -> bool:
+    return path.stem == "unit_tests" or path.stem.endswith("_tests")
+
+
 def module_graph() -> tuple[dict[str, set[str]], set[str]]:
     edges: dict[str, set[str]] = defaultdict(set)
     modules: set[str] = set()
     for path in SRC.rglob("*.rs"):
         module = top_module(path)
-        if module in {"lib", "unit_tests", "compat_tests"}:
+        if module in {"lib", "compat_tests", "test_fixtures"} or is_test_file(path):
             continue
         modules.add(module)
         # Test modules sit at the end of files; they may reach anywhere.

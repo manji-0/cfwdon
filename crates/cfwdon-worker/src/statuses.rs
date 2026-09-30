@@ -363,3 +363,6 @@ pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result
     }
     Response::from_json(&deleted.response)
 }
+
+#[cfg(test)]
+mod unit_tests;

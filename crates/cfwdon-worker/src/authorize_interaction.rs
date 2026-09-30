@@ -201,3 +201,6 @@ fn access_login_redirect(
     let authorize_url = authorize_interaction_url_for_uri(req, uri)?;
     auth0_login_redirect_response(config, &authorize_url, &authorize_url)
 }
+
+#[cfg(test)]
+mod unit_tests;

@@ -435,3 +435,6 @@ pub(crate) fn matches_tag_timeline_filters(
 
     true
 }
+
+#[cfg(test)]
+mod unit_tests;

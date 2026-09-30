@@ -133,3 +133,6 @@ pub(crate) async fn async_refresh_response(
     };
     Response::from_json(&AsyncRefreshDocument { async_refresh })
 }
+
+#[cfg(test)]
+mod unit_tests;

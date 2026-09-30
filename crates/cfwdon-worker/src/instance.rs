@@ -408,3 +408,6 @@ pub(crate) async fn custom_emojis_response_from_env(env: &Env) -> Result<Respons
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     custom_emojis_response_direct(&config)
 }
+
+#[cfg(test)]
+mod unit_tests;

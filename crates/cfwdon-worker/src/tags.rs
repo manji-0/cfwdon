@@ -664,3 +664,6 @@ mod trending_tags_tests {
         assert!(!sql.contains("text_content"));
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

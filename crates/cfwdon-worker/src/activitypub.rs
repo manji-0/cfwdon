@@ -51,3 +51,6 @@ pub(crate) async fn build_activitypub_delete_with_published_at(
         "object": note_id,
     }))
 }
+
+#[cfg(test)]
+mod unit_tests;

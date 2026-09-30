@@ -7,3 +7,6 @@ pub(crate) use crypto::*;
 pub(crate) use request_validation::*;
 pub(crate) use signatures::*;
 pub(crate) use signed_delivery::send_signed_activity;
+
+#[cfg(test)]
+mod unit_tests;

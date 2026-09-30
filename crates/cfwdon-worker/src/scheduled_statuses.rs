@@ -236,3 +236,6 @@ mod tests {
         assert!(scheduled_status_from_value(&value).is_err());
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

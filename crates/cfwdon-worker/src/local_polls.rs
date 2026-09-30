@@ -510,3 +510,6 @@ mod tests {
         assert_eq!(response.own_votes, None);
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

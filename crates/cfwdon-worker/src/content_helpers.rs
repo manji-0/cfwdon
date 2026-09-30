@@ -245,3 +245,6 @@ mod tests {
 pub(crate) fn tag_history_stub() -> Vec<MastodonTagHistoryEntry> {
     Vec::new()
 }
+
+#[cfg(test)]
+mod unit_tests;

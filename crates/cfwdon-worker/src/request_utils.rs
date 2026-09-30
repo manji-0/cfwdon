@@ -159,3 +159,6 @@ pub(crate) fn parse_media_id_fields<const N: usize>(
         Some(media_ids)
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

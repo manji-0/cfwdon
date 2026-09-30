@@ -398,3 +398,6 @@ pub(crate) fn oauth_access_token_auth_from_joined_row(
 
     Ok(Some(OAuthAccessTokenWithAccount { token, account }))
 }
+
+#[cfg(test)]
+mod unit_tests;

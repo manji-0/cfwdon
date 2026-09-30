@@ -1743,3 +1743,6 @@ mod tests {
         assert!(!html.contains("Post by @alice\"onclick=x"));
     }
 }
+
+#[cfg(test)]
+mod unit_tests;
