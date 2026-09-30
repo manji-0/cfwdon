@@ -11,6 +11,7 @@ import {
 } from "@/infrastructure/api/account";
 import { AccountRow } from "@/ui/components/AccountRow";
 import { AppShell } from "@/ui/components/AppShell";
+import { ListStatus } from "@/ui/components/ListStatus";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { useSession } from "@/ui/context/SessionContext";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
@@ -139,18 +140,17 @@ export const AccountCollectionPage = ({ kind }: Readonly<{ kind: CollectionKind 
           @{profile.acct} の{title}
         </p>
       ) : null}
-      {error ? <p className="app-error">{error}</p> : null}
-      {loading ? <div className="app-status">読み込み中…</div> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        isEmpty={accounts.length === 0}
+        empty={`${title}はまだいません。`}
+      />
       <div className="search-accounts">
         {accounts.map((account) => (
           <AccountRow key={account.id} account={account} />
         ))}
       </div>
-      {!loading && accounts.length === 0 ? (
-        <div className="app-card">
-          <p className="app-muted">{title}はまだいません。</p>
-        </div>
-      ) : null}
       <LoadMoreFooter
         hasMore={hasMore && !loading && accounts.length > 0}
         loading={loadingMore}

@@ -331,6 +331,15 @@ button {
   color: var(--color-danger);
 }
 
+.list-status-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
 .app-toasts {
   position: fixed;
   inset-inline: 0;

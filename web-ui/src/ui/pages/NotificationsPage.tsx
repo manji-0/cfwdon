@@ -18,6 +18,7 @@ import {
   rejectFollowRequest,
 } from "@/infrastructure/api/relationship";
 import { AppShell } from "@/ui/components/AppShell";
+import { ListStatus } from "@/ui/components/ListStatus";
 import { InboxTabs } from "@/ui/components/InboxTabs";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { NotificationCard } from "@/ui/components/NotificationCard";
@@ -259,8 +260,12 @@ export const NotificationsPage = () => {
           すべて既読
         </button>
       </div>
-      {error ? <p className="app-error">{error}</p> : null}
-      {loading ? <div className="app-status">読み込み中…</div> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        isEmpty={notifications.length === 0}
+        empty={"通知はまだありません。"}
+      />
       <div className="timeline">
         {notifications.map((notification) => (
           <NotificationCard
@@ -272,11 +277,6 @@ export const NotificationsPage = () => {
           />
         ))}
       </div>
-      {!loading && notifications.length === 0 ? (
-        <div className="app-card">
-          <p className="app-muted">通知はまだありません。</p>
-        </div>
-      ) : null}
       <LoadMoreFooter
         hasMore={hasMore && !loading && notifications.length > 0}
         loading={loadingMore}

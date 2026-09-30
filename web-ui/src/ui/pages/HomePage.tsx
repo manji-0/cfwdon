@@ -6,6 +6,7 @@ import { ViewReadiness } from "@/domain/cache/view-readiness";
 import { Status } from "@/domain/status/status";
 import { fetchHomeTimeline, fetchPublicTimeline } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
+import { ListStatus } from "@/ui/components/ListStatus";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useCompose } from "@/ui/context/ComposeContext";
@@ -234,22 +235,22 @@ export const HomePage = () => {
           このインスタンス
         </button>
       </nav>
-      {error ? <p className="app-error">{error}</p> : null}
-      {loading ? <div className="app-status">読み込み中…</div> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        isEmpty={statuses.length === 0}
+        empty={
+          feed === "local"
+            ? "このインスタンスの投稿はまだありません。"
+            : "まだ投稿がありません。投稿ボタンから最初の投稿をしてみましょう。"
+        }
+        onRetry={() => void handleRefresh()}
+      />
       <div className="timeline">
         {statuses.map((status) => (
           <StatusCard key={status.id} status={status} {...actions} />
         ))}
       </div>
-      {!loading && statuses.length === 0 ? (
-        <div className="app-card">
-          <p className="app-muted">
-            {feed === "local"
-              ? "このインスタンスの投稿はまだありません。"
-              : "まだ投稿がありません。投稿ボタンから最初の投稿をしてみましょう。"}
-          </p>
-        </div>
-      ) : null}
       <LoadMoreFooter
         hasMore={hasMore && !loading && statuses.length > 0}
         loading={loadingMore}

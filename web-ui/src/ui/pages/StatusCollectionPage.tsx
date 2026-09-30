@@ -5,6 +5,7 @@ import { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
 import type { PageQuery } from "@/domain/pagination";
 import { AppShell } from "@/ui/components/AppShell";
+import { ListStatus } from "@/ui/components/ListStatus";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
@@ -123,18 +124,17 @@ export const StatusCollectionPage = ({
   return (
     <AppShell title={title}>
       {header}
-      {error ? <p className="app-error">{error}</p> : null}
-      {loading ? <div className="app-status">読み込み中…</div> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        isEmpty={statuses.length === 0}
+        empty={emptyMessage}
+      />
       <div className="timeline">
         {statuses.map((status) => (
           <StatusCard key={status.id} status={status} {...actions} />
         ))}
       </div>
-      {!loading && statuses.length === 0 ? (
-        <div className="app-card">
-          <p className="app-muted">{emptyMessage}</p>
-        </div>
-      ) : null}
       <LoadMoreFooter
         hasMore={hasMore && !loading && statuses.length > 0}
         loading={loadingMore}
