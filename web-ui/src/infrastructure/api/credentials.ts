@@ -1,6 +1,6 @@
 import { type ResultAsync } from "neverthrow";
 import type { AccountCredentials } from "@/domain/account/credentials";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonFetchJson,
   mastodonPatchForm,

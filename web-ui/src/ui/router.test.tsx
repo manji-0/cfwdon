@@ -7,6 +7,7 @@ import { useAppParams } from "@/ui/hooks/useAppParams";
 import { useAppSearch } from "@/ui/hooks/useAppSearch";
 import { AppLink } from "@/ui/lib/app-link";
 import { createAppRouter } from "@/ui/router";
+import routerSource from "@/ui/router.tsx?raw";
 
 const StatusProbe = () => {
   const { statusId } = useAppParams();
@@ -91,5 +92,16 @@ describe("TanStack spike routes", () => {
   it("maps home to /", () => {
     expect(AppRoute.toPath(AppRoute.home())).toBe("/");
     expect(AppRoute.toLink(AppRoute.home())).toEqual({ to: AppRoute.path.home });
+  });
+});
+
+describe("router source", () => {
+  it("keeps router.tsx paths on AppRoute.path", () => {
+    for (const key of Object.keys(AppRoute.path)) {
+      expect(routerSource).toContain(`AppRoute.path.${key}`);
+    }
+    const pathLiterals = [...routerSource.matchAll(/path:\s*"([^"]*)"/g)].map((match) => match[1]);
+    expect(pathLiterals).toEqual([]);
+    expect(routerSource).toContain("lazy-pages");
   });
 });

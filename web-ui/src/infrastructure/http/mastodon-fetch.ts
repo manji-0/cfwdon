@@ -1,11 +1,9 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { HttpError } from "@/domain/errors/http-error";
-
-export type ValidationError = Readonly<{ kind: "ValidationError" }>;
-
-export type NotImplementedError = Readonly<{ kind: "NotImplemented"; feature: string }>;
-
-export type MastodonFetchError = HttpError | ValidationError | NotImplementedError;
+import {
+  HttpError,
+  type MastodonFetchError,
+  type NotImplementedError,
+} from "@/domain/errors/http-error";
 
 export const notImplemented = (feature: string): ResultAsync<never, NotImplementedError> =>
   errAsync({ kind: "NotImplemented", feature } as const);

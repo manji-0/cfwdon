@@ -1,9 +1,12 @@
 import { ok, type Result } from "neverthrow";
+import type { HttpError, ValidationError } from "@/domain/errors/http-error";
+import type { AccountSummary } from "@/domain/session/account";
 import { SessionState, type SessionResolved } from "@/domain/session/session";
-import type { FetchSessionError } from "@/infrastructure/api/web-session";
-import { fetchWebSession } from "@/infrastructure/api/web-session";
 
-export type LoadSessionError = FetchSessionError;
+export type LoadSessionError = HttpError | ValidationError;
+
+/** Port implemented by `infrastructure/api/web-session`; `null` means signed out. */
+export type FetchSession = () => PromiseLike<Result<AccountSummary | null, LoadSessionError>>;
 
 const toFailureMessage = (error: LoadSessionError): string => {
   switch (error.kind) {
@@ -16,8 +19,10 @@ const toFailureMessage = (error: LoadSessionError): string => {
   }
 };
 
-export const loadSession = async (): Promise<Result<SessionResolved, never>> => {
-  const result = await fetchWebSession();
+export const loadSession = async (
+  fetchSession: FetchSession,
+): Promise<Result<SessionResolved, never>> => {
+  const result = await fetchSession();
   if (result.isErr()) {
     return ok(SessionState.failed(toFailureMessage(result.error)));
   }

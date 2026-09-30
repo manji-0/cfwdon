@@ -13,7 +13,7 @@ import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 import { useKeyboardShortcuts } from "@/ui/hooks/useKeyboardShortcuts";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { useStreamingTimeline } from "@/ui/hooks/useStreamingTimeline";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";

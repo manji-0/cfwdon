@@ -3,7 +3,7 @@ import type { AccountRef } from "@/domain/account/account";
 import type { AccountList } from "@/domain/lists/list";
 import type { ListRepliesPolicy } from "@/domain/lists/replies-policy";
 import type { Status } from "@/domain/status/status";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,

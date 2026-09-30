@@ -1,7 +1,7 @@
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { Relationship } from "@/domain/account/relationship";
 import { Relationship as RelationshipModel } from "@/domain/account/relationship";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonFetchJson, mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import {

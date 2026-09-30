@@ -1,6 +1,6 @@
 import { type ResultAsync } from "neverthrow";
 import type { Announcement } from "@/domain/announcements/announcement";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonFetchJson, mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseAnnouncementList } from "@/infrastructure/mastodon/parsers/announcement";

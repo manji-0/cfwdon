@@ -3,6 +3,13 @@ export type HttpError = Readonly<
   | { kind: "NetworkError"; cause: unknown }
 >;
 
+export type ValidationError = Readonly<{ kind: "ValidationError" }>;
+
+export type NotImplementedError = Readonly<{ kind: "NotImplemented"; feature: string }>;
+
+/** Every failure a Mastodon API call can surface to the application layer. */
+export type MastodonFetchError = HttpError | ValidationError | NotImplementedError;
+
 export const HttpError = {
   fromResponse: async (response: Response): Promise<HttpError> => ({
     kind: "HttpStatus",

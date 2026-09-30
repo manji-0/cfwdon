@@ -9,7 +9,7 @@ import { Visibility } from "@/domain/status/visibility";
 import { createStatus, fetchStatus, fetchStatusContext } from "@/infrastructure/api/status";
 import { AppShell } from "@/ui/components/AppShell";
 import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/components/Composer";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 

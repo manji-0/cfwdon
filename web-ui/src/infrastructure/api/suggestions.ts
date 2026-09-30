@@ -1,6 +1,6 @@
 import { type ResultAsync } from "neverthrow";
 import type { AccountSuggestion } from "@/domain/suggestions/suggestion";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonDeleteJson, mastodonFetchJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseAccountSuggestionList } from "@/infrastructure/mastodon/parsers/suggestion";

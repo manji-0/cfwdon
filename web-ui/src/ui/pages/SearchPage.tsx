@@ -16,7 +16,7 @@ import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 import { useAppNavigate } from "@/ui/hooks/useAppNavigate";
 import { useAppSearch } from "@/ui/hooks/useAppSearch";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { AppLink } from "@/ui/lib/app-link";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 

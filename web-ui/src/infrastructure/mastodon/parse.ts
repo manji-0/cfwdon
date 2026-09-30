@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 
 export type ArkParser<T> = (input: unknown) => T | type.errors;
 

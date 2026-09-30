@@ -5,7 +5,7 @@ import type { StatusEdit } from "@/domain/status/edit";
 import type { StatusSource } from "@/domain/status/source";
 import type { Status, StatusContext } from "@/domain/status/status";
 import type { StatusTranslation } from "@/domain/status/translation";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,

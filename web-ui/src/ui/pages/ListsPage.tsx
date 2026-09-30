@@ -25,7 +25,7 @@ import { MeBackLink } from "@/ui/components/MeHubNav";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 

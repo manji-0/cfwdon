@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { loadProfileSnapshot } from "@/application/load-profile-snapshot";
 import { CachedView } from "@/domain/cache/cached-view";
 import { SelfProfilePreload } from "@/domain/cache/self-profile-preload";
+import { profileSnapshotSource } from "@/infrastructure/api/account";
 import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
 
@@ -20,7 +21,7 @@ export const SelfProfilePreloader = () => {
       case "Fetch": {
         const { accountId } = decision;
         let cancelled = false;
-        void loadProfileSnapshot(accountId).then((result) => {
+        void loadProfileSnapshot(profileSnapshotSource, accountId).then((result) => {
           if (cancelled || result.isErr()) {
             return;
           }

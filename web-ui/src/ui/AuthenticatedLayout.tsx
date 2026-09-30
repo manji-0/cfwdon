@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { Outlet } from "@tanstack/react-router";
+import { ComposeSheet } from "@/ui/components/ComposeSheet";
 import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
 import { ComposeProvider } from "@/ui/context/ComposeContext";
@@ -15,6 +16,7 @@ export const AuthenticatedLayout = () => (
   <ViewCacheProvider>
     <ConfirmProvider>
       <ComposeProvider>
+        <ComposeSheet />
         <SelfProfilePreloader />
         <UnreadMessagesProvider>
           <UnreadNotificationsProvider>

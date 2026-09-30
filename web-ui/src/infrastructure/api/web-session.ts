@@ -1,14 +1,12 @@
 import { type } from "arktype";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { HttpError } from "@/domain/errors/http-error";
+import { HttpError, type ValidationError } from "@/domain/errors/http-error";
 import type { AccountSummary } from "@/domain/session/account";
 import { parseAccountSummary } from "@/infrastructure/mastodon/parsers/account";
 
 const SESSION_PATH = "/api/cfwdon/web/session";
 
-export type FetchSessionError =
-  | HttpError
-  | Readonly<{ kind: "ValidationError" }>;
+export type FetchSessionError = HttpError | ValidationError;
 
 export const fetchWebSession = (): ResultAsync<AccountSummary | null, FetchSessionError> =>
   ResultAsync.fromPromise(

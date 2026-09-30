@@ -1,6 +1,6 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { Conversation } from "@/domain/conversations/conversation";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,

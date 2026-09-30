@@ -3,7 +3,7 @@ import {
   type NotificationPolicy,
   type NotificationPolicyAction,
 } from "@/domain/settings/notification-policy";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonFetchJson, mastodonPatchJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseNotificationPolicy } from "@/infrastructure/mastodon/parsers/notification-policy";

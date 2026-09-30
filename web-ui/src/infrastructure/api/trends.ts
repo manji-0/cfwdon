@@ -2,7 +2,7 @@ import { type ResultAsync } from "neverthrow";
 import type { Status } from "@/domain/status/status";
 import type { TrendLink } from "@/domain/trends/link";
 import type { TrendTag } from "@/domain/trends/trend";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonFetchJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseStatusList } from "@/infrastructure/mastodon/parsers/status";

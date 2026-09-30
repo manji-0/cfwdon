@@ -1,4 +1,4 @@
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 
 export const mastodonErrorMessage = (error: MastodonFetchError): string => {
   switch (error.kind) {
