@@ -10,9 +10,9 @@ use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, NotificationsQuery,
     load_notification_policy_row, notification_account_matches_filter, notification_type_allowed,
 };
-use crate::relationship::{is_blocking_actor, muted_notifications_for_actor};
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::responses::MastodonAccountResponse;
+use crate::store::relationship::{is_blocking_actor, muted_notifications_for_actor};
 use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use worker::Result;

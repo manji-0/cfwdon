@@ -6,13 +6,13 @@ use super::{
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
 use crate::media::find_media_attachments_by_status_id;
-use crate::relationship::is_muted_actor;
 use crate::runtime_config::load_config;
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses, load_in_reply_to_account_id,
     local_status_ids_thread_muted_by,
 };
+use crate::store::relationship::is_muted_actor;
 use crate::timelines::{
     build_timeline_link_header, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };

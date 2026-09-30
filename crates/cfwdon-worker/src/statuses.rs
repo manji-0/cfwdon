@@ -10,7 +10,7 @@ use crate::oauth_store::{
     app_bearer_token_from_request, find_oauth_access_token_with_account_by_bearer_token,
     find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
 };
-use crate::relationship::{is_blocking_actor, is_local_follower_authorized};
+use crate::relationship::is_local_follower_authorized;
 use crate::remote::{find_remote_status_by_id, find_remote_status_by_url_or_object_uri};
 use crate::request_utils::status_id_from_context;
 use crate::response_cache::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
@@ -18,6 +18,7 @@ use crate::runtime_config::load_config;
 use crate::scheduled_statuses::create_scheduled_status;
 use crate::statuses::request_parsing::ParsedStatusDraft;
 use crate::store::media::delete_media_attachments;
+use crate::store::relationship::is_blocking_actor;
 use crate::tracked_d1::D1Database;
 use worker::{Request, Response, Result, RouteContext};
 

@@ -30,7 +30,6 @@ use crate::oauth_store::{
 };
 use crate::observability::log_json_event;
 use crate::push::send_push_notification;
-use crate::relationship::delete_follow_by_target;
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{
     AccountReference, find_remote_actor_by_actor_uri, resolve_account_reference,
@@ -50,6 +49,7 @@ use crate::statuses::{
     can_view_local_status, find_local_status_by_object_uri, load_in_reply_to_account_id,
     resolve_status_reference,
 };
+use crate::store::relationship::delete_follow_by_target;
 use crate::store::remote::upsert_remote_actor;
 use crate::time_html::{escape_html, now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;

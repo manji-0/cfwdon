@@ -1,8 +1,8 @@
 use super::{
     set_relationship_email_subscription, set_relationship_endorsement, set_relationship_note,
 };
-use crate::relationship::find_follow_by_target;
 use crate::relationships::{RelationshipResponse, build_relationship_for_target};
+use crate::store::relationship::find_follow_by_target;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

@@ -11,7 +11,6 @@ use crate::media::{find_media_attachments_by_status_id, remote_status_has_media}
 use crate::notifications::{
     NotificationsQuery, collect_visible_notifications, filter_notification_entries_by_query,
 };
-use crate::relationship::is_muted_actor;
 use crate::remote::RemoteActorRow;
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, is_local_status_thread_muted_by,
@@ -19,6 +18,7 @@ use crate::statuses::{
     list_local_public_timeline_statuses, list_remote_public_statuses_by_tag,
     list_remote_public_timeline_statuses, load_in_reply_to_account_id,
 };
+use crate::store::relationship::is_muted_actor;
 use crate::streaming_types::{
     StreamingBatch, StreamingEntry, StreamingEvent, StreamingPublicPlan,
     streaming_batch_from_entries,

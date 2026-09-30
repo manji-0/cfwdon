@@ -4,9 +4,9 @@ use crate::accounts::{
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::identity::actor_url;
-use crate::relationship::{find_follow_by_target, is_blocking_actor, is_muted_actor};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::store::relationship::{find_follow_by_target, is_blocking_actor, is_muted_actor};
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};
 

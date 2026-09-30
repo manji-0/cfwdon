@@ -1,5 +1,5 @@
 use crate::db_utils::{d1_results, sql_placeholders, unique_ordered_refs};
-use crate::relationship::FollowerTargetRow;
+use crate::store::relationship::FollowerTargetRow;
 use std::collections::{HashMap, HashSet};
 
 use super::D1Database;

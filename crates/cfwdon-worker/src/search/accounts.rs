@@ -8,7 +8,7 @@ use crate::custom_emojis::config_with_resolved_custom_emojis;
 use crate::db_utils::d1_results;
 use crate::federation::ensure_remote_actor_username_matches_handle;
 use crate::identity::{actor_url, instance_host, parse_lookup_handle};
-use crate::relationship::{find_follow_by_target, list_accepted_follow_target_uris};
+use crate::relationship::list_accepted_follow_target_uris;
 use crate::remote::{
     REMOTE_ACTOR_ROW_COLUMNS, REMOTE_ACTOR_ROW_COLUMNS_ALIASED, RemoteActorRow,
     RemoteActorStatusSummary, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
@@ -19,6 +19,7 @@ use crate::response::{
     fetch_remote_actor_profile_with_context,
 };
 use crate::responses::MastodonAccountResponse;
+use crate::store::relationship::find_follow_by_target;
 use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

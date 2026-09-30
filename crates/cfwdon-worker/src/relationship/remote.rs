@@ -1,7 +1,7 @@
 use crate::accounts::FollowAccountRequest;
 use crate::federation::RemoteActorProfile;
-use crate::relationship::FollowRow;
 use crate::remote::RemoteActorRow;
+use crate::store::relationship::FollowRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, RemoteFollowState, initial_remote_follow_state};
 use worker::d1::D1Type;

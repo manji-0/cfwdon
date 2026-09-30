@@ -11,10 +11,10 @@ use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
     notification_type_allowed, push_notification_entry,
 };
-use crate::relationship::muted_notifications_for_actor;
 use crate::remote::find_remote_actor_by_actor_uri;
 use crate::responses::MastodonAccountResponse;
 use crate::statuses::find_statuses_by_ids;
+use crate::store::relationship::muted_notifications_for_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

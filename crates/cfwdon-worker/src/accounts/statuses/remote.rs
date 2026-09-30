@@ -20,7 +20,6 @@ use crate::media::{
     find_remote_status_ids_with_media,
 };
 use crate::observability::log_json_event;
-use crate::relationship::find_follow_by_target;
 use crate::remote::{
     RemoteActorRow, extract_remote_poll_draft, find_remote_actor_by_actor_uri,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
@@ -41,6 +40,7 @@ use crate::statuses::{
     preload_remote_status_viewer_state, preload_status_counts_for_remote_rows,
     preload_status_quote_counts,
 };
+use crate::store::relationship::find_follow_by_target;
 use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

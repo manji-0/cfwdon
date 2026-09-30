@@ -9,13 +9,13 @@ use crate::content_helpers::extract_mentions_from_text;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::load_account_filter_matcher;
 use crate::identity::instance_host;
-use crate::relationship::list_active_muted_actor_uris;
 use crate::remote::RemoteActorRow;
 use crate::runtime_config::load_config;
 use crate::statuses::{
     account_has_thread_mutes, list_local_direct_timeline_statuses,
     list_remote_direct_statuses_mentioning_viewer,
 };
+use crate::store::relationship::list_active_muted_actor_uris;
 use crate::timelines::find_authenticated_local_account;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};

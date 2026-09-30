@@ -9,7 +9,6 @@ use crate::media::{
     RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_ids,
 };
-use crate::relationship::list_active_muted_actor_uris_for_account;
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
@@ -28,6 +27,7 @@ use crate::statuses::{
     preload_status_quote_counts,
 };
 use crate::store::media::MediaAttachmentRow;
+use crate::store::relationship::list_active_muted_actor_uris_for_account;
 use crate::streaming_types::{StreamingBatch, StreamingEntry, streaming_batch_from_entries};
 use crate::tag_actions::list_followed_tag_names;
 use crate::timelines::{

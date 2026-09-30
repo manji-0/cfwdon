@@ -1,11 +1,11 @@
 use super::{FollowAccountRequest, upsert_local_follow};
 use crate::identity::actor_url;
-use crate::relationship::delete_follow_by_target;
 use crate::relationships::{
     RelationshipResponse, build_relationship_for_target, follow_remote_account,
     unfollow_remote_account,
 };
 use crate::remote::RemoteActorRow;
+use crate::store::relationship::delete_follow_by_target;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

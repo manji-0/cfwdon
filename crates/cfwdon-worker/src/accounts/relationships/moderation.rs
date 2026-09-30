@@ -4,10 +4,10 @@ use super::collections::{
 };
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
-use crate::relationship::{list_blocks_for_account, list_mutes_for_account};
 use crate::remote::find_remote_actor_by_actor_uri;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::store::relationship::{list_blocks_for_account, list_mutes_for_account};
 use crate::tracked_d1::D1Database;
 use worker::{Request, Response, Result, RouteContext};
 
