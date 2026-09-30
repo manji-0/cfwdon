@@ -11,8 +11,8 @@ use crate::relationship::is_blocking_actor;
 use crate::remote::{
     AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri, resolve_account_reference,
 };
-use crate::response::{timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt};
 use crate::responses::MastodonAccountResponse;
+use crate::time_html::{timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt};
 use crate::tracked_d1::D1Database;
 use std::collections::HashSet;
 use worker::Result;

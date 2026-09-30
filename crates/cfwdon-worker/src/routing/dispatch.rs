@@ -8,7 +8,7 @@ use super::{
 };
 use crate::admin_api::dispatch_admin_route;
 use crate::admin_ui::is_admin_ui_path;
-use crate::response::{CACHE_TTL_HEALTH, cache_public_response};
+use crate::response_utils::{CACHE_TTL_HEALTH, cache_public_response};
 use crate::runtime_config::{load_config_from_env, root_document};
 use crate::web_api::{is_web_api_path, web_session_response};
 use crate::web_ui::{

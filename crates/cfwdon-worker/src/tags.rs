@@ -1,5 +1,6 @@
 use crate::db_utils::d1_results;
-use crate::response::{MastodonTagHistoryEntry, MastodonTagResponse};
+use crate::response::MastodonTagResponse;
+use crate::responses::MastodonTagHistoryEntry;
 use crate::search::normalize_search_match_text;
 use crate::time_html::now_unix_timestamp;
 use crate::timelines::ResolvedTimelineCursor;

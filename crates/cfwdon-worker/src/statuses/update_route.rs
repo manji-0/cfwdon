@@ -12,7 +12,7 @@ use crate::local_polls::{
 };
 use crate::media::resolve_editable_media;
 use crate::request_utils::status_id_from_context;
-use crate::response::invalidate_status_api_cache;
+use crate::response_cache::invalidate_status_api_cache;
 use crate::runtime_config::load_config;
 use crate::time_html::is_iso_timestamp_in_past;
 use worker::{Error, Request, Response, Result, RouteContext};

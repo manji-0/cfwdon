@@ -1,7 +1,7 @@
 use super::TrendsQuery;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::response::{CACHE_TTL_TRENDS, cache_public_response};
+use crate::response_utils::{CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::load_config;
 use crate::statuses::build_status_card_value;
 use crate::time_html::now_unix_timestamp;

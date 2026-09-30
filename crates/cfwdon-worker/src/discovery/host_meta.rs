@@ -1,5 +1,5 @@
 use crate::identity::webfinger_lrdd_template;
-use crate::response::{
+use crate::response_utils::{
     CACHE_TTL_STATIC_METADATA, cache_public_json_response, cache_public_response,
 };
 use crate::runtime_config::{load_config, load_config_from_env};

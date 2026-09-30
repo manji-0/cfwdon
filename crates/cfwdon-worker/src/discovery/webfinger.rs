@@ -5,7 +5,8 @@ use crate::identity::{
     authorize_interaction_subscribe_template, instance_host, parse_webfinger_resource,
     share_create_template,
 };
-use crate::response::{CACHE_TTL_STATIC_METADATA, cache_public_json_response, media_object_url};
+use crate::response::media_object_url;
+use crate::response_utils::{CACHE_TTL_STATIC_METADATA, cache_public_json_response};
 use crate::runtime_config::load_config;
 use worker::{Request, Response, Result, RouteContext};
 

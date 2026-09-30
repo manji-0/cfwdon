@@ -3,11 +3,9 @@ use crate::custom_emojis::{FederatedEmojiMap, custom_emojis_used_in_texts, resol
 use crate::identity::actor_url;
 use crate::media::MediaAttachmentRow;
 use crate::remote::RemoteActorRow;
-use crate::response::{
-    MastodonMediaAttachmentResponse, MastodonStatusTagResponse, timestamp_to_mastodon_iso8601,
-    timestamp_to_mastodon_iso8601_opt,
-};
+use crate::response::{MastodonMediaAttachmentResponse, MastodonStatusTagResponse};
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::time_html::{timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 

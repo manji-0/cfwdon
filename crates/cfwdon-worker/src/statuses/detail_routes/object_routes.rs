@@ -8,9 +8,9 @@ use crate::db_session::bind_request_d1;
 use crate::identity::instance_base_url;
 use crate::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
 use crate::remote::find_remote_status_by_id;
-use crate::response::{
+use crate::response::media_attachment_url;
+use crate::response_utils::{
     CACHE_TTL_FEDERATION, cache_public_json_response, cache_public_response_with_options,
-    media_attachment_url,
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{

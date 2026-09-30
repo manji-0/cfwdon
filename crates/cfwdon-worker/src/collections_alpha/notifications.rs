@@ -12,8 +12,8 @@ use crate::notifications::{
 };
 use crate::relationship::{is_blocking_actor, muted_notifications_for_actor};
 use crate::remote::{AccountReference, resolve_account_reference};
-use crate::response::timestamp_to_mastodon_iso8601;
 use crate::responses::MastodonAccountResponse;
+use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;

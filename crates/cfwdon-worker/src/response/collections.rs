@@ -1,4 +1,4 @@
-use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse, MastodonTagHistoryEntry};
 use serde::Serialize;
 
 pub(crate) const UNAUTH_CONTEXT_ANCESTOR_LIMIT: usize = 40;
@@ -69,11 +69,4 @@ pub(crate) struct MastodonTagResponse {
 pub(crate) struct MastodonStatusTagResponse {
     pub(crate) name: String,
     pub(crate) url: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct MastodonTagHistoryEntry {
-    pub(crate) day: String,
-    pub(crate) uses: String,
-    pub(crate) accounts: String,
 }

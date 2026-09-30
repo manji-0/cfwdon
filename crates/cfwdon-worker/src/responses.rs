@@ -129,3 +129,10 @@ pub(crate) struct MastodonReportResponse {
     pub(crate) target_account: MastodonAccountResponse,
     pub(crate) rule_ids: Option<Vec<String>>,
 }
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MastodonTagHistoryEntry {
+    pub(crate) day: String,
+    pub(crate) uses: String,
+    pub(crate) accounts: String,
+}

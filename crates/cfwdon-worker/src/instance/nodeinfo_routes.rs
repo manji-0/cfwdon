@@ -4,7 +4,7 @@ use super::{
     load_instance_summary, load_total_local_accounts, load_total_local_statuses,
 };
 use crate::db_session::bind_request_d1;
-use crate::response::cache_public_response;
+use crate::response_utils::cache_public_response;
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::tracked_d1::D1Database;
 use worker::{Response, Result, RouteContext};

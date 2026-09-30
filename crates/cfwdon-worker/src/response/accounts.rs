@@ -13,7 +13,7 @@ use crate::remote::{
 };
 use crate::response::media_object_url;
 use crate::responses::{MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource};
-use crate::time_html::{activitypub_datetime_string, escape_html};
+use crate::time_html::{escape_html, timestamp_to_mastodon_account_created_at};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, ProfileField};
@@ -744,60 +744,10 @@ impl MastodonAccountResponse {
     }
 }
 
-/// Normalize persisted timestamps into ISO-8601 for Mastodon API exposure.
-///
-/// Already-ISO values (containing `T`) are preserved as-is. SQLite
-/// `YYYY-MM-DD HH:MM:SS` values are treated as UTC and rewritten with
-/// Mastodon-style millisecond precision.
-pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        return String::new();
-    }
-    if value.contains('T') {
-        return value.to_owned();
-    }
-    let normalized = activitypub_datetime_string(value);
-    if normalized.ends_with('Z') && !normalized.contains('.') {
-        format!("{}.000Z", &normalized[..normalized.len() - 1])
-    } else {
-        normalized
-    }
-}
-
-pub(crate) fn timestamp_to_mastodon_iso8601_opt(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(timestamp_to_mastodon_iso8601)
-}
-
-pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
-    let normalized = timestamp_to_mastodon_iso8601(value);
-    let date = normalized.split(['T', ' ']).next().unwrap_or("1970-01-01");
-    if date.len() >= 10 {
-        format!("{}T00:00:00.000Z", &date[..10])
-    } else {
-        "1970-01-01T00:00:00.000Z".to_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::remote::RemoteActorRow;
-
-    #[test]
-    fn timestamp_to_mastodon_iso8601_normalizes_sqlite_timestamp() {
-        assert_eq!(
-            timestamp_to_mastodon_iso8601("2026-05-09 13:40:48"),
-            "2026-05-09T13:40:48.000Z"
-        );
-        assert_eq!(
-            timestamp_to_mastodon_iso8601("2026-05-09T13:40:48.000Z"),
-            "2026-05-09T13:40:48.000Z"
-        );
-    }
 
     #[test]
     fn activitypub_collection_count_reads_numeric_and_string_total_items() {

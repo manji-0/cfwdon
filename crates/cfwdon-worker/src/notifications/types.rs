@@ -1,5 +1,5 @@
-use crate::response::timestamp_to_mastodon_iso8601;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::time_html::timestamp_to_mastodon_iso8601;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

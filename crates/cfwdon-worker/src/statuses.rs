@@ -13,7 +13,7 @@ use crate::oauth_apps::{
 use crate::relationship::{is_blocking_actor, is_local_follower_authorized};
 use crate::remote::{find_remote_status_by_id, find_remote_status_by_url_or_object_uri};
 use crate::request_utils::status_id_from_context;
-use crate::response::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
+use crate::response_cache::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
 use crate::runtime_config::load_config;
 use crate::scheduled_statuses::create_scheduled_status;
 use crate::statuses::request_parsing::ParsedStatusDraft;

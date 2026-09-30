@@ -12,7 +12,7 @@ use crate::policy_documents::{build_default_terms_of_service_document, configure
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
 };
-use crate::response::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
+use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::tags::trending_tags_documents;
 use crate::time_html::now_unix_timestamp;

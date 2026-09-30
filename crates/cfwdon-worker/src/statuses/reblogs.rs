@@ -6,7 +6,7 @@ use super::{
     upsert_reblog_wrapper_status,
 };
 use crate::delivery::{enqueue_announce_activity, enqueue_undo_announce_activity};
-use crate::response::invalidate_status_api_cache;
+use crate::response_cache::invalidate_status_api_cache;
 use crate::statuses::{
     AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus,
     find_owned_local_status_response_subject,
