@@ -692,6 +692,7 @@ button {
 
 .status-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   margin-top: 0.5rem;
   margin-inline-start: calc((var(--touch-target) - 1.2em) / -2);

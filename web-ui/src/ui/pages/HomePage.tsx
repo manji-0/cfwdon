@@ -244,7 +244,7 @@ export const HomePage = () => {
             ? "このインスタンスの投稿はまだありません。"
             : "まだ投稿がありません。投稿ボタンから最初の投稿をしてみましょう。"
         }
-        onRetry={() => void handleRefresh()}
+        onRetry={statuses.length === 0 ? () => void handleRefresh() : undefined}
       />
       <div className="timeline">
         {statuses.map((status) => (
