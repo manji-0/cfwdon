@@ -5,7 +5,7 @@ use super::request::{required_account_status_route_param, required_account_statu
 use crate::auth::{find_account_by_username, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
 use crate::remote::{AccountReference, resolve_account_reference_with_fetch};
-use crate::responses::RemoteCollectionFetchContext;
+use crate::response::RemoteCollectionFetchContext;
 use crate::runtime_config::load_config;
 use crate::statuses::AccountStatusesQuery;
 use crate::tracked_d1::D1Database;

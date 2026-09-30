@@ -5,10 +5,10 @@ use crate::activitypub::{
 use crate::auth::find_account_by_username;
 use crate::content_helpers::strip_html_tags;
 use crate::db_session::bind_request_d1;
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
 use crate::remote::find_remote_status_by_id;
-use crate::responses::{
+use crate::response::{
     CACHE_TTL_FEDERATION, cache_public_json_response, cache_public_response_with_options,
     media_attachment_url,
 };

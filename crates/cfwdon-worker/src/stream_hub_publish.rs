@@ -5,7 +5,7 @@ use crate::content_helpers::{
 use crate::conversation_store::{find_conversation_for_account, find_conversation_id_by_status_id};
 use crate::conversations::conversation_document;
 use crate::federation::RemoteActorProfile;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::lists::{
     STREAM_HUB_LIST_FANOUT_LIMIT, list_local_account_list_stream_fanout,
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,

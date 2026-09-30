@@ -9,7 +9,7 @@ use super::query::parse_relationship_query_ids;
 use super::resolution::resolve_requested_account_reference;
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;

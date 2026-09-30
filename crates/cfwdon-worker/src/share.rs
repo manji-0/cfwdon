@@ -2,7 +2,7 @@ use crate::auth::find_authenticated_local_account;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_status_draft};
 use crate::db_session::bind_request_d1;
 use crate::oauth_apps::auth0_login_redirect_response;
-use crate::responses::invalidate_account_dynamic_public_cache;
+use crate::response::invalidate_account_dynamic_public_cache;
 use crate::runtime_config::load_config;
 use crate::statuses::{CreatePublishedStatusInput, create_published_status_and_response};
 use crate::time_html::escape_html;

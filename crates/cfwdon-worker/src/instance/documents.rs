@@ -1,7 +1,8 @@
-use super::{
+use crate::identity::{
     configured_instance_languages, extended_description_url, instance_base_url,
-    instance_supported_mime_types, normalize_policy_body, privacy_policy_url, terms_of_service_url,
+    instance_supported_mime_types, privacy_policy_url, terms_of_service_url,
 };
+use crate::policy_documents::normalize_policy_body;
 use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
 use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;

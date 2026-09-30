@@ -1,5 +1,5 @@
 use super::{FollowAccountRequest, upsert_local_follow};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::relationship::delete_follow_by_target;
 use crate::relationships::{
     RelationshipResponse, build_relationship_for_target, follow_remote_account,

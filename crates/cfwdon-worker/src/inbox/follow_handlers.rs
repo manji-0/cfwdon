@@ -6,7 +6,7 @@ use crate::collections_alpha::{
 use crate::delivery::queue_remote_actor_activity_required;
 use crate::federation::RemoteActorProfile;
 use crate::follow_requests::{delete_remote_follow_request_by_actor, upsert_remote_follow_request};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::notifications::publish_remote_actor_notification_soft;
 use crate::relationship::update_follow_state_from_response;
 use crate::time_html::now_iso_string;

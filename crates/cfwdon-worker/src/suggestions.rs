@@ -2,7 +2,7 @@ use crate::accounts::{
     DirectoryOrder, list_discoverable_accounts_with_sort_key, load_account_stats,
 };
 use crate::db_session::bind_request_d1;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::profile::require_authenticated_local_account;
 use crate::relationship::{find_follow_by_target, is_blocking_actor, is_muted_actor};
 use crate::responses::MastodonAccountResponse;

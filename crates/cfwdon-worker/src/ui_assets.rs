@@ -1,4 +1,4 @@
-use crate::responses::{into_mutable_response, ui_asset_cache_control};
+use crate::response::{into_mutable_response, ui_asset_cache_control};
 use worker::{Env, Response, Result};
 
 pub(crate) const ASSETS_BINDING: &str = "ASSETS";

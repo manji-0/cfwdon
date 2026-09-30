@@ -3,18 +3,17 @@ use crate::activitypub::build_activitypub_actor_document;
 use crate::featured_tags::build_featured_collection_document;
 use crate::instance::{
     build_announcements_document, build_default_extended_description_document,
-    build_default_privacy_policy_document, build_default_terms_of_service_document,
-    build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
+    build_default_privacy_policy_document, build_instance_activity_document,
+    build_instance_v1_document, build_instance_v2_document,
 };
 use crate::meta_placeholder_routes::{
     build_app_verify_credentials_document, build_donation_campaign_document,
     build_oauth_authorization_server_document, build_oauth_userinfo_document,
 };
+use crate::policy_documents::build_default_terms_of_service_document;
 use crate::relationships::RelationshipResponse;
-use crate::responses::{
-    MastodonAccountResponse, MastodonSearchResponse, MastodonStatusResponse,
-    build_preferences_document,
-};
+use crate::response::{MastodonSearchResponse, build_preferences_document};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::scheduled_statuses::scheduled_status_document;
 use crate::statuses::{StatusRow, build_translation_document};
 use cfwdon_core::AppConfig;

@@ -1,11 +1,11 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
 use crate::db_session::bind_request_d1;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::reports::{
     ReportRow, find_report_by_id, list_report_status_ids, list_reports_filtered, resolve_report,
 };
-use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::response::timestamp_to_mastodon_iso8601;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};

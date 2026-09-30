@@ -2,7 +2,7 @@ use super::{
     NotificationsQuery, RemoteStatusNotificationRow, list_local_status_notifications_for_account,
     list_remote_status_notifications_for_account,
 };
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
     notification_type_allowed, push_notification_entry,

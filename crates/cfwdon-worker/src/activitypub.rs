@@ -1,4 +1,4 @@
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::statuses::StatusRow;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;

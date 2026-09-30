@@ -5,14 +5,13 @@ use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_mentions_from_text;
 use crate::db_utils::d1_results;
 use crate::federation::RemoteActorProfile;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::media::find_media_attachments_by_status_id;
 use crate::remote::{
     RemoteStatusRow, find_remote_actor_by_actor_uri, load_remote_status_updated_at,
 };
-use crate::responses::{
-    MastodonAccountResponse, MastodonStatusResponse, timestamp_to_mastodon_iso8601,
-};
+use crate::response::timestamp_to_mastodon_iso8601;
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::statuses::{
     StatusRecord, StatusRow, build_local_status_response, build_remote_status_response,
     find_local_status_by_object_uri, load_in_reply_to_account_id, statuses_from_records,

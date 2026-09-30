@@ -2,7 +2,7 @@ use crate::accounts::load_account_stats;
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::instance::parse_lookup_handle;
+use crate::identity::parse_lookup_handle;
 use crate::remote::{
     AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri,
     find_remote_actor_by_username_domain, resolve_account_reference,

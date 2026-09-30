@@ -7,7 +7,7 @@ use crate::federation::RemoteActorProfile;
 use crate::follow_requests::{
     delete_remote_follow_request_by_actor, find_pending_remote_follow_request_by_actor,
 };
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

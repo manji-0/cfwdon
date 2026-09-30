@@ -1,9 +1,9 @@
 use crate::auth::find_account_by_username;
 use crate::db_session::bind_request_d1;
 use crate::delivery::list_follower_actor_uris;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::relationship::{list_following_actor_uris, list_local_follower_usernames};
-use crate::responses::{CACHE_TTL_FEDERATION, cache_public_json_response};
+use crate::response::{CACHE_TTL_FEDERATION, cache_public_json_response};
 use crate::runtime_config::load_config;
 use crate::statuses::{
     build_outbox_activities, count_public_outbox_statuses, list_public_outbox_statuses_page,

@@ -6,9 +6,9 @@ use super::{
 use crate::delivery::{
     enqueue_targeted_outbox_activity, list_follower_delivery_targets, queue_remote_actor_activity,
 };
-use crate::instance::{actor_url, instance_base_url};
+use crate::identity::{actor_url, instance_base_url};
 use crate::remote::{AccountReference, resolve_account_reference};
-use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::response::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use worker::Result;
 

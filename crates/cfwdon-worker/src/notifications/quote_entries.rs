@@ -4,7 +4,7 @@ use super::{
     list_remote_quote_notifications_for_account, notification_timestamp_sort_token,
     preload_notification_statuses,
 };
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     NotificationEntry, QuotedUpdateNotificationRow, notification_account_matches_filter,
     notification_type_allowed,

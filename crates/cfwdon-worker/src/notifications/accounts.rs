@@ -6,7 +6,7 @@ use super::{
     list_remote_follow_request_notifications_for_account, preload_notification_statuses,
 };
 use crate::auth::find_account_by_id;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
     notification_type_allowed, push_notification_entry,

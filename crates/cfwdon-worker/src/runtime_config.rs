@@ -1,9 +1,6 @@
-use crate::custom_emojis::parse_custom_emojis_json;
-use crate::instance::{
-    normalize_configured_instance_domain, parse_csv_list, policy_html_from_sources,
-};
-use cfwdon_core::AppConfig;
-use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
+use crate::identity::{normalize_configured_instance_domain, parse_csv_list};
+use crate::policy_documents::policy_html_from_sources;
+use cfwdon_core::{AppConfig, BuildMetadata, TimelineAccessLevel, parse_custom_emojis_json};
 use worker::{Env, RouteContext};
 
 #[derive(Debug, serde::Serialize)]

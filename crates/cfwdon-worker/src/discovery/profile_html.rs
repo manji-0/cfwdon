@@ -1,6 +1,6 @@
 use crate::accounts::AccountStats;
-use crate::instance::{actor_url, instance_host};
-use crate::responses::{media_object_url, render_profile_field_value_html};
+use crate::identity::{actor_url, instance_host};
+use crate::response::{media_object_url, render_profile_field_value_html};
 use crate::time_html::{activitypub_datetime_string, escape_html};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

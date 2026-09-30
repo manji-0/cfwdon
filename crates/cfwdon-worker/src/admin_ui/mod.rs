@@ -1,6 +1,6 @@
 use crate::auth::find_authenticated_local_account_with_roles;
 use crate::db_session::bind_request_d1;
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::notifications::is_admin_authorized;
 use crate::oauth_apps::{
     auth0_login_redirect_response, auth0_logout_redirect_response, auth0_relogin_redirect_response,

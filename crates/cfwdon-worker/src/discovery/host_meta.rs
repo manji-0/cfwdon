@@ -1,5 +1,5 @@
-use crate::instance::webfinger_lrdd_template;
-use crate::responses::{
+use crate::identity::webfinger_lrdd_template;
+use crate::response::{
     CACHE_TTL_STATIC_METADATA, cache_public_json_response, cache_public_response,
 };
 use crate::runtime_config::{load_config, load_config_from_env};
@@ -75,7 +75,6 @@ fn escape_xml_attr(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instance::webfinger_lrdd_template;
 
     #[test]
     fn host_meta_body_includes_webfinger_lrdd_template() {

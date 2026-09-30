@@ -4,7 +4,7 @@ use super::{
     list_remote_mention_notifications_for_account, preload_notification_statuses,
 };
 use crate::activitypub::is_public_activitypub_visibility;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };

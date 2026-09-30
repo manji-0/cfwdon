@@ -1,4 +1,4 @@
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::media::{
     MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind, media_kind_label,
 };

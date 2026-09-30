@@ -7,7 +7,7 @@ use crate::delivery::enqueue_targeted_outbox_activity;
 use crate::domain_blocks::{delivery_inbox_blocked_by_domains, list_instance_domain_block_domains};
 use crate::federation::{RemoteActorProfile, parse_remote_http_url};
 use crate::id_utils::generate_entity_id;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

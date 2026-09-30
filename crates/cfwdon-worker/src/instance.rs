@@ -1,18 +1,18 @@
 mod announcements;
 mod documents;
-mod identity;
 mod nodeinfo_documents;
 mod nodeinfo_routes;
-mod policy_documents;
 mod store;
 mod trending_links;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, list_custom_emojis};
 use crate::d1_metrics::d1_pressure_load_shed_response;
 use crate::db_session::{bind_request_d1, open_bound_request_session, with_d1_bookmark};
+use crate::identity::configured_instance_languages;
+use crate::policy_documents::{build_default_terms_of_service_document, configured_html_document};
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
 };
-use crate::responses::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
+use crate::response::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::tags::trending_tags_documents;
 use crate::time_html::now_unix_timestamp;
@@ -25,10 +25,8 @@ use crate::trends_cache::{
 pub(crate) use announcements::*;
 use cfwdon_core::AppConfig;
 pub(crate) use documents::*;
-pub(crate) use identity::*;
 pub(crate) use nodeinfo_documents::*;
 pub(crate) use nodeinfo_routes::*;
-pub(crate) use policy_documents::*;
 pub(crate) use store::*;
 pub(crate) use trending_links::*;
 use worker::{Request, Response, Result, RouteContext};

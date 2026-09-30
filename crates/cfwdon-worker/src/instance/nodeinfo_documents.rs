@@ -1,4 +1,5 @@
-use super::{instance_base_url, instance_open_registrations, nodeinfo_21_url, nodeinfo_url};
+use super::instance_open_registrations;
+use crate::identity::{instance_base_url, nodeinfo_21_url, nodeinfo_url};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::InstanceSummary;
 
@@ -112,7 +113,8 @@ mod tests {
         build_nodeinfo_21_document, build_nodeinfo_document_with_halfyear,
         build_nodeinfo_links_document,
     };
-    use crate::instance::{instance_open_registrations, nodeinfo_21_url, nodeinfo_url};
+    use crate::identity::{nodeinfo_21_url, nodeinfo_url};
+    use crate::instance::instance_open_registrations;
     use cfwdon_core::AppConfig;
     use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 

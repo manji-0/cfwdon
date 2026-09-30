@@ -6,7 +6,7 @@ use crate::conversation_store::{
     mark_conversation_unread,
 };
 use crate::db_session::bind_request_d1;
-use crate::instance::parse_lookup_handle;
+use crate::identity::parse_lookup_handle;
 use crate::media::find_media_attachments_by_status_id;
 use crate::profile::require_authenticated_local_account;
 use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain};

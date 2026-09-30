@@ -3,7 +3,7 @@ use crate::auth::{apply_auth0_web_session_cookies, reset_auth0_web_session_state
 use crate::d1_metrics::reset_d1_request_metrics;
 use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::install_remote_dns_cache;
-use crate::responses::into_mutable_response;
+use crate::response::into_mutable_response;
 use crate::routing::{
     HttpRequestContext, dispatch_route, ensure_missing_content_type,
     error_response_with_plain_content_type, should_apply_auth0_web_session_cookies,

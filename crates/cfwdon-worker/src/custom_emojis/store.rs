@@ -4,7 +4,7 @@ use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
 use crate::media::log_r2_operation;
 use crate::observability::observability_started_at_ms;
-use crate::responses::media_object_url;
+use crate::response::media_object_url;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;

@@ -129,5 +129,3 @@ pub(crate) struct MastodonReportResponse {
     pub(crate) target_account: MastodonAccountResponse,
     pub(crate) rule_ids: Option<Vec<String>>,
 }
-
-pub(crate) use crate::response::*;

@@ -15,8 +15,8 @@ use crate::follow_requests::{
     delete_remote_follow_request_by_actor, find_pending_remote_follow_request_by_actor,
 };
 use crate::id_utils::generate_entity_id;
+use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
 use crate::inbox::{delete_follower_by_actor, find_follower_follow_activity_id};
-use crate::instance::{actor_url, instance_base_url, remote_account_rest_id};
 use crate::media::find_media_attachments_by_status_id;
 use crate::oauth_apps::{
     app_bearer_token_from_request, build_app_verify_credentials_document_from_parts,
@@ -34,12 +34,12 @@ use crate::remote::{
     resolve_account_reference_with_fetch, upsert_remote_actor,
 };
 use crate::request_utils::parse_optional_bool;
-use crate::responses::{
-    CACHE_TTL_OAUTH_DISCOVERY, CACHE_TTL_OEMBED, MastodonAccountResponse,
-    RemoteCollectionFetchContext, cache_public_response, enrich_remote_account_response,
-    fetch_remote_actor_profile_with_context, media_object_url,
-    reconcile_remote_account_status_summary, timestamp_to_mastodon_iso8601,
+use crate::response::{
+    CACHE_TTL_OAUTH_DISCOVERY, CACHE_TTL_OEMBED, RemoteCollectionFetchContext,
+    cache_public_response, enrich_remote_account_response, fetch_remote_actor_profile_with_context,
+    media_object_url, reconcile_remote_account_status_summary, timestamp_to_mastodon_iso8601,
 };
+use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::statuses::{
     ResolvedStatus, build_local_status_response, build_remote_status_response,

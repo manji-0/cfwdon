@@ -3,7 +3,7 @@ use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::{
     extract_account_handles_from_text, extract_hashtags_from_text, tag_url,
 };
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::local_polls::{
     apply_activitypub_poll_fields, count_poll_voters, find_status_poll_by_status_id,
     list_status_poll_options,
@@ -12,7 +12,7 @@ use crate::media::{
     MediaAttachmentRow, classify_media_kind, find_media_attachments_by_status_id, media_kind_label,
 };
 use crate::remote::{find_remote_actor_by_username_domain, find_remote_status_by_id};
-use crate::responses::media_attachment_url;
+use crate::response::media_attachment_url;
 use crate::statuses::{
     StatusRow, find_local_status_by_object_uri, find_status_by_id, status_has_active_quote,
 };

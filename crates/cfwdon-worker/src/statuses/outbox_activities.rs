@@ -1,6 +1,6 @@
 use super::{LocalAccount, StatusRow};
 use crate::activitypub::build_activitypub_note;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::time_html::activitypub_datetime_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

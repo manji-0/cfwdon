@@ -3,11 +3,9 @@
 //! Call sites already gate caching to viewer-independent documents. These
 //! helpers store/load/delete by absolute URL keys in `caches.default`.
 //! Invalidation uses `cache.delete` (Cache-Tag purge is Enterprise-only).
-use crate::instance::instance_base_url;
-use crate::responses::{
-    CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API, MastodonAccountResponse,
-    MastodonStatusResponse,
-};
+use crate::identity::instance_base_url;
+use crate::response::{CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::runtime_config::load_config;
 use worker::{Cache, Response, ResponseBody, Result, RouteContext};
 

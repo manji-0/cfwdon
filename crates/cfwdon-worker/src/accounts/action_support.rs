@@ -1,6 +1,6 @@
 use crate::accounts::{FollowAccountRequest, ResolvedRelationshipTarget, SocialActionError};
 use crate::db_session::bind_request_d1;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::publish_local_actor_notification_soft;
 use crate::profile::require_authenticated_local_account;
 use crate::push::send_push_notification;

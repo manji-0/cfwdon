@@ -5,7 +5,7 @@ use super::{
 use crate::activitypub::local_status_identity_from_uri;
 use crate::auth::find_account_by_id;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::timelines::{append_local_status_id_cursor_parts, format_with_clauses};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

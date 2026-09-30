@@ -1,6 +1,6 @@
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
-use crate::responses::media_object_url;
+use crate::response::media_object_url;
 use crate::runtime_config::load_config;
 use serde::Serialize;
 use worker::{Request, Response, Result, RouteContext};

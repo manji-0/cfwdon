@@ -1,11 +1,11 @@
 use crate::auth::find_account_by_username;
 use crate::db_session::bind_request_d1;
-use crate::instance::{
+use crate::identity::{
     account_profile_page_url, actor_url, authorize_interaction_object_template,
     authorize_interaction_subscribe_template, instance_host, parse_webfinger_resource,
     share_create_template,
 };
-use crate::responses::{CACHE_TTL_STATIC_METADATA, cache_public_json_response, media_object_url};
+use crate::response::{CACHE_TTL_STATIC_METADATA, cache_public_json_response, media_object_url};
 use crate::runtime_config::load_config;
 use worker::{Request, Response, Result, RouteContext};
 
@@ -191,6 +191,10 @@ fn filter_webfinger_links(links: Vec<WebFingerLink>, rels: &[String]) -> Vec<Web
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{
+        account_profile_page_url, actor_url, authorize_interaction_object_template,
+        authorize_interaction_subscribe_template,
+    };
 
     #[test]
     fn webfinger_document_matches_mastodon_shape() {

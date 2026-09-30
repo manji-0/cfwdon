@@ -12,7 +12,7 @@ use crate::federation::{
     parse_remote_http_json_response, parse_remote_http_url, resolve_remote_redirect_location,
     validate_remote_fetch_url,
 };
-use crate::instance::public_key_id;
+use crate::identity::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

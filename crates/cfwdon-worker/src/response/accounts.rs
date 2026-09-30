@@ -6,14 +6,13 @@ use crate::federation::{
     parse_remote_actor_profile_document, validate_remote_actor_profile_urls,
 };
 use crate::http::fetch_signed_activitypub_document;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::observability::log_json_event;
 use crate::remote::{
     RemoteActorRow, load_remote_actor_status_summary, update_remote_actor_social_counts,
 };
-use crate::responses::{
-    MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource, media_object_url,
-};
+use crate::response::media_object_url;
+use crate::responses::{MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource};
 use crate::time_html::{activitypub_datetime_string, escape_html};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

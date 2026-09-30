@@ -1,12 +1,13 @@
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text, tag_url};
 use crate::custom_emojis::{FederatedEmojiMap, custom_emojis_used_in_texts, resolve_status_emojis};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::media::MediaAttachmentRow;
 use crate::remote::{RemoteActorRow, RemoteStatusRow};
-use crate::responses::{
-    MastodonAccountResponse, MastodonMediaAttachmentResponse, MastodonStatusResponse,
-    MastodonStatusTagResponse, timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
+use crate::response::{
+    MastodonMediaAttachmentResponse, MastodonStatusTagResponse, timestamp_to_mastodon_iso8601,
+    timestamp_to_mastodon_iso8601_opt,
 };
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::statuses::StatusRow;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

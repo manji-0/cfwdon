@@ -4,7 +4,7 @@ use crate::content_helpers::{
 };
 use crate::media::{MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind};
 use crate::remote::{RemoteActorRow, RemoteStatusRow};
-use crate::responses::media_attachment_url;
+use crate::response::media_attachment_url;
 use crate::statuses::StatusRow;
 use crate::time_html::escape_html;
 use cfwdon_core::AppConfig;

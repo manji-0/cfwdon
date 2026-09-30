@@ -1,6 +1,6 @@
 use crate::auth::find_account_by_username;
 use crate::db_session::bind_request_d1;
-use crate::instance::{instance_host, parse_webfinger_resource};
+use crate::identity::{instance_host, parse_webfinger_resource};
 use crate::runtime_config::load_config;
 use crate::time_html::escape_html;
 use url::Url;

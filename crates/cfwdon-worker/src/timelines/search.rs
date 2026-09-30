@@ -1,10 +1,8 @@
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::oauth_apps::oauth_access_token_has_any_scope;
 use crate::remote::resolve_search_account_with_viewer;
-use crate::responses::{
-    MastodonAccountResponse, MastodonSearchResponse, MastodonStatusResponse, MastodonTagResponse,
-    json_response,
-};
+use crate::response::{MastodonSearchResponse, MastodonTagResponse, json_response};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::runtime_config::load_config;
 use crate::search::{
     SearchCategoryFlags, SearchUrlQueryMode, SearchV2ExecutionPlan, SearchV2Query,
@@ -355,6 +353,7 @@ async fn resolve_search_url_only_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::response::MastodonSearchResponse;
     use crate::search::SearchV2ExecutionPlan;
 
     #[test]

@@ -12,7 +12,7 @@ use crate::auth::{
 };
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use url::Url;

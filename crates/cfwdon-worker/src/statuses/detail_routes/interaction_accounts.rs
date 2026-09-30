@@ -5,7 +5,7 @@ use crate::accounts::load_account_stats;
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::find_account_by_id;
 use crate::db_session::with_d1_bookmark;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::remote::{find_remote_actor_by_actor_uri, load_remote_actor_status_summary};
 use crate::responses::MastodonAccountResponse;
 use crate::statuses::{

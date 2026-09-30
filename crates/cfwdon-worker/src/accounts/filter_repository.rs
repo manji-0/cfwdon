@@ -1,4 +1,4 @@
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::relationship::{
     delete_block_by_target, delete_mute_by_target, upsert_block, upsert_mute,
 };

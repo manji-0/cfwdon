@@ -5,10 +5,10 @@ use crate::db_session::bind_request_d1;
 use crate::db_utils::{count_rows, d1_results};
 use crate::delivery::queue_remote_actor_activity_required;
 use crate::federation::RemoteActorProfile;
-use crate::inbox::upsert_follower_by_inbox;
-use crate::instance::{
+use crate::identity::{
     actor_url, parse_lookup_handle, remote_account_rest_id, remote_actor_uri_from_rest_id,
 };
+use crate::inbox::upsert_follower_by_inbox;
 use crate::profile::require_authenticated_local_account;
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{
@@ -16,7 +16,8 @@ use crate::remote::{
     load_remote_actor_status_summary,
 };
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
-use crate::responses::{MastodonAccountResponse, timestamp_to_mastodon_iso8601};
+use crate::response::timestamp_to_mastodon_iso8601;
+use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

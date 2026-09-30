@@ -1,14 +1,13 @@
+use crate::app_cache::app_cache_kv;
 use crate::db_utils::d1_results;
+use crate::identity::{instance_host, normalize_instance_domain, peer_authority_from_uri};
 use crate::runtime_config::build_metadata;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
-
-use super::{instance_host, normalize_instance_domain, peer_authority_from_uri};
-use crate::app_cache::app_cache_kv;
-use serde::{Deserialize, Serialize};
 use worker::Result;
 use worker::d1::D1Type;
 

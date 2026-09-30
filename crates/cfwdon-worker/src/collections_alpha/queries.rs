@@ -5,7 +5,7 @@ use super::{
 };
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::remote::AccountReference;
 use crate::tracked_d1::D1Database;
 use worker::Result;

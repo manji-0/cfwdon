@@ -1,7 +1,7 @@
 use super::AppConfig;
-use crate::instance::{account_webfinger_acct, actor_url, public_key_id, shared_inbox_url};
+use crate::identity::{account_webfinger_acct, actor_url, public_key_id, shared_inbox_url};
 use crate::profile::activitypub_profile_attachments;
-use crate::responses::media_object_url;
+use crate::response::media_object_url;
 use crate::time_html::activitypub_datetime_string;
 use cfwdon_domain::LocalAccount;
 

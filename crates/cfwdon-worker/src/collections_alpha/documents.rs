@@ -6,14 +6,13 @@ use super::{
 use crate::accounts::load_account_stats;
 use crate::activitypub::local_username_from_actor_uri;
 use crate::auth::find_account_by_username;
-use crate::instance::{actor_url, instance_base_url, remote_account_rest_id};
+use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
 use crate::relationship::is_blocking_actor;
 use crate::remote::{
     AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri, resolve_account_reference,
 };
-use crate::responses::{
-    MastodonAccountResponse, timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
-};
+use crate::response::{timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt};
+use crate::responses::MastodonAccountResponse;
 use crate::tracked_d1::D1Database;
 use std::collections::HashSet;
 use worker::Result;

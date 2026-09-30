@@ -4,7 +4,7 @@ use crate::auth::{
 };
 use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_status_draft};
 use crate::db_session::bind_request_d1;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::media::{delete_media_attachments, resolve_attachable_media};
 use crate::oauth_apps::{
     app_bearer_token_from_request, find_oauth_access_token_with_account_by_bearer_token,
@@ -13,7 +13,7 @@ use crate::oauth_apps::{
 use crate::relationship::{is_blocking_actor, is_local_follower_authorized};
 use crate::remote::{find_remote_status_by_id, find_remote_status_by_url_or_object_uri};
 use crate::request_utils::status_id_from_context;
-use crate::responses::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
+use crate::response::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
 use crate::runtime_config::load_config;
 use crate::scheduled_statuses::create_scheduled_status;
 use crate::statuses::request_parsing::ParsedStatusDraft;

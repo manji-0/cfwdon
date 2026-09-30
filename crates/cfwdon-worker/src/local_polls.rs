@@ -3,7 +3,7 @@ mod votes;
 
 use crate::custom_emojis::sanitize_emoji_shortcodes;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
-use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::response::timestamp_to_mastodon_iso8601;
 use crate::statuses::CreateStatusPollRequest;
 use crate::time_html::is_iso_timestamp_in_past;
 use crate::tracked_d1::D1Database;

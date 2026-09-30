@@ -1,7 +1,7 @@
 use crate::activitypub::local_username_from_actor_uri;
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::federation::{RemoteActorProfile, fetch_remote_activitypub_document};
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::oauth_apps::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
 use crate::relationship::{find_follow_by_target, is_blocking_actor};
 use crate::remote::AccountReference;
@@ -947,7 +947,7 @@ mod tests {
     use super::notifications::merge_collection_notification_policy_action;
     use super::routes::build_collection_offset_link_header_for_url;
     use super::*;
-    use crate::instance::remote_account_rest_id;
+    use crate::identity::actor_url;
 
     fn fixture_config() -> cfwdon_core::AppConfig {
         cfwdon_core::AppConfig::new("https://social.example", "cfwdon", "test")

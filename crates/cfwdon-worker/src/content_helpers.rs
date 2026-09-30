@@ -1,5 +1,5 @@
-use crate::instance::{instance_base_url, instance_host};
-use crate::responses::MastodonTagHistoryEntry;
+use crate::identity::{instance_base_url, instance_host};
+use crate::response::MastodonTagHistoryEntry;
 use crate::statuses::StatusRow;
 use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;

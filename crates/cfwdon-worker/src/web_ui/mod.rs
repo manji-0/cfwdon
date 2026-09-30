@@ -1,4 +1,4 @@
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::oauth_apps::{auth0_login_redirect_response, auth0_logout_redirect_response};
 use crate::runtime_config::load_config;
 use crate::time_html::escape_html;

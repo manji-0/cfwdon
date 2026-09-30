@@ -20,9 +20,8 @@ use crate::remote::{
     find_remote_status_raw_object_by_id, has_remote_status_edit_snapshots,
     load_remote_mastodon_poll_response, load_remote_status_updated_at,
 };
-use crate::responses::{
-    MastodonMediaAttachmentResponse, MastodonStatusResponse, RemoteStatusResponseDetails,
-};
+use crate::response::{MastodonMediaAttachmentResponse, RemoteStatusResponseDetails};
+use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use std::collections::HashMap;

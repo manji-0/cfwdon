@@ -6,7 +6,8 @@ use crate::notifications::{
     notification_account_matches_filter, notification_type_allowed, push_notification_entry,
 };
 use crate::reports::list_admin_report_notifications;
-use crate::responses::{MastodonAccountResponse, build_report_response};
+use crate::response::build_report_response;
+use crate::responses::MastodonAccountResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

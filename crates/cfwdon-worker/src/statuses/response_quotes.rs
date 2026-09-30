@@ -1,5 +1,5 @@
 use super::{LocalAccount, StatusRow};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::relationship::{is_blocking_actor, is_local_follower_authorized, is_muted_actor};
 use crate::remote::{RemoteActorRow, RemoteStatusRow};
 use crate::responses::MastodonStatusResponse;

@@ -1,10 +1,10 @@
 use crate::accounts::FollowAccountRequest;
 use crate::activitypub::{build_follow_activity, build_undo_follow_activity};
 use crate::delivery::{queue_remote_actor_activity, queue_remote_actor_activity_required};
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::relationship::{delete_follow_by_target, load_follow_activity_id, upsert_remote_follow};
 use crate::remote::RemoteActorRow;
-use crate::responses::timestamp_to_mastodon_iso8601_opt;
+use crate::response::timestamp_to_mastodon_iso8601_opt;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

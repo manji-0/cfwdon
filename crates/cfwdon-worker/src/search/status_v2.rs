@@ -1,7 +1,7 @@
 use crate::activitypub::{is_public_activitypub_visibility, local_status_ap_id};
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::filters::load_account_filter_matcher;
-use crate::instance::parse_lookup_handle;
+use crate::identity::parse_lookup_handle;
 use crate::local_polls::{find_status_poll_by_status_id, preload_mastodon_poll_responses};
 use crate::media::{
     find_media_attachments_by_status_id, find_media_attachments_by_status_ids,

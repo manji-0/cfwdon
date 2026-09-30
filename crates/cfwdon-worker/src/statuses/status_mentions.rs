@@ -4,7 +4,7 @@ use super::response_mentions::{
 };
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::d1_results;
-use crate::instance::{actor_url, remote_account_rest_id};
+use crate::identity::{actor_url, remote_account_rest_id};
 use crate::remote::find_remote_actor_by_actor_uri;
 use cfwdon_core::AppConfig;
 use worker::{Result, d1::D1Type};

@@ -1,5 +1,5 @@
 use super::NotificationsQuery;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 

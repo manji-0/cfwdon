@@ -8,7 +8,7 @@ use crate::delivery::{
     outbox_create_insert_statement,
 };
 use crate::id_utils::generate_entity_id;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::tags::replace_local_status_hashtags;
 use crate::time_html::{add_seconds_to_iso_string, now_iso_string, render_status_html};
 use crate::tracked_d1::{D1Database, D1PreparedStatement};

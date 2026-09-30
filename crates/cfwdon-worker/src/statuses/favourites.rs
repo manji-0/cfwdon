@@ -7,7 +7,7 @@ use super::{
 };
 use crate::activitypub::{build_like_activity, build_undo_like_activity};
 use crate::delivery::queue_remote_actor_activity;
-use crate::responses::invalidate_status_api_cache;
+use crate::response::invalidate_status_api_cache;
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};

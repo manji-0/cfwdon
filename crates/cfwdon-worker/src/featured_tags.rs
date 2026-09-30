@@ -1,6 +1,7 @@
 use crate::db_session::bind_request_d1;
 use crate::db_utils::{d1_results, sql_placeholders};
-use crate::responses::{
+use crate::identity::{actor_url, instance_base_url};
+use crate::response::{
     CACHE_TTL_FEDERATION, cache_public_response, timestamp_to_mastodon_iso8601_opt,
 };
 use crate::statuses::list_pinned_statuses_for_account;
@@ -9,7 +10,6 @@ use crate::tracked_d1::D1Database;
 use std::collections::{HashMap, HashSet};
 
 use crate::auth::find_account_by_username;
-use crate::instance::{actor_url, instance_base_url};
 use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;

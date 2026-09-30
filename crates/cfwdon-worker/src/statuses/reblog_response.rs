@@ -1,5 +1,5 @@
 use super::{LocalAccount, StatusRow};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::remote::{RemoteActorRow, RemoteStatusRow};
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use cfwdon_core::AppConfig;

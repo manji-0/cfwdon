@@ -2,7 +2,7 @@ use super::{
     NotificationsQuery, build_status_notification_entry, list_update_notifications_for_account,
     notification_timestamp_sort_token, preload_notification_statuses,
 };
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };

@@ -6,7 +6,7 @@ use crate::activitypub::{
 use crate::domain_blocks::{
     filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
 };
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::media::MediaAttachmentRow;
 use crate::relationship::load_remote_actor_delivery_inbox;
 use crate::statuses::{StatusRow, status_has_active_quote};

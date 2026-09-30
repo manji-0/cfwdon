@@ -5,11 +5,12 @@ use super::{
 };
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::find_account_by_id;
-use crate::instance::actor_url;
-use crate::responses::{
-    MastodonContextResponse, MastodonStatusResponse, context_descendant_max_depth,
-    trim_context_ancestors, trim_context_descendants,
+use crate::identity::actor_url;
+use crate::response::{
+    MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
+    trim_context_descendants,
 };
+use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use std::collections::HashSet;

@@ -3,7 +3,7 @@ use super::html::{account_statuses_html_response, local_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::activitypub::local_status_ap_id;
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_ids};
 use crate::relationship::is_local_follower_authorized;

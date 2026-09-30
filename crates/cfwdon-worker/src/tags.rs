@@ -1,4 +1,5 @@
 use crate::db_utils::d1_results;
+use crate::response::{MastodonTagHistoryEntry, MastodonTagResponse};
 use crate::search::normalize_search_match_text;
 use crate::time_html::now_unix_timestamp;
 use crate::timelines::ResolvedTimelineCursor;
@@ -10,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 use crate::content_helpers::{
     extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
 };
-use crate::responses::{MastodonTagHistoryEntry, MastodonTagResponse};
 use crate::search::search_text_match_rank;
 use crate::statuses::{list_local_public_timeline_statuses, list_remote_public_timeline_statuses};
 use cfwdon_core::AppConfig;

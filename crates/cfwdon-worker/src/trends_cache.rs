@@ -1,8 +1,7 @@
 //! Materialized trend payloads in `APP_CACHE` KV.
 //!
 //! Cron refreshes every 6 hours; reads avoid D1 except on cache miss.
-
-use crate::responses::CACHE_TTL_TRENDS;
+use crate::response::CACHE_TTL_TRENDS;
 use worker::Result;
 
 use crate::app_cache::app_cache_kv;
@@ -72,6 +71,7 @@ async fn kv_put_json_array(key: &str, documents: &[serde_json::Value]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::response::CACHE_TTL_TRENDS;
 
     #[test]
     fn slice_trending_cache_applies_offset_and_limit() {

@@ -5,14 +5,15 @@ use super::{
 use crate::auth::find_account_by_id;
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, NotificationsQuery,
     load_notification_policy_row, notification_account_matches_filter, notification_type_allowed,
 };
 use crate::relationship::{is_blocking_actor, muted_notifications_for_actor};
 use crate::remote::{AccountReference, resolve_account_reference};
-use crate::responses::{MastodonAccountResponse, timestamp_to_mastodon_iso8601};
+use crate::response::timestamp_to_mastodon_iso8601;
+use crate::responses::MastodonAccountResponse;
 use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;

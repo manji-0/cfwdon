@@ -2,7 +2,7 @@ use crate::accounts::AccountRow;
 use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::id_utils::generate_entity_id;
-use crate::instance::instance_base_url;
+use crate::identity::instance_base_url;
 use crate::time_html::{escape_html, now_unix_timestamp};
 use crate::tracked_d1::D1Database;
 use base64::Engine;

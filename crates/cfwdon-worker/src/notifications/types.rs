@@ -1,6 +1,5 @@
-use crate::responses::{
-    MastodonAccountResponse, MastodonStatusResponse, timestamp_to_mastodon_iso8601,
-};
+use crate::response::timestamp_to_mastodon_iso8601;
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

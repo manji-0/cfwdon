@@ -7,7 +7,7 @@ use crate::db_session::bind_request_d1;
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::delivery::enqueue_profile_update_activities;
 use crate::follow_requests::count_pending_follow_requests;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::oauth_apps::{
     app_bearer_token_from_request, oauth_access_token_has_any_scope_json, oauth_bearer_token_hash,
 };
@@ -16,13 +16,13 @@ use crate::remote::{
     AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri,
     resolve_account_reference_with_fetch, resolve_lookup_account_with_viewer, upsert_remote_actor,
 };
-use crate::responses::{
-    CACHE_TTL_ACCOUNT_API, MastodonAccountResponse, RemoteCollectionFetchContext,
-    cache_account_api_response, cache_public_json_response, cached_account_api_response,
-    enrich_remote_account_response, fetch_remote_actor_profile_with_context,
-    invalidate_account_public_cache, media_object_url, reconcile_remote_account_status_summary,
-    render_profile_field_value_html,
+use crate::response::{
+    CACHE_TTL_ACCOUNT_API, RemoteCollectionFetchContext, cache_account_api_response,
+    cache_public_json_response, cached_account_api_response, enrich_remote_account_response,
+    fetch_remote_actor_profile_with_context, invalidate_account_public_cache, media_object_url,
+    reconcile_remote_account_status_summary, render_profile_field_value_html,
 };
+use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::tags::normalize_hashtag;
 use crate::tracked_d1::D1Database;
@@ -36,8 +36,7 @@ pub(crate) use self::request_parsing::{
     UpdateCredentialsRequest,
 };
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
-use cfwdon_domain::ProfileField;
+use cfwdon_domain::{LocalAccount, ProfileField};
 use serde::Deserialize;
 use std::collections::HashMap;
 use worker::Bucket;

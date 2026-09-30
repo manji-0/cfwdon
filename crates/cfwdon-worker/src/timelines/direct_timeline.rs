@@ -8,7 +8,7 @@ use super::{
 use crate::content_helpers::extract_mentions_from_text;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::load_account_filter_matcher;
-use crate::instance::instance_host;
+use crate::identity::instance_host;
 use crate::profile::require_authenticated_local_account;
 use crate::relationship::list_active_muted_actor_uris;
 use crate::remote::{RemoteActorRow, RemoteStatusRow};

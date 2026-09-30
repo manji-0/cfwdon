@@ -1,5 +1,5 @@
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
-use crate::responses::RemoteActorSocialCounts;
+use crate::response::RemoteActorSocialCounts;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;

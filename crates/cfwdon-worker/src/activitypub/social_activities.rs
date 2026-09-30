@@ -1,7 +1,7 @@
 use super::activitypub_audiences_for_visibility;
 use crate::activitypub::activity_object_id;
 use crate::id_utils::generate_entity_id;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::time_html::{activitypub_datetime_string, now_iso_string};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

@@ -2,7 +2,7 @@ use super::{
     NotificationsQuery, build_status_notification_entry, list_poll_notifications_for_account,
     preload_notification_statuses,
 };
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };

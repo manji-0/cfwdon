@@ -1,6 +1,6 @@
 use crate::content_helpers::{extract_mentions_from_text, strip_html_tags};
 use crate::db_utils::d1_results;
-use crate::instance::instance_host;
+use crate::identity::instance_host;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

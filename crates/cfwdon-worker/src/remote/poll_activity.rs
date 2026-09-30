@@ -1,5 +1,5 @@
 use crate::id_utils::generate_entity_id;
-use crate::instance::actor_url;
+use crate::identity::actor_url;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::{Error, Result};

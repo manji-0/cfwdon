@@ -3,7 +3,7 @@ use super::{
     find_remote_statuses_with_actors_by_ids, find_status_by_id, load_in_reply_to_account_id,
 };
 use crate::auth::find_account_by_id;
-use crate::instance::remote_account_rest_id;
+use crate::identity::remote_account_rest_id;
 use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_id};
 use worker::Result;
 
