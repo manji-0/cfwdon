@@ -16,7 +16,7 @@ import { useViewCache } from "@/ui/context/ViewCacheContext";
 export const ComposeSheet = () => {
   const { intent, close: onClose, markPublished: onPublished } = useCompose();
   const cache = useViewCache();
-  const { alert } = useConfirm();
+  const { alert, confirm } = useConfirm();
   const composerRef = useRef<ComposerHandle>(null);
   const [editText, setEditText] = useState("");
   const [editSpoiler, setEditSpoiler] = useState("");
@@ -61,6 +61,20 @@ export const ComposeSheet = () => {
     composerRef.current?.focus();
   }, [intent, editReady]);
 
+  const requestClose = async () => {
+    if (composerRef.current?.isDirty()) {
+      const discard = await confirm("入力中の内容は保存されません。破棄しますか？", {
+        title: "下書きを破棄",
+        confirmLabel: "破棄",
+        danger: true,
+      });
+      if (!discard) {
+        return;
+      }
+    }
+    onClose();
+  };
+
   useEffect(() => {
     if (intent.kind === "Closed") {
       return undefined;
@@ -70,11 +84,11 @@ export const ComposeSheet = () => {
         return;
       }
       event.preventDefault();
-      onClose();
+      void requestClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [intent, onClose]);
+  });
 
   if (intent.kind === "Closed") {
     return null;
@@ -144,7 +158,7 @@ export const ComposeSheet = () => {
       className="compose-overlay"
       data-app-overlay="true"
       role="presentation"
-      onClick={onClose}
+      onClick={() => void requestClose()}
     >
       <div
         className="compose-sheet app-card"
@@ -168,7 +182,7 @@ export const ComposeSheet = () => {
             quotedStatusId={intent.kind === "Quote" ? intent.quotedStatusId : undefined}
             quotedPreview={intent.kind === "Quote" ? intent.quotedPreview : null}
             allowSchedule={intent.kind !== "Edit"}
-            onCancel={onClose}
+            onCancel={() => void requestClose()}
             onSubmit={handleSubmit}
           />
         ) : null}

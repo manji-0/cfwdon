@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import type { Result } from "neverthrow";
 import { AppLink } from "@/ui/lib/app-link";
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import type { AccountCredentials } from "@/domain/account/credentials";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import type { AccountRef } from "@/domain/account/account";
 import { AppRoute } from "@/domain/navigation/route";
 import { FilterAction, FilterContext, FilterExpire, type FilterContext as FilterContextValue, type FilterExpirePreset, type KeywordFilter } from "@/domain/filters/filter";
@@ -135,6 +137,7 @@ export const SettingsPage = () => {
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [savingModeration, setSavingModeration] = useState(false);
   const [sectionMessage, setSectionMessage] = useState("");
+  const [loadFailures, setLoadFailures] = useState<ReadonlyArray<string>>([]);
 
   const loadSettings = useCallback(async () => {
     const [
@@ -167,42 +170,31 @@ export const SettingsPage = () => {
     if (preferencesResult.isErr()) {
       throw new Error(mastodonErrorMessage(preferencesResult.error));
     }
-    if (policyResult.isErr()) {
-      throw new Error(mastodonErrorMessage(policyResult.error));
-    }
-    if (mutesResult.isErr()) {
-      throw new Error(mastodonErrorMessage(mutesResult.error));
-    }
-    if (blocksResult.isErr()) {
-      throw new Error(mastodonErrorMessage(blocksResult.error));
-    }
-    if (filtersResult.isErr()) {
-      throw new Error(mastodonErrorMessage(filtersResult.error));
-    }
-    if (domainsResult.isErr()) {
-      throw new Error(mastodonErrorMessage(domainsResult.error));
-    }
-    if (tagsResult.isErr()) {
-      throw new Error(mastodonErrorMessage(tagsResult.error));
-    }
-    if (featuredResult.isErr()) {
-      throw new Error(mastodonErrorMessage(featuredResult.error));
-    }
-    if (featuredSuggestionResult.isErr()) {
-      throw new Error(mastodonErrorMessage(featuredSuggestionResult.error));
-    }
+    const failures: string[] = [];
+    const settle = <T,>(label: string, result: Result<T, MastodonFetchError>, apply: (value: T) => void) => {
+      if (result.isOk()) {
+        apply(result.value);
+      } else {
+        failures.push(`${label}: ${mastodonErrorMessage(result.error)}`);
+      }
+    };
 
     setCredentials(credentialsResult.value);
-    setNotificationPolicy(policyResult.value);
-    setMutes(mutesResult.value);
-    setBlocks(blocksResult.value);
-    setMutesHasMore(pageHasMore(mutesResult.value.length));
-    setBlocksHasMore(pageHasMore(blocksResult.value.length));
-    setFilters(filtersResult.value);
-    setDomainBlocks(domainsResult.value);
-    setFollowedTags(tagsResult.value);
-    setFeaturedTags(featuredResult.value);
-    setFeaturedSuggestions(featuredSuggestionResult.value);
+    settle("通知ポリシー", policyResult, setNotificationPolicy);
+    settle("ミュート", mutesResult, (value) => {
+      setMutes(value);
+      setMutesHasMore(pageHasMore(value.length));
+    });
+    settle("ブロック", blocksResult, (value) => {
+      setBlocks(value);
+      setBlocksHasMore(pageHasMore(value.length));
+    });
+    settle("キーワードフィルター", filtersResult, setFilters);
+    settle("ドメインブロック", domainsResult, setDomainBlocks);
+    settle("フォロー中のハッシュタグ", tagsResult, setFollowedTags);
+    settle("注目のハッシュタグ", featuredResult, setFeaturedTags);
+    settle("注目のハッシュタグ候補", featuredSuggestionResult, setFeaturedSuggestions);
+    setLoadFailures(failures);
 
     setDisplayName(credentialsResult.value.displayName);
     setNote(credentialsResult.value.source.note);
@@ -535,6 +527,16 @@ export const SettingsPage = () => {
       {loading ? <div className="app-status">読み込み中…</div> : null}
       {error ? <p className="app-error">{error}</p> : null}
       {sectionMessage ? <p className="app-status">{sectionMessage}</p> : null}
+      {!loading && loadFailures.length > 0 ? (
+        <div className="app-error" role="alert">
+          <p>一部の設定を読み込めませんでした。</p>
+          <ul>
+            {loadFailures.map((failure) => (
+              <li key={failure}>{failure}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {!loading && !error ? (
         <>
@@ -991,20 +993,22 @@ export const SettingsPage = () => {
               </>
             )}
           </section>
-
-          <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
-            <h2>セッション</h2>
-            {credentials ? (
-              <p className="app-muted">
-                ログイン中: @{credentials.acct}
-                {session.kind === "Authenticated" ? ` (${session.account.instanceName})` : null}
-              </p>
-            ) : null}
-            <button type="button" className="app-button app-button-secondary" onClick={handleLogout}>
-              ログアウト
-            </button>
-          </section>
         </>
+      ) : null}
+
+      {!loading ? (
+        <section className="app-card settings-section" data-phase={WebUiPhase.settings}>
+          <h2>セッション</h2>
+          {credentials ? (
+            <p className="app-muted">
+              ログイン中: @{credentials.acct}
+              {session.kind === "Authenticated" ? ` (${session.account.instanceName})` : null}
+            </p>
+          ) : null}
+          <button type="button" className="app-button app-button-secondary" onClick={handleLogout}>
+            ログアウト
+          </button>
+        </section>
       ) : null}
     </AppShell>
   );

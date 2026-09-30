@@ -73,7 +73,8 @@ export const StatusCard = ({
   const card = Status.visibleCard(status);
   const quote = body.quote && StatusQuote.isVisible(body.quote) ? body.quote.quotedStatus : null;
   const isOwn = Boolean(selfAccountId && body.account.id === selfAccountId);
-  const [revealed, setRevealed] = useState(!body.sensitive && !body.spoilerText);
+  const [contentRevealed, setContentRevealed] = useState(!body.spoilerText);
+  const [mediaRevealed, setMediaRevealed] = useState(!body.sensitive);
   const [menuOpen, setMenuOpen] = useState(false);
   const [translation, setTranslation] = useState<StatusTranslation | null>(null);
   const [translating, setTranslating] = useState(false);
@@ -82,7 +83,8 @@ export const StatusCard = ({
   const [listBusyId, setListBusyId] = useState<string | null>(null);
   const [listMessage, setListMessage] = useState("");
   const { prompt, alert } = useConfirm();
-  const showContent = revealed || (!body.sensitive && !body.spoilerText);
+  const showContent = contentRevealed || !body.spoilerText;
+  const showMedia = mediaRevealed || !body.sensitive;
   const lightboxItems = body.mediaAttachments.filter(MediaAttachment.isLightboxable);
 
   const handleReport = async () => {
@@ -177,7 +179,7 @@ export const StatusCard = ({
         pinned={body.pinned}
       />
       {body.spoilerText ? (
-        <button type="button" className="status-spoiler-toggle" onClick={() => setRevealed((v) => !v)}>
+        <button type="button" className="status-spoiler-toggle" onClick={() => setContentRevealed((v) => !v)}>
           {showContent ? "警告を隠す" : `CW: ${body.spoilerText}`}
         </button>
       ) : null}
@@ -191,7 +193,12 @@ export const StatusCard = ({
                 : "翻訳済み"}
             </p>
           ) : null}
-          {body.mediaAttachments.length > 0 ? (
+          {body.mediaAttachments.length > 0 && !showMedia ? (
+            <button type="button" className="status-media-reveal" onClick={() => setMediaRevealed(true)}>
+              センシティブなメディア（{body.mediaAttachments.length}件）を表示
+            </button>
+          ) : null}
+          {body.mediaAttachments.length > 0 && showMedia ? (
             <div className="status-media-grid">
               {body.mediaAttachments.map((media) =>
                 MediaAttachment.isLightboxable(media) ? (

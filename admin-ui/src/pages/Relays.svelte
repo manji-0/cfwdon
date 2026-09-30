@@ -151,6 +151,25 @@
 </section>
 
 <style>
+  .primary,
+  .actions button {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    border-radius: 0.5rem;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .primary {
+    background: rgba(79, 140, 255, 0.18);
+    border-color: rgba(79, 140, 255, 0.45);
+  }
+
+  .actions .danger {
+    background: rgba(255, 107, 107, 0.12);
+    border-color: rgba(255, 107, 107, 0.35);
+  }
+
   .actions {
     display: flex;
     gap: 0.5rem;

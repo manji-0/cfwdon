@@ -4,7 +4,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsPage } from "@/ui/pages/SettingsPage";
 import { cleanupPage, renderPage } from "@/ui/test/render-page";
-import { stubFetch } from "@/ui/test/stub-fetch";
+import { jsonResponse, stubFetch } from "@/ui/test/stub-fetch";
 import {
   credentialsApi,
   featuredTagApi,
@@ -53,6 +53,22 @@ describe("SettingsPage", () => {
       expect(screen.getByRole("heading", { name: "注目タグ" })).toBeTruthy();
       expect(screen.getByRole("link", { name: /#cfwdon/ })).toBeTruthy();
       expect(screen.getByRole("button", { name: "#rust" })).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the rest of the page and logout usable when one section fails to load", async () => {
+    const { restore } = stubFetch({
+      ...settingsRoutes,
+      "GET /api/v1/featured_tags/suggestions": () => jsonResponse({ error: "boom" }, 500),
+    });
+    try {
+      await renderPage(<SettingsPage />, { path: "/settings" });
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("注目のハッシュタグ候補");
+      expect(screen.getByRole("heading", { name: "キーワードフィルター" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
     } finally {
       restore();
     }

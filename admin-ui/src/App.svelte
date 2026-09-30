@@ -17,7 +17,22 @@
     | "domain-blocks"
     | "system";
 
-  let page: Page = "dashboard";
+  const navItems: ReadonlyArray<{ page: Page; href: string; label: string }> = [
+    { page: "dashboard", href: "/admin", label: "ダッシュボード" },
+    { page: "reports", href: "/admin/reports", label: "レポート" },
+    { page: "emojis", href: "/admin/emojis", label: "カスタム絵文字" },
+    { page: "deliveries", href: "/admin/deliveries", label: "配信キュー" },
+    { page: "relays", href: "/admin/relays", label: "リレー" },
+    { page: "domain-blocks", href: "/admin/domain-blocks", label: "ドメインブロック" },
+    { page: "system", href: "/admin/system", label: "システム" },
+  ];
+
+  function pageFromPath(pathname: string): Page {
+    const normalized = pathname.replace(/\/+$/, "") || "/admin";
+    return navItems.find((item) => item.href === normalized)?.page ?? "dashboard";
+  }
+
+  let page: Page = pageFromPath(window.location.pathname);
   let session: AdminSession | null = null;
   let error = "";
   let loading = true;
@@ -35,12 +50,25 @@
     }
   }
 
-  function selectPage(next: Page) {
-    page = next;
+  function navigate(event: MouseEvent, item: (typeof navItems)[number]) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    if (page !== item.page) {
+      history.pushState(null, "", item.href);
+      page = item.page;
+    }
+  }
+
+  function onPopState() {
+    page = pageFromPath(window.location.pathname);
   }
 
   loadSession();
 </script>
+
+<svelte:window on:popstate={onPopState} />
 
 {#if loading}
   <div class="loading">読み込み中…</div>
@@ -58,62 +86,17 @@
       <div class="brand">cfwdon Admin</div>
       <div class="subtitle">{session.instance_name}</div>
       <nav>
-        <a
-          class="nav-link"
-          class:active={page === "dashboard"}
-          href="/admin"
-          on:click|preventDefault={() => selectPage("dashboard")}
-        >
-          ダッシュボード
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "reports"}
-          href="/admin/reports"
-          on:click|preventDefault={() => selectPage("reports")}
-        >
-          レポート
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "emojis"}
-          href="/admin/emojis"
-          on:click|preventDefault={() => selectPage("emojis")}
-        >
-          カスタム絵文字
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "deliveries"}
-          href="/admin/deliveries"
-          on:click|preventDefault={() => selectPage("deliveries")}
-        >
-          配信キュー
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "relays"}
-          href="/admin/relays"
-          on:click|preventDefault={() => selectPage("relays")}
-        >
-          リレー
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "domain-blocks"}
-          href="/admin/domain-blocks"
-          on:click|preventDefault={() => selectPage("domain-blocks")}
-        >
-          ドメインブロック
-        </a>
-        <a
-          class="nav-link"
-          class:active={page === "system"}
-          href="/admin/system"
-          on:click|preventDefault={() => selectPage("system")}
-        >
-          システム
-        </a>
+        {#each navItems as item (item.page)}
+          <a
+            class="nav-link"
+            class:active={page === item.page}
+            aria-current={page === item.page ? "page" : undefined}
+            href={item.href}
+            on:click={(event) => navigate(event, item)}
+          >
+            {item.label}
+          </a>
+        {/each}
       </nav>
       <p class="muted" style="margin-top: 1.5rem; font-size: 0.85rem;">
         {session.username} ({session.email})

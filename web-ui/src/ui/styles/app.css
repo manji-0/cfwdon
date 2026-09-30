@@ -546,6 +546,17 @@ button {
   display: block;
 }
 
+.status-media-reveal {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 1.5rem 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
 .status-media-thumb {
   padding: 0;
   text-align: left;
@@ -634,11 +645,6 @@ button {
 
 .status-action-count:hover {
   text-decoration: underline;
-}
-
-.status-action {
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
 }
 
 .status-action.is-active {
@@ -1035,7 +1041,7 @@ button {
 }
 
 .settings-field > span {
-  color: var(--color-muted);
+  color: var(--color-text-muted);
 }
 
 .settings-field input,
@@ -1070,7 +1076,7 @@ button {
 
 .settings-field legend {
   margin-bottom: 0.35rem;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
 }
 
 .settings-moderation {
@@ -1378,7 +1384,7 @@ button {
 .chat-cw {
   margin: 0 0 0.35rem;
   font-size: 0.85rem;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
 }
 
 .dm-search {

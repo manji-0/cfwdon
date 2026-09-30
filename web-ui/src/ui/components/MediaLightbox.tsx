@@ -78,6 +78,7 @@ export const MediaLightbox = ({
   return (
     <div
       className="media-lightbox"
+      data-app-overlay="true"
       role="dialog"
       aria-modal="true"
       aria-label={media.description ?? MediaAttachment.label(media)}

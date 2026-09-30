@@ -63,6 +63,8 @@ type ComposerProps = Readonly<{
 
 export type ComposerHandle = Readonly<{
   focus: () => void;
+  /** True when the draft differs from its initial state and closing would lose input. */
+  isDirty: () => boolean;
 }>;
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -111,8 +113,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       focus: () => {
         textareaRef.current?.focus();
       },
+      isDirty: () =>
+        text !== initialText ||
+        (showCw && spoilerText !== initialSpoilerText) ||
+        mediaAttachments.length > 0 ||
+        (pollEnabled && PollDraft.filledOptions(poll).length > 0),
     }),
-    [],
+    [text, initialText, showCw, spoilerText, initialSpoilerText, mediaAttachments, pollEnabled, poll],
   );
 
   useEffect(() => {
