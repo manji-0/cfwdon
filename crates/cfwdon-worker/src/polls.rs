@@ -3,11 +3,11 @@ use crate::delivery::enqueue_status_update_activity;
 use crate::local_polls::{build_mastodon_poll_response, find_status_poll_by_id};
 use crate::push::send_poll_end_notifications;
 use crate::remote::{
-    build_remote_mastodon_poll_response, find_remote_status_by_id, find_remote_status_poll_by_id,
-    find_remote_status_poll_by_status_id, refresh_remote_poll_if_needed,
+    build_remote_mastodon_poll_response, find_remote_status_by_id, refresh_remote_poll_if_needed,
     remote_poll_is_visible_to_viewer,
 };
 use crate::statuses::{can_view_local_status, find_status_by_id};
+use crate::store::remote::{find_remote_status_poll_by_id, find_remote_status_poll_by_status_id};
 use crate::tracked_d1::D1Database;
 
 mod expiration_store;

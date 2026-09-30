@@ -85,6 +85,7 @@ mod search;
 mod secret_storage;
 mod share;
 mod statuses;
+mod store;
 mod stream_hub;
 mod stream_hub_publish;
 mod streaming_home_batch;

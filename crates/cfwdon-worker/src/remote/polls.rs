@@ -1,10 +1,6 @@
 use super::{
-    RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusPollVoteRow, build_poll_vote_activity, extract_remote_poll_draft,
-    find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
-    has_remote_poll_votes_created_after, list_remote_poll_votes_for_account,
-    list_remote_status_poll_options, remap_remote_poll_vote_positions, upsert_remote_actor,
-    upsert_remote_status,
+    RemoteActorRow, RemotePollDraft, build_poll_vote_activity, extract_remote_poll_draft,
+    find_remote_status_raw_object_by_id, upsert_remote_status,
 };
 use crate::activitypub::{
     extract_remote_note_object, note_targets_account, note_targets_followers,
@@ -16,6 +12,12 @@ use crate::id_utils::generate_entity_id;
 use crate::local_polls::{MastodonPollOptionResponse, MastodonPollResponse};
 use crate::polls::validate_poll_vote_submission;
 use crate::relationship::is_local_account_following_remote_actor;
+use crate::store::remote::{
+    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    find_remote_status_poll_by_status_id, has_remote_poll_votes_created_after,
+    list_remote_poll_votes_for_account, list_remote_status_poll_options,
+    remap_remote_poll_vote_positions, upsert_remote_actor,
+};
 use crate::time_html::{is_iso_timestamp_in_past, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

@@ -4,7 +4,7 @@ use crate::notifications::{
     publish_remote_status_update_stream_notifications_soft,
 };
 use crate::push::{send_remote_status_quote_notification, send_remote_status_update_notifications};
-use crate::remote::find_cached_remote_actor_profile_by_actor_uri;
+use crate::store::remote::find_cached_remote_actor_profile_by_actor_uri;
 use crate::stream_hub_publish::{
     publish_remote_status_create_stream_fanout_soft,
     publish_remote_status_update_user_stream_fanout_soft,

@@ -12,13 +12,14 @@ use crate::relationship::{find_follow_by_target, list_accepted_follow_target_uri
 use crate::remote::{
     REMOTE_ACTOR_ROW_COLUMNS, REMOTE_ACTOR_ROW_COLUMNS_ALIASED, RemoteActorRow,
     RemoteActorStatusSummary, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    load_remote_actor_status_summaries, upsert_remote_actor,
+    load_remote_actor_status_summaries,
 };
 use crate::response::{
     RemoteCollectionFetchContext, enrich_remote_account_response,
     fetch_remote_actor_profile_with_context,
 };
 use crate::responses::MastodonAccountResponse;
+use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};

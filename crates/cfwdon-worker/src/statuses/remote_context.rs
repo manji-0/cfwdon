@@ -13,13 +13,14 @@ use crate::background_jobs::{
 use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
 use crate::remote::{
     RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_status_by_object_uri,
-    resolve_remote_status_by_url, upsert_remote_actor, upsert_remote_status,
+    resolve_remote_status_by_url, upsert_remote_status,
 };
 use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
     trim_context_descendants,
 };
 use crate::responses::MastodonStatusResponse;
+use crate::store::remote::upsert_remote_actor;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

@@ -666,11 +666,10 @@ fn pkce_verifier_matches(verifier: &str, challenge: &str, method: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oauth_store::FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL;
     use crate::oauth_store::{
-        AUTH0_REFRESH_COOKIE, AUTH0_WEB_SESSION_TTL_SECONDS, LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL,
-        access_token_cookie_max_age, auth0_session_cookie, oauth_bearer_token_hash,
-        parse_bearer_authorization_header,
+        AUTH0_REFRESH_COOKIE, AUTH0_WEB_SESSION_TTL_SECONDS, FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL,
+        LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL, access_token_cookie_max_age, auth0_session_cookie,
+        oauth_bearer_token_hash, parse_bearer_authorization_header,
     };
 
     #[test]

@@ -11,14 +11,14 @@ use crate::notifications::publish_remote_status_interaction_notification_soft;
 use crate::observability::log_json_event;
 use crate::relationship::{is_blocking_actor, is_remote_actor_following_local_account};
 use crate::remote::{
-    find_cached_remote_actor_profile_by_actor_uri, find_remote_status_by_url_or_object_uri,
-    resolve_remote_status_by_url, upsert_remote_actor, upsert_remote_reblog_status,
-    upsert_remote_status,
+    find_remote_status_by_url_or_object_uri, resolve_remote_status_by_url,
+    upsert_remote_reblog_status, upsert_remote_status,
 };
 use crate::statuses::{
     delete_remote_favourite, delete_remote_reblog, find_local_status_by_object_uri,
     upsert_remote_favourite, upsert_remote_reblog,
 };
+use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};

@@ -8,8 +8,9 @@ use crate::collections_alpha::{
 };
 use crate::federation::RemoteActorProfile;
 use crate::media::remote_status_has_media;
-use crate::remote::{find_remote_status_by_object_uri, upsert_remote_actor, upsert_remote_status};
+use crate::remote::{find_remote_status_by_object_uri, upsert_remote_status};
 use crate::statuses::delete_remote_status_by_id;
+use crate::store::remote::upsert_remote_actor;
 use crate::stream_hub_publish::publish_remote_status_delete_stream_fanout_soft;
 use crate::tags::load_remote_status_hashtag_names;
 use crate::tracked_d1::D1Database;

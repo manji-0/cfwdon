@@ -7,7 +7,7 @@ use crate::federation::{
 use crate::relationship::{
     has_any_local_followers_for_remote_actor, is_local_account_following_remote_actor,
 };
-use crate::remote::upsert_remote_actor;
+use crate::store::remote::upsert_remote_actor;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
 

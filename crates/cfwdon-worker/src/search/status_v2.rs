@@ -9,7 +9,7 @@ use crate::media::{
 };
 use crate::remote::{
     AccountReference, RemoteActorRow, find_remote_actor_by_username_domain,
-    find_remote_status_by_id, find_remote_status_poll_by_status_id, resolve_account_reference,
+    find_remote_status_by_id, resolve_account_reference,
 };
 use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
@@ -20,6 +20,7 @@ use crate::statuses::{
     is_remote_status_reblogged_by, load_in_reply_to_account_id, preload_local_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
 };
+use crate::store::remote::find_remote_status_poll_by_status_id;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::cmp::Reverse;

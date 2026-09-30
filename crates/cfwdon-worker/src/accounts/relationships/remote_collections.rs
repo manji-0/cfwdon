@@ -1,11 +1,12 @@
 use super::collections::CollectionAccountEntry;
 use crate::accounts::find_local_account_response_by_actor_uri;
-use crate::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::remote::find_remote_actor_by_actor_uri;
 use crate::response::{
     RemoteCollectionFetchContext, fetch_activitypub_document_with_context,
     fetch_remote_actor_profile_with_context,
 };
 use crate::responses::MastodonAccountResponse;
+use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccount;
 use futures_util::{StreamExt, stream};

@@ -13,7 +13,7 @@ use crate::federation::{
     validate_remote_fetch_url,
 };
 use crate::identity::public_key_id;
-use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, activitypub_key_id_matches_actor};

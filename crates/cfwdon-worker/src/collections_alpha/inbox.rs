@@ -8,7 +8,7 @@ use super::{
 };
 use crate::auth::find_account_by_id;
 use crate::federation::RemoteActorProfile;
-use crate::remote::upsert_remote_actor;
+use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;

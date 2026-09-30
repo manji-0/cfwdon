@@ -1,7 +1,5 @@
-use crate::remote::{
-    RemotePollDraft, RemotePollOptionDraft, list_remote_status_poll_options,
-    prune_remote_poll_vote_rows,
-};
+use crate::remote::{RemotePollDraft, RemotePollOptionDraft};
+use crate::store::remote::{list_remote_status_poll_options, prune_remote_poll_vote_rows};
 use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;

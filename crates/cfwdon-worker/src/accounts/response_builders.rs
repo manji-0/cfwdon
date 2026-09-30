@@ -4,12 +4,13 @@ use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::custom_emojis::config_with_resolved_custom_emojis;
 use crate::federation::RemoteActorProfile;
 use crate::observability::log_json_event;
-use crate::remote::{RemoteActorRow, find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::response::{
     RemoteCollectionFetchContext, enrich_remote_account_response,
     fetch_remote_actor_profile_with_context,
 };
 use crate::responses::MastodonAccountResponse;
+use crate::store::remote::upsert_remote_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccount;
 use worker::Result;

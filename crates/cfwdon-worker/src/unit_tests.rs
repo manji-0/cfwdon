@@ -77,13 +77,12 @@ use crate::policy_documents::configured_html_document;
 use crate::polls::validate_poll_vote_submission;
 use crate::profile::activitypub_profile_attachments;
 use crate::remote::{
-    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow,
-    RemoteStatusPollRow, RemoteStatusPollVoteRow, build_poll_vote_activity_with_ids,
+    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, build_poll_vote_activity_with_ids,
     effective_remote_status_quote_state, extract_remote_poll_draft,
-    optimistic_remote_poll_vote_deltas, remap_remote_poll_vote_positions,
-    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
-    remote_poll_should_refresh, remote_status_targets_local_viewer,
-    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
+    optimistic_remote_poll_vote_deltas, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers,
 };
 use crate::request_utils::{
     build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
@@ -122,6 +121,10 @@ use crate::statuses::{
     status_has_active_quote, translation_provider_language_code,
     translation_provider_language_matches, translation_provider_supported_target_language,
     translation_target_language, validate_scheduled_at_minimum_offset,
+};
+use crate::store::remote::{
+    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    remap_remote_poll_vote_positions,
 };
 use crate::tags::{
     TagSearchMetrics, paginate_tag_search_matches, resolve_search_tag_name,

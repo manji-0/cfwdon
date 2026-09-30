@@ -8,9 +8,8 @@ use crate::http::VerifiedActivityPubDelivery;
 use crate::relays::{
     mark_federation_relay_accepted, mark_federation_relay_rejected, relay_delivery_is_enabled,
 };
-use crate::remote::{
-    find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor, upsert_remote_status,
-};
+use crate::remote::upsert_remote_status;
+use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use worker::{Env, Result};
