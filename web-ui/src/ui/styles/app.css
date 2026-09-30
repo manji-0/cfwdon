@@ -36,6 +36,13 @@ a {
   outline-offset: 2px;
 }
 
+/* Text fields already have a border; draw the ring on top of it, not beside it. */
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: -1px;
+}
+
 /* Containers focused programmatically (e.g. focus-trap fallback) need no ring. */
 [tabindex="-1"]:focus-visible {
   outline: none;
@@ -230,6 +237,14 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+
+/* The sheet is already a card; don't draw a second box inside it. */
+.compose-sheet .app-composer {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
 }
 
 .composer-main {
