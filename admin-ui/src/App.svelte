@@ -7,6 +7,7 @@
   import Reports from "./pages/Reports.svelte";
   import System from "./pages/System.svelte";
   import { fetchSession, type AdminSession } from "./lib/api";
+  import ConfirmDialog from "./lib/ConfirmDialog.svelte";
 
   type Page =
     | "dashboard"
@@ -121,3 +122,5 @@
     </main>
   </div>
 {/if}
+
+<ConfirmDialog />

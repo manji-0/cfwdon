@@ -6,11 +6,13 @@
     fetchRelays,
     type AdminRelay,
   } from "../lib/api";
+  import { confirmAction } from "../lib/confirm";
 
   let relays: AdminRelay[] = [];
   let inboxUrl = "";
   let loading = true;
   let error = "";
+  let actionError = "";
   let saving = false;
   let actingId = "";
 
@@ -29,43 +31,57 @@
 
   async function submitRelay() {
     if (!inboxUrl.trim()) {
-      error = "リレーの inbox URL を入力してください。";
+      actionError = "リレーの inbox URL を入力してください。";
       return;
     }
     saving = true;
-    error = "";
+    actionError = "";
     try {
       await createRelay(inboxUrl.trim());
       inboxUrl = "";
       await loadRelays();
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to create relay";
+      actionError = err instanceof Error ? err.message : "failed to create relay";
     } finally {
       saving = false;
     }
   }
 
   async function disable(relay: AdminRelay) {
+    const ok = await confirmAction(`${relay.inbox_url} の購読を停止しますか？`, {
+      title: "リレーの無効化",
+      confirmLabel: "無効化",
+    });
+    if (!ok) {
+      return;
+    }
     actingId = relay.id;
-    error = "";
+    actionError = "";
     try {
       await disableRelay(relay.id);
       await loadRelays();
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to disable relay";
+      actionError = err instanceof Error ? err.message : "failed to disable relay";
     } finally {
       actingId = "";
     }
   }
 
   async function remove(relay: AdminRelay) {
+    const ok = await confirmAction(`${relay.inbox_url} を削除しますか？この操作は取り消せません。`, {
+      title: "リレーの削除",
+      confirmLabel: "削除",
+    });
+    if (!ok) {
+      return;
+    }
     actingId = relay.id;
-    error = "";
+    actionError = "";
     try {
       await deleteRelay(relay.id);
       relays = relays.filter((entry) => entry.id !== relay.id);
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to delete relay";
+      actionError = err instanceof Error ? err.message : "failed to delete relay";
     } finally {
       actingId = "";
     }
@@ -101,6 +117,10 @@
       {saving ? "追加中…" : "追加して有効化"}
     </button>
   </form>
+
+  {#if actionError}
+    <p class="error" role="alert">{actionError}</p>
+  {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>

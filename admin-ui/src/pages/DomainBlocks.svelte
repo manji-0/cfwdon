@@ -5,11 +5,13 @@
     fetchDomainBlocks,
     type AdminDomainBlock,
   } from "../lib/api";
+  import { confirmAction } from "../lib/confirm";
 
   let blocks: AdminDomainBlock[] = [];
   let domain = "";
   let loading = true;
   let error = "";
+  let actionError = "";
   let saving = false;
 
   async function loadBlocks() {
@@ -27,29 +29,36 @@
 
   async function submitBlock() {
     if (!domain.trim()) {
-      error = "ドメインを入力してください。";
+      actionError = "ドメインを入力してください。";
       return;
     }
     saving = true;
-    error = "";
+    actionError = "";
     try {
       await createDomainBlock(domain.trim());
       domain = "";
       await loadBlocks();
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to create domain block";
+      actionError = err instanceof Error ? err.message : "failed to create domain block";
     } finally {
       saving = false;
     }
   }
 
   async function removeBlock(block: AdminDomainBlock) {
-    error = "";
+    const ok = await confirmAction(`${block.domain} のブロックを解除しますか？解除すると連合配信が再開されます。`, {
+      title: "ドメインブロックの解除",
+      confirmLabel: "解除",
+    });
+    if (!ok) {
+      return;
+    }
+    actionError = "";
     try {
       await deleteDomainBlock(block.domain);
       blocks = blocks.filter((entry) => entry.id !== block.id);
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to delete domain block";
+      actionError = err instanceof Error ? err.message : "failed to delete domain block";
     }
   }
 
@@ -66,6 +75,10 @@
       {saving ? "追加中…" : "追加"}
     </button>
   </form>
+
+  {#if actionError}
+    <p class="error" role="alert">{actionError}</p>
+  {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>

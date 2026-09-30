@@ -12,6 +12,9 @@
   let inbox: AdminInboxActivity[] = [];
   let loading = true;
   let error = "";
+  let jobActionError = "";
+  let inboxActionError = "";
+  let inboxNotice = "";
   let jobFilter = "";
   let inboxPendingOnly = false;
   let retryingJobId = "";
@@ -43,14 +46,14 @@
 
   async function retry(job: AdminBackgroundJob) {
     retryingJobId = job.id;
-    error = "";
+    jobActionError = "";
     try {
       await retryBackgroundJob(job.id);
       jobs = jobs.map((entry) =>
         entry.id === job.id ? { ...entry, status: "pending" } : entry,
       );
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to retry job";
+      jobActionError = err instanceof Error ? err.message : "failed to retry job";
     } finally {
       retryingJobId = "";
     }
@@ -58,15 +61,17 @@
 
   async function reclaim() {
     reclaiming = true;
-    error = "";
+    inboxActionError = "";
+    inboxNotice = "";
     try {
       const result = await reclaimInboxActivities();
       await loadAll();
-      if (result.marked_processed === 0 && result.released === 0) {
-        error = "回収対象の inbox はありませんでした。";
-      }
+      inboxNotice =
+        result.marked_processed === 0 && result.released === 0
+          ? "回収対象の inbox はありませんでした。"
+          : `${result.marked_processed} 件を処理済みにし、${result.released} 件を再受信できるよう解放しました。`;
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to reclaim inbox";
+      inboxActionError = err instanceof Error ? err.message : "failed to reclaim inbox";
     } finally {
       reclaiming = false;
     }
@@ -106,6 +111,10 @@
       待機
     </button>
   </div>
+
+  {#if jobActionError}
+    <p class="error" role="alert">{jobActionError}</p>
+  {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>
@@ -165,8 +174,17 @@
     「副作用済み」は投稿などは取り込み済みで dedup 行だけ残っている状態です。
   </p>
 
+  {#if inboxActionError}
+    <p class="error" role="alert">{inboxActionError}</p>
+  {/if}
+  {#if inboxNotice}
+    <p class="muted" role="status">{inboxNotice}</p>
+  {/if}
+
   {#if loading}
     <div class="loading">読み込み中…</div>
+  {:else if error}
+    <p class="error">{error}</p>
   {:else if inbox.length === 0}
     <div class="empty">受信 Activity はありません。</div>
   {:else}

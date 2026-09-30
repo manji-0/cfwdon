@@ -4,10 +4,12 @@
     resolveReport,
     type AdminReport,
   } from "../lib/api";
+  import { confirmAction } from "../lib/confirm";
 
   let reports: AdminReport[] = [];
   let loading = true;
   let error = "";
+  let actionError = "";
   let filter: "all" | "pending" = "pending";
   let resolvingId = "";
 
@@ -25,8 +27,16 @@
   }
 
   async function markResolved(reportId: string) {
+    const ok = await confirmAction("このレポートを対応済みにしますか？未対応一覧から外れます。", {
+      title: "レポートの対応",
+      confirmLabel: "対応済みにする",
+      danger: false,
+    });
+    if (!ok) {
+      return;
+    }
     resolvingId = reportId;
-    error = "";
+    actionError = "";
     try {
       const updated = await resolveReport(reportId);
       reports = reports.map((report) =>
@@ -36,7 +46,7 @@
         reports = reports.filter((report) => !report.action_taken);
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : "failed to resolve report";
+      actionError = err instanceof Error ? err.message : "failed to resolve report";
     } finally {
       resolvingId = "";
     }
@@ -70,6 +80,10 @@
       </button>
     </div>
   </div>
+
+  {#if actionError}
+    <p class="error" role="alert">{actionError}</p>
+  {/if}
 
   {#if loading}
     <div class="loading">読み込み中…</div>

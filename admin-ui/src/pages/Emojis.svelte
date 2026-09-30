@@ -6,6 +6,7 @@
     updateEmoji,
     type AdminEmoji,
   } from "../lib/api";
+  import { confirmAction } from "../lib/confirm";
 
   let emojis: AdminEmoji[] = [];
   let loading = true;
@@ -74,7 +75,11 @@
   }
 
   async function removeEmoji(emoji: AdminEmoji) {
-    if (!confirm(`:${emoji.shortcode}: を削除しますか？`)) {
+    const ok = await confirmAction(`:${emoji.shortcode}: を削除しますか？この操作は取り消せません。`, {
+      title: "カスタム絵文字の削除",
+      confirmLabel: "削除",
+    });
+    if (!ok) {
       return;
     }
     error = "";
