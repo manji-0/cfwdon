@@ -5,6 +5,7 @@ import { KeyboardShortcutsHelp } from "@/ui/components/KeyboardShortcutsHelp";
 import { SelfProfilePreloader } from "@/ui/components/SelfProfilePreloader";
 import { ComposeProvider } from "@/ui/context/ComposeContext";
 import { ConfirmProvider } from "@/ui/context/ConfirmContext";
+import { ToastProvider } from "@/ui/context/ToastContext";
 import { UnreadMessagesProvider } from "@/ui/context/UnreadMessagesContext";
 import { UnreadNotificationsProvider } from "@/ui/context/UnreadNotificationsContext";
 import { ViewCacheProvider } from "@/ui/context/ViewCacheContext";
@@ -14,20 +15,22 @@ const RouteFallback = () => <div className="app-status">読み込み中…</div>
 
 export const AuthenticatedLayout = () => (
   <ViewCacheProvider>
-    <ConfirmProvider>
-      <ComposeProvider>
-        <ComposeSheet />
-        <SelfProfilePreloader />
-        <UnreadMessagesProvider>
-          <UnreadNotificationsProvider>
-            <KeyboardShortcutsHelp />
-            <AppKeyboard />
-            <Suspense fallback={<RouteFallback />}>
-              <Outlet />
-            </Suspense>
-          </UnreadNotificationsProvider>
-        </UnreadMessagesProvider>
-      </ComposeProvider>
-    </ConfirmProvider>
+    <ToastProvider>
+      <ConfirmProvider>
+        <ComposeProvider>
+          <ComposeSheet />
+          <SelfProfilePreloader />
+          <UnreadMessagesProvider>
+            <UnreadNotificationsProvider>
+              <KeyboardShortcutsHelp />
+              <AppKeyboard />
+              <Suspense fallback={<RouteFallback />}>
+                <Outlet />
+              </Suspense>
+            </UnreadNotificationsProvider>
+          </UnreadMessagesProvider>
+        </ComposeProvider>
+      </ConfirmProvider>
+    </ToastProvider>
   </ViewCacheProvider>
 );

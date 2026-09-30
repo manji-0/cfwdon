@@ -181,7 +181,6 @@ export const SearchPage = () => {
         ...current,
         statuses: Status.removeById(current.statuses, statusId),
       })),
-    onError: setError,
   });
 
   const hasResults = typedCount(results, "all") > 0;

@@ -205,7 +205,6 @@ export const HomePage = () => {
     onRemove: (statusId) => {
       setStatuses((current) => Status.removeById(current, statusId));
     },
-    onError: setError,
   });
 
   useKeyboardShortcuts([

@@ -293,7 +293,6 @@ export const ProfilePage = () => {
       cache.patchStatus(updated);
     },
     onRemove: (statusId) => setStatuses((current) => Status.removeById(current, statusId)),
-    onError: setError,
   });
 
   const runRelationship = async (action: () => ReturnType<typeof followAccount>) => {

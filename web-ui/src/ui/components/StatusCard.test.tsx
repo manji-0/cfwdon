@@ -1,12 +1,14 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AccountRef } from "@/domain/account/account";
 import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 import { StatusCard } from "@/ui/components/StatusCard";
-import { renderWithRouter } from "@/ui/test/render-page";
+import { useStatusActions } from "@/ui/components/useStatusActions";
+import { cleanupPage, renderWithRouter } from "@/ui/test/render-page";
+import { jsonResponse, stubFetch } from "@/ui/test/stub-fetch";
 
 const account: AccountRef = {
   id: "1",
@@ -46,7 +48,7 @@ const status = (overrides: Readonly<{ spoilerText?: string; sensitive?: boolean 
 
 describe("StatusCard", () => {
   afterEach(() => {
-    cleanup();
+    cleanupPage();
   });
 
   it("shows the text of a sensitive status without CW and hides only its media", async () => {
@@ -66,5 +68,24 @@ describe("StatusCard", () => {
     expect(screen.getByText("本文です")).toBeTruthy();
     expect(screen.queryByAltText("猫の写真")).toBeNull();
     expect(screen.getByRole("button", { name: /センシティブなメディア/ })).toBeTruthy();
+  });
+
+  it("reports a failed action in an error toast by default", async () => {
+    const user = userEvent.setup();
+    const { restore } = stubFetch({
+      "GET /api/v1/announcements": [],
+      "POST /api/v1/statuses/s1/favourite": () => jsonResponse({ error: "rate limited" }, 429),
+    });
+    const WithActions = () => {
+      const actions = useStatusActions({ onReplace: () => undefined });
+      return <StatusCard status={status({})} {...actions} />;
+    };
+    try {
+      await renderWithRouter(<WithActions />);
+      await user.click(screen.getByRole("button", { name: "いいね" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("rate limited");
+    } finally {
+      restore();
+    }
   });
 });

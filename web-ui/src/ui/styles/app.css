@@ -331,6 +331,54 @@ button {
   color: var(--color-danger);
 }
 
+.app-toasts {
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  z-index: var(--z-toast);
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  padding-inline: 1rem;
+  pointer-events: none;
+}
+
+.app-toasts > div {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: center;
+}
+
+.app-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: min(32rem, 100%);
+  padding: 0.25rem 0.25rem 0.25rem 1rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.app-toast.is-error {
+  border-color: var(--color-danger);
+}
+
+.app-toast-message {
+  overflow-wrap: anywhere;
+}
+
+.app-toast-dismiss {
+  flex-shrink: 0;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+}
+
 .composer-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -837,6 +885,10 @@ button {
   .settings-field textarea,
   .search-input {
     font-size: 16px;
+  }
+
+  .app-toasts {
+    bottom: calc(4.75rem + env(safe-area-inset-bottom));
   }
 
   .app-bottom-nav {

@@ -83,7 +83,6 @@ export const ThreadPage = () => {
       setAncestors((current) => Status.removeById(current, removedId));
       setDescendants((current) => Status.removeById(current, removedId));
     },
-    onError: setError,
   });
 
   const handleReply = async (input: ComposerSubmitInput) => {

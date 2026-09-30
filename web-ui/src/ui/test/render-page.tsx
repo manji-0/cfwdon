@@ -5,6 +5,7 @@ import { SessionState } from "@/domain/session/session";
 import { ViewCache } from "@/domain/cache/view-cache";
 import { ProfileSet } from "@/domain/cache/profile-set";
 import { ConfirmProvider } from "@/ui/context/ConfirmContext";
+import { ToastProvider } from "@/ui/context/ToastContext";
 import { ComposeProvider } from "@/ui/context/ComposeContext";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import {
@@ -74,16 +75,18 @@ const AppTestProviders = ({ children }: Readonly<{ children: ReactNode }>) => {
   return (
     <SessionProvider value={createSessionContextValue(session, () => undefined)}>
       <ViewCacheContextProvider value={createMemoryViewCache()}>
-        <ConfirmProvider>
-          <ComposeProvider>
-            <ComposeSheet />
-            <UnreadMessagesContextProvider value={unreadMessages}>
-              <UnreadNotificationsContextProvider value={unreadNotifications}>
-                {children}
-              </UnreadNotificationsContextProvider>
-            </UnreadMessagesContextProvider>
-          </ComposeProvider>
-        </ConfirmProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <ComposeProvider>
+              <ComposeSheet />
+              <UnreadMessagesContextProvider value={unreadMessages}>
+                <UnreadNotificationsContextProvider value={unreadNotifications}>
+                  {children}
+                </UnreadNotificationsContextProvider>
+              </UnreadMessagesContextProvider>
+            </ComposeProvider>
+          </ConfirmProvider>
+        </ToastProvider>
       </ViewCacheContextProvider>
     </SessionProvider>
   );

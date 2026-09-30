@@ -161,7 +161,6 @@ export const ListsPage = () => {
     selfAccountId,
     onReplace: (updated) => setStatuses((current) => Status.replaceInList(current, updated)),
     onRemove: (statusId) => setStatuses((current) => Status.removeById(current, statusId)),
-    onError: setError,
   });
 
   const handleLoadMore = async () => {

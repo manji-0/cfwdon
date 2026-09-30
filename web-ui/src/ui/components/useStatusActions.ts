@@ -24,6 +24,7 @@ import {
 } from "@/infrastructure/api/status";
 import { useCompose } from "@/ui/context/ComposeContext";
 import { useConfirm } from "@/ui/context/ConfirmContext";
+import { useToast } from "@/ui/context/ToastContext";
 
 export type StatusActionHandlers = Readonly<{
   selfAccountId: string | null;
@@ -47,13 +48,16 @@ export const useStatusActions = (options: {
   selfAccountId?: string | null;
   onReplace: (status: Status) => void;
   onRemove?: (statusId: string) => void;
-  onError: (message: string) => void;
+  /** Defaults to an error toast so failures stay visible wherever the card is scrolled. */
+  onError?: (message: string) => void;
 }): StatusActionHandlers => {
   const navigate = useAppNavigate();
   const { openQuote, openEdit } = useCompose();
-  const { confirm, alert } = useConfirm();
+  const { confirm } = useConfirm();
+  const toast = useToast();
   const selfAccountId = options.selfAccountId ?? null;
-  const { onReplace, onRemove, onError } = options;
+  const { onReplace, onRemove } = options;
+  const onError = options.onError ?? toast.error;
 
   const handleFavourite = useCallback(
     async (status: OriginalStatus) => {
@@ -167,9 +171,9 @@ export const useStatusActions = (options: {
         onError(mastodonErrorMessage(result.error));
         return;
       }
-      await alert("通報を送信しました", { title: "通報" });
+      toast.info("通報を送信しました");
     },
-    [alert, onError],
+    [onError, toast],
   );
 
   const handleVotePoll = useCallback(
