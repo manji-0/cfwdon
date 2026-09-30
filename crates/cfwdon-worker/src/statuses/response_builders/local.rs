@@ -1,19 +1,20 @@
 use super::super::{
     BoostTargetPreload, LocalAccount, LocalStatusResponseViewerState,
     LocalStatusViewerStatePreload, MentionAccountsPreload, StatusApplicationPreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, build_local_quote_approval,
-    build_status_application, build_status_card_value, build_status_mentions_with_preload,
-    effective_status_quote_state, is_local_status_bookmarked_by, is_local_status_favourited_by,
-    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
-    load_local_status_counts, load_local_status_response_preload, load_stored_status_mentions,
-    local_status_edited_at, local_status_poll_response,
-    preloaded_local_status_response_viewer_state, status_quotes_count, status_response_config,
+    StatusQuoteCountsPreload, build_local_quote_approval, build_status_application,
+    build_status_card_value, build_status_mentions_with_preload, effective_status_quote_state,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by,
+    load_local_status_response_preload, load_stored_status_mentions, local_status_edited_at,
+    local_status_poll_response, preloaded_local_status_response_viewer_state, status_quotes_count,
+    status_response_config,
 };
 use crate::filters::AccountFilterMatcher;
 use crate::local_polls::MastodonPollResponsePreload;
 use crate::response::LocalStatusResponseDetails;
 use crate::responses::MastodonStatusResponse;
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, load_local_status_counts};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalStatus;

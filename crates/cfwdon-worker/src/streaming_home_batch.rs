@@ -15,19 +15,18 @@ use crate::remote::{
 };
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
-    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, account_has_thread_mutes,
-    build_local_status_response_with_timeline_preloads,
+    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
+    account_has_thread_mutes, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, list_local_home_timeline_statuses,
     list_local_public_statuses_by_tag, list_remote_home_timeline_statuses,
     list_remote_public_statuses_by_tag, load_in_reply_to_account_ids,
     local_status_ids_thread_muted_by, preload_boost_targets, preload_local_status_viewer_state,
     preload_mention_accounts_from_texts, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts_for_remote_rows,
-    preload_status_quote_counts,
+    preload_status_applications, preload_status_quote_counts,
 };
 use crate::store::media::MediaAttachmentRow;
 use crate::store::relationship::list_active_muted_actor_uris_for_account;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use crate::streaming_types::{StreamingBatch, StreamingEntry, streaming_batch_from_entries};
 use crate::tag_actions::list_followed_tag_names;
 use crate::timelines::{

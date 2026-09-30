@@ -5,8 +5,8 @@ use super::{
     insert_status_edit_snapshot, load_in_reply_to_account_id, load_in_reply_to_account_ids,
     local_quote_revoke_allowed, local_status_target_uri, normalize_status_history_entry,
     preload_local_status_viewer_state, preload_remote_status_viewer_state,
-    preload_status_applications, preload_status_counts_for_remote_rows,
-    preload_status_quote_counts, resolve_status_reference, update_local_status_quote_state,
+    preload_status_applications, preload_status_quote_counts, resolve_status_reference,
+    update_local_status_quote_state,
 };
 use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::{
@@ -36,9 +36,10 @@ use crate::remote::{
 use crate::runtime_config::load_config;
 use crate::statuses::{
     LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, ResolvedStatus,
-    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, statuses_from_records,
+    StatusApplicationPreload, StatusQuoteCountsPreload, statuses_from_records,
 };
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use crate::time_html::now_iso_string;
 use crate::timelines::{
     ResolvedTimelineCursor, TimelinePaginationQuery, append_resolved_timeline_cursor_bindings,

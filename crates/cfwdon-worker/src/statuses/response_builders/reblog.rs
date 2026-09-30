@@ -4,8 +4,7 @@ use super::super::reblog_response::{
 use super::super::{
     BoostTarget, BoostTargetPreload, LocalAccount, LocalStatusViewerStatePreload,
     MentionAccountsPreload, RemoteStatusViewerStatePreload, StatusApplicationPreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, resolve_boost_target,
-    resolve_local_status_response_subject,
+    StatusQuoteCountsPreload, resolve_boost_target, resolve_local_status_response_subject,
 };
 use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
 use crate::filters::AccountFilterMatcher;
@@ -16,6 +15,7 @@ use crate::remote::{
     find_remote_actor_by_actor_uri,
 };
 use crate::responses::MastodonStatusResponse;
+use crate::store::statuses::StatusCountsPreload;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, RemoteStatus};

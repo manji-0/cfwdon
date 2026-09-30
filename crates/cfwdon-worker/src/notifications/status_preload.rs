@@ -18,14 +18,14 @@ use crate::remote::{
 use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
-    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, build_local_status_response_with_timeline_preloads,
+    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
+    build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, load_in_reply_to_account_ids,
     preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
-    preload_remote_status_viewer_state, preload_status_applications,
-    preload_status_counts_for_remote_rows, preload_status_quote_counts,
+    preload_remote_status_viewer_state, preload_status_applications, preload_status_quote_counts,
 };
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
@@ -524,6 +524,7 @@ mod tests {
     use super::*;
     use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
     use crate::store::media::MediaAttachmentRow;
+    use crate::store::statuses::StatusCountsPreload;
     use cfwdon_domain::{LocalAccountRecord, QuoteState, Visibility};
 
     fn test_config() -> AppConfig {

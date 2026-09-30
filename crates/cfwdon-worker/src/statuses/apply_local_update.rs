@@ -1,8 +1,8 @@
 use super::{
     LocalAccount, StatusMediaAttributeRequest, build_loaded_local_status_response,
     build_local_status_response, insert_status_edit_snapshot, load_local_status_response_preload,
-    normalize_status_history_entry, preload_status_counts, preload_status_quote_counts,
-    replace_status_poll, update_local_status,
+    normalize_status_history_entry, preload_status_quote_counts, replace_status_poll,
+    update_local_status,
 };
 use crate::activitypub::local_status_ap_id;
 use crate::delivery::enqueue_status_update_activity;
@@ -13,6 +13,7 @@ use crate::media::{
 use crate::push::send_status_update_notifications;
 use crate::responses::MastodonStatusResponse;
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::preload_status_counts;
 use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_update_stream_fanout_soft;
 use crate::time_html::now_iso_string;

@@ -1,5 +1,6 @@
 use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 mod candidate_render;
 mod cursor_sql;
@@ -29,11 +30,11 @@ use crate::remote::{
 };
 use crate::statuses::{
     BoostTarget, BoostTargetPreload, LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, build_status_card_value,
-    find_statuses_by_ap_ids, find_statuses_by_ids, list_local_public_timeline_statuses,
+    StatusQuoteCountsPreload, build_status_card_value, find_statuses_by_ap_ids,
+    find_statuses_by_ids, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses, local_status_ids_thread_muted_by,
     preload_local_status_viewer_state, preload_remote_status_viewer_state,
-    preload_status_counts_for_remote_rows, preload_status_quote_counts,
+    preload_status_quote_counts,
 };
 use crate::tracked_d1::D1Database;
 pub(crate) use cursor_sql::{

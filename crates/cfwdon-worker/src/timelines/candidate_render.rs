@@ -21,12 +21,13 @@ use crate::remote::{
 };
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
-    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, build_local_status_response_with_timeline_preloads,
+    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
+    build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, enrich_card_with_remote_preview,
     preload_boost_targets, preload_mention_accounts_from_texts, preload_status_applications,
-    preload_status_counts_for_remote_rows, preload_status_quote_counts,
+    preload_status_quote_counts,
 };
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

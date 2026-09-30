@@ -9,13 +9,14 @@ use crate::media::find_media_attachments_by_status_ids;
 use crate::relationship::is_local_follower_authorized;
 use crate::statuses::{
     AccountStatusVisibilityScope, AccountStatusesQuery, LocalStatusViewerStatePreload,
-    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload,
+    StatusApplicationPreload, StatusQuoteCountsPreload,
     build_local_status_response_with_quote_count_preloads, can_view_local_status,
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
     load_in_reply_to_account_ids, preload_local_status_viewer_state, preload_status_applications,
-    preload_status_counts, preload_status_quote_counts,
+    preload_status_quote_counts,
 };
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};

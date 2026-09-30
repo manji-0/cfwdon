@@ -37,11 +37,11 @@ use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
     AccountStatusesQuery, build_remote_status_response_with_timeline_preloads,
     list_public_remote_statuses_by_actor_uri, list_remote_statuses_by_actor_uri,
-    preload_remote_status_viewer_state, preload_status_counts_for_remote_rows,
-    preload_status_quote_counts,
+    preload_remote_status_viewer_state, preload_status_quote_counts,
 };
 use crate::store::relationship::find_follow_by_target;
 use crate::store::remote::upsert_remote_actor;
+use crate::store::statuses::preload_status_counts_for_remote_rows;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};

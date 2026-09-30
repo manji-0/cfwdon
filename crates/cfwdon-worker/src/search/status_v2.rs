@@ -18,10 +18,11 @@ use crate::statuses::{
     find_status_by_id, is_local_status_bookmarked_by, is_local_status_favourited_by,
     is_local_status_reblogged_by, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
     is_remote_status_reblogged_by, load_in_reply_to_account_id, preload_local_status_viewer_state,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
+    preload_status_applications, preload_status_quote_counts,
 };
 use crate::store::local_polls::find_status_poll_by_status_id;
 use crate::store::remote::find_remote_status_poll_by_status_id;
+use crate::store::statuses::preload_status_counts;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::cmp::Reverse;

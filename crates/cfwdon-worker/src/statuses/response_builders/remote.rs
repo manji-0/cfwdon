@@ -1,11 +1,11 @@
 use super::super::{
     BoostTargetPreload, LocalAccount, MentionAccountsPreload, RemoteStatusResponseViewerState,
-    RemoteStatusViewerStatePreload, StatusCountsPreload, StatusQuoteCountsPreload,
-    build_remote_quote_approval, build_remote_status_card_value,
-    build_status_mentions_with_preload, find_local_status_by_object_uri,
-    is_remote_status_bookmarked_by, is_remote_status_favourited_by, is_remote_status_reblogged_by,
-    load_remote_status_counts, load_stored_remote_status_mentions,
-    preloaded_remote_status_response_viewer_state, status_quotes_count,
+    RemoteStatusViewerStatePreload, StatusQuoteCountsPreload, build_remote_quote_approval,
+    build_remote_status_card_value, build_status_mentions_with_preload,
+    find_local_status_by_object_uri, is_remote_status_bookmarked_by,
+    is_remote_status_favourited_by, is_remote_status_reblogged_by,
+    load_stored_remote_status_mentions, preloaded_remote_status_response_viewer_state,
+    status_quotes_count,
 };
 use crate::custom_emojis::{
     FederatedEmojiMap, RemoteStatusFederatedEmojisPreload,
@@ -22,6 +22,7 @@ use crate::remote::{
 use crate::response::{MastodonMediaAttachmentResponse, RemoteStatusResponseDetails};
 use crate::responses::MastodonStatusResponse;
 use crate::store::relationship::is_muted_actor;
+use crate::store::statuses::{StatusCountsPreload, load_remote_status_counts};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::RemoteStatus;

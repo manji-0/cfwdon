@@ -2,7 +2,7 @@ use super::{
     LocalAccount, LocalStatusResponsePreload,
     build_local_status_response_with_quote_count_preloads, find_local_status_by_object_uri,
     insert_status, load_local_status_response_preload, preload_local_status_viewer_state,
-    preload_status_counts, preload_status_quote_counts,
+    preload_status_quote_counts,
 };
 use crate::activitypub::local_status_ap_id;
 use crate::auth::find_account_by_username;
@@ -17,8 +17,9 @@ use crate::notifications::{
 };
 use crate::push::{send_push_notification, send_status_quote_notification};
 use crate::responses::MastodonStatusResponse;
-use crate::statuses::{StatusCountsPreload, StatusQuoteCountsPreload};
+use crate::statuses::StatusQuoteCountsPreload;
 use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts};
 use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_create_stream_fanout_soft;
 use crate::tracked_d1::D1Database;
