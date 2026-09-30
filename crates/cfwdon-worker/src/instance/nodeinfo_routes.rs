@@ -1,11 +1,14 @@
 use super::{
     Env, build_nodeinfo_21_document, build_nodeinfo_document_with_halfyear,
-    build_nodeinfo_links_document, load_active_halfyear_users, load_active_month_users,
-    load_instance_summary, load_total_local_accounts, load_total_local_statuses,
+    build_nodeinfo_links_document,
 };
 use crate::db_session::bind_request_d1;
 use crate::response_utils::cache_public_response;
 use crate::runtime_config::{load_config, load_config_from_env};
+use crate::store::instance::{
+    load_active_halfyear_users, load_active_month_users, load_instance_summary,
+    load_total_local_accounts, load_total_local_statuses,
+};
 use crate::tracked_d1::D1Database;
 use worker::{Response, Result, RouteContext};
 

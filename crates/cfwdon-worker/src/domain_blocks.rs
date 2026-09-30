@@ -2,9 +2,9 @@ use crate::app_cache::{invalidate_account_capabilities, load_account_capabilitie
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::instance::load_known_peer_domains;
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::runtime_config::load_config;
+use crate::store::instance::load_known_peer_domains;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

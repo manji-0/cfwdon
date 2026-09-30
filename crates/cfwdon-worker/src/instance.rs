@@ -2,7 +2,6 @@ mod announcements;
 mod documents;
 mod nodeinfo_documents;
 mod nodeinfo_routes;
-mod store;
 mod trending_links;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, list_custom_emojis};
 use crate::d1_metrics::d1_pressure_load_shed_response;
@@ -14,6 +13,11 @@ use crate::public_endpoint_cache::{
 };
 use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
+use crate::store::instance::{
+    count_accounts_created_by_week_offset, count_local_statuses_by_week_offset,
+    load_active_month_users, load_instance_summary, load_known_peer_domains,
+    load_total_local_accounts, load_total_local_statuses,
+};
 use crate::tags::trending_tags_documents;
 use crate::time_html::now_unix_timestamp;
 use crate::timelines::trending_status_documents;
@@ -27,7 +31,6 @@ use cfwdon_core::AppConfig;
 pub(crate) use documents::*;
 pub(crate) use nodeinfo_documents::*;
 pub(crate) use nodeinfo_routes::*;
-pub(crate) use store::*;
 pub(crate) use trending_links::*;
 use worker::{Request, Response, Result, RouteContext};
 

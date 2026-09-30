@@ -1,3 +1,4 @@
+pub(crate) mod instance;
 pub(crate) mod local_polls;
 pub(crate) mod media;
 pub(crate) mod relationship;
