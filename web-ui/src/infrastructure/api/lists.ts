@@ -4,11 +4,13 @@ import type { AccountList } from "@/domain/lists/list";
 import type { ListRepliesPolicy } from "@/domain/lists/replies-policy";
 import type { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
+import type { PageQuery } from "@/domain/pagination";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
   mastodonPostJson,
   mastodonPutJson,
+  pageParams,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseAccountRefList } from "@/infrastructure/mastodon/parsers/account";
@@ -77,20 +79,11 @@ export const removeListAccounts = (
     account_ids: [...accountIds],
   }).map(() => null);
 
-export type ListTimelineQuery = Readonly<{
-  maxId?: string;
-  limit?: number;
-}>;
-
 export const fetchListTimeline = (
   listId: string,
-  query: ListTimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   return mastodonFetchJson(
     `/api/v1/timelines/list/${encodeURIComponent(listId)}?${params}`,
   ).andThen((raw) => parseMastodon(parseStatusList, raw));

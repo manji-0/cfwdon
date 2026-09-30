@@ -2,7 +2,8 @@ import { type ResultAsync } from "neverthrow";
 import type { AccountProfile } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
-import { mastodonFetchJson } from "@/infrastructure/http/mastodon-fetch";
+import type { PageQuery } from "@/domain/pagination";
+import { mastodonFetchJson, pageParams } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import {
   parseAccountProfile,
@@ -18,11 +19,6 @@ export type AccountStatusesQuery = Readonly<{
   pinned?: boolean;
 }>;
 
-export type AccountCollectionQuery = Readonly<{
-  maxId?: string;
-  limit?: number;
-}>;
-
 export const fetchAccountProfile = (
   accountId: string,
 ): ResultAsync<AccountProfile, MastodonFetchError> =>
@@ -34,11 +30,7 @@ export const fetchAccountStatuses = (
   accountId: string,
   query: AccountStatusesQuery = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   if (query.excludeReplies) {
     params.set("exclude_replies", "true");
   }
@@ -56,13 +48,9 @@ export const fetchAccountStatuses = (
 const fetchAccountCollection = (
   accountId: string,
   collection: "followers" | "following",
-  query: AccountCollectionQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   return mastodonFetchJson(
     `/api/v1/accounts/${encodeURIComponent(accountId)}/${collection}?${params}`,
   ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
@@ -70,13 +58,13 @@ const fetchAccountCollection = (
 
 export const fetchAccountFollowers = (
   accountId: string,
-  query: AccountCollectionQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
   fetchAccountCollection(accountId, "followers", query);
 
 export const fetchAccountFollowing = (
   accountId: string,
-  query: AccountCollectionQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
   fetchAccountCollection(accountId, "following", query);
 

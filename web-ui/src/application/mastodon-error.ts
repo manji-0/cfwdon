@@ -8,7 +8,5 @@ export const mastodonErrorMessage = (error: MastodonFetchError): string => {
       return "ネットワークエラーが発生しました";
     case "ValidationError":
       return "サーバー応答の形式が不正です";
-    case "NotImplemented":
-      return `${error.feature} はまだ利用できません`;
   }
 };

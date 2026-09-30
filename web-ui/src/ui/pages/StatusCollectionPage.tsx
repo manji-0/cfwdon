@@ -3,7 +3,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { ForegroundResume } from "@/domain/cache/foreground-resume";
 import { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
-import type { TimelineQuery } from "@/infrastructure/api/status";
+import type { PageQuery } from "@/domain/pagination";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
@@ -18,7 +18,7 @@ type StatusCollectionPageProps = Readonly<{
   title: string;
   emptyMessage: string;
   header?: ReactNode;
-  fetchPage: (query: TimelineQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
+  fetchPage: (query: PageQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
 }>;
 
 export const StatusCollectionPage = ({

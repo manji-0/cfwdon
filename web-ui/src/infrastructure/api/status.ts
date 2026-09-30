@@ -6,11 +6,13 @@ import type { StatusSource } from "@/domain/status/source";
 import type { Status, StatusContext } from "@/domain/status/status";
 import type { StatusTranslation } from "@/domain/status/translation";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
+import type { PageQuery } from "@/domain/pagination";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
   mastodonPostJson,
   mastodonPutJson,
+  pageParams,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import {
@@ -25,31 +27,17 @@ import {
 } from "@/infrastructure/mastodon/parsers/status";
 import { parseAccountProfileList } from "@/infrastructure/mastodon/parsers/account";
 
-export type TimelineQuery = Readonly<{
-  maxId?: string;
-  limit?: number;
-}>;
-
-const timelineParams = (query: TimelineQuery): string => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
-  return params.toString();
-};
-
 export const fetchHomeTimeline = (
-  query: TimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> =>
-  mastodonFetchJson(`/api/v1/timelines/home?${timelineParams(query)}`).andThen((raw) =>
+  mastodonFetchJson(`/api/v1/timelines/home?${pageParams(query)}`).andThen((raw) =>
     parseMastodon(parseStatusList, raw),
   );
 
 export const fetchPublicTimeline = (
-  query: TimelineQuery & { local?: boolean } = {},
+  query: PageQuery & { local?: boolean } = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> => {
-  const params = new URLSearchParams(timelineParams(query));
+  const params = pageParams(query);
   if (query.local) {
     params.set("local", "true");
   }
@@ -60,10 +48,10 @@ export const fetchPublicTimeline = (
 
 export const fetchTagTimeline = (
   tag: string,
-  query: TimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> =>
   mastodonFetchJson(
-    `/api/v1/timelines/tag/${encodeURIComponent(tag)}?${timelineParams(query)}`,
+    `/api/v1/timelines/tag/${encodeURIComponent(tag)}?${pageParams(query)}`,
   ).andThen((raw) => parseMastodon(parseStatusList, raw));
 
 export const fetchStatusContext = (
@@ -231,24 +219,24 @@ export const unmuteConversation = (statusId: string): ResultAsync<Status, Mastod
 
 export const fetchStatusFavouritedBy = (
   statusId: string,
-  query: TimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
   mastodonFetchJson(
-    `/api/v1/statuses/${encodeURIComponent(statusId)}/favourited_by?${timelineParams(query)}`,
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/favourited_by?${pageParams(query)}`,
   ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
 
 export const fetchStatusRebloggedBy = (
   statusId: string,
-  query: TimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
   mastodonFetchJson(
-    `/api/v1/statuses/${encodeURIComponent(statusId)}/reblogged_by?${timelineParams(query)}`,
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/reblogged_by?${pageParams(query)}`,
   ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
 
 export const fetchStatusQuotes = (
   statusId: string,
-  query: TimelineQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<Status>, MastodonFetchError> =>
   mastodonFetchJson(
-    `/api/v1/statuses/${encodeURIComponent(statusId)}/quotes?${timelineParams(query)}`,
+    `/api/v1/statuses/${encodeURIComponent(statusId)}/quotes?${pageParams(query)}`,
   ).andThen((raw) => parseMastodon(parseStatusList, raw));

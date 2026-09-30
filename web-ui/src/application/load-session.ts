@@ -1,23 +1,16 @@
 import { ok, type Result } from "neverthrow";
-import type { HttpError, ValidationError } from "@/domain/errors/http-error";
+import { mastodonErrorMessage } from "@/application/mastodon-error";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import type { AccountSummary } from "@/domain/session/account";
 import { SessionState, type SessionResolved } from "@/domain/session/session";
 
-export type LoadSessionError = HttpError | ValidationError;
-
 /** Port implemented by `infrastructure/api/web-session`; `null` means signed out. */
-export type FetchSession = () => PromiseLike<Result<AccountSummary | null, LoadSessionError>>;
+export type FetchSession = () => PromiseLike<Result<AccountSummary | null, MastodonFetchError>>;
 
-const toFailureMessage = (error: LoadSessionError): string => {
-  switch (error.kind) {
-    case "HttpStatus":
-      return error.body.trim() || `セッションの取得に失敗しました (${error.status})`;
-    case "NetworkError":
-      return "ネットワークエラーが発生しました";
-    case "ValidationError":
-      return "サーバー応答の形式が不正です";
-  }
-};
+const toFailureMessage = (error: MastodonFetchError): string =>
+  error.kind === "HttpStatus" && !error.body.trim()
+    ? `セッションの取得に失敗しました (${error.status})`
+    : mastodonErrorMessage(error);
 
 export const loadSession = async (
   fetchSession: FetchSession,
