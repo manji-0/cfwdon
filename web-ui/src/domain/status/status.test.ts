@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountRef } from "@/domain/account/account";
-import { Status } from "@/domain/status/status";
+import { Status, type OriginalStatus } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 
 const account: AccountRef = {
@@ -10,6 +10,8 @@ const account: AccountRef = {
   displayName: "Alice",
   avatar: "https://example.test/a.png",
 };
+
+const booster: AccountRef = { ...account, id: "2", username: "bob", acct: "bob", displayName: "Bob" };
 
 const original = (id: string, favourited = false) =>
   Status.original({
@@ -125,5 +127,114 @@ describe("Status.visibleCard", () => {
       ],
     });
     expect(Status.visibleCard(withMedia)).toBeNull();
+  });
+});
+
+const boostOf = (body: OriginalStatus, id = `boost-${body.id}`) =>
+  Status.boost({ id, createdAt: "2026-08-13T00:00:02.000Z", account: booster, original: body });
+
+describe("Status.original", () => {
+  it("fills optional fields with neutral defaults", () => {
+    const status = original("s1");
+    expect(status.kind).toBe("Original");
+    expect(status.poll).toBeNull();
+    expect(status.pinned).toBe(false);
+    expect(status.editedAt).toBeNull();
+    expect(status.quote).toBeNull();
+    expect(status.muted).toBe(false);
+  });
+});
+
+describe("Status.displayBody / boostedBy", () => {
+  it("returns the status itself and no booster for originals", () => {
+    const status = original("s1");
+    expect(Status.displayBody(status)).toBe(status);
+    expect(Status.boostedBy(status)).toBeNull();
+  });
+
+  it("unwraps boosts to the boosted original and its booster", () => {
+    const body = original("s1");
+    const boost = boostOf(body);
+    expect(Status.displayBody(boost)).toBe(body);
+    expect(Status.boostedBy(boost)).toBe(booster);
+  });
+});
+
+describe("Status.withBody", () => {
+  it("replaces an original outright", () => {
+    const next = original("s1", true);
+    expect(Status.withBody(original("s1"), next)).toBe(next);
+  });
+
+  it("keeps the boost identity when the body is unchanged", () => {
+    const body = original("s1");
+    const boost = boostOf(body);
+    expect(Status.withBody(boost, body)).toBe(boost);
+  });
+
+  it("rewraps a boost around a new body", () => {
+    const boost = boostOf(original("s1"));
+    const next = Status.withBody(boost, original("s1", true));
+    expect(next).not.toBe(boost);
+    expect(next.id).toBe(boost.id);
+    expect(Status.displayBody(next).favourited).toBe(true);
+  });
+});
+
+describe("Status.containsId / findByBodyId", () => {
+  const boost = boostOf(original("s1"), "b1");
+
+  it("matches either the wrapper id or the body id", () => {
+    expect(Status.containsId([boost], "b1")).toBe(true);
+    expect(Status.containsId([boost], "s1")).toBe(true);
+    expect(Status.containsId([boost], "s2")).toBe(false);
+  });
+
+  it("finds by body id only", () => {
+    expect(Status.findByBodyId([boost], "s1")).toBe(boost);
+    expect(Status.findByBodyId([boost], "b1")).toBeUndefined();
+  });
+
+  it("skips an incoming boost whose wrapper id is already listed", () => {
+    const list = [original("s1")];
+    expect(Status.prependUnique(list, boostOf(original("s2"), "s1"))).toBe(list);
+  });
+});
+
+describe("Status.withPoll", () => {
+  const poll = {
+    id: "p1",
+    expiresAt: "2026-08-14T00:00:00.000Z",
+    expired: false,
+    multiple: false,
+    votesCount: 1,
+    votersCount: 1,
+    voted: true,
+    ownVotes: [0],
+    options: [
+      { title: "a", votesCount: 1 },
+      { title: "b", votesCount: 0 },
+    ],
+  };
+
+  it("sets the poll on the displayed body, including inside boosts", () => {
+    expect(Status.displayBody(Status.withPoll(original("s1"), poll)).poll).toEqual(poll);
+    const boosted = Status.withPoll(boostOf(original("s1")), poll);
+    expect(boosted.kind).toBe("Boost");
+    expect(Status.displayBody(boosted).poll).toEqual(poll);
+  });
+});
+
+describe("Status.removeById", () => {
+  it("removes by wrapper id or body id", () => {
+    const boost = boostOf(original("s1"), "b1");
+    const other = original("s2");
+    expect(Status.removeById([boost, other], "b1")).toEqual([other]);
+    expect(Status.removeById([boost, other], "s1")).toEqual([other]);
+  });
+
+  it("returns the same array when nothing matches", () => {
+    const list = [original("s1")];
+    expect(Status.removeById(list, "missing")).toBe(list);
   });
 });
