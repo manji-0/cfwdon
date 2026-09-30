@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useFocusTrap } from "@/ui/hooks/useFocusTrap";
 
 export type ConfirmOptions = Readonly<{
   title?: string;
@@ -43,6 +44,7 @@ const ConfirmContext = createContext<ConfirmApi | null>(null);
 export const ConfirmProvider = ({ children }: Readonly<{ children: ReactNode }>) => {
   const [dialog, setDialog] = useState<(ConfirmDialogState & Resolver) | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
 
   const close = useCallback(() => {
     setDialog(null);
@@ -146,13 +148,26 @@ export const ConfirmProvider = ({ children }: Readonly<{ children: ReactNode }>)
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [dialog]);
 
+  // Enter on a destructive confirm should not delete: start on Cancel there.
+  useFocusTrap(dialogRef, dialog !== null, () =>
+    dialogRef.current?.querySelector<HTMLElement>(
+      dialog?.kind === "prompt"
+        ? "input"
+        : dialog?.danger && dialog.kind === "confirm"
+          ? "[data-confirm-cancel]"
+          : "[data-confirm-ok]",
+    ),
+  );
+
   return (
     <ConfirmContext.Provider value={value}>
       {children}
       {dialog ? (
         <div className="shortcut-overlay" data-app-overlay="true" role="presentation" onClick={handleCancel}>
           <section
+            ref={dialogRef}
             className="shortcut-dialog app-card"
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-labelledby="confirm-dialog-title"
@@ -166,7 +181,6 @@ export const ConfirmProvider = ({ children }: Readonly<{ children: ReactNode }>)
               <label className="settings-field">
                 <span>内容</span>
                 <input
-                  autoFocus
                   value={inputValue}
                   onChange={(event) => setInputValue(event.target.value)}
                   onKeyDown={(event) => {
@@ -184,15 +198,20 @@ export const ConfirmProvider = ({ children }: Readonly<{ children: ReactNode }>)
             ) : null}
             <div className="confirm-dialog-actions">
               {dialog.kind !== "alert" ? (
-                <button type="button" className="app-button app-button-secondary" onClick={handleCancel}>
+                <button
+                  type="button"
+                  className="app-button app-button-secondary"
+                  data-confirm-cancel=""
+                  onClick={handleCancel}
+                >
                   キャンセル
                 </button>
               ) : null}
               <button
                 type="button"
                 className={dialog.danger ? "app-button app-button-danger" : "app-button"}
+                data-confirm-ok=""
                 onClick={handleOk}
-                autoFocus={dialog.kind !== "prompt"}
               >
                 {dialog.confirmLabel}
               </button>

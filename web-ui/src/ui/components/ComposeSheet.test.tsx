@@ -54,12 +54,14 @@ describe("ComposeSheet", () => {
         within(await screen.findByRole("dialog", { name: "下書きを破棄" })).getByRole("button", { name: "キャンセル" }),
       );
       expect(screen.getByRole("dialog", { name: "新規投稿" })).toBeTruthy();
+      expect(document.activeElement).toBe(sheet.querySelector("textarea"));
 
       await user.keyboard("{Escape}");
       await user.click(
         within(await screen.findByRole("dialog", { name: "下書きを破棄" })).getByRole("button", { name: "破棄" }),
       );
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "新規投稿" })).toBeNull());
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "開く" }));
     } finally {
       restore();
     }

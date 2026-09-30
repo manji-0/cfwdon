@@ -106,4 +106,32 @@ describe("ConfirmProvider", () => {
     await user.click(screen.getByRole("button", { name: "OK" }));
     expect(document.body.dataset.alertResult).toBe("done");
   });
+
+  it("starts destructive confirms on Cancel, traps Tab, and restores focus", async () => {
+    const user = userEvent.setup();
+    renderConfirm();
+    const opener = screen.getByRole("button", { name: "ask-confirm" });
+    await user.click(opener);
+    const cancel = screen.getByRole("button", { name: "キャンセル" });
+    const ok = screen.getByRole("button", { name: "削除" });
+    expect(document.activeElement).toBe(cancel);
+    await user.tab();
+    expect(document.activeElement).toBe(ok);
+    await user.tab();
+    expect(document.activeElement).toBe(cancel);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(ok);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("focuses the prompt input and the alert OK button", async () => {
+    const user = userEvent.setup();
+    renderConfirm();
+    await user.click(screen.getByRole("button", { name: "ask-prompt" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("内容"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "ask-alert" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "OK" }));
+  });
 });

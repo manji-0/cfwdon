@@ -11,6 +11,7 @@ import { Composer, type ComposerHandle, type ComposerSubmitInput } from "@/ui/co
 import { useCompose } from "@/ui/context/ComposeContext";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
+import { useFocusTrap } from "@/ui/hooks/useFocusTrap";
 
 /** Modal composer driven by `ComposeContext`; mount once inside `ComposeProvider`. */
 export const ComposeSheet = () => {
@@ -18,6 +19,7 @@ export const ComposeSheet = () => {
   const cache = useViewCache();
   const { alert, confirm } = useConfirm();
   const composerRef = useRef<ComposerHandle>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const [editText, setEditText] = useState("");
   const [editSpoiler, setEditSpoiler] = useState("");
   const [editReady, setEditReady] = useState(false);
@@ -51,6 +53,8 @@ export const ComposeSheet = () => {
     };
   }, [intent]);
 
+  useFocusTrap(sheetRef, intent.kind !== "Closed");
+
   useEffect(() => {
     if (intent.kind === "Closed") {
       return;
@@ -69,6 +73,8 @@ export const ComposeSheet = () => {
         danger: true,
       });
       if (!discard) {
+        // Escape blurs the textarea before we get here, so resume typing explicitly.
+        composerRef.current?.focus();
         return;
       }
     }
@@ -161,7 +167,9 @@ export const ComposeSheet = () => {
       onClick={() => void requestClose()}
     >
       <div
+        ref={sheetRef}
         className="compose-sheet app-card"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={intent.kind === "Edit" ? "投稿を編集" : "新規投稿"}

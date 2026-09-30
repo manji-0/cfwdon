@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useFocusTrap } from "@/ui/hooks/useFocusTrap";
 import { isHelpShortcut, isTypingTarget, modKeyLabel } from "@/ui/lib/keyboard";
 
 const SHORTCUTS = [
@@ -14,6 +15,8 @@ const SHORTCUTS = [
 
 export const KeyboardShortcutsHelp = () => {
   const [open, setOpen] = useState(false);
+  const dialogRef = useRef<HTMLElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -39,7 +42,9 @@ export const KeyboardShortcutsHelp = () => {
   return (
     <div className="shortcut-overlay" data-app-overlay="true" role="presentation" onClick={() => setOpen(false)}>
       <section
+        ref={dialogRef}
         className="shortcut-dialog app-card"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcut-dialog-title"

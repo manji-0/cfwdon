@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { MediaAttachment, type MediaAttachment as Media } from "@/domain/media/attachment";
+import { useFocusTrap } from "@/ui/hooks/useFocusTrap";
 
 type MediaLightboxProps = Readonly<{
   attachments: ReadonlyArray<Media>;
@@ -47,6 +48,8 @@ export const MediaLightbox = ({
   onIndexChange,
 }: MediaLightboxProps) => {
   const media = attachments[index];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, media !== undefined);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -77,7 +80,9 @@ export const MediaLightbox = ({
 
   return (
     <div
+      ref={dialogRef}
       className="media-lightbox"
+      tabIndex={-1}
       data-app-overlay="true"
       role="dialog"
       aria-modal="true"
