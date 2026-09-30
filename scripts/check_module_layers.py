@@ -58,7 +58,7 @@ FOUNDATION = {
 }
 MAX_CYCLE_MODULES = 33
 
-TEST_MODULE_RE = re.compile(r"#\[cfg\(test\)\]")
+STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 CRATE_PATH_RE = re.compile(r"\bcrate::([a-z_][a-z0-9_]*)")
 ROOT_GLOB_RE = re.compile(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+[a-z_][a-z0-9_]*::\*;")
 CRATE_GLOB_RE = re.compile(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+crate::\*;")
@@ -67,6 +67,31 @@ CRATE_GLOB_RE = re.compile(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+crate::\*;")
 def top_module(path: Path) -> str:
     rel = path.relative_to(SRC)
     return rel.parts[0].removesuffix(".rs")
+
+
+def strip_test_items(text: str) -> str:
+    """Drop every item annotated `#[cfg(test)]` (inline test modules, test-only fns/uses)."""
+    lines = text.split("\n")
+    kept: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() != "#[cfg(test)]":
+            kept.append(lines[i])
+            i += 1
+            continue
+        i += 1
+        while i < len(lines) and lines[i].strip().startswith("#["):
+            i += 1
+        depth = 0
+        opened = False
+        while i < len(lines):
+            code = STRING_RE.sub('""', lines[i]).split("//")[0]
+            depth += code.count("{") - code.count("}")
+            opened = opened or "{" in code
+            i += 1
+            if (opened and depth <= 0) or (not opened and code.rstrip().endswith(";")):
+                break
+    return "\n".join(kept)
 
 
 def is_test_file(path: Path) -> bool:
@@ -81,8 +106,8 @@ def module_graph() -> tuple[dict[str, set[str]], set[str]]:
         if module in {"lib", "compat_tests", "test_fixtures"} or is_test_file(path):
             continue
         modules.add(module)
-        # Test modules sit at the end of files; they may reach anywhere.
-        production = TEST_MODULE_RE.split(path.read_text(), maxsplit=1)[0]
+        # Test-only items may reach anywhere.
+        production = strip_test_items(path.read_text())
         for target in CRATE_PATH_RE.findall(production):
             if target != module:
                 edges[module].add(target)
