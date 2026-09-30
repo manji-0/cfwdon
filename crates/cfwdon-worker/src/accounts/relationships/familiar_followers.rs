@@ -6,9 +6,10 @@ use crate::relationship::{
     list_familiar_local_accounts_for_local_target, list_familiar_local_accounts_for_remote_target,
     list_familiar_remote_actors_for_local_target,
 };
-use crate::remote::{AccountReference, RemoteActorRow, resolve_account_reference};
+use crate::remote::{AccountReference, resolve_account_reference};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccount;
 use std::collections::HashSet;

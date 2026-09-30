@@ -8,11 +8,12 @@ use crate::federation::{
 use crate::http::fetch_signed_activitypub_document;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::observability::log_json_event;
-use crate::remote::{
-    RemoteActorRow, load_remote_actor_status_summary, update_remote_actor_social_counts,
-};
 use crate::response::media_object_url;
 use crate::responses::{MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource};
+use crate::store::remote::{
+    RemoteActorRow, RemoteActorSocialCounts, load_remote_actor_status_summary,
+    update_remote_actor_social_counts,
+};
 use crate::time_html::{escape_html, timestamp_to_mastodon_account_created_at};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -29,21 +30,6 @@ pub(crate) const REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS: f64 = 60.0 * 60.0 * 1000.0;
 thread_local! {
     static REMOTE_ACTOR_COLLECTION_COUNT_CACHE: RefCell<HashMap<String, (u64, f64)>> =
         RefCell::new(HashMap::new());
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct RemoteActorSocialCounts {
-    pub(crate) followers_count: Option<u64>,
-    pub(crate) following_count: Option<u64>,
-    pub(crate) statuses_count: Option<u64>,
-}
-
-impl RemoteActorSocialCounts {
-    pub(crate) fn has_any(self) -> bool {
-        self.followers_count.is_some()
-            || self.following_count.is_some()
-            || self.statuses_count.is_some()
-    }
 }
 
 /// Controls whether ActivityPub GETs may use HTTP signatures.
@@ -747,7 +733,7 @@ impl MastodonAccountResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote::RemoteActorRow;
+    use crate::store::remote::RemoteActorSocialCounts;
 
     #[test]
     fn activitypub_collection_count_reads_numeric_and_string_total_items() {

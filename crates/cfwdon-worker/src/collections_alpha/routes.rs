@@ -26,8 +26,9 @@ use super::{
 };
 use crate::auth::find_account_by_id;
 use crate::db_session::bind_request_d1;
-use crate::remote::{AccountReference, find_remote_actor_by_actor_uri, resolve_account_reference};
+use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
+use crate::store::remote::find_remote_actor_by_actor_uri;
 use worker::{Request, Response, Result, RouteContext};
 
 fn route_param(ctx: &RouteContext<()>, name: &str) -> Result<String> {

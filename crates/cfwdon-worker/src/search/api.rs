@@ -8,12 +8,10 @@ use crate::accounts::{
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::remote::{
-    find_remote_actor_by_actor_uri, load_remote_actor_status_summary,
-    resolve_search_account_with_viewer,
-};
+use crate::remote::resolve_search_account_with_viewer;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::store::remote::{find_remote_actor_by_actor_uri, load_remote_actor_status_summary};
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;

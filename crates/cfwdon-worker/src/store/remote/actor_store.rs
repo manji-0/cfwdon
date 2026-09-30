@@ -1,5 +1,4 @@
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
-use crate::response::RemoteActorSocialCounts;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -338,4 +337,19 @@ pub(crate) async fn find_remote_actor_by_username_domain(
             &domain,
         )
     }))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RemoteActorSocialCounts {
+    pub(crate) followers_count: Option<u64>,
+    pub(crate) following_count: Option<u64>,
+    pub(crate) statuses_count: Option<u64>,
+}
+
+impl RemoteActorSocialCounts {
+    pub(crate) fn has_any(self) -> bool {
+        self.followers_count.is_some()
+            || self.following_count.is_some()
+            || self.statuses_count.is_some()
+    }
 }

@@ -11,8 +11,7 @@ use crate::oauth_store::{
 };
 use crate::observability::log_json_event;
 use crate::remote::{
-    AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri,
-    resolve_account_reference_with_fetch, resolve_lookup_account_with_viewer,
+    AccountReference, resolve_account_reference_with_fetch, resolve_lookup_account_with_viewer,
 };
 use crate::response::{
     RemoteCollectionFetchContext, enrich_remote_account_response,
@@ -25,7 +24,7 @@ use crate::response_cache::{
 use crate::response_utils::{CACHE_TTL_ACCOUNT_API, cache_public_json_response};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::store::remote::upsert_remote_actor;
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri, upsert_remote_actor};
 use crate::tags::normalize_hashtag;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccountRecord;

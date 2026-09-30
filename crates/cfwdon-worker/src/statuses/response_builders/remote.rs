@@ -14,7 +14,7 @@ use crate::custom_emojis::{
 use crate::filters::AccountFilterMatcher;
 use crate::media::{RemoteStatusAttachmentRow, find_remote_status_attachments_by_status_id};
 use crate::remote::{
-    RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
+    RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
     effective_remote_status_quote_state, find_remote_status_by_url_or_object_uri,
     find_remote_status_raw_object_by_id, has_remote_status_edit_snapshots,
     load_remote_mastodon_poll_response, load_remote_status_updated_at,
@@ -22,6 +22,7 @@ use crate::remote::{
 use crate::response::{MastodonMediaAttachmentResponse, RemoteStatusResponseDetails};
 use crate::responses::MastodonStatusResponse;
 use crate::store::relationship::is_muted_actor;
+use crate::store::remote::RemoteActorRow;
 use crate::store::statuses::{StatusCountsPreload, load_remote_status_counts};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

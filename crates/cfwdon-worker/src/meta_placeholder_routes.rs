@@ -32,8 +32,7 @@ use crate::observability::log_json_event;
 use crate::push::send_push_notification;
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{
-    AccountReference, find_remote_actor_by_actor_uri, resolve_account_reference,
-    resolve_account_reference_with_fetch,
+    AccountReference, resolve_account_reference, resolve_account_reference_with_fetch,
 };
 use crate::request_utils::parse_optional_bool;
 use crate::response::{
@@ -50,7 +49,7 @@ use crate::statuses::{
     resolve_status_reference,
 };
 use crate::store::relationship::delete_follow_by_target;
-use crate::store::remote::upsert_remote_actor;
+use crate::store::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
 use crate::time_html::{escape_html, now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;

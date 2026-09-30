@@ -7,11 +7,10 @@ use crate::accounts::load_account_stats;
 use crate::activitypub::local_username_from_actor_uri;
 use crate::auth::find_account_by_username;
 use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
-use crate::remote::{
-    AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri, resolve_account_reference,
-};
+use crate::remote::{AccountReference, resolve_account_reference};
 use crate::responses::MastodonAccountResponse;
 use crate::store::relationship::is_blocking_actor;
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::time_html::{timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt};
 use crate::tracked_d1::D1Database;
 use std::collections::HashSet;

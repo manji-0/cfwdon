@@ -3,11 +3,11 @@ use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
 use crate::identity::parse_lookup_handle;
-use crate::remote::{
-    AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri,
-    find_remote_actor_by_username_domain, resolve_account_reference,
-};
+use crate::remote::{AccountReference, resolve_account_reference};
 use crate::responses::MastodonAccountResponse;
+use crate::store::remote::{
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+};
 use crate::timelines::TimelinePaginationQuery;
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;

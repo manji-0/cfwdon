@@ -17,10 +17,9 @@ use crate::relationship::{
     list_local_follower_account_ids_for_remote_actor_stream_fanout,
     list_local_follower_account_ids_for_stream_fanout,
 };
-use crate::remote::{
-    RemoteActorRow, find_remote_actor_by_actor_uri, load_remote_status_updated_at,
-};
+use crate::remote::load_remote_status_updated_at;
 use crate::statuses::build_remote_status_response;
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::stream_hub::{
     StreamHubEvent, publish_direct_stream_hub_event_soft, publish_list_stream_hub_event_soft,
     publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_channel_id_name,

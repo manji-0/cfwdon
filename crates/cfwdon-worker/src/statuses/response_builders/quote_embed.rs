@@ -9,11 +9,9 @@ use super::super::{
 use crate::filters::AccountFilterMatcher;
 use crate::local_polls::load_mastodon_poll_response;
 use crate::media::find_remote_status_attachments_by_status_id;
-use crate::remote::{
-    find_remote_actor_by_actor_uri, find_remote_status_by_url_or_object_uri,
-    load_remote_mastodon_poll_response,
-};
+use crate::remote::{find_remote_status_by_url_or_object_uri, load_remote_mastodon_poll_response};
 use crate::responses::MastodonStatusResponse;
+use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::store::statuses::StatusCountsPreload;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

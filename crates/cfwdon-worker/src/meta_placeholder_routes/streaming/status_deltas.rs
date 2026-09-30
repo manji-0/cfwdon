@@ -1,13 +1,12 @@
 use crate::auth::find_account_by_id;
 use crate::media::find_media_attachments_by_status_id;
-use crate::remote::{
-    find_remote_actor_by_actor_uri, find_remote_status_by_id, load_remote_status_updated_at,
-};
+use crate::remote::{find_remote_status_by_id, load_remote_status_updated_at};
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, find_status_by_id,
     is_local_status_thread_muted_by, load_in_reply_to_account_id, load_status_updated_at,
 };
 use crate::store::relationship::is_muted_actor;
+use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::streaming_types::StreamingEvent;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;

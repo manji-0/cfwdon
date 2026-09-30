@@ -1,7 +1,7 @@
 use super::LocalAccount;
 use crate::identity::actor_url;
-use crate::remote::RemoteActorRow;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::store::remote::RemoteActorRow;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 

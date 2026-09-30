@@ -1,6 +1,7 @@
 use super::AccountStatusVisibilityScope;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
-use crate::remote::{RemoteActorRow, remote_status_from_record, remote_statuses_from_records};
+use crate::remote::{remote_status_from_record, remote_statuses_from_records};
+use crate::store::remote::RemoteActorRow;
 use crate::tags::normalize_hashtag;
 use crate::timelines::{
     ResolvedTimelineCursor, StatusIdCursorParts, append_remote_status_id_cursor_parts,

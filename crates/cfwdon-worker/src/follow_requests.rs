@@ -10,13 +10,13 @@ use crate::identity::{
 };
 use crate::inbox::upsert_follower_by_inbox;
 use crate::relationships::build_relationship_for_target;
-use crate::remote::{
-    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    load_remote_actor_status_summary,
-};
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::store::remote::{
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    load_remote_actor_status_summary,
+};
 use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

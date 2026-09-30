@@ -7,8 +7,8 @@ use crate::relationship::{
     list_local_following_for_account, list_local_following_for_remote_actor,
     list_remote_followers_for_account, list_remote_following_for_account,
 };
-use crate::remote::find_remote_actor_by_actor_uri;
 use crate::responses::MastodonAccountResponse;
+use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccount;
 use worker::Result;

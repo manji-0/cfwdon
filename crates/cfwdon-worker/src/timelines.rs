@@ -1,5 +1,6 @@
 use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
 use crate::store::media::MediaAttachmentRow;
+use crate::store::remote::RemoteActorRow;
 use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 mod candidate_render;
@@ -24,7 +25,7 @@ use crate::media::{
     find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
 };
 use crate::remote::{
-    RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
+    RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
     find_remote_statuses_by_url_or_object_uris, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at,
 };

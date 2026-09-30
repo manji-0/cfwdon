@@ -1,4 +1,3 @@
-mod actor_store;
 mod adapters;
 mod poll_activity;
 mod poll_mutations;
@@ -8,7 +7,6 @@ mod resolve;
 mod status_edits;
 mod store;
 
-pub(crate) use actor_store::*;
 pub(crate) use adapters::*;
 pub(crate) use poll_activity::*;
 pub(crate) use poll_mutations::*;

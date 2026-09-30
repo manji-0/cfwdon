@@ -1,6 +1,6 @@
 use crate::db_utils::{d1_results, sql_placeholders, unique_ordered_refs};
-use crate::remote::RemoteActorRow;
 use crate::store::relationship::{FollowerTargetRow, UsernameRow};
+use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;

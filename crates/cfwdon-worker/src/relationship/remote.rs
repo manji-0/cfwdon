@@ -1,7 +1,7 @@
 use crate::accounts::FollowAccountRequest;
 use crate::federation::RemoteActorProfile;
-use crate::remote::RemoteActorRow;
 use crate::store::relationship::FollowRow;
+use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, RemoteFollowState, initial_remote_follow_state};
 use worker::d1::D1Type;
@@ -257,7 +257,7 @@ pub(crate) async fn load_follow_activity_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote::RemoteActorRow;
+    use crate::store::remote::RemoteActorRow;
     use cfwdon_domain::LocalAccountRecord;
 
     fn local_account(id: &str) -> LocalAccount {

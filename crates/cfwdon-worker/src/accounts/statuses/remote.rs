@@ -21,13 +21,12 @@ use crate::media::{
 };
 use crate::observability::log_json_event;
 use crate::remote::{
-    RemoteActorRow, extract_remote_poll_draft, find_remote_actor_by_actor_uri,
-    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
-    remote_status_attachments_from_object, remote_status_content_html, remote_status_from_record,
-    upsert_remote_status,
+    extract_remote_poll_draft, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, remote_status_attachments_from_object,
+    remote_status_content_html, remote_status_from_record, upsert_remote_status,
 };
 use crate::response::{
-    MastodonMediaAttachmentResponse, RemoteActorSocialCounts, RemoteCollectionFetchContext,
+    MastodonMediaAttachmentResponse, RemoteCollectionFetchContext,
     apply_remote_actor_social_counts, fetch_activitypub_document_with_context,
     fetch_remote_actor_profile_with_context,
     load_remote_actor_social_counts_from_document_with_context, persist_remote_actor_social_counts,
@@ -40,7 +39,9 @@ use crate::statuses::{
     preload_remote_status_viewer_state, preload_status_quote_counts,
 };
 use crate::store::relationship::find_follow_by_target;
-use crate::store::remote::upsert_remote_actor;
+use crate::store::remote::{
+    RemoteActorRow, RemoteActorSocialCounts, find_remote_actor_by_actor_uri, upsert_remote_actor,
+};
 use crate::store::statuses::preload_status_counts_for_remote_rows;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

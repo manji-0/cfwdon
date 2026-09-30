@@ -1,6 +1,7 @@
 use crate::db_utils::d1_results;
-use crate::remote::{RemoteActorRow, remote_status_from_record};
+use crate::remote::remote_status_from_record;
 use crate::statuses::statuses_from_records;
+use crate::store::remote::RemoteActorRow;
 use crate::timelines::{
     append_timeline_cursor_bindings, seekable_resolved_timeline_cursor_predicates,
 };

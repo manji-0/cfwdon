@@ -4,10 +4,10 @@ use crate::accounts::{
     upserted_remote_actor_response,
 };
 use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
-use crate::remote::{
+use crate::responses::MastodonAccountResponse;
+use crate::store::remote::{
     RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
 };
-use crate::responses::MastodonAccountResponse;
 use crate::tracked_d1::D1Database;
 use std::collections::HashSet;
 use worker::Result;

@@ -211,7 +211,7 @@ pub(crate) async fn list_report_status_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote::RemoteActorRow;
+    use crate::store::remote::RemoteActorRow;
     use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 
     fn local_account() -> LocalAccount {

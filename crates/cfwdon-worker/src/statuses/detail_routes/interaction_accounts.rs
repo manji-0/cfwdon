@@ -6,7 +6,6 @@ use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::find_account_by_id;
 use crate::db_session::with_d1_bookmark;
 use crate::identity::remote_account_rest_id;
-use crate::remote::{find_remote_actor_by_actor_uri, load_remote_actor_status_summary};
 use crate::responses::MastodonAccountResponse;
 use crate::statuses::{
     list_local_favourite_account_ids_for_remote_status,
@@ -14,6 +13,7 @@ use crate::statuses::{
     list_local_reblog_account_ids_for_status, list_remote_favourite_actor_uris_for_status,
     list_remote_reblog_actor_uris_for_status,
 };
+use crate::store::remote::{find_remote_actor_by_actor_uri, load_remote_actor_status_summary};
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use url::Url;

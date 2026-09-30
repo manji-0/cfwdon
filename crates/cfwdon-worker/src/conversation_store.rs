@@ -2,7 +2,7 @@ use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::remote::find_remote_actor_by_username_domain;
+use crate::store::remote::find_remote_actor_by_username_domain;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalStatus;

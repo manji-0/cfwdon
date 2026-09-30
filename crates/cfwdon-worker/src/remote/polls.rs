@@ -1,5 +1,5 @@
 use super::{
-    RemoteActorRow, RemotePollDraft, build_poll_vote_activity, extract_remote_poll_draft,
+    RemotePollDraft, build_poll_vote_activity, extract_remote_poll_draft,
     find_remote_status_raw_object_by_id, upsert_remote_status,
 };
 use crate::activitypub::{
@@ -13,7 +13,7 @@ use crate::local_polls::{MastodonPollOptionResponse, MastodonPollResponse};
 use crate::polls::validate_poll_vote_submission;
 use crate::relationship::is_local_account_following_remote_actor;
 use crate::store::remote::{
-    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    RemoteActorRow, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
     find_remote_status_poll_by_status_id, has_remote_poll_votes_created_after,
     list_remote_poll_votes_for_account, list_remote_status_poll_options,
     remap_remote_poll_vote_positions, upsert_remote_actor,

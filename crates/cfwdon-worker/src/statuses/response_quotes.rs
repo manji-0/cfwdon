@@ -1,9 +1,9 @@
 use super::LocalAccount;
 use crate::identity::actor_url;
 use crate::relationship::is_local_follower_authorized;
-use crate::remote::RemoteActorRow;
 use crate::responses::MastodonStatusResponse;
 use crate::store::relationship::{is_blocking_actor, is_muted_actor};
+use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, RemoteStatus};

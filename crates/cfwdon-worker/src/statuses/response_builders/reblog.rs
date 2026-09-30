@@ -10,11 +10,9 @@ use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
 use crate::filters::AccountFilterMatcher;
 use crate::local_polls::MastodonPollResponsePreload;
 use crate::media::RemoteStatusAttachmentRow;
-use crate::remote::{
-    RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    find_remote_actor_by_actor_uri,
-};
+use crate::remote::{RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload};
 use crate::responses::MastodonStatusResponse;
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::store::statuses::StatusCountsPreload;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

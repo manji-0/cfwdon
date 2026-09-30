@@ -72,7 +72,7 @@ use crate::policy_documents::configured_html_document;
 use crate::polls::validate_poll_vote_submission;
 use crate::profile::activitypub_profile_attachments;
 use crate::remote::{
-    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, build_poll_vote_activity_with_ids,
+    RemotePollDraft, RemotePollOptionDraft, build_poll_vote_activity_with_ids,
     effective_remote_status_quote_state, extract_remote_poll_draft,
     optimistic_remote_poll_vote_deltas, remote_poll_draft_acknowledges_local_snapshot,
     remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
@@ -120,7 +120,7 @@ use crate::statuses::{
 use crate::store::local_polls::{StatusPollOptionRow, StatusPollRow};
 use crate::store::media::{MediaAttachmentRow, classify_media_kind, media_kind_label};
 use crate::store::remote::{
-    RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
+    RemoteActorRow, RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,
     remap_remote_poll_vote_positions,
 };
 use crate::tags::{

@@ -2,7 +2,7 @@ use super::LocalAccount;
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
 use crate::identity::{actor_url, remote_account_rest_id};
-use crate::remote::{REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow};
+use crate::store::remote::{REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccountRecord};

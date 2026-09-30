@@ -12,9 +12,7 @@ use crate::http::fetch_signed_activitypub_document;
 use crate::identity::{parse_lookup_handle, remote_actor_uri_from_rest_id};
 use crate::observability::log_json_event;
 use crate::remote::{
-    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
-    find_remote_actor_by_username_domain, find_remote_status_by_object_uri,
-    find_remote_status_by_url_or_object_uri, upsert_remote_status,
+    find_remote_status_by_object_uri, find_remote_status_by_url_or_object_uri, upsert_remote_status,
 };
 use crate::response::{
     RemoteCollectionFetchContext, enrich_remote_account_response,
@@ -22,7 +20,10 @@ use crate::response::{
 };
 use crate::responses::MastodonAccountResponse;
 use crate::search::account_search_is_complete_handle;
-use crate::store::remote::upsert_remote_actor;
+use crate::store::remote::{
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+    find_remote_actor_by_username_domain, upsert_remote_actor,
+};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, RemoteStatus};

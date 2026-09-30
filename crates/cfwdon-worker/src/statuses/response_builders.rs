@@ -29,8 +29,8 @@ mod tests {
         local_reblog_wrapper_response_from_embedded, remote_reblog_wrapper_response_from_embedded,
     };
     use super::remote::remote_media_attachment_values;
-    use crate::remote::RemoteActorRow;
     use crate::responses::MastodonStatusResponse;
+    use crate::store::remote::RemoteActorRow;
     use cfwdon_core::AppConfig;
     use cfwdon_domain::{LocalAccountRecord, LocalStatus, RemoteStatus};
 

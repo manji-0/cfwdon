@@ -2,12 +2,11 @@ use crate::auth::find_account_by_username;
 use crate::federation::{ensure_remote_actor_username_matches_handle, resolve_webfinger_actor_uri};
 use crate::identity::parse_lookup_handle;
 use crate::observability::log_json_event;
-use crate::remote::{
-    AccountReference, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    resolve_account_reference_with_fetch,
-};
+use crate::remote::{AccountReference, resolve_account_reference_with_fetch};
 use crate::response::{RemoteCollectionFetchContext, fetch_remote_actor_profile_with_context};
-use crate::store::remote::upsert_remote_actor;
+use crate::store::remote::{
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, upsert_remote_actor,
+};
 use crate::tracked_d1::D1Database;
 use worker::Result;
 

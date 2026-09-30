@@ -7,12 +7,13 @@ use crate::db_utils::d1_results;
 use crate::federation::RemoteActorProfile;
 use crate::identity::remote_account_rest_id;
 use crate::media::find_media_attachments_by_status_id;
-use crate::remote::{find_remote_actor_by_actor_uri, load_remote_status_updated_at};
+use crate::remote::load_remote_status_updated_at;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, find_local_status_by_object_uri,
     load_in_reply_to_account_id, statuses_from_records,
 };
+use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::stream_hub::publish_notification_stream_hub_event_soft;
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
