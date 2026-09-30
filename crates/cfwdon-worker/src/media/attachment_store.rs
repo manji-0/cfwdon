@@ -4,10 +4,9 @@ use crate::delivery::{
     outbox_create_insert_statement_with_attachments,
 };
 use crate::media::{MediaAttachmentRow, OrphanMediaRow, UpdateMediaRequest, parse_media_focus};
-use crate::statuses::StatusRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -393,7 +392,7 @@ pub(crate) async fn attach_media_and_enqueue_outbox(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     media: &[MediaAttachmentRow],
 ) -> Result<()> {
     if media.is_empty() {

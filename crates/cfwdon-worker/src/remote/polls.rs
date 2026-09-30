@@ -1,6 +1,6 @@
 use super::{
     RemoteActorRow, RemotePollDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusPollVoteRow, RemoteStatusRow, build_poll_vote_activity, extract_remote_poll_draft,
+    RemoteStatusPollVoteRow, build_poll_vote_activity, extract_remote_poll_draft,
     find_remote_status_poll_by_status_id, find_remote_status_raw_object_by_id,
     has_remote_poll_votes_created_after, list_remote_poll_votes_for_account,
     list_remote_status_poll_options, remap_remote_poll_vote_positions, upsert_remote_actor,
@@ -20,7 +20,7 @@ use crate::response::timestamp_to_mastodon_iso8601;
 use crate::time_html::is_iso_timestamp_in_past;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, StoredRemotePollVoteIntent};
+use cfwdon_domain::{LocalAccount, RemoteStatus, StoredRemotePollVoteIntent};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -56,7 +56,7 @@ impl RemoteMastodonPollResponsePreload {
 
 pub(crate) async fn load_remote_mastodon_poll_response(
     db: &D1Database,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     viewer: Option<&LocalAccount>,
 ) -> Result<Option<serde_json::Value>> {
     let Some(poll) = find_remote_status_poll_by_status_id(db, &status.id).await? else {
@@ -338,7 +338,7 @@ pub(crate) async fn remote_poll_is_visible_to_viewer(
     db: &D1Database,
     config: &AppConfig,
     poll: &RemoteStatusPollRow,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     viewer: Option<&LocalAccount>,
 ) -> Result<bool> {
     if matches!(status.visibility.as_str(), "public" | "unlisted") {
@@ -379,7 +379,7 @@ pub(crate) async fn remote_poll_is_visible_to_viewer(
 pub(crate) async fn refresh_remote_poll_if_needed(
     db: &D1Database,
     config: &AppConfig,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     poll: &RemoteStatusPollRow,
     viewer: Option<&LocalAccount>,
 ) -> Result<()> {
@@ -533,7 +533,7 @@ async fn refresh_remote_poll_after_vote_if_acknowledged(
     db: &D1Database,
     config: &AppConfig,
     actor: &RemoteActorRow,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     poll: &RemoteStatusPollRow,
     options: &[RemoteStatusPollOptionRow],
     had_existing_votes: bool,
@@ -637,7 +637,7 @@ pub(crate) async fn apply_remote_poll_vote(
     config: &AppConfig,
     viewer: &LocalAccount,
     actor: &RemoteActorRow,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     poll: &RemoteStatusPollRow,
     choices: &[u32],
 ) -> Result<Vec<u32>> {
@@ -675,7 +675,7 @@ async fn queue_and_insert_remote_poll_votes(
     config: &AppConfig,
     viewer: &LocalAccount,
     actor: &RemoteActorRow,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     poll: &RemoteStatusPollRow,
     plan: &RemotePollVotePlan,
 ) -> Result<()> {

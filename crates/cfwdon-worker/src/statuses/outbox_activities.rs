@@ -1,15 +1,16 @@
-use super::{LocalAccount, StatusRow};
+use super::LocalAccount;
 use crate::activitypub::build_activitypub_note;
 use crate::identity::actor_url;
 use crate::time_html::activitypub_datetime_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalStatus;
 use worker::Result;
 pub(crate) async fn build_outbox_activities(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    statuses: &[StatusRow],
+    statuses: &[LocalStatus],
 ) -> Result<Vec<serde_json::Value>> {
     let mut items = Vec::with_capacity(statuses.len());
 

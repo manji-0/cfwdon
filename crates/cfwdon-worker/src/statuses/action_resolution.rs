@@ -1,7 +1,6 @@
 use super::{
-    LocalAccount, StatusRow, build_local_status_response,
-    build_remote_status_response_with_filter_matcher, find_local_status_by_object_uri,
-    find_status_by_id, find_visible_local_status_response_subject,
+    LocalAccount, build_local_status_response, build_remote_status_response_with_filter_matcher,
+    find_local_status_by_object_uri, find_status_by_id, find_visible_local_status_response_subject,
     load_visible_local_status_response_subject,
 };
 use crate::activitypub::is_public_activitypub_visibility;
@@ -9,7 +8,7 @@ use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::custom_emojis::preload_remote_status_federated_emojis;
 use crate::db_session::bind_request_d1;
 use crate::remote::{
-    RemoteActorRow, RemoteStatusRow, find_remote_actor_by_actor_uri, find_remote_status_by_id,
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_status_by_id,
     find_remote_status_by_url_or_object_uri, resolve_remote_status_by_url,
 };
 use crate::request_utils::status_id_from_context;
@@ -17,6 +16,7 @@ use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use serde::Deserialize;
 use worker::{Error, Request, Response, Result, RouteContext};
 #[derive(Debug, Default, Deserialize)]
@@ -25,13 +25,13 @@ pub(crate) struct StatusActionQuery {
 }
 
 pub(crate) enum ResolvedActionStatus {
-    Local(StatusRow),
-    Remote(RemoteStatusRow, RemoteActorRow),
+    Local(LocalStatus),
+    Remote(RemoteStatus, RemoteActorRow),
 }
 
 pub(crate) enum ResolvedVisibleActionStatus {
     Local(super::LoadedLocalStatusResponseSubject),
-    Remote(RemoteStatusRow, RemoteActorRow),
+    Remote(RemoteStatus, RemoteActorRow),
 }
 
 pub(crate) struct AuthenticatedStatusViewerContext {

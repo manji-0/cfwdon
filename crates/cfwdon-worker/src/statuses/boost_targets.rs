@@ -6,25 +6,23 @@
 //! boost-heavy timeline page multiplies by its item count. This module resolves
 //! every URI on a page in a fixed number of batched queries instead.
 
-use super::{
-    StatusRow, find_local_status_by_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids,
-};
+use super::{find_local_status_by_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids};
 use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::local_status_identity_from_uri;
 use crate::remote::{
-    RemoteStatusRow, find_remote_status_by_url_or_object_uri,
-    find_remote_statuses_by_url_or_object_uris,
+    find_remote_status_by_url_or_object_uri, find_remote_statuses_by_url_or_object_uris,
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::Result;
 
 /// The status a boost points at, once resolved.
 #[derive(Debug, Clone)]
 pub(crate) enum BoostTarget {
-    Local(StatusRow),
-    Remote(RemoteStatusRow),
+    Local(LocalStatus),
+    Remote(RemoteStatus),
 }
 
 /// Boost targets resolved for a batch of URIs.

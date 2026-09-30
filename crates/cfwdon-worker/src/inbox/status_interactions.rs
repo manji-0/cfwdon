@@ -16,16 +16,16 @@ use crate::remote::{
     upsert_remote_status,
 };
 use crate::statuses::{
-    StatusRow, delete_remote_favourite, delete_remote_reblog, find_local_status_by_object_uri,
+    delete_remote_favourite, delete_remote_reblog, find_local_status_by_object_uri,
     upsert_remote_favourite, upsert_remote_reblog,
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::{Env, Result};
 pub(crate) async fn remote_actor_may_interact_with_local_status(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     remote_actor_uri: &str,
 ) -> Result<bool> {
     if is_blocking_actor(db, &status.account_id, remote_actor_uri).await? {

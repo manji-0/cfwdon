@@ -8,8 +8,6 @@ use std::collections::HashMap;
 use worker::Result;
 use worker::d1::D1Type;
 
-pub(crate) type AccountRow = LocalAccountRecord;
-
 #[derive(Debug, Deserialize)]
 struct DiscoverableAccountRow {
     id: String,
@@ -104,7 +102,7 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
         .map(|row| {
             let sort_key = row.sort_key.clone();
             (
-                LocalAccount::from_record(AccountRow {
+                LocalAccount::from_record(LocalAccountRecord {
                     id: row.id,
                     username: row.username,
                     access_email: row.access_email,
@@ -232,7 +230,7 @@ pub(crate) async fn find_accounts_by_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(|row| {
             let id = row.id.clone();

@@ -1,5 +1,5 @@
 use super::super::{
-    BoostTarget, BoostTargetPreload, LocalAccount, StatusCountsPreload, StatusRow,
+    BoostTarget, BoostTargetPreload, LocalAccount, StatusCountsPreload,
     build_remote_status_card_value, build_status_card_value, build_status_mentions,
     find_local_status_by_object_uri, local_quoted_status_document_state, pending_quote_document,
     quote_document_for_local_state, quote_document_from_response,
@@ -10,12 +10,13 @@ use crate::filters::AccountFilterMatcher;
 use crate::local_polls::load_mastodon_poll_response;
 use crate::media::find_remote_status_attachments_by_status_id;
 use crate::remote::{
-    RemoteStatusRow, find_remote_actor_by_actor_uri, find_remote_status_by_url_or_object_uri,
+    find_remote_actor_by_actor_uri, find_remote_status_by_url_or_object_uri,
     load_remote_mastodon_poll_response,
 };
 use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use worker::Result;
 
 pub(super) async fn build_quoted_status_value(
@@ -117,7 +118,7 @@ async fn build_local_quoted_status_from_row(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    local_status: StatusRow,
+    local_status: LocalStatus,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
 ) -> Result<Option<serde_json::Value>> {
@@ -207,7 +208,7 @@ async fn build_remote_quoted_status_from_row(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    remote_status: RemoteStatusRow,
+    remote_status: RemoteStatus,
     pending_remote_quote: bool,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,

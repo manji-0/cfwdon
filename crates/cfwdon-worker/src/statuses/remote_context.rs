@@ -12,9 +12,8 @@ use crate::background_jobs::{
 };
 use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
 use crate::remote::{
-    RemoteActorRow, RemoteStatusRow, find_remote_actor_by_actor_uri,
-    find_remote_status_by_object_uri, resolve_remote_status_by_url, upsert_remote_actor,
-    upsert_remote_status,
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_status_by_object_uri,
+    resolve_remote_status_by_url, upsert_remote_actor, upsert_remote_status,
 };
 use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
@@ -24,6 +23,7 @@ use crate::responses::MastodonStatusResponse;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::RemoteStatus;
 use std::collections::HashSet;
 use worker::Result;
 const REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT: usize = 8;
@@ -49,7 +49,7 @@ pub(crate) async fn build_remote_status_context(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     root_actor: &RemoteActorRow,
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
@@ -70,7 +70,7 @@ async fn collect_ancestors_for_remote_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let mut ancestors = Vec::new();
     let mut current = root.in_reply_to_uri.clone();
@@ -145,7 +145,7 @@ async fn collect_descendants_for_remote_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     _root_actor: &RemoteActorRow,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
@@ -230,7 +230,7 @@ impl RemoteReplyReference {
 async fn hydrate_remote_descendants_for_context(
     db: &D1Database,
     config: &AppConfig,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     root_actor: &RemoteActorRow,
     depth: usize,
 ) -> Result<()> {

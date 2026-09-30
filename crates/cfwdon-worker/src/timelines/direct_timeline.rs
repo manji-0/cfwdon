@@ -11,13 +11,14 @@ use crate::filters::load_account_filter_matcher;
 use crate::identity::instance_host;
 use crate::profile::require_authenticated_local_account;
 use crate::relationship::list_active_muted_actor_uris;
-use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::remote::RemoteActorRow;
 use crate::runtime_config::load_config;
 use crate::statuses::{
-    StatusRow, account_has_thread_mutes, list_local_direct_timeline_statuses,
+    account_has_thread_mutes, list_local_direct_timeline_statuses,
     list_remote_direct_statuses_mentioning_viewer,
 };
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::{Request, Response, Result, RouteContext};
 
@@ -25,8 +26,8 @@ async fn preload_muted_timeline_actor_uris(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
-    local_statuses: &[&StatusRow],
-    remote_statuses: &[&(RemoteStatusRow, RemoteActorRow)],
+    local_statuses: &[&LocalStatus],
+    remote_statuses: &[&(RemoteStatus, RemoteActorRow)],
     accounts_by_id: &HashMap<String, cfwdon_domain::LocalAccount>,
 ) -> Result<HashSet<String>> {
     let mut actor_uris = local_statuses

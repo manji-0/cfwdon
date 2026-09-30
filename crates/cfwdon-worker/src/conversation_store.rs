@@ -3,9 +3,9 @@ use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
 use crate::remote::find_remote_actor_by_username_domain;
-use crate::statuses::StatusRow;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalStatus;
 use std::collections::HashSet;
 
 use cfwdon_core::AppConfig;
@@ -31,7 +31,7 @@ pub(crate) async fn ensure_direct_conversation_for_status(
     config: &AppConfig,
     author: &LocalAccount,
     draft: &StatusDraft,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<String>> {
     if draft.visibility().as_str() != "direct" {
         return Ok(None);

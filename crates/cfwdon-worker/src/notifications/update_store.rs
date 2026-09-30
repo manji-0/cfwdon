@@ -1,7 +1,7 @@
 use crate::db_utils::d1_results;
-use crate::remote::{RemoteStatusRow, remote_status_from_record};
+use crate::remote::remote_status_from_record;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::RemoteStatusRecord;
+use cfwdon_domain::{RemoteStatus, RemoteStatusRecord};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
@@ -54,7 +54,7 @@ pub(crate) async fn list_update_notifications_for_account(
 }
 
 impl UpdateNotificationRow {
-    pub(crate) fn as_remote_status_row(&self) -> Result<RemoteStatusRow> {
+    pub(crate) fn as_remote_status_row(&self) -> Result<RemoteStatus> {
         remote_status_from_record(RemoteStatusRecord {
             id: self.id.clone(),
             actor_uri: self.actor_uri.clone(),

@@ -3,7 +3,7 @@ use crate::async_refreshes::build_finished_context_async_refresh_header;
 use crate::db_session::with_d1_bookmark;
 use crate::media::find_remote_status_attachments_by_status_id;
 use crate::remote::{
-    RemoteActorRow, RemoteStatusRow, find_remote_actor_by_actor_uri, find_remote_status_by_id,
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_status_by_id,
     list_remote_status_edit_snapshots, load_remote_status_updated_at,
 };
 use crate::response::{
@@ -11,8 +11,9 @@ use crate::response::{
     cached_status_api_response, timestamp_to_mastodon_iso8601,
 };
 use crate::responses::MastodonStatusResponse;
-use crate::statuses::{StatusRow, list_status_edit_snapshots, load_status_updated_at};
+use crate::statuses::{list_status_edit_snapshots, load_status_updated_at};
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use worker::{Request, Response, Result, RouteContext};
 mod html_preview;
 mod interaction_accounts;
@@ -36,7 +37,7 @@ use serde::Serialize;
 enum LoadedStatusApiSubject {
     Local(super::LoadedLocalStatusResponseSubject),
     Remote {
-        status: RemoteStatusRow,
+        status: RemoteStatus,
         actor: RemoteActorRow,
     },
 }
@@ -231,7 +232,7 @@ async fn load_local_status_api_subject(
     db: &D1Database,
     _config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
-    status: StatusRow,
+    status: LocalStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     match resolve_local_status_response_subject(db, viewer, status).await? {
         Some(super::ResolvedLocalStatusResponseSubject::Loaded(subject)) => {
@@ -243,7 +244,7 @@ async fn load_local_status_api_subject(
 
 async fn load_remote_status_api_subject(
     db: &D1Database,
-    status: RemoteStatusRow,
+    status: RemoteStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(None);

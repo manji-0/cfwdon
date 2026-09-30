@@ -1,7 +1,7 @@
 use super::helpers::{
     normalize_search_match_text, normalize_search_query_input, search_text_match_rank,
 };
-use crate::accounts::{AccountRow, AccountStats, load_account_stats, load_account_stats_map};
+use crate::accounts::{AccountStats, load_account_stats, load_account_stats_map};
 use crate::auth::find_account_by_username;
 use crate::content_helpers::strip_html_tags;
 use crate::custom_emojis::config_with_resolved_custom_emojis;
@@ -21,7 +21,7 @@ use crate::response::{
 use crate::responses::MastodonAccountResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use worker::d1::D1Type;
 use worker::{Error, Result};
 pub(crate) fn normalized_account_search_query(query: &str) -> String {
@@ -360,7 +360,7 @@ pub(crate) async fn search_local_accounts(
         db.prepare(&sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())

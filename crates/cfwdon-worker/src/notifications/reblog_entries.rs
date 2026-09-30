@@ -7,10 +7,10 @@ use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };
 use crate::responses::MastodonAccountResponse;
-use crate::statuses::{StatusRow, find_statuses_by_ids};
+use crate::statuses::find_statuses_by_ids;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use std::collections::HashMap;
 use worker::Result;
 pub(crate) async fn collect_reblog_notification_entries(
@@ -38,7 +38,7 @@ pub(crate) async fn collect_reblog_notification_entries(
         .await?
         .into_iter()
         .map(|status| (status.id.clone(), status))
-        .collect::<HashMap<String, StatusRow>>();
+        .collect::<HashMap<String, LocalStatus>>();
     let local_actor_ids = local_reblogs
         .iter()
         .map(|reblog| reblog.account_id.clone())

@@ -1,6 +1,6 @@
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
-use crate::remote::RemoteStatusRow;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::RemoteStatus;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
@@ -161,7 +161,7 @@ pub(crate) async fn preload_status_counts(
 pub(crate) async fn preload_status_counts_for_remote_rows(
     db: &D1Database,
     local_status_ids: &[String],
-    remote_statuses: &[&RemoteStatusRow],
+    remote_statuses: &[&RemoteStatus],
 ) -> Result<StatusCountsPreload> {
     let mut seen = HashSet::new();
     let mut missing = Vec::new();

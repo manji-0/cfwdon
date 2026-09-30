@@ -5,8 +5,8 @@ use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_or
 use crate::profile::require_authenticated_local_account;
 use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
-use crate::statuses::StatusRow;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalStatus;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
@@ -23,7 +23,7 @@ struct ThreadRootStatusIdRow {
     thread_root_status_id: String,
 }
 
-async fn resolve_thread_root_status_id(db: &D1Database, status: &StatusRow) -> Result<String> {
+async fn resolve_thread_root_status_id(db: &D1Database, status: &LocalStatus) -> Result<String> {
     let roots = resolve_thread_root_status_ids(db, &[status]).await?;
     roots.get(&status.id).cloned().ok_or_else(|| {
         Error::RustError("failed to resolve thread root for local status".to_owned())
@@ -33,7 +33,7 @@ async fn resolve_thread_root_status_id(db: &D1Database, status: &StatusRow) -> R
 /// Resolve thread-root status ids for many local statuses with batched parent fetches.
 pub(crate) async fn resolve_thread_root_status_ids(
     db: &D1Database,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<HashMap<String, String>> {
     let mut parent_by_id = HashMap::new();
     for status in statuses {
@@ -153,7 +153,7 @@ async fn load_muted_thread_root_status_ids(
 pub(crate) async fn local_status_ids_thread_muted_by(
     db: &D1Database,
     account_id: &str,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<HashSet<String>> {
     if statuses.is_empty() {
         return Ok(HashSet::new());
@@ -178,7 +178,7 @@ pub(crate) async fn local_status_ids_thread_muted_by(
 pub(crate) async fn is_local_status_thread_muted_by(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     let muted = local_status_ids_thread_muted_by(db, account_id, &[status]).await?;
     Ok(muted.contains(&status.id))
@@ -193,7 +193,7 @@ pub(crate) async fn account_has_thread_mutes(db: &D1Database, account_id: &str) 
 async fn mute_thread_for_status(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let root_status_id = resolve_thread_root_status_id(db, status).await?;
     let bindings = [
@@ -215,7 +215,7 @@ async fn mute_thread_for_status(
 async fn unmute_thread_for_status(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let root_status_id = resolve_thread_root_status_id(db, status).await?;
     let bindings = [

@@ -1,5 +1,5 @@
 use super::{
-    LocalAccount, LocalStatusResponsePreload, StatusRow,
+    LocalAccount, LocalStatusResponsePreload,
     build_local_status_response_with_quote_count_preloads, find_local_status_by_object_uri,
     insert_status, load_local_status_response_preload, preload_local_status_viewer_state,
     preload_status_counts, preload_status_quote_counts,
@@ -22,7 +22,7 @@ use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_create_stream_fanout_soft;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{QuoteState, StatusDraft};
+use cfwdon_domain::{LocalStatus, QuoteState, StatusDraft};
 use worker::{Env, Result, console_error};
 
 pub(crate) struct CreatePublishedStatusInput<'a> {
@@ -36,7 +36,7 @@ pub(crate) struct CreatePublishedStatusInput<'a> {
 
 struct PublishedStatusArtifacts {
     response: MastodonStatusResponse,
-    status: StatusRow,
+    status: LocalStatus,
     response_preload: LocalStatusResponsePreload,
     counts_preload: StatusCountsPreload,
     quote_counts_preload: StatusQuoteCountsPreload,
@@ -49,7 +49,7 @@ struct PublishedStatusArtifacts {
 pub(crate) async fn viewer_agnostic_local_status_stream_payload(
     db: &D1Database,
     config: &AppConfig,
-    status: &StatusRow,
+    status: &LocalStatus,
     author: &LocalAccount,
     response_preload: &LocalStatusResponsePreload,
     counts_preload: &StatusCountsPreload,
@@ -97,7 +97,7 @@ async fn send_create_status_push_notifications(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     in_reply_to_account_id: Option<&str>,
 ) {
     let _ = send_status_quote_notification(db, config, status).await;
@@ -140,7 +140,7 @@ async fn build_published_status_artifacts(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<PublishedStatusArtifacts> {
     let response_preload = load_local_status_response_preload(db, status).await?;
     let has_media = !response_preload.media.is_empty();

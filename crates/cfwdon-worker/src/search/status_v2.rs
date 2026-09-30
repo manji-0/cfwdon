@@ -8,20 +8,20 @@ use crate::media::{
     find_remote_status_attachments_by_status_id,
 };
 use crate::remote::{
-    AccountReference, RemoteActorRow, RemoteStatusRow, find_remote_actor_by_username_domain,
+    AccountReference, RemoteActorRow, find_remote_actor_by_username_domain,
     find_remote_status_by_id, find_remote_status_poll_by_status_id, resolve_account_reference,
 };
 use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
-    StatusRow, build_local_status_response_with_quote_count_preloads,
-    build_remote_status_card_value, build_remote_status_response, build_status_card_value,
-    can_view_local_status, find_status_by_id, is_local_status_bookmarked_by,
-    is_local_status_favourited_by, is_local_status_reblogged_by, is_remote_status_bookmarked_by,
-    is_remote_status_favourited_by, is_remote_status_reblogged_by, load_in_reply_to_account_id,
-    preload_local_status_viewer_state, preload_status_applications, preload_status_counts,
-    preload_status_quote_counts,
+    build_local_status_response_with_quote_count_preloads, build_remote_status_card_value,
+    build_remote_status_response, build_status_card_value, can_view_local_status,
+    find_status_by_id, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    is_local_status_reblogged_by, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
+    is_remote_status_reblogged_by, load_in_reply_to_account_id, preload_local_status_viewer_state,
+    preload_status_applications, preload_status_counts, preload_status_quote_counts,
 };
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::cmp::Reverse;
 
 use super::status_store::{search_local_status_rows, search_remote_status_rows};
@@ -39,12 +39,12 @@ type SearchStatusSortKey = ((u8, u8, u8), Reverse<String>, Reverse<String>);
 
 enum SearchStatusCandidate {
     Local {
-        status: StatusRow,
+        status: LocalStatus,
         owner: LocalAccount,
         in_reply_to_account_id: Option<String>,
     },
     Remote {
-        status: RemoteStatusRow,
+        status: RemoteStatus,
         actor: RemoteActorRow,
     },
 }
@@ -173,7 +173,7 @@ async fn local_status_is_in_search_library(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     if status.account_id == viewer.id() {
         return Ok(true);
@@ -197,7 +197,7 @@ async fn remote_status_is_in_search_library(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
 ) -> Result<bool> {
     if is_remote_status_favourited_by(db, viewer.id(), &status.id).await? {
         return Ok(true);

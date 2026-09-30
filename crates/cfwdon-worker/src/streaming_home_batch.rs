@@ -12,12 +12,12 @@ use crate::media::{
 use crate::relationship::list_active_muted_actor_uris_for_account;
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusRow, preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
 };
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, StatusRow, account_has_thread_mutes,
+    StatusQuoteCountsPreload, account_has_thread_mutes,
     build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, list_local_home_timeline_statuses,
     list_local_public_statuses_by_tag, list_remote_home_timeline_statuses,
@@ -34,23 +34,23 @@ use crate::timelines::{
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::Result;
 
 enum StreamingHomeCandidate {
-    Local(StatusRow),
-    Remote(RemoteStatusRow, RemoteActorRow),
+    Local(LocalStatus),
+    Remote(RemoteStatus, RemoteActorRow),
 }
 
 enum PreparedStreamingHomeCandidate<'a> {
     Local {
-        status: StatusRow,
+        status: LocalStatus,
         media: Vec<MediaAttachmentRow>,
         account: &'a LocalAccount,
     },
     Remote {
-        status: RemoteStatusRow,
+        status: RemoteStatus,
         actor: RemoteActorRow,
         attachments: Vec<RemoteStatusAttachmentRow>,
     },
@@ -65,7 +65,7 @@ struct StreamingHomeCandidateLoad {
 struct StreamingHomeRenderPlan {
     local_status_ids: Vec<String>,
     remote_status_ids: Vec<String>,
-    local_statuses_for_replies: Vec<StatusRow>,
+    local_statuses_for_replies: Vec<LocalStatus>,
     quote_status_uris: Vec<String>,
     mention_texts: Vec<String>,
     boost_of_uris: Vec<String>,
@@ -229,8 +229,8 @@ fn collect_streaming_home_render_plan(
 fn streaming_home_status_refs<'c>(
     candidates: &'c [PreparedStreamingHomeCandidate<'_>],
 ) -> (
-    Vec<&'c StatusRow>,
-    Vec<(&'c RemoteStatusRow, &'c RemoteActorRow)>,
+    Vec<&'c LocalStatus>,
+    Vec<(&'c RemoteStatus, &'c RemoteActorRow)>,
 ) {
     let local_status_refs = candidates
         .iter()

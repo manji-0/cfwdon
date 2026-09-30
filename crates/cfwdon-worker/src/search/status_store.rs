@@ -1,11 +1,11 @@
 use crate::db_utils::d1_results;
-use crate::remote::{RemoteActorRow, RemoteStatusRow, remote_status_from_record};
-use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::remote::{RemoteActorRow, remote_status_from_record};
+use crate::statuses::statuses_from_records;
 use crate::timelines::{
     append_timeline_cursor_bindings, seekable_resolved_timeline_cursor_predicates,
 };
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::RemoteStatusRecord;
+use cfwdon_domain::{LocalStatus, LocalStatusRecord, RemoteStatus, RemoteStatusRecord};
 use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
@@ -141,7 +141,7 @@ fn json_optional_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
     })
 }
 
-fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {
+fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<RemoteStatus> {
     remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
@@ -176,7 +176,7 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<Remo
 
 fn remote_search_rows_from_values(
     values: Vec<serde_json::Value>,
-) -> Vec<(RemoteStatusRow, RemoteActorRow)> {
+) -> Vec<(RemoteStatus, RemoteActorRow)> {
     values
         .into_iter()
         .filter_map(|value| {
@@ -196,7 +196,7 @@ pub(crate) async fn search_local_status_rows(
     max_timestamp: Option<&str>,
     min_id: Option<&str>,
     min_timestamp: Option<&str>,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let patterns = normalized_search_patterns(queries);
     let pattern_count = if search_patterns_match_everything(&patterns) {
         0
@@ -259,7 +259,7 @@ pub(crate) async fn search_local_status_rows(
         .await?
     };
 
-    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn search_remote_status_rows(
@@ -271,7 +271,7 @@ pub(crate) async fn search_remote_status_rows(
     max_timestamp: Option<&str>,
     min_id: Option<&str>,
     min_timestamp: Option<&str>,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let patterns = normalized_search_patterns(queries);
     let pattern_count = if search_patterns_match_everything(&patterns) {
         0

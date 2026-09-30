@@ -15,11 +15,11 @@ use crate::relationships::RelationshipResponse;
 use crate::response::{MastodonSearchResponse, build_preferences_document};
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::scheduled_statuses::scheduled_status_document;
-use crate::statuses::{StatusRow, build_translation_document};
+use crate::statuses::build_translation_document;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, QuoteState,
-    SoftwareInfo, Visibility,
+    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, LocalStatus,
+    QuoteState, SoftwareInfo, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
@@ -58,8 +58,8 @@ fn fixture_stats() -> AccountStats {
     }
 }
 
-fn fixture_status() -> StatusRow {
-    StatusRow {
+fn fixture_status() -> LocalStatus {
+    LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: Some("https://social.example/users/alice/statuses/status-1".to_owned()),

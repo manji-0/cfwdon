@@ -1,10 +1,11 @@
-use super::{LocalAccount, StatusRow};
+use super::LocalAccount;
 use crate::identity::actor_url;
 use crate::relationship::{is_blocking_actor, is_local_follower_authorized, is_muted_actor};
-use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::remote::RemoteActorRow;
 use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use worker::{Result, d1::D1Type};
 
 pub(crate) fn quote_document_with_state(
@@ -145,13 +146,13 @@ pub(crate) async fn remote_quoted_status_document_state(
         .unwrap_or(accepted_quote_document_state()))
 }
 
-pub(crate) fn effective_local_quote_approval_policy(status: &StatusRow) -> &'static str {
+pub(crate) fn effective_local_quote_approval_policy(status: &LocalStatus) -> &'static str {
     status.effective_quote_approval_policy().as_str()
 }
 
 pub(crate) async fn build_local_quote_approval(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     viewer: Option<&LocalAccount>,
     owner: &LocalAccount,
 ) -> Result<serde_json::Value> {
@@ -198,7 +199,7 @@ pub(crate) async fn build_local_quote_approval(
     }))
 }
 
-pub(crate) fn build_remote_quote_approval(status: &RemoteStatusRow) -> serde_json::Value {
+pub(crate) fn build_remote_quote_approval(status: &RemoteStatus) -> serde_json::Value {
     if !matches!(status.visibility.as_str(), "public" | "unlisted") {
         return serde_json::json!({
             "automatic": [],

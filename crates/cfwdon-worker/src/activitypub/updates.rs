@@ -4,10 +4,9 @@ use super::{
 };
 use crate::id_utils::generate_entity_id;
 use crate::identity::actor_url;
-use crate::statuses::StatusRow;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::Error;
 fn status_activity_context(object: &serde_json::Value) -> serde_json::Value {
     if object.get("_misskey_quote").is_some()
@@ -60,7 +59,7 @@ pub(crate) async fn build_status_update_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<String> {
     let object = build_activitypub_note(db, config, account, status, false, None).await?;
     let object_id = object

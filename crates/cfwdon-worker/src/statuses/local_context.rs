@@ -1,5 +1,5 @@
 use super::{
-    LocalAccount, StatusRow, build_loaded_local_status_response, build_remote_status_response,
+    LocalAccount, build_loaded_local_status_response, build_remote_status_response,
     can_view_local_status, find_status_by_id, list_direct_local_replies,
     list_direct_remote_replies_by_uri,
 };
@@ -13,12 +13,13 @@ use crate::response::{
 use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalStatus;
 use std::collections::HashSet;
 use worker::Result;
 fn local_context_object_uri(
     config: &AppConfig,
     owner: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> String {
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
@@ -59,7 +60,7 @@ pub(crate) async fn build_local_status_context(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &StatusRow,
+    root: &LocalStatus,
     root_owner: &LocalAccount,
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
@@ -101,7 +102,7 @@ async fn collect_descendants_for_local_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &StatusRow,
+    root: &LocalStatus,
     root_uri: &str,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());

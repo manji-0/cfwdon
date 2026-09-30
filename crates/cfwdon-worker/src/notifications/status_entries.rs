@@ -7,15 +7,15 @@ use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
     notification_type_allowed, push_notification_entry,
 };
-use crate::remote::{RemoteStatusRow, remote_status_from_record};
+use crate::remote::remote_status_from_record;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use crate::statuses::can_view_local_status;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, RemoteStatusRecord};
+use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};
 use worker::Result;
 
-fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatusRow> {
+fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatus> {
     remote_status_from_record(RemoteStatusRecord {
         id: status.id.clone(),
         actor_uri: status.actor_uri.clone(),

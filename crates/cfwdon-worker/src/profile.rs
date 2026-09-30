@@ -1,6 +1,4 @@
-use crate::accounts::{
-    AccountRow, AccountStats, apply_account_credentials_update, load_account_stats,
-};
+use crate::accounts::{AccountStats, apply_account_credentials_update, load_account_stats};
 use crate::auth::{extract_authenticated_user, find_authenticated_local_account};
 use crate::custom_emojis::config_with_resolved_custom_emojis;
 use crate::db_session::bind_request_d1;
@@ -26,6 +24,7 @@ use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::tags::normalize_hashtag;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalAccountRecord;
 use worker::{Error, Request, Response, Result, RouteContext};
 
 mod request_parsing;
@@ -384,7 +383,7 @@ async fn load_access_preferences_subject(
 fn account_preferences_subject_from_value(
     row: &serde_json::Value,
 ) -> Result<AccountPreferencesSubject> {
-    let account = serde_json::from_value::<AccountRow>(row.clone())
+    let account = serde_json::from_value::<LocalAccountRecord>(row.clone())
         .map(LocalAccount::from_record)
         .map_err(|error| {
             Error::RustError(format!("failed to decode account preferences row: {error}"))

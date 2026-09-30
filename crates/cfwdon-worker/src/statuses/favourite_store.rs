@@ -1,11 +1,10 @@
-use super::{StatusRow, local_status_target_uri};
+use super::local_status_target_uri;
 use crate::db_utils::d1_results;
 use crate::notifications::publish_local_status_interaction_notification_soft;
 use crate::push::send_push_notification;
-use crate::remote::RemoteStatusRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Env, Result};
@@ -36,7 +35,7 @@ pub(crate) async fn upsert_favourite_local_status(
     config: &AppConfig,
     env: Option<&Env>,
     actor: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let account_id = actor.id();
     let target_uri = local_status_target_uri(status);
@@ -103,7 +102,7 @@ pub(crate) async fn upsert_favourite_local_status(
 pub(crate) async fn upsert_favourite_remote_status(
     db: &D1Database,
     account_id: &str,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     ap_activity_id: Option<&str>,
 ) -> Result<()> {
     let bindings = [
@@ -168,7 +167,7 @@ pub(crate) async fn delete_favourite_by_target_uri(
 pub(crate) async fn is_local_status_favourited_by(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     is_favourite_target_for_account(db, account_id, &local_status_target_uri(status)).await
 }

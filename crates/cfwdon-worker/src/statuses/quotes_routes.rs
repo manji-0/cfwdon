@@ -29,16 +29,14 @@ use crate::media::{
 };
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusRow, clear_remote_status_quote, find_remote_actor_by_actor_uri,
-    find_remote_actors_by_actor_uris, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, remote_statuses_from_records,
-    update_remote_status_quote_state,
+    clear_remote_status_quote, find_remote_actor_by_actor_uri, find_remote_actors_by_actor_uris,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    remote_statuses_from_records, update_remote_status_quote_state,
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{
     LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, ResolvedStatus,
-    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, StatusRecord,
-    StatusRow, statuses_from_records,
+    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, statuses_from_records,
 };
 use crate::time_html::now_iso_string;
 use crate::timelines::{
@@ -47,7 +45,7 @@ use crate::timelines::{
     seekable_resolved_timeline_cursor_predicates, timeline_fetch_limit, timeline_limit,
 };
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::{OwnerQuoteAction, QuoteState};
+use cfwdon_domain::{LocalStatus, LocalStatusRecord, OwnerQuoteAction, QuoteState, RemoteStatus};
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::d1::D1Type;
@@ -169,7 +167,7 @@ async fn load_accepted_status_quotes(
     target_uri: &str,
     cursor: &ResolvedTimelineCursor,
     query_limit: u32,
-) -> Result<(Vec<StatusRow>, Vec<RemoteStatusRow>)> {
+) -> Result<(Vec<LocalStatus>, Vec<RemoteStatus>)> {
     let local_quotes = list_local_status_quotes_by_uri(db, target_uri, cursor, query_limit).await?;
     let remote_quotes =
         list_remote_status_quotes_by_uri(db, target_uri, cursor, query_limit).await?;
@@ -180,8 +178,8 @@ async fn preload_status_quotes(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
-    local_quotes: &[StatusRow],
-    remote_quotes: &[RemoteStatusRow],
+    local_quotes: &[LocalStatus],
+    remote_quotes: &[RemoteStatus],
 ) -> Result<StatusQuotesPreloads> {
     let local_status_ids = local_quotes
         .iter()
@@ -279,8 +277,8 @@ async fn build_status_quote_values(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
-    local_quotes: Vec<StatusRow>,
-    remote_quotes: Vec<RemoteStatusRow>,
+    local_quotes: Vec<LocalStatus>,
+    remote_quotes: Vec<RemoteStatus>,
     preloads: &mut StatusQuotesPreloads,
 ) -> Result<Vec<(String, String, serde_json::Value)>> {
     let mut quotes: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -396,7 +394,7 @@ async fn list_local_status_quotes_by_uri(
     status_uri: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) = status_quotes_list_sql(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses
@@ -409,7 +407,7 @@ async fn list_local_status_quotes_by_uri(
         limit,
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn list_remote_status_quotes_by_uri(
@@ -417,7 +415,7 @@ async fn list_remote_status_quotes_by_uri(
     status_uri: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatus>> {
     let (sql, bindings) = status_quotes_list_sql(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
@@ -753,7 +751,7 @@ async fn apply_owner_action_to_local_quote(
     action: OwnerQuoteAction,
     target_status_id: &str,
     target_uri: &str,
-    quote_status: StatusRow,
+    quote_status: LocalStatus,
 ) -> Result<Response> {
     if quote_status.quote_of_uri.as_deref() != Some(target_uri)
         || quote_status.effective_quote_state() != QuoteState::Pending
@@ -815,7 +813,7 @@ async fn apply_owner_action_to_remote_quote(
     action: OwnerQuoteAction,
     target_status_id: &str,
     target_uri: &str,
-    quote_status: RemoteStatusRow,
+    quote_status: RemoteStatus,
 ) -> Result<Response> {
     if quote_status.quote_of_uri.as_deref() != Some(target_uri)
         || quote_status.effective_quote_state() != QuoteState::Pending

@@ -9,7 +9,7 @@ use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_ids};
 use crate::relationship::is_local_follower_authorized;
 use crate::statuses::{
     AccountStatusVisibilityScope, AccountStatusesQuery, LocalStatusViewerStatePreload,
-    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, StatusRow,
+    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload,
     build_local_status_response_with_quote_count_preloads, can_view_local_status,
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
     load_in_reply_to_account_ids, preload_local_status_viewer_state, preload_status_applications,
@@ -17,12 +17,12 @@ use crate::statuses::{
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use std::collections::HashMap;
 use worker::{Request, Response, Result};
 
 struct LocalAccountStatusPage {
-    statuses: Vec<StatusRow>,
+    statuses: Vec<LocalStatus>,
     older_page_url: Option<String>,
 }
 
@@ -151,7 +151,7 @@ async fn preload_local_account_status_json_context(
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
     account: &LocalAccount,
-    statuses: &[StatusRow],
+    statuses: &[LocalStatus],
 ) -> Result<LocalAccountStatusJsonPreloads> {
     let status_ids = statuses
         .iter()
@@ -213,7 +213,7 @@ async fn respond_local_account_statuses_json(
     account: &LocalAccount,
     query: &AccountStatusesQuery,
     limit: u32,
-    statuses: Vec<StatusRow>,
+    statuses: Vec<LocalStatus>,
     preloads: LocalAccountStatusJsonPreloads,
 ) -> Result<Response> {
     let LocalAccountStatusJsonPreloads {

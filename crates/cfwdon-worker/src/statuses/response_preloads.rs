@@ -4,7 +4,7 @@
 //! and detail builders so a page pays one query set instead of one per status.
 
 use super::{
-    LocalAccount, StatusRow, find_statuses_by_ap_ids, find_statuses_by_ids, load_status_updated_at,
+    LocalAccount, find_statuses_by_ap_ids, find_statuses_by_ids, load_status_updated_at,
     local_status_ids_thread_muted_by, local_status_target_uri,
 };
 use crate::activitypub::local_status_identity_from_uri;
@@ -14,9 +14,10 @@ use crate::db_utils::{count_rows, d1_results, json_string_array, sql_in_json_eac
 use crate::local_polls::{MastodonPollResponsePreload, load_mastodon_poll_response};
 use crate::oauth_apps::{find_oauth_app_by_id, find_oauth_apps_by_ids};
 use crate::relationship::list_active_muted_actor_uris;
-use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
@@ -87,7 +88,7 @@ impl StatusApplicationPreload {
 fn collect_status_application_id(
     application_ids: &mut Vec<i64>,
     seen_application_ids: &mut HashSet<i64>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) {
     if let Some(application_id) = status.application_id
         && seen_application_ids.insert(application_id)
@@ -100,7 +101,7 @@ fn collect_local_reblog_target_refs(
     config: &AppConfig,
     status_ids: &mut Vec<String>,
     ap_ids: &mut Vec<String>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) {
     let Some(boost_of_uri) = status.boost_of_uri.as_deref() else {
         return;
@@ -115,7 +116,7 @@ fn collect_local_reblog_target_refs(
 pub(crate) async fn preload_status_applications(
     db: &D1Database,
     config: &AppConfig,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<StatusApplicationPreload> {
     let mut application_ids = Vec::new();
     let mut seen_application_ids = HashSet::new();
@@ -156,7 +157,7 @@ pub(crate) async fn preload_status_applications(
 
 pub(crate) async fn local_status_edited_at(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<String>> {
     let updated_at = match status.updated_at.as_deref() {
         Some(updated_at) => Some(updated_at.to_owned()),
@@ -234,17 +235,17 @@ pub(crate) struct LocalStatusViewerStatePreload {
 }
 
 impl LocalStatusViewerStatePreload {
-    fn favourited(&self, status: &StatusRow) -> bool {
+    fn favourited(&self, status: &LocalStatus) -> bool {
         self.favourited_target_uris
             .contains(&local_status_target_uri(status))
     }
 
-    fn reblogged(&self, status: &StatusRow) -> bool {
+    fn reblogged(&self, status: &LocalStatus) -> bool {
         self.reblogged_target_uris
             .contains(&local_status_target_uri(status))
     }
 
-    fn bookmarked(&self, status: &StatusRow) -> bool {
+    fn bookmarked(&self, status: &LocalStatus) -> bool {
         self.bookmarked_target_uris
             .contains(&local_status_target_uri(status))
     }
@@ -278,7 +279,7 @@ pub(crate) struct LocalStatusResponseViewerState {
 
 pub(crate) fn preloaded_local_status_response_viewer_state(
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     preload: Option<&LocalStatusViewerStatePreload>,
 ) -> Option<LocalStatusPreloadedViewerState> {
     match (viewer, preload) {
@@ -432,7 +433,7 @@ async fn load_viewer_pinned_status_ids(
 pub(crate) async fn preload_local_status_viewer_state(
     db: &D1Database,
     account_id: &str,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
     known_has_thread_mutes: Option<bool>,
 ) -> Result<LocalStatusViewerStatePreload> {
     let mut seen_targets = HashSet::new();
@@ -492,7 +493,7 @@ pub(crate) async fn preload_local_status_viewer_state(
 pub(crate) async fn preload_remote_status_viewer_state(
     db: &D1Database,
     account_id: &str,
-    statuses: &[(&RemoteStatusRow, &RemoteActorRow)],
+    statuses: &[(&RemoteStatus, &RemoteActorRow)],
 ) -> Result<RemoteStatusViewerStatePreload> {
     let mut seen_status_ids = HashSet::new();
     let status_ids = statuses
@@ -804,8 +805,8 @@ mod tests {
         assert_eq!(state, Some(RemoteStatusResponseViewerState::default()));
     }
 
-    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> StatusRow {
-        StatusRow {
+    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> LocalStatus {
+        LocalStatus {
             id: id.to_owned(),
             account_id: "acct-1".to_owned(),
             ap_id: ap_id.map(str::to_owned),

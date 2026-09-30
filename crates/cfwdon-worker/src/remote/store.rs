@@ -1,3 +1,4 @@
+use cfwdon_domain::RemoteStatus;
 mod attachments;
 mod bindings;
 mod edit_snapshots;
@@ -66,7 +67,7 @@ async fn upsert_remote_status_draft(
 async fn reload_upserted_remote_status(
     db: &D1Database,
     intent: &StoredRemoteStatusIntent,
-) -> Result<RemoteStatusRow> {
+) -> Result<RemoteStatus> {
     find_remote_status_by_object_uri(db, &intent.object_uri)
         .await?
         .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))
@@ -75,7 +76,7 @@ async fn reload_upserted_remote_status(
 async fn replace_remote_status_dependents(
     db: &D1Database,
     config: &AppConfig,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     object: &serde_json::Value,
 ) -> Result<Vec<RemoteStatusAttachmentRow>> {
     replace_remote_status_hashtags(

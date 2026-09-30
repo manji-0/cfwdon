@@ -1,14 +1,11 @@
 use crate::content_helpers::status_contains_tag;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 
 use crate::statuses::AccountStatusVisibilityScope;
-
-use crate::remote::RemoteStatusRow;
 
 use crate::statuses::RemoteAccountStatusListOptions;
 
 use crate::statuses::AccountStatusesQuery;
-
-use crate::statuses::StatusRow;
 
 use crate::media::MediaAttachmentRow;
 
@@ -50,7 +47,7 @@ pub(crate) fn account_status_list_options<'a>(
 }
 
 pub(crate) fn local_status_matches_account_filters(
-    status: &StatusRow,
+    status: &LocalStatus,
     account_id: &str,
     query: &AccountStatusesQuery,
     media: &[MediaAttachmentRow],
@@ -73,7 +70,7 @@ pub(crate) fn local_status_matches_account_filters(
 }
 
 pub(crate) fn remote_status_matches_account_filters(
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     query: &AccountStatusesQuery,
     has_media: bool,
 ) -> bool {
@@ -104,8 +101,8 @@ mod tests {
 
     use cfwdon_domain::{QuoteState, Visibility};
 
-    fn status_row() -> StatusRow {
-        StatusRow {
+    fn status_row() -> LocalStatus {
+        LocalStatus {
             id: "status-1".to_owned(),
             account_id: "account-1".to_owned(),
             ap_id: None,
@@ -128,8 +125,8 @@ mod tests {
         }
     }
 
-    fn remote_status_row() -> RemoteStatusRow {
-        RemoteStatusRow {
+    fn remote_status_row() -> RemoteStatus {
+        RemoteStatus {
             id: "remote-1".to_owned(),
             actor_uri: "https://remote.example/users/alice".to_owned(),
             object_uri: "https://remote.example/users/alice/statuses/1".to_owned(),

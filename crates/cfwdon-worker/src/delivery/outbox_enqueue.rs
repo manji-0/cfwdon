@@ -9,15 +9,15 @@ use crate::domain_blocks::{
 use crate::identity::actor_url;
 use crate::media::MediaAttachmentRow;
 use crate::relationship::load_remote_actor_delivery_inbox;
-use crate::statuses::{StatusRow, status_has_active_quote};
+use crate::statuses::status_has_active_quote;
 use crate::time_html::activitypub_datetime_string;
 use crate::tracked_d1::{D1Database, D1PreparedStatement};
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, Visibility};
+use cfwdon_domain::{LocalAccount, LocalStatus, Visibility};
 use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{Error, Result};
-fn create_activity_context(status: &StatusRow) -> serde_json::Value {
+fn create_activity_context(status: &LocalStatus) -> serde_json::Value {
     if status_has_active_quote(status) {
         serde_json::json!([
             "https://www.w3.org/ns/activitystreams",
@@ -139,7 +139,7 @@ async fn build_create_activity_payload(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     attachments_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<(String, String)> {
     let note =
@@ -174,7 +174,7 @@ pub(crate) async fn outbox_create_insert_statement(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<D1PreparedStatement>> {
     outbox_create_insert_statement_with_attachments(db, config, account, status, None).await
 }
@@ -183,7 +183,7 @@ pub(crate) async fn outbox_create_insert_statement_with_attachments(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     attachments_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<Option<D1PreparedStatement>> {
     if status.visibility == Visibility::Direct {
@@ -208,7 +208,7 @@ pub(crate) async fn enqueue_direct_create_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     attachments_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<()> {
     if status.visibility != Visibility::Direct {
@@ -239,7 +239,7 @@ pub(crate) async fn enqueue_addressed_create_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     attachments_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<()> {
     if status.visibility == Visibility::Direct {
@@ -275,7 +275,7 @@ pub(crate) async fn outbox_delete_insert_statement(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<D1PreparedStatement>> {
     if status.visibility == Visibility::Direct {
         return Ok(None);
@@ -305,7 +305,7 @@ pub(crate) async fn enqueue_direct_delete_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if status.visibility != Visibility::Direct {
         return Ok(());
@@ -335,7 +335,7 @@ pub(crate) async fn enqueue_addressed_delete_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if status.visibility == Visibility::Direct {
         return Ok(());

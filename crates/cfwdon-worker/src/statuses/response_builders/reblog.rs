@@ -4,7 +4,7 @@ use super::super::reblog_response::{
 use super::super::{
     BoostTarget, BoostTargetPreload, LocalAccount, LocalStatusViewerStatePreload,
     MentionAccountsPreload, RemoteStatusViewerStatePreload, StatusApplicationPreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, StatusRow, resolve_boost_target,
+    StatusCountsPreload, StatusQuoteCountsPreload, resolve_boost_target,
     resolve_local_status_response_subject,
 };
 use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
@@ -13,11 +13,12 @@ use crate::local_polls::MastodonPollResponsePreload;
 use crate::media::RemoteStatusAttachmentRow;
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusRow, find_remote_actor_by_actor_uri,
+    find_remote_actor_by_actor_uri,
 };
 use crate::responses::MastodonStatusResponse;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::HashMap;
 use worker::Result;
 
@@ -25,7 +26,7 @@ pub(super) async fn build_remote_reblog_wrapper_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    wrapper_status: &RemoteStatusRow,
+    wrapper_status: &RemoteStatus,
     wrapper_actor: &RemoteActorRow,
     boost_of_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
@@ -153,7 +154,7 @@ async fn build_local_reblog_embedded_response(
     config: &AppConfig,
     resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
-    local_status: StatusRow,
+    local_status: LocalStatus,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
@@ -207,7 +208,7 @@ async fn build_remote_reblog_embedded_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    remote_status: RemoteStatusRow,
+    remote_status: RemoteStatus,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
     quote_counts_preload: Option<&StatusQuoteCountsPreload>,
@@ -273,7 +274,7 @@ pub(super) async fn build_local_reblog_wrapper_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    wrapper_status: &StatusRow,
+    wrapper_status: &LocalStatus,
     wrapper_account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     boost_of_uri: &str,

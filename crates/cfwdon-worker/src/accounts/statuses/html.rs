@@ -3,12 +3,11 @@ use crate::content_helpers::{
     sanitize_remote_http_url, sanitize_remote_status_html, strip_html_tags,
 };
 use crate::media::{MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind};
-use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::remote::RemoteActorRow;
 use crate::response::media_attachment_url;
-use crate::statuses::StatusRow;
 use crate::time_html::escape_html;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use worker::{Response, ResponseBody, Result};
 
 pub(crate) fn account_statuses_html_response(
@@ -136,7 +135,7 @@ const ACCOUNT_STATUSES_INFINITE_SCROLL_SCRIPT: &str = r#"<script>
 pub(crate) fn local_status_html_item(
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     media: &[MediaAttachmentRow],
 ) -> String {
     let status_url = escape_html(&local_status_ap_id(config, account, status));
@@ -152,7 +151,7 @@ pub(crate) fn local_status_html_item(
 
 pub(crate) fn remote_status_html_item(
     actor: &RemoteActorRow,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     media: &[RemoteStatusAttachmentRow],
 ) -> String {
     let _actor = actor;

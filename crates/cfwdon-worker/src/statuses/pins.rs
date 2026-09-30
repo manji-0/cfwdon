@@ -7,8 +7,9 @@ use crate::delivery::{
 use crate::profile::require_authenticated_local_account;
 use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
-use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::statuses::statuses_from_records;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, LocalStatusRecord};
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
 
@@ -69,7 +70,7 @@ pub(crate) async fn unpin_local_status(
 pub(crate) async fn list_pinned_statuses_for_account(
     db: &D1Database,
     account_id: &str,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
@@ -83,7 +84,7 @@ pub(crate) async fn list_pinned_statuses_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn pinned_status_response(

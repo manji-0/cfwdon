@@ -2,9 +2,10 @@ use super::bindings::{
     remote_status_id_bindings, remote_status_lookup_value_bindings,
     remote_status_object_uri_bindings,
 };
-use super::records::{RemoteStatusRecord, RemoteStatusRow, remote_status_from_record};
+use super::records::{RemoteStatusRecord, remote_status_from_record};
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::RemoteStatus;
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Error, Result};
@@ -27,7 +28,7 @@ pub(super) fn remote_statuses_by_url_or_object_uris_sql() -> String {
 pub(crate) async fn find_remote_status_by_id(
     db: &D1Database,
     status_id: &str,
-) -> Result<Option<RemoteStatusRow>> {
+) -> Result<Option<RemoteStatus>> {
     let bindings = remote_status_id_bindings(status_id);
     db.prepare(format!(
         "{REMOTE_STATUS_ROW_SELECT}
@@ -72,7 +73,7 @@ pub(crate) async fn find_remote_status_raw_object_by_id(
 pub(crate) async fn find_remote_status_by_object_uri(
     db: &D1Database,
     object_uri: &str,
-) -> Result<Option<RemoteStatusRow>> {
+) -> Result<Option<RemoteStatus>> {
     let bindings = remote_status_object_uri_bindings(object_uri);
     db.prepare(format!(
         "{REMOTE_STATUS_ROW_SELECT}
@@ -88,7 +89,7 @@ pub(crate) async fn find_remote_status_by_object_uri(
 pub(crate) async fn find_remote_status_by_url_or_object_uri(
     db: &D1Database,
     value: &str,
-) -> Result<Option<RemoteStatusRow>> {
+) -> Result<Option<RemoteStatus>> {
     if let Some(row) = find_remote_status_by_object_uri(db, value).await? {
         return Ok(Some(row));
     }
@@ -112,7 +113,7 @@ pub(crate) async fn find_remote_status_by_url_or_object_uri(
 pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     db: &D1Database,
     values: &[String],
-) -> Result<Vec<RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatus>> {
     let values = unique_ordered_refs(values);
     if values.is_empty() {
         return Ok(Vec::new());

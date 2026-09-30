@@ -1,8 +1,7 @@
 use crate::identity::actor_url;
-use crate::statuses::StatusRow;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 
 mod actor_document;
 mod local_uri;
@@ -26,7 +25,7 @@ pub(crate) async fn build_activitypub_delete(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<serde_json::Value> {
     build_activitypub_delete_with_published_at(db, config, account, status, &now_iso_string()?)
         .await
@@ -36,7 +35,7 @@ pub(crate) async fn build_activitypub_delete_with_published_at(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     published_at: &str,
 ) -> Result<serde_json::Value> {
     let note_id = local_status_ap_id(config, account, status);

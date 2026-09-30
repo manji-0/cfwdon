@@ -1,4 +1,3 @@
-use crate::accounts::AccountRow;
 use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::id_utils::generate_entity_id;
@@ -7,7 +6,7 @@ use crate::time_html::{escape_html, now_unix_timestamp};
 use crate::tracked_d1::D1Database;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -551,7 +550,7 @@ fn oauth_access_token_auth_from_joined_row(
     })?;
     let account = match row.get("id").and_then(serde_json::Value::as_str) {
         Some(_) => Some(
-            serde_json::from_value::<AccountRow>(row)
+            serde_json::from_value::<LocalAccountRecord>(row)
                 .map(LocalAccount::from_record)
                 .map_err(|error| {
                     worker::Error::RustError(format!(

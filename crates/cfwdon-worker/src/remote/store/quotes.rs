@@ -1,13 +1,12 @@
 use super::bindings::remote_status_quote_state_update_bindings;
 use super::lookups::find_remote_status_by_id;
-use super::records::RemoteStatusRow;
 use crate::auth::find_account_by_id;
 use crate::federation::RemoteActorProfile;
 use crate::relationship::{count_followers_by_actor, is_blocking_actor};
 use crate::statuses::find_local_status_by_object_uri;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution};
+use cfwdon_domain::{QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus};
 use worker::{Error, Result};
 
 pub(super) async fn resolve_remote_quote_resolution(
@@ -44,8 +43,8 @@ pub(super) async fn resolve_remote_quote_resolution(
 
 pub(crate) async fn clear_remote_status_quote(
     db: &D1Database,
-    status: &RemoteStatusRow,
-) -> Result<RemoteStatusRow> {
+    status: &RemoteStatus,
+) -> Result<RemoteStatus> {
     update_remote_status_quote_state(
         db,
         &status.id,
@@ -58,7 +57,7 @@ pub(crate) async fn update_remote_status_quote_state(
     db: &D1Database,
     status_id: &str,
     quote_state: QuoteState,
-) -> Result<RemoteStatusRow> {
+) -> Result<RemoteStatus> {
     let bindings = remote_status_quote_state_update_bindings(quote_state.as_str(), status_id);
     db.prepare(
         "UPDATE remote_statuses

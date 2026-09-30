@@ -1,5 +1,5 @@
 use super::{
-    LocalAccount, StatusMediaAttributeRequest, StatusRow, build_loaded_local_status_response,
+    LocalAccount, StatusMediaAttributeRequest, build_loaded_local_status_response,
     build_local_status_response, insert_status_edit_snapshot, load_local_status_response_preload,
     normalize_status_history_entry, preload_status_counts, preload_status_quote_counts,
     replace_status_poll, update_local_status,
@@ -17,12 +17,12 @@ use crate::stream_hub_publish::publish_local_status_update_stream_fanout_soft;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::PollDraft;
+use cfwdon_domain::{LocalStatus, PollDraft};
 use worker::{Env, Result, console_error};
 
 pub(crate) struct UpdateLocalStatusInput<'a> {
     pub(crate) account: &'a LocalAccount,
-    pub(crate) status: &'a StatusRow,
+    pub(crate) status: &'a LocalStatus,
     pub(crate) current_media: Vec<MediaAttachmentRow>,
     pub(crate) current_in_reply_to_account_id: Option<String>,
     pub(crate) next_text: &'a str,

@@ -9,10 +9,10 @@ use crate::domain_blocks::{
     list_all_account_domain_blocks,
 };
 use crate::relationship::load_remote_actor_delivery_inbox;
-use crate::statuses::{StatusRow, local_status_target_uri};
+use crate::statuses::local_status_target_uri;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, Visibility};
+use cfwdon_domain::{LocalAccount, LocalStatus, Visibility};
 use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{Error, Result};
@@ -262,7 +262,7 @@ pub(crate) async fn enqueue_status_update_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let payload_json = build_status_update_activity(db, config, account, status).await?;
     let blocked_domains = list_all_account_domain_blocks(db, account.id()).await?;
@@ -342,7 +342,7 @@ pub(crate) async fn enqueue_add_featured_status_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
@@ -365,7 +365,7 @@ pub(crate) async fn enqueue_remove_featured_status_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());

@@ -76,13 +76,12 @@ use crate::polls::validate_poll_vote_submission;
 use crate::profile::activitypub_profile_attachments;
 use crate::remote::{
     RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow,
-    RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
-    build_poll_vote_activity_with_ids, effective_remote_status_quote_state,
-    extract_remote_poll_draft, optimistic_remote_poll_vote_deltas,
-    remap_remote_poll_vote_positions, remote_poll_draft_acknowledges_local_snapshot,
-    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers,
+    RemoteStatusPollRow, RemoteStatusPollVoteRow, build_poll_vote_activity_with_ids,
+    effective_remote_status_quote_state, extract_remote_poll_draft,
+    optimistic_remote_poll_vote_deltas, remap_remote_poll_vote_positions,
+    remote_poll_draft_acknowledges_local_snapshot, remote_poll_draft_acknowledges_vote,
+    remote_poll_should_refresh, remote_status_targets_local_viewer,
+    remote_status_targets_local_viewer_account, remote_status_targets_local_viewer_followers,
 };
 use crate::request_utils::{
     build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
@@ -109,7 +108,7 @@ use crate::search::{
     status_search_rank, text_mentions_search_library_viewer,
 };
 use crate::statuses::{
-    AccountStatusesQuery, CreateStatusPollRequest, StatusRow, TranslationProviderLanguageRow,
+    AccountStatusesQuery, CreateStatusPollRequest, TranslationProviderLanguageRow,
     apply_html_preview_metadata, build_deepl_translation_languages_document,
     build_remote_status_card_value, build_status_card_value, build_translation_document,
     build_translation_document_for_language, build_translation_languages_document,
@@ -135,8 +134,8 @@ use crate::timelines::{
 use base64::Engine;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, ProfileField,
-    QuoteState, SoftwareInfo, StatusDraft, Visibility,
+    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, LocalStatus,
+    ProfileField, QuoteState, RemoteStatus, SoftwareInfo, StatusDraft, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use url::Url;
@@ -3952,7 +3951,7 @@ fn extract_account_handles_from_text_keeps_remote_mentions() {
 fn build_activitypub_delete_uses_status_audience_and_object_id() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test");
     let account = actor_fixture_account();
-    let status = StatusRow {
+    let status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: account.id().to_owned(),
         ap_id: None,
@@ -3993,7 +3992,7 @@ fn build_activitypub_delete_uses_status_audience_and_object_id() {
 
 #[test]
 fn effective_local_quote_approval_defaults_to_public() {
-    let status = StatusRow {
+    let status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: None,
@@ -4020,7 +4019,7 @@ fn effective_local_quote_approval_defaults_to_public() {
 
 #[test]
 fn effective_local_quote_approval_forces_private_status_to_nobody() {
-    let status = StatusRow {
+    let status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: None,
@@ -4119,7 +4118,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
     use cfwdon_domain::QuoteState;
 
     fn remote_quote_state_for_local_target(
-        status: &StatusRow,
+        status: &LocalStatus,
         remote_actor_follows_owner: bool,
         blocked_by_owner: bool,
     ) -> &'static str {
@@ -4131,7 +4130,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
         .as_str()
     }
 
-    let mut status = StatusRow {
+    let mut status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: None,
@@ -4188,7 +4187,7 @@ fn remote_quote_state_for_local_target_matches_policy_rules() {
 
 #[test]
 fn effective_status_quote_state_defaults_to_accepted_without_quote() {
-    let status = StatusRow {
+    let status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: None,
@@ -4216,7 +4215,7 @@ fn effective_status_quote_state_defaults_to_accepted_without_quote() {
 
 #[test]
 fn status_has_active_quote_depends_on_quote_state() {
-    let mut status = StatusRow {
+    let mut status = LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: None,
@@ -4303,7 +4302,7 @@ fn local_status_allows_viewer_opens_direct_to_participants_only() {
 #[test]
 fn local_quote_revoke_allowed_requires_quote_author_and_active_quote() {
     let target_uri = "https://social.example/users/bob/statuses/target-1";
-    let mut quote = StatusRow {
+    let mut quote = LocalStatus {
         id: "quote-1".to_owned(),
         account_id: "alice".to_owned(),
         ap_id: Some("https://social.example/users/alice/statuses/quote-1".to_owned()),
@@ -4339,7 +4338,7 @@ fn local_quote_revoke_allowed_requires_quote_author_and_active_quote() {
 
 #[test]
 fn remote_status_quote_helpers_follow_quote_state() {
-    let mut status = RemoteStatusRow {
+    let mut status = RemoteStatus {
         id: "remote-1".to_owned(),
         actor_uri: "https://remote.example/users/bob".to_owned(),
         object_uri: "https://remote.example/users/bob/statuses/1".to_owned(),

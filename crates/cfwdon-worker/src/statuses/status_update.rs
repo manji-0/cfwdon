@@ -1,13 +1,13 @@
 use super::{
-    StatusRow, build_status_card_value, delete_status_poll, insert_status_poll,
-    replace_local_status_mentions, require_status_by_id,
+    build_status_card_value, delete_status_poll, insert_status_poll, replace_local_status_mentions,
+    require_status_by_id,
 };
 use crate::background_jobs::{JOB_CARD_UNFURL, card_unfurl_payload, soft_enqueue_background_job};
 use crate::tags::replace_local_status_hashtags;
 use crate::time_html::render_status_html;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::PollDraft;
+use cfwdon_domain::{LocalStatus, PollDraft};
 use worker::Result;
 use worker::d1::D1Type;
 
@@ -58,13 +58,13 @@ fn local_status_quote_policy_update_bindings<'a>(
 pub(crate) async fn update_local_status(
     db: &D1Database,
     config: &AppConfig,
-    status: &StatusRow,
+    status: &LocalStatus,
     text: &str,
     spoiler_text: &str,
     sensitive: bool,
     language: Option<&str>,
     updated_at: &str,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     let content_html = render_status_html(text);
     let card_json =
         build_status_card_value(text).and_then(|value| serde_json::to_string(&value).ok());
@@ -113,10 +113,10 @@ pub(crate) async fn update_local_status(
 
 pub(crate) async fn update_local_status_quote_approval_policy(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     quote_approval_policy: &str,
     updated_at: &str,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     let bindings =
         local_status_quote_policy_update_bindings(quote_approval_policy, updated_at, &status.id);
     db.prepare(
@@ -146,10 +146,10 @@ fn local_status_quote_state_update_bindings<'a>(
 
 pub(crate) async fn update_local_status_quote_state(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     quote_state: cfwdon_domain::QuoteState,
     updated_at: &str,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     let bindings = local_status_quote_state_update_bindings(
         quote_state.as_str(),
         updated_at,
@@ -170,9 +170,9 @@ pub(crate) async fn update_local_status_quote_state(
 
 pub(crate) async fn clear_local_status_quote(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     updated_at: &str,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     update_local_status_quote_state(
         db,
         status,

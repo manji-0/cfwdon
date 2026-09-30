@@ -1,6 +1,7 @@
 use crate::db_utils::d1_results;
-use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::statuses::statuses_from_records;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, LocalStatusRecord};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
@@ -37,7 +38,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
     let result = db
         .prepare(
@@ -57,7 +58,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
         .all()
         .await?;
 
-    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_status_notifications_for_account(

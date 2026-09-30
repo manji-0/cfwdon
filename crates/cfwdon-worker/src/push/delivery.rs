@@ -7,11 +7,12 @@ use crate::notifications::{
 };
 use crate::push::{load_push_subscription, push_subscription_alert_enabled};
 use crate::statuses::{
-    StatusRow, find_local_status_by_object_uri, find_status_by_id, local_status_target_uri,
+    find_local_status_by_object_uri, find_status_by_id, local_status_target_uri,
 };
 use crate::tracked_d1::D1Database;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalStatus;
 use js_sys::Uint8Array;
 use serde::Deserialize;
 use serde_json::json;
@@ -98,7 +99,7 @@ async fn publish_local_status_update_stream_notifications_soft(
     env: Option<&Env>,
     db: &D1Database,
     config: &AppConfig,
-    status: &StatusRow,
+    status: &LocalStatus,
     reblog_recipient_ids: &[String],
     quote_recipient_ids: &[String],
 ) {
@@ -318,7 +319,7 @@ pub(crate) async fn send_push_notification(
 pub(crate) async fn send_status_quote_notification(
     db: &D1Database,
     config: &AppConfig,
-    quote_status: &StatusRow,
+    quote_status: &LocalStatus,
 ) -> Result<()> {
     let Some(quote_of_uri) = quote_status.quote_of_uri.as_deref() else {
         return Ok(());
@@ -384,7 +385,7 @@ pub(crate) async fn send_status_update_notifications(
     db: &D1Database,
     config: &AppConfig,
     env: Option<&Env>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let bindings = [worker::d1::D1Type::Text(status.id.as_str())];
     let reblog_accounts = load_account_ids(

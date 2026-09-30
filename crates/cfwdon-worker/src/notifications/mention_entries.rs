@@ -8,17 +8,19 @@ use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };
-use crate::remote::{RemoteStatusRow, remote_status_from_record};
+use crate::remote::remote_status_from_record;
 use crate::responses::MastodonAccountResponse;
-use crate::statuses::{StatusRow, can_view_local_status};
+use crate::statuses::can_view_local_status;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, QuoteState, RemoteStatusRecord, Visibility};
+use cfwdon_domain::{
+    LocalAccount, LocalStatus, QuoteState, RemoteStatus, RemoteStatusRecord, Visibility,
+};
 use worker::Result;
-fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow> {
+fn local_mention_status_row(mention: MentionNotificationRow) -> Option<LocalStatus> {
     let visibility = Visibility::parse(&mention.visibility).ok()?;
     let quote_state = QuoteState::parse(&mention.quote_state).ok()?;
-    Some(StatusRow {
+    Some(LocalStatus {
         id: mention.id,
         account_id: mention.account_id.clone(),
         ap_id: mention.ap_id,
@@ -41,7 +43,7 @@ fn local_mention_status_row(mention: MentionNotificationRow) -> Option<StatusRow
     })
 }
 
-fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<RemoteStatusRow> {
+fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<RemoteStatus> {
     remote_status_from_record(RemoteStatusRecord {
         id: mention.id,
         actor_uri: mention.actor_uri.clone(),

@@ -14,9 +14,10 @@ use crate::response::{
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{
-    StatusRow, find_status_by_id, load_local_status_response_preload, local_status_target_uri,
+    find_status_by_id, load_local_status_response_preload, local_status_target_uri,
 };
 use crate::time_html::escape_html;
+use cfwdon_domain::LocalStatus;
 use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn status_object_response(
@@ -161,7 +162,7 @@ pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {
 pub(super) fn status_object_html_response(
     config: &cfwdon_core::AppConfig,
     account: &cfwdon_domain::LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     attachments: &[MediaAttachmentRow],
 ) -> Result<Response> {
     let title_text = strip_html_tags(&status.content_html);

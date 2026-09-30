@@ -12,14 +12,14 @@ use crate::media::{
 };
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusRow, find_remote_actors_by_actor_uris, preload_remote_mastodon_poll_responses,
+    find_remote_actors_by_actor_uris, preload_remote_mastodon_poll_responses,
     preload_remote_status_edit_updated_at,
 };
 use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, StatusRow, build_local_status_response_with_timeline_preloads,
+    StatusQuoteCountsPreload, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, load_in_reply_to_account_ids,
     preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
     preload_remote_status_viewer_state, preload_status_applications,
@@ -27,7 +27,7 @@ use crate::statuses::{
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
 
@@ -76,7 +76,7 @@ impl NotificationStatusPreloads {
         db: &D1Database,
         config: &AppConfig,
         viewer: &LocalAccount,
-        status: &StatusRow,
+        status: &LocalStatus,
         account: &LocalAccount,
         media: Vec<MediaAttachmentRow>,
     ) -> Result<MastodonStatusResponse> {
@@ -106,7 +106,7 @@ impl NotificationStatusPreloads {
         db: &D1Database,
         config: &AppConfig,
         viewer: &LocalAccount,
-        status: &RemoteStatusRow,
+        status: &RemoteStatus,
         actor: &RemoteActorRow,
         media: Vec<RemoteStatusAttachmentRow>,
     ) -> Result<MastodonStatusResponse> {
@@ -167,8 +167,8 @@ fn empty_notification_status_preloads(config: &AppConfig) -> NotificationStatusP
 }
 
 fn plan_notification_status_preloads(
-    local_statuses: &[StatusRow],
-    remote_statuses: &[RemoteStatusRow],
+    local_statuses: &[LocalStatus],
+    remote_statuses: &[RemoteStatus],
     additional_local_account_ids: &[String],
     additional_remote_actor_uris: &[String],
 ) -> NotificationPreloadPlan {
@@ -246,8 +246,8 @@ async fn load_notification_entity_preloads(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    local_statuses: &[StatusRow],
-    remote_statuses: &[RemoteStatusRow],
+    local_statuses: &[LocalStatus],
+    remote_statuses: &[RemoteStatus],
     plan: &NotificationPreloadPlan,
 ) -> Result<NotificationEntityPreloads> {
     let local_status_refs = local_statuses.iter().collect::<Vec<_>>();
@@ -316,8 +316,8 @@ async fn load_notification_entity_preloads(
 
 fn collect_notification_quote_uris(
     config: &AppConfig,
-    local_statuses: &[StatusRow],
-    remote_statuses: &[RemoteStatusRow],
+    local_statuses: &[LocalStatus],
+    remote_statuses: &[RemoteStatus],
     local_accounts_by_id: &HashMap<String, LocalAccount>,
 ) -> Vec<String> {
     let mut quote_uris = remote_statuses
@@ -334,9 +334,9 @@ fn collect_notification_quote_uris(
 
 fn collect_notification_actor_uris(
     config: &AppConfig,
-    local_statuses: &[StatusRow],
+    local_statuses: &[LocalStatus],
     additional_local_account_ids: &[String],
-    remote_statuses: &[RemoteStatusRow],
+    remote_statuses: &[RemoteStatus],
     additional_remote_actor_uris: &[String],
     local_accounts_by_id: &HashMap<String, LocalAccount>,
 ) -> Vec<String> {
@@ -370,8 +370,8 @@ pub(crate) async fn preload_notification_statuses(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    local_statuses: &[StatusRow],
-    remote_statuses: &[RemoteStatusRow],
+    local_statuses: &[LocalStatus],
+    remote_statuses: &[RemoteStatus],
     additional_local_account_ids: &[String],
     additional_remote_actor_uris: &[String],
 ) -> Result<NotificationStatusPreloads> {
@@ -449,7 +449,7 @@ pub(crate) async fn preload_notification_statuses(
 
 fn local_status_quote_count_uri(
     config: &AppConfig,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
 ) -> String {
     status.ap_id.clone().unwrap_or_else(|| {
@@ -532,8 +532,8 @@ mod tests {
         LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", username))
     }
 
-    fn test_local_status(ap_id: Option<String>) -> StatusRow {
-        StatusRow {
+    fn test_local_status(ap_id: Option<String>) -> LocalStatus {
+        LocalStatus {
             id: "status-1".to_owned(),
             account_id: "acct-1".to_owned(),
             ap_id,

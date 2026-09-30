@@ -1,9 +1,8 @@
-use crate::accounts::AccountRow;
 use crate::db_utils::{d1_results, sql_placeholders, unique_ordered_refs};
 use crate::relationship::{FollowerTargetRow, UsernameRow};
 use crate::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::Result;
@@ -191,7 +190,7 @@ pub(crate) async fn list_local_follower_accounts_for_remote_actor(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    let rows = d1_results::<AccountRow>(&result)?;
+    let rows = d1_results::<LocalAccountRecord>(&result)?;
     Ok(rows.into_iter().map(LocalAccount::from_record).collect())
 }
 
@@ -258,7 +257,7 @@ pub(crate) async fn list_familiar_local_accounts_for_local_target(
         .all()
         .await?;
 
-    Ok(d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -326,7 +325,7 @@ pub(crate) async fn list_familiar_local_accounts_for_remote_target(
         .all()
         .await?;
 
-    Ok(d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())

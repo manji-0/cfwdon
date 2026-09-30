@@ -1,7 +1,6 @@
-use crate::accounts::AccountRow;
 use crate::db_utils::d1_results;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
@@ -129,7 +128,7 @@ pub(crate) async fn list_admin_sign_up_notifications(
         .all()
         .await?;
 
-    Ok(d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())

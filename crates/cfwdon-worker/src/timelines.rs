@@ -1,3 +1,4 @@
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 mod candidate_render;
 mod cursor_sql;
 mod direct_timeline;
@@ -21,12 +22,12 @@ use crate::media::{
 };
 use crate::remote::{
     RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
-    RemoteStatusRow, find_remote_statuses_by_url_or_object_uris,
-    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+    find_remote_statuses_by_url_or_object_uris, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at,
 };
 use crate::statuses::{
     BoostTarget, BoostTargetPreload, LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, StatusRow, build_status_card_value,
+    StatusCountsPreload, StatusQuoteCountsPreload, build_status_card_value,
     find_statuses_by_ap_ids, find_statuses_by_ids, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses, local_status_ids_thread_muted_by,
     preload_local_status_viewer_state, preload_remote_status_viewer_state,
@@ -138,11 +139,11 @@ type TimelineEntry = (String, String, serde_json::Value);
 
 enum PublicTimelineCandidate {
     Local {
-        status: StatusRow,
+        status: LocalStatus,
         media: Vec<MediaAttachmentRow>,
     },
     Remote {
-        status: RemoteStatusRow,
+        status: RemoteStatus,
         actor: RemoteActorRow,
     },
 }
@@ -160,12 +161,12 @@ struct PublicTimelineCandidateEntry {
 /// concurrently rather than one await at a time.
 enum PreparedTimelineCandidate<'a> {
     Local {
-        status: StatusRow,
+        status: LocalStatus,
         media: Vec<MediaAttachmentRow>,
         account: &'a cfwdon_domain::LocalAccount,
     },
     Remote {
-        status: RemoteStatusRow,
+        status: RemoteStatus,
         actor: RemoteActorRow,
         attachments: Vec<RemoteStatusAttachmentRow>,
     },
@@ -236,7 +237,7 @@ async fn muted_local_timeline_status_ids(
     db: &D1Database,
     viewer_account_id: &str,
     viewer_has_thread_mutes: bool,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<HashSet<String>> {
     if !viewer_has_thread_mutes || statuses.is_empty() {
         return Ok(HashSet::new());
@@ -398,13 +399,13 @@ async fn preload_remote_in_reply_to_status_ids(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     candidates: &[PublicTimelineCandidateEntry],
-    extra_statuses: &[&RemoteStatusRow],
+    extra_statuses: &[&RemoteStatus],
 ) -> Result<HashMap<String, Option<String>>> {
     let mut uri_by_status_id = HashMap::new();
     let mut uris = Vec::new();
     let mut seen_uris = HashSet::new();
 
-    let mut push_status = |status: &RemoteStatusRow| {
+    let mut push_status = |status: &RemoteStatus| {
         uri_by_status_id
             .entry(status.id.clone())
             .or_insert_with(|| status.in_reply_to_uri.clone());
@@ -512,7 +513,7 @@ struct BoostTargetPreloadIds {
     remote_ids: Vec<String>,
     remote_actor_uris: Vec<String>,
     remote_quote_uris: Vec<String>,
-    remote_statuses: Vec<RemoteStatusRow>,
+    remote_statuses: Vec<RemoteStatus>,
 }
 
 fn collect_boost_target_preload_ids(boost_targets: &BoostTargetPreload) -> BoostTargetPreloadIds {
@@ -543,7 +544,7 @@ fn collect_boost_target_preload_ids(boost_targets: &BoostTargetPreload) -> Boost
 
 fn local_status_quote_count_uri(
     config: &cfwdon_core::AppConfig,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &cfwdon_domain::LocalAccount,
 ) -> String {
     status.ap_id.clone().unwrap_or_else(|| {
@@ -557,7 +558,7 @@ fn local_status_quote_count_uri(
 
 async fn preload_local_timeline_rows(
     db: &D1Database,
-    statuses: &[StatusRow],
+    statuses: &[LocalStatus],
 ) -> Result<LocalTimelinePreload> {
     let account_ids = statuses
         .iter()
@@ -576,7 +577,7 @@ async fn preload_local_timeline_rows(
 
 async fn preload_local_timeline_rows_from_status_refs(
     db: &D1Database,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<LocalTimelinePreload> {
     let account_ids = statuses
         .iter()
@@ -596,7 +597,7 @@ async fn preload_local_timeline_rows_from_status_refs(
 fn local_status_actor_uri(
     config: &cfwdon_core::AppConfig,
     accounts_by_id: &HashMap<String, cfwdon_domain::LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Option<String> {
     accounts_by_id
         .get(&status.account_id)
@@ -606,7 +607,7 @@ fn local_status_actor_uri(
 async fn remote_media_status_ids_for_filter(
     db: &D1Database,
     only_media: bool,
-    statuses: &[(RemoteStatusRow, RemoteActorRow)],
+    statuses: &[(RemoteStatus, RemoteActorRow)],
 ) -> Result<HashSet<String>> {
     if !only_media {
         return Ok(HashSet::new());
@@ -797,8 +798,8 @@ mod tests {
         status_card_url_matches_targets, timeline_page_response,
         timeline_request_requires_authorization, timeline_source_requires_authorization,
     };
-    use crate::statuses::StatusRow;
     use cfwdon_core::TimelineAccessLevel;
+    use cfwdon_domain::LocalStatus;
     use std::collections::HashSet;
 
     fn timeline_test_entry(created_at: &str, id: &str) -> super::TimelineEntry {
@@ -817,7 +818,7 @@ mod tests {
             timestamp: created_at.to_owned(),
             id: id.to_owned(),
             candidate: PublicTimelineCandidate::Local {
-                status: StatusRow {
+                status: LocalStatus {
                     id: id.to_owned(),
                     account_id: "account".to_owned(),
                     ap_id: None,

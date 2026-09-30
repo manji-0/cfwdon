@@ -1,12 +1,11 @@
 use crate::identity::{instance_base_url, instance_host};
 use crate::response::MastodonTagHistoryEntry;
-use crate::statuses::StatusRow;
 use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::AccountHandle;
+use cfwdon_domain::{AccountHandle, LocalStatus};
 use std::collections::HashSet;
 
-pub(crate) fn status_contains_tag(status: &StatusRow, tag: &str) -> bool {
+pub(crate) fn status_contains_tag(status: &LocalStatus, tag: &str) -> bool {
     let normalized_tag = tag.trim().trim_start_matches('#').to_ascii_lowercase();
     if normalized_tag.is_empty() {
         return true;

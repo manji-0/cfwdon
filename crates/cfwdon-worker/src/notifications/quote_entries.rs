@@ -10,10 +10,10 @@ use crate::notifications::{
     notification_type_allowed,
 };
 use crate::responses::MastodonAccountResponse;
-use crate::statuses::{StatusRow, can_view_local_status};
+use crate::statuses::can_view_local_status;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::Result;
 pub(crate) async fn collect_quote_notification_entries(
     entries: &mut Vec<NotificationEntry>,
@@ -204,8 +204,8 @@ pub(crate) async fn collect_quoted_update_notification_entries(
 
 use cfwdon_domain::{QuoteState, Visibility};
 
-fn quoted_update_status_row(update: &QuotedUpdateNotificationRow) -> StatusRow {
-    StatusRow {
+fn quoted_update_status_row(update: &QuotedUpdateNotificationRow) -> LocalStatus {
+    LocalStatus {
         id: update.id.clone(),
         account_id: update.account_id.clone(),
         ap_id: update.ap_id.clone(),

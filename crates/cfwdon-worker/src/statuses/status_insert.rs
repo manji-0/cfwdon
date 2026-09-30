@@ -1,6 +1,6 @@
 use super::{
-    StatusRecord, StatusRow, build_status_card_value, find_local_status_by_object_uri,
-    replace_local_status_mentions, require_status_by_id, status_from_record,
+    build_status_card_value, find_local_status_by_object_uri, replace_local_status_mentions,
+    require_status_by_id, status_from_record,
 };
 use crate::background_jobs::{JOB_CARD_UNFURL, card_unfurl_payload, soft_enqueue_background_job};
 use crate::delivery::{
@@ -14,9 +14,9 @@ use crate::time_html::{add_seconds_to_iso_string, now_iso_string, render_status_
 use crate::tracked_d1::{D1Database, D1PreparedStatement};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    LocalAccount, LocalReblogPersistenceFacts, LocalStatus, LocalStatusPersistenceFacts, PollDraft,
-    QuoteTargetResolution, StatusDraft, StoredLocalReblogIntent, StoredLocalStatusIntent,
-    Visibility,
+    LocalAccount, LocalReblogPersistenceFacts, LocalStatus, LocalStatusPersistenceFacts,
+    LocalStatusRecord, PollDraft, QuoteTargetResolution, StatusDraft, StoredLocalReblogIntent,
+    StoredLocalStatusIntent, Visibility,
 };
 use worker::Result;
 use worker::d1::D1Type;
@@ -44,7 +44,7 @@ pub(crate) async fn insert_status(
     quote_of_uri: Option<&str>,
     defer_outbox: bool,
     in_reply_to_account_id: Option<String>,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     let quote_resolution = quote_target_resolution(db, config, quote_of_uri).await?;
     let publish_intent = draft
         .clone()
@@ -231,7 +231,7 @@ pub(crate) async fn upsert_reblog_wrapper_status(
     account: &LocalAccount,
     target_uri: &str,
     visibility: &str,
-) -> Result<StatusRow> {
+) -> Result<LocalStatus> {
     if let Some(existing) =
         find_reblog_wrapper_status_by_target_uri(db, account.id(), target_uri).await?
     {
@@ -353,7 +353,7 @@ pub(crate) async fn find_reblog_wrapper_status_by_target_uri(
     db: &D1Database,
     account_id: &str,
     target_uri: &str,
-) -> Result<Option<StatusRow>> {
+) -> Result<Option<LocalStatus>> {
     let bindings = reblog_wrapper_status_target_bindings(account_id, target_uri);
     db.prepare(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, created_at
@@ -364,7 +364,7 @@ pub(crate) async fn find_reblog_wrapper_status_by_target_uri(
          LIMIT 1",
     )
     .bind_refs(bindings.iter())?
-    .first::<StatusRecord>(None)
+    .first::<LocalStatusRecord>(None)
     .await
     .and_then(|row| row.map(status_from_record).transpose())
 }
