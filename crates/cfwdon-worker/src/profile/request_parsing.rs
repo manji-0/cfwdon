@@ -1,9 +1,9 @@
 use super::ProfileMediaUpload;
 use crate::custom_emojis::sanitize_emoji_shortcodes;
-use crate::media::{MediaKind, classify_media_kind};
 use crate::request_utils::parse_optional_bool;
 use crate::runtime_config::MAX_IMAGE_UPLOAD_BYTES;
 use crate::statuses::normalize_quote_approval_policy;
+use crate::store::media::{MediaKind, classify_media_kind};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde::de::Deserializer;

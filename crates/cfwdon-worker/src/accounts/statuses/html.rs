@@ -2,9 +2,10 @@ use crate::activitypub::local_status_ap_id;
 use crate::content_helpers::{
     sanitize_remote_http_url, sanitize_remote_status_html, strip_html_tags,
 };
-use crate::media::{MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind};
+use crate::media::RemoteStatusAttachmentRow;
 use crate::remote::RemoteActorRow;
 use crate::response::media_attachment_url;
+use crate::store::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
 use crate::time_html::escape_html;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};

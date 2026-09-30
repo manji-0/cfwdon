@@ -3,7 +3,10 @@ use crate::delivery::{
     enqueue_addressed_create_activity, enqueue_direct_create_activity,
     outbox_create_insert_statement_with_attachments,
 };
-use crate::media::{MediaAttachmentRow, OrphanMediaRow, UpdateMediaRequest, parse_media_focus};
+use crate::media::{UpdateMediaRequest, parse_media_focus};
+use crate::store::media::{
+    MediaAttachmentRow, OrphanMediaRow, find_media_attachment_by_id, require_media_attachment_by_id,
+};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
@@ -24,31 +27,6 @@ pub(crate) struct RemoteStatusAttachmentRow {
     pub(crate) width: Option<u32>,
     pub(crate) height: Option<u32>,
     pub(crate) created_at: String,
-}
-
-pub(crate) async fn require_media_attachment_by_id(
-    db: &D1Database,
-    media_id: &str,
-) -> Result<MediaAttachmentRow> {
-    find_media_attachment_by_id(db, media_id)
-        .await?
-        .ok_or_else(|| Error::RustError("media attachment not found".to_owned()))
-}
-
-pub(crate) async fn find_media_attachment_by_id(
-    db: &D1Database,
-    media_id: &str,
-) -> Result<Option<MediaAttachmentRow>> {
-    let media_id = D1Type::Text(media_id);
-    db.prepare(
-        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
-         FROM media_attachments
-         WHERE id = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&media_id)?
-    .first::<MediaAttachmentRow>(None)
-    .await
 }
 
 pub(crate) async fn apply_media_update(
@@ -341,19 +319,6 @@ pub(crate) async fn list_orphan_media(
         .await?;
 
     d1_results::<OrphanMediaRow>(&result)
-}
-
-pub(crate) async fn delete_media_attachment_row(db: &D1Database, media_id: &str) -> Result<()> {
-    let media_id = D1Type::Text(media_id);
-    db.prepare(
-        "DELETE FROM media_attachments
-         WHERE id = ?1",
-    )
-    .bind_refs(&media_id)?
-    .run()
-    .await?;
-
-    Ok(())
 }
 
 pub(crate) async fn resolve_attachable_media(

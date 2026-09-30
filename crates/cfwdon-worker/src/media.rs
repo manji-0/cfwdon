@@ -1,41 +1,21 @@
 use crate::auth::find_authenticated_local_account;
 use crate::response::{MastodonMediaAttachmentResponse, media_object_url};
+use crate::store::media::{
+    delete_media_attachment_row, delete_orphan_media, delete_queued_media,
+    find_media_attachment_by_id, log_r2_operation, store_media_attachment,
+};
 use worker::{Error, Request, Response, Result, RouteContext};
 mod attachment_store;
 mod request_parsing;
-mod storage;
 
 use crate::db_session::bind_request_d1;
 use crate::observability::observability_started_at_ms;
 use crate::runtime_config::load_config;
+use crate::store::media::delete_r2_object;
 pub(crate) use attachment_store::*;
 pub(crate) use request_parsing::*;
 use serde::{Deserialize, Serialize};
-pub(crate) use storage::{delete_r2_object, *};
 use url::Url;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MediaKind {
-    Image,
-    Video,
-    Audio,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(crate) struct MediaAttachmentRow {
-    pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) status_id: Option<String>,
-    pub(crate) object_key: String,
-    pub(crate) content_type: String,
-    pub(crate) description: String,
-    pub(crate) focus_x: Option<f64>,
-    pub(crate) focus_y: Option<f64>,
-    pub(crate) width: Option<u32>,
-    pub(crate) height: Option<u32>,
-    #[serde(rename = "created_at")]
-    pub(crate) _created_at: String,
-}
 
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct OrphanMediaPruneResponse {
@@ -46,12 +26,6 @@ pub(crate) struct OrphanMediaPruneResponse {
 pub(crate) struct UpdateMediaRequest {
     pub(crate) description: Option<String>,
     pub(crate) focus: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct OrphanMediaRow {
-    pub(crate) id: String,
-    pub(crate) object_key: String,
 }
 
 pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> Result<Response> {

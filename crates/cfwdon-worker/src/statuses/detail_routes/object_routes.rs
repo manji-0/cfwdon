@@ -6,7 +6,6 @@ use crate::auth::find_account_by_username;
 use crate::content_helpers::strip_html_tags;
 use crate::db_session::bind_request_d1;
 use crate::identity::instance_base_url;
-use crate::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
 use crate::remote::find_remote_status_by_id;
 use crate::response::media_attachment_url;
 use crate::response_utils::{
@@ -16,6 +15,7 @@ use crate::runtime_config::load_config;
 use crate::statuses::{
     find_status_by_id, load_local_status_response_preload, local_status_target_uri,
 };
+use crate::store::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
 use crate::time_html::escape_html;
 use cfwdon_domain::LocalStatus;
 use worker::{Error, Request, Response, Result, RouteContext};

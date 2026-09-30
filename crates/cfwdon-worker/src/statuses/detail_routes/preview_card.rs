@@ -1,4 +1,5 @@
-use crate::media::{RemoteStatusAttachmentRow, classify_media_kind};
+use crate::media::RemoteStatusAttachmentRow;
+use crate::store::media::classify_media_kind;
 use url::Url;
 
 pub(crate) fn first_url_from_text(text: &str) -> Option<String> {

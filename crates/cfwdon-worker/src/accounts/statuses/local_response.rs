@@ -5,7 +5,7 @@ use crate::activitypub::local_status_ap_id;
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
-use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_ids};
+use crate::media::find_media_attachments_by_status_ids;
 use crate::relationship::is_local_follower_authorized;
 use crate::statuses::{
     AccountStatusVisibilityScope, AccountStatusesQuery, LocalStatusViewerStatePreload,
@@ -15,6 +15,7 @@ use crate::statuses::{
     load_in_reply_to_account_ids, preload_local_status_viewer_state, preload_status_applications,
     preload_status_counts, preload_status_quote_counts,
 };
+use crate::store::media::MediaAttachmentRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};

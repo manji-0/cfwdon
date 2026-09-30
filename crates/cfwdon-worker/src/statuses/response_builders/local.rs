@@ -11,9 +11,9 @@ use super::super::{
 };
 use crate::filters::AccountFilterMatcher;
 use crate::local_polls::MastodonPollResponsePreload;
-use crate::media::MediaAttachmentRow;
 use crate::response::LocalStatusResponseDetails;
 use crate::responses::MastodonStatusResponse;
+use crate::store::media::MediaAttachmentRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalStatus;

@@ -1,4 +1,5 @@
 use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
+use crate::store::media::MediaAttachmentRow;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 mod candidate_render;
 mod cursor_sql;
@@ -18,7 +19,7 @@ use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{
-    MediaAttachmentRow, RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_ids, find_remote_status_ids_with_media,
 };
 use crate::remote::{

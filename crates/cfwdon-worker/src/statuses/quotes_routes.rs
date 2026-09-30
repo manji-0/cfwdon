@@ -24,7 +24,7 @@ use crate::delivery::{
 };
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{
-    MediaAttachmentRow, RemoteStatusAttachmentRow, find_media_attachments_by_status_id,
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_id,
     find_media_attachments_by_status_ids, find_remote_status_attachments_by_status_ids,
 };
 use crate::remote::{
@@ -38,6 +38,7 @@ use crate::statuses::{
     LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, ResolvedStatus,
     StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, statuses_from_records,
 };
+use crate::store::media::MediaAttachmentRow;
 use crate::time_html::now_iso_string;
 use crate::timelines::{
     ResolvedTimelineCursor, TimelinePaginationQuery, append_resolved_timeline_cursor_bindings,

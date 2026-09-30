@@ -1,6 +1,6 @@
 use super::ScheduledStatus;
-use crate::media::find_media_attachment_by_id;
 use crate::response::MastodonMediaAttachmentResponse;
+use crate::store::media::find_media_attachment_by_id;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::StatusDraft;

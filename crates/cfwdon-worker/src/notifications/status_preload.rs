@@ -7,7 +7,7 @@ use crate::db_utils::d1_results;
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{
-    MediaAttachmentRow, RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_ids,
 };
 use crate::remote::{
@@ -25,6 +25,7 @@ use crate::statuses::{
     preload_remote_status_viewer_state, preload_status_applications,
     preload_status_counts_for_remote_rows, preload_status_quote_counts,
 };
+use crate::store::media::MediaAttachmentRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
@@ -522,6 +523,7 @@ async fn preload_notification_mutes(
 mod tests {
     use super::*;
     use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
+    use crate::store::media::MediaAttachmentRow;
     use cfwdon_domain::{LocalAccountRecord, QuoteState, Visibility};
 
     fn test_config() -> AppConfig {

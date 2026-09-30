@@ -3,8 +3,8 @@ use super::{
     find_owned_local_status, load_local_status_response_preload,
 };
 use crate::local_polls::load_mastodon_poll_response;
-use crate::media::MediaAttachmentRow;
 use crate::responses::MastodonStatusResponse;
+use crate::store::media::MediaAttachmentRow;
 use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_delete_stream_fanout_soft;
 use crate::tracked_d1::D1Database;

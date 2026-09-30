@@ -7,11 +7,12 @@ use super::{
 use crate::activitypub::local_status_ap_id;
 use crate::delivery::enqueue_status_update_activity;
 use crate::media::{
-    MediaAttachmentRow, UpdateMediaRequest, apply_media_update,
-    find_media_attachments_by_status_id, replace_status_media,
+    UpdateMediaRequest, apply_media_update, find_media_attachments_by_status_id,
+    replace_status_media,
 };
 use crate::push::send_status_update_notifications;
 use crate::responses::MastodonStatusResponse;
+use crate::store::media::MediaAttachmentRow;
 use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_update_stream_fanout_soft;
 use crate::time_html::now_iso_string;

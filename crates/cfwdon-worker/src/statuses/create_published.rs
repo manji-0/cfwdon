@@ -10,7 +10,7 @@ use crate::content_helpers::extract_mentions_from_text;
 use crate::conversation_store::ensure_direct_conversation_for_status;
 use crate::filters::load_account_filter_matcher;
 use crate::local_polls::preload_mastodon_poll_responses;
-use crate::media::{MediaAttachmentRow, attach_media_and_enqueue_outbox};
+use crate::media::attach_media_and_enqueue_outbox;
 use crate::notifications::{
     build_local_status_response_for_recipient_soft, local_status_interaction_notification_id,
     publish_local_actor_notification_soft,
@@ -18,6 +18,7 @@ use crate::notifications::{
 use crate::push::{send_push_notification, send_status_quote_notification};
 use crate::responses::MastodonStatusResponse;
 use crate::statuses::{StatusCountsPreload, StatusQuoteCountsPreload};
+use crate::store::media::MediaAttachmentRow;
 use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::stream_hub_publish::publish_local_status_create_stream_fanout_soft;
 use crate::tracked_d1::D1Database;

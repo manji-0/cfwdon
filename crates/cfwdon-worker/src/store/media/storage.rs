@@ -1,14 +1,10 @@
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::media::{
-    MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow, delete_media_attachment_row,
-    require_media_attachment_by_id,
-};
 use crate::observability::{log_observed_operation, observability_started_at_ms};
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, StoredMediaAttachmentIntent};
 use serde::Deserialize;
-use worker::{Bucket, HttpMetadata, Result, d1::D1Type};
+use worker::{Bucket, Error, HttpMetadata, Result, d1::D1Type};
 
 #[derive(Debug, Deserialize)]
 struct QueuedMediaDeletionRow {
@@ -294,4 +290,81 @@ pub(crate) const fn media_kind_label(kind: MediaKind) -> &'static str {
         MediaKind::Video => "video",
         MediaKind::Audio => "audio",
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MediaKind {
+    Image,
+    Video,
+    Audio,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct MediaAttachmentRow {
+    pub(crate) id: String,
+    pub(crate) account_id: String,
+    pub(crate) status_id: Option<String>,
+    pub(crate) object_key: String,
+    pub(crate) content_type: String,
+    pub(crate) description: String,
+    pub(crate) focus_x: Option<f64>,
+    pub(crate) focus_y: Option<f64>,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+    #[serde(rename = "created_at")]
+    pub(crate) _created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OrphanMediaRow {
+    pub(crate) id: String,
+    pub(crate) object_key: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct MediaUploadDraft {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) content_type: String,
+    pub(crate) description: String,
+    pub(crate) kind: MediaKind,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+}
+
+pub(crate) async fn require_media_attachment_by_id(
+    db: &D1Database,
+    media_id: &str,
+) -> Result<MediaAttachmentRow> {
+    find_media_attachment_by_id(db, media_id)
+        .await?
+        .ok_or_else(|| Error::RustError("media attachment not found".to_owned()))
+}
+
+pub(crate) async fn delete_media_attachment_row(db: &D1Database, media_id: &str) -> Result<()> {
+    let media_id = D1Type::Text(media_id);
+    db.prepare(
+        "DELETE FROM media_attachments
+         WHERE id = ?1",
+    )
+    .bind_refs(&media_id)?
+    .run()
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn find_media_attachment_by_id(
+    db: &D1Database,
+    media_id: &str,
+) -> Result<Option<MediaAttachmentRow>> {
+    let media_id = D1Type::Text(media_id);
+    db.prepare(
+        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
+         FROM media_attachments
+         WHERE id = ?1
+         LIMIT 1",
+    )
+    .bind_refs(&media_id)?
+    .first::<MediaAttachmentRow>(None)
+    .await
 }

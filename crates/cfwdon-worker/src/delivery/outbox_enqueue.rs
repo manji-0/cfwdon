@@ -7,9 +7,9 @@ use crate::domain_blocks::{
     filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
 };
 use crate::identity::actor_url;
-use crate::media::MediaAttachmentRow;
 use crate::relationship::load_remote_actor_delivery_inbox;
 use crate::statuses::status_has_active_quote;
+use crate::store::media::MediaAttachmentRow;
 use crate::time_html::activitypub_datetime_string;
 use crate::tracked_d1::{D1Database, D1PreparedStatement};
 use cfwdon_core::AppConfig;

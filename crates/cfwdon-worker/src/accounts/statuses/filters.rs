@@ -1,4 +1,5 @@
 use crate::content_helpers::status_contains_tag;
+use crate::store::media::MediaAttachmentRow;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 
 use crate::statuses::AccountStatusVisibilityScope;
@@ -6,8 +7,6 @@ use crate::statuses::AccountStatusVisibilityScope;
 use crate::statuses::RemoteAccountStatusListOptions;
 
 use crate::statuses::AccountStatusesQuery;
-
-use crate::media::MediaAttachmentRow;
 
 use crate::statuses::AccountStatusListOptions;
 
@@ -98,6 +97,7 @@ pub(crate) fn remote_status_matches_account_filters(
 mod tests {
     use super::*;
     use crate::statuses::AccountStatusVisibilityScope;
+    use crate::store::media::MediaAttachmentRow;
 
     use cfwdon_domain::{QuoteState, Visibility};
 

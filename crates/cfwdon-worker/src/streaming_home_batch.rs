@@ -6,7 +6,7 @@ use crate::custom_emojis::{
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{
-    MediaAttachmentRow, RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_ids,
 };
 use crate::relationship::list_active_muted_actor_uris_for_account;
@@ -27,6 +27,7 @@ use crate::statuses::{
     preload_status_applications, preload_status_counts_for_remote_rows,
     preload_status_quote_counts,
 };
+use crate::store::media::MediaAttachmentRow;
 use crate::streaming_types::{StreamingBatch, StreamingEntry, streaming_batch_from_entries};
 use crate::tag_actions::list_followed_tag_names;
 use crate::timelines::{

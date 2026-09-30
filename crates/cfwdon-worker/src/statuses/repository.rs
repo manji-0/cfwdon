@@ -4,7 +4,8 @@ use super::{
 };
 use crate::auth::find_account_by_id;
 use crate::identity::remote_account_rest_id;
-use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_id};
+use crate::media::find_media_attachments_by_status_id;
+use crate::store::media::MediaAttachmentRow;
 use cfwdon_domain::LocalStatus;
 use worker::Result;
 

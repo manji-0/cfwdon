@@ -1,11 +1,11 @@
 use crate::auth::find_account_by_id;
 use crate::delivery::enqueue_profile_update_activities;
 use crate::id_utils::generate_entity_id;
-use crate::media::{delete_r2_object, log_r2_operation};
 use crate::observability::observability_started_at_ms;
 use crate::profile::{
     FieldsAttributesUpdate, ProfileMediaUpload, UpdateCredentialsRequest, profile_field_from_update,
 };
+use crate::store::media::{delete_r2_object, log_r2_operation};
 use crate::time_html::render_status_html;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
