@@ -115,7 +115,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       },
       isDirty: () =>
         text !== initialText ||
-        (showCw && spoilerText !== initialSpoilerText) ||
+        (showCw ? spoilerText : "") !== initialSpoilerText ||
         mediaAttachments.length > 0 ||
         (pollEnabled && PollDraft.filledOptions(poll).length > 0),
     }),
