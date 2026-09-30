@@ -60,6 +60,7 @@ mod media;
 mod meta_placeholder_routes;
 mod notifications;
 mod oauth_apps;
+mod oauth_store;
 mod observability;
 mod policy_documents;
 mod polls;

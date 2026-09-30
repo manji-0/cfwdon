@@ -1,5 +1,5 @@
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::{D1RequestSession, open_bound_request_session};
-use crate::profile::require_authenticated_local_account;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use worker::{Error, Request, Result, RouteContext};
@@ -35,7 +35,7 @@ pub(crate) async fn resolve_authenticated_notification_context(
 ) -> Result<Option<AuthenticatedNotificationContext>> {
     let config = load_config(ctx);
     let (session, db) = open_bound_request_session(ctx, &config, req)?;
-    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Ok(None),
     };

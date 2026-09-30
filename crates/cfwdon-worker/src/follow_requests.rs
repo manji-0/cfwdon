@@ -1,6 +1,6 @@
 use crate::accounts::load_account_stats;
 use crate::activitypub::{build_reject_follow_activity, build_stored_accept_follow_activity};
-use crate::auth::find_account_by_id;
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
 use crate::db_utils::{count_rows, d1_results};
 use crate::delivery::queue_remote_actor_activity_required;
@@ -9,7 +9,6 @@ use crate::identity::{
     actor_url, parse_lookup_handle, remote_account_rest_id, remote_actor_uri_from_rest_id,
 };
 use crate::inbox::upsert_follower_by_inbox;
-use crate::profile::require_authenticated_local_account;
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{
     find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
@@ -45,7 +44,7 @@ async fn authenticated_follow_request_viewer(
     config: &AppConfig,
 ) -> Result<Option<(D1Database, cfwdon_domain::LocalAccount)>> {
     let db = bind_request_d1(ctx, config)?;
-    let Some(viewer) = require_authenticated_local_account(req, &db, config).await? else {
+    let Some(viewer) = find_authenticated_local_account(req, &db, config).await? else {
         return Ok(None);
     };
     Ok(Some((db, viewer)))

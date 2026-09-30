@@ -1,7 +1,7 @@
 use crate::accounts::{FollowAccountRequest, upsert_local_follow};
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::oauth_apps::auth0_login_redirect_response;
-use crate::profile::require_authenticated_local_account;
 use crate::relationships::{build_relationship_for_target, follow_remote_account};
 use crate::remote::{AccountReference, resolve_account_reference, resolve_search_account};
 use crate::runtime_config::load_config;
@@ -40,7 +40,7 @@ pub(crate) async fn authorize_interaction_submit_response(
     let config = load_config(&ctx);
     let uri = authorize_interaction_uri(&mut req).await?;
     let db = bind_request_d1(&ctx, &config)?;
-    let follower = match require_authenticated_local_account(&req, &db, &config).await? {
+    let follower = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return access_login_redirect(&config, &req, &uri),
     };

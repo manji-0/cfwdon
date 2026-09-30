@@ -1,7 +1,7 @@
 use crate::app_cache::invalidate_account_capabilities;
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::profile::require_authenticated_local_account;
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::runtime_config::load_config;
 use crate::tags::{build_tag_response, normalize_hashtag};
@@ -199,7 +199,7 @@ async fn resolve_authenticated_account(
 > {
     let config = load_config(ctx);
     let db = bind_request_d1(ctx, &config)?;
-    let Some(account) = require_authenticated_local_account(req, &db, &config).await? else {
+    let Some(account) = find_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };
     Ok(Some((db, config, account)))

@@ -1,6 +1,6 @@
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
-use crate::oauth_apps::app_bearer_token_from_request;
+use crate::oauth_store::app_bearer_token_from_request;
 use crate::runtime_config::load_config;
 use crate::statuses::{
     build_loaded_local_status_response, effective_local_quote_approval_policy, find_status_by_id,

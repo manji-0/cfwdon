@@ -1,8 +1,8 @@
 use crate::accounts::{FollowAccountRequest, ResolvedRelationshipTarget, SocialActionError};
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::publish_local_actor_notification_soft;
-use crate::profile::require_authenticated_local_account;
 use crate::push::send_push_notification;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::request_utils::parse_optional_bool;
@@ -281,7 +281,7 @@ pub(crate) async fn resolve_social_action_context(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
     let db = bind_request_d1(ctx, &config)?;
-    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Ok(None),
     };

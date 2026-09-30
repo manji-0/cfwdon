@@ -2,7 +2,7 @@ use crate::activitypub::local_username_from_actor_uri;
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::federation::{RemoteActorProfile, fetch_remote_activitypub_document};
 use crate::identity::{actor_url, remote_account_rest_id};
-use crate::oauth_apps::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
+use crate::oauth_store::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
 use crate::relationship::{find_follow_by_target, is_blocking_actor};
 use crate::remote::AccountReference;
 use crate::request_utils::parse_optional_bool;

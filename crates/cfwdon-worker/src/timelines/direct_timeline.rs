@@ -9,7 +9,6 @@ use crate::content_helpers::extract_mentions_from_text;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::load_account_filter_matcher;
 use crate::identity::instance_host;
-use crate::profile::require_authenticated_local_account;
 use crate::relationship::list_active_muted_actor_uris;
 use crate::remote::RemoteActorRow;
 use crate::runtime_config::load_config;
@@ -17,6 +16,7 @@ use crate::statuses::{
     account_has_thread_mutes, list_local_direct_timeline_statuses,
     list_remote_direct_statuses_mentioning_viewer,
 };
+use crate::timelines::find_authenticated_local_account;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
@@ -52,7 +52,7 @@ pub(crate) async fn direct_timeline_response(
     let limit = timeline_limit(&query);
     let query_limit = timeline_fetch_limit(limit);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
     };

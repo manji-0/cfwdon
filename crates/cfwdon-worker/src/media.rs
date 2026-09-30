@@ -1,3 +1,4 @@
+use crate::auth::find_authenticated_local_account;
 use crate::response::{MastodonMediaAttachmentResponse, media_object_url};
 use worker::{Error, Request, Response, Result, RouteContext};
 mod attachment_store;
@@ -6,7 +7,6 @@ mod storage;
 
 use crate::db_session::bind_request_d1;
 use crate::observability::observability_started_at_ms;
-use crate::profile::require_authenticated_local_account;
 use crate::runtime_config::load_config;
 pub(crate) use attachment_store::*;
 pub(crate) use request_parsing::*;
@@ -57,7 +57,7 @@ pub(crate) struct OrphanMediaRow {
 pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
         None => return Response::error("Auth0 authentication required", 401),
     }
@@ -82,7 +82,7 @@ pub(crate) async fn create_media_attachment(
 
     let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -179,7 +179,7 @@ pub(crate) async fn update_media_attachment(
     };
 
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -207,7 +207,7 @@ pub(crate) async fn delete_media_attachment(
     };
 
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

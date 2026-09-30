@@ -2,13 +2,12 @@ use super::{
     build_scheduled_status_document, delete_scheduled_status, find_scheduled_status_for_account,
     insert_scheduled_status, list_scheduled_statuses_for_account, update_scheduled_status_time,
 };
-use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
-use crate::db_session::bind_request_d1;
-use crate::oauth_apps::{
-    app_bearer_token_from_request, find_oauth_app_id_by_bearer_token,
-    oauth_access_token_has_any_scope,
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, find_authenticated_local_account,
 };
-use crate::profile::require_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::oauth_apps::find_oauth_app_id_by_bearer_token;
+use crate::oauth_store::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
 use crate::request_utils::{
     build_internal_cursor_link_for_url_with_min_id, parse_internal_pagination_id,
 };
@@ -32,7 +31,7 @@ async fn require_authenticated_scheduled_account(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Option<cfwdon_domain::LocalAccount>> {
-    require_authenticated_local_account(req, db, config).await
+    find_authenticated_local_account(req, db, config).await
 }
 
 #[derive(Debug)]

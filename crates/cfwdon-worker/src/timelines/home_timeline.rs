@@ -14,7 +14,7 @@ use crate::home_timeline::{
     HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
     list_home_timeline_candidate_ids,
 };
-use crate::oauth_apps::oauth_access_token_has_any_scope;
+use crate::oauth_store::oauth_access_token_has_any_scope;
 use crate::relationship::list_active_muted_actor_uris_for_account;
 use crate::runtime_config::load_config;
 use crate::statuses::{find_remote_statuses_with_actors_by_ids, find_statuses_by_ids};

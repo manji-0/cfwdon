@@ -3,8 +3,8 @@ use crate::accounts::{
     finalize_cursor_account_collection, list_local_endorsement_accounts,
     list_remote_endorsement_accounts,
 };
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
-use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
 use worker::{Error, Request, Response, Result, RouteContext};
@@ -12,7 +12,7 @@ use worker::{Error, Request, Response, Result, RouteContext};
 pub(crate) async fn endorsements_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
     };

@@ -1,5 +1,5 @@
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
-use crate::profile::require_authenticated_local_account;
 use crate::runtime_config::load_config;
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
@@ -120,7 +120,7 @@ fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
 pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -151,7 +151,7 @@ pub(crate) async fn save_markers_response(
         .await
         .map_err(|error| worker::Error::RustError(format!("invalid markers payload: {error}")))?;
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

@@ -1,3 +1,4 @@
+use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 mod candidate_render;
 mod cursor_sql;
@@ -56,9 +57,7 @@ pub(crate) use self::request_parsing::{
     matches_tag_timeline_filters, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };
 use crate::auth::find_authenticated_local_account;
-use crate::oauth_apps::{
-    app_bearer_token_from_request, find_oauth_app_by_bearer_token, oauth_app_has_any_scope,
-};
+use crate::oauth_apps::oauth_app_has_any_scope;
 use cfwdon_core::TimelineAccessLevel;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};

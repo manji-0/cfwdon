@@ -6,7 +6,7 @@ use crate::db_utils::{d1_results, sql_placeholders};
 use crate::delivery::enqueue_profile_update_activities;
 use crate::follow_requests::count_pending_follow_requests;
 use crate::identity::actor_url;
-use crate::oauth_apps::{
+use crate::oauth_store::{
     app_bearer_token_from_request, oauth_access_token_has_any_scope_json, oauth_bearer_token_hash,
 };
 use crate::observability::log_json_event;
@@ -940,14 +940,6 @@ fn value_as_option_bool(value: Option<&serde_json::Value>) -> Option<bool> {
     value
         .and_then(|value| value.as_i64())
         .map(|value| value != 0)
-}
-
-pub(crate) async fn require_authenticated_local_account(
-    req: &Request,
-    db: &D1Database,
-    config: &AppConfig,
-) -> Result<Option<cfwdon_domain::LocalAccount>> {
-    find_authenticated_local_account(req, db, config).await
 }
 
 pub(crate) fn profile_field_from_update(field: &UpdateCredentialsField) -> Option<ProfileField> {

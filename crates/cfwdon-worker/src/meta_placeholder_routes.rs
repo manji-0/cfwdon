@@ -19,11 +19,14 @@ use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
 use crate::inbox::{delete_follower_by_actor, find_follower_follow_activity_id};
 use crate::media::find_media_attachments_by_status_id;
 use crate::oauth_apps::{
-    app_bearer_token_from_request, build_app_verify_credentials_document_from_parts,
+    build_app_verify_credentials_document_from_parts,
     build_app_verify_credentials_document_from_row, build_oauth_token_document,
-    find_oauth_app_by_bearer_token, find_oauth_app_id_by_bearer_token, issue_oauth_access_token,
-    oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
-    store_account_password,
+    find_oauth_app_id_by_bearer_token, issue_oauth_access_token, oauth_app_has_any_scope,
+    oauth_app_scopes, store_account_password,
+};
+use crate::oauth_store::{
+    app_bearer_token_from_request, find_oauth_app_by_bearer_token, link_oauth_app_to_account,
+    oauth_access_token_has_any_scope,
 };
 use crate::observability::log_json_event;
 use crate::push::send_push_notification;
@@ -763,32 +766,6 @@ async fn insert_registered_account(
         }
     }
     Ok(id)
-}
-
-pub(crate) async fn link_oauth_app_to_account(
-    db: &D1Database,
-    oauth_app_id: i64,
-    account_id: &str,
-) -> Result<()> {
-    let bindings = [
-        D1Type::Integer(oauth_app_id as i32),
-        D1Type::Text(account_id),
-    ];
-    db.prepare(
-        "INSERT OR REPLACE INTO oauth_app_accounts (
-            oauth_app_id,
-            account_id,
-            created_at
-        ) VALUES (
-            ?1,
-            ?2,
-            CURRENT_TIMESTAMP
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(())
 }
 
 async fn upsert_pending_email_confirmation(

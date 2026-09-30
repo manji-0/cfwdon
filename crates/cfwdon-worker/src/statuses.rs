@@ -6,7 +6,7 @@ use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_status_d
 use crate::db_session::bind_request_d1;
 use crate::identity::actor_url;
 use crate::media::{delete_media_attachments, resolve_attachable_media};
-use crate::oauth_apps::{
+use crate::oauth_store::{
     app_bearer_token_from_request, find_oauth_access_token_with_account_by_bearer_token,
     find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
 };

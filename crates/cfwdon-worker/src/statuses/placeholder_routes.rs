@@ -1,9 +1,8 @@
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::identity::configured_instance_languages;
-use crate::oauth_apps::{
-    app_bearer_token_from_request, find_oauth_app_by_bearer_token, oauth_app_has_any_scope,
-};
+use crate::oauth_apps::oauth_app_has_any_scope;
+use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
 use crate::runtime_config::load_config;
 use worker::{Request, Response, Result, RouteContext};
 mod cache;

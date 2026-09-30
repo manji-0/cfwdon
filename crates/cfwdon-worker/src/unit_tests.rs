@@ -67,9 +67,11 @@ use crate::notifications::{
 use crate::oauth_apps::{
     OAuthAuthorizeRequest, auth0_login_url, auth0_logout_url,
     build_app_verify_credentials_document_from_parts, build_oauth_token_document,
-    hash_account_password, oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
-    parse_basic_authorization_header, parse_bearer_authorization_header,
+    hash_account_password, oauth_authorize_url_from_form, parse_basic_authorization_header,
     redirect_uri_matches_registered, verify_account_password_hash,
+};
+use crate::oauth_store::{
+    oauth_access_token_has_any_scope_json, parse_bearer_authorization_header,
 };
 use crate::policy_documents::configured_html_document;
 use crate::polls::validate_poll_vote_submission;

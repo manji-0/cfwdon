@@ -1,9 +1,9 @@
 use crate::accounts::{
     DirectoryOrder, list_discoverable_accounts_with_sort_key, load_account_stats,
 };
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::identity::actor_url;
-use crate::profile::require_authenticated_local_account;
 use crate::relationship::{find_follow_by_target, is_blocking_actor, is_muted_actor};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
@@ -23,7 +23,7 @@ async fn suggested_accounts(
     let query: SuggestionsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let db = bind_request_d1(ctx, &config)?;
-    let Some(viewer) = require_authenticated_local_account(req, &db, &config).await? else {
+    let Some(viewer) = find_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };
 
@@ -72,7 +72,7 @@ pub(crate) async fn delete_suggestion_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    if require_authenticated_local_account(&req, &db, &config)
+    if find_authenticated_local_account(&req, &db, &config)
         .await?
         .is_none()
     {

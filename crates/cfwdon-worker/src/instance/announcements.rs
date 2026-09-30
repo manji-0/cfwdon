@@ -1,6 +1,6 @@
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::profile::require_authenticated_local_account;
 use crate::runtime_config::load_config;
 use crate::stream_hub_publish::{
     publish_announcement_reaction_user_stream_soft, publish_announcement_user_stream_soft,
@@ -337,7 +337,7 @@ pub(crate) async fn announcements_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => {
             return Ok(Response::from_json(&serde_json::json!({
@@ -362,7 +362,7 @@ pub(crate) async fn announcement_reaction_mutation_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -402,7 +402,7 @@ pub(crate) async fn dismiss_announcement_mutation_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

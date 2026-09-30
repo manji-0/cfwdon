@@ -1,5 +1,5 @@
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
-use crate::profile::require_authenticated_local_account;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
@@ -121,7 +121,7 @@ pub(crate) async fn async_refresh_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let Some(_viewer) = require_authenticated_local_account(&req, &db, &config).await? else {
+    let Some(_viewer) = find_authenticated_local_account(&req, &db, &config).await? else {
         return Response::error("Auth0 authentication required", 401);
     };
     let refresh_id = match ctx.param("id") {

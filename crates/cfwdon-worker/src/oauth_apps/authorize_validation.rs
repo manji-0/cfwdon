@@ -3,6 +3,7 @@ use super::{
     oauth_app_redirect_uris, oauth_app_scopes, redirect_uri_matches_registered,
     requested_oauth_token_scopes,
 };
+use crate::oauth_store::OAuthAppRow;
 use crate::tracked_d1::D1Database;
 
 pub(super) fn code_challenge_method_is_supported(method: Option<&str>) -> bool {
@@ -12,10 +13,7 @@ pub(super) fn code_challenge_method_is_supported(method: Option<&str>) -> bool {
 pub(super) async fn validate_authorize_request(
     db: &D1Database,
     request: OAuthAuthorizeRequest,
-) -> std::result::Result<
-    (OAuthAuthorizeRequest, super::OAuthAppRow, Vec<String>),
-    OAuthAuthorizeFailure,
-> {
+) -> std::result::Result<(OAuthAuthorizeRequest, OAuthAppRow, Vec<String>), OAuthAuthorizeFailure> {
     let client_id = request
         .client_id
         .as_deref()

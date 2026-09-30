@@ -1,12 +1,14 @@
-use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::id_utils::generate_entity_id;
 use crate::identity::instance_base_url;
+use crate::oauth_store::{
+    AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, OAuthAccessTokenRow, OAuthAppRow, auth0_domain_url,
+    auth0_session_cookie, find_oauth_app_by_bearer_token, oauth_bearer_token_hash,
+};
 use crate::time_html::{escape_html, now_unix_timestamp};
 use crate::tracked_d1::D1Database;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,7 +21,7 @@ mod authorize_validation;
 mod create_app_route;
 mod token_routes;
 
-pub(crate) use auth0_callback::{auth0_callback_response, exchange_auth0_refresh_token};
+pub(crate) use auth0_callback::auth0_callback_response;
 pub(in crate::oauth_apps) use authorization_codes::{
     OAuthAuthorizationCodeRow, authorization_redirect_with_params, delete_oauth_authorization_code,
     issue_oauth_authorization_code, load_oauth_authorization_code,
@@ -34,21 +36,10 @@ pub(crate) use token_routes::{oauth_revoke_response, oauth_token_response};
 
 use authorize_validation::code_challenge_method_is_supported;
 const APP_ACCESS_TOKEN_TTL_SECONDS: i64 = 3600;
-const AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS: i64 = 3600;
-pub(crate) const AUTH0_WEB_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub(in crate::oauth_apps) const OAUTH_AUTHORIZE_CSRF_COOKIE: &str = "cfwdon_oauth_authorize_csrf";
 const AUTH0_AUTHORIZE_STATE_COOKIE: &str = "cfwdon_auth0_authorize";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
 const PASSWORD_HASH_ITERATIONS: u32 = 210_000;
-const FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL: &str =
-    "SELECT a.id, a.name, a.website, a.scopes_json, a.redirect_uri_legacy, a.redirect_uris_json,
-                a.client_id, a.client_secret, a.client_secret_expires_at
-         FROM oauth_app_access_tokens t
-         INNER JOIN oauth_apps a ON a.id = t.oauth_app_id
-         WHERE t.access_token_hash = ?1
-           AND t.expires_at > ?2
-         ORDER BY a.id ASC
-         LIMIT 1";
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct OAuthAuthorizeRequest {
@@ -62,45 +53,10 @@ pub(crate) struct OAuthAuthorizeRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct Auth0TokenResponse {
-    pub(crate) access_token: String,
-    #[serde(default)]
-    pub(crate) refresh_token: Option<String>,
-    #[serde(default)]
-    pub(crate) expires_in: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 struct Auth0AuthorizeStateCookie {
     state: String,
     code_verifier: String,
     return_url: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct OAuthAppRow {
-    pub(crate) id: i64,
-    pub(crate) name: String,
-    pub(crate) website: Option<String>,
-    scopes_json: String,
-    redirect_uri_legacy: String,
-    redirect_uris_json: String,
-    client_id: String,
-    client_secret: String,
-    client_secret_expires_at: i64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(crate) struct OAuthAccessTokenRow {
-    pub(crate) access_token: String,
-    pub(crate) oauth_app_id: i64,
-    scopes_json: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct OAuthAccessTokenWithAccount {
-    pub(crate) token: OAuthAccessTokenRow,
-    pub(crate) account: Option<LocalAccount>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -215,21 +171,10 @@ pub(crate) fn oauth_app_scopes(row: &OAuthAppRow) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(&row.scopes_json).unwrap_or_default()
 }
 
-pub(crate) fn oauth_access_token_has_any_scope_json(scopes_json: &str, scopes: &[&str]) -> bool {
-    serde_json::from_str::<Vec<String>>(scopes_json)
-        .unwrap_or_default()
-        .iter()
-        .any(|scope| scopes.contains(&scope.as_str()))
-}
-
 pub(crate) fn oauth_app_has_any_scope(row: &OAuthAppRow, scopes: &[&str]) -> bool {
     oauth_app_scopes(row)
         .iter()
         .any(|scope| scopes.contains(&scope.as_str()))
-}
-
-pub(crate) fn oauth_access_token_has_any_scope(row: &OAuthAccessTokenRow, scopes: &[&str]) -> bool {
-    oauth_access_token_has_any_scope_json(&row.scopes_json, scopes)
 }
 
 pub(in crate::oauth_apps) fn oauth_app_redirect_uris(row: &OAuthAppRow) -> Vec<String> {
@@ -313,23 +258,6 @@ pub(crate) fn build_app_verify_credentials_document_from_row(
     )
 }
 
-pub(crate) fn app_bearer_token_from_request(req: &Request) -> Result<Option<String>> {
-    let Some(value) = req.headers().get("Authorization")? else {
-        return Ok(None);
-    };
-    Ok(parse_bearer_authorization_header(&value))
-}
-
-pub(crate) fn parse_bearer_authorization_header(value: &str) -> Option<String> {
-    let value = value.trim();
-    let (scheme, token) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("Bearer") {
-        return None;
-    }
-    let token = token.trim();
-    (!token.is_empty()).then(|| token.to_owned())
-}
-
 pub(crate) fn parse_basic_authorization_header(value: &str) -> Option<(String, String)> {
     let value = value.trim();
     let encoded = value.strip_prefix("Basic ")?.trim();
@@ -342,51 +270,6 @@ pub(crate) fn parse_basic_authorization_header(value: &str) -> Option<(String, S
         return None;
     }
     Some((client_id.to_owned(), client_secret.to_owned()))
-}
-
-pub(crate) fn oauth_bearer_token_hash(token: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(token.as_bytes()))
-}
-
-pub(crate) async fn find_oauth_app_by_bearer_token(
-    db: &D1Database,
-    token: &str,
-) -> Result<Option<OAuthAppRow>> {
-    let token_hash = oauth_bearer_token_hash(token);
-    let binding = D1Type::Text(token_hash.as_str());
-    let expires_at_binding =
-        D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
-    if let Some(app) = db
-        .prepare(FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL)
-        .bind_refs(&[binding, expires_at_binding])?
-        .first::<OAuthAppRow>(None)
-        .await?
-    {
-        return Ok(Some(app));
-    }
-
-    let legacy_binding = D1Type::Text(token);
-    let expires_at_binding =
-        D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
-    let Some(app) = db
-        .prepare(
-            "SELECT a.id, a.name, a.website, a.scopes_json, a.redirect_uri_legacy, a.redirect_uris_json,
-                    a.client_id, a.client_secret, a.client_secret_expires_at
-             FROM oauth_app_access_tokens t
-             INNER JOIN oauth_apps a ON a.id = t.oauth_app_id
-             WHERE t.access_token = ?1
-               AND t.expires_at > ?2
-             ORDER BY a.id ASC
-             LIMIT 1",
-        )
-        .bind_refs(&[legacy_binding, expires_at_binding])?
-        .first::<OAuthAppRow>(None)
-        .await?
-    else {
-        return Ok(None);
-    };
-    migrate_legacy_oauth_app_access_token_hash(db, token, &token_hash).await?;
-    Ok(Some(app))
 }
 
 pub(crate) async fn find_oauth_app_by_client_id(
@@ -454,159 +337,6 @@ pub(crate) async fn find_oauth_app_id_by_bearer_token(
     Ok(find_oauth_app_by_bearer_token(db, token)
         .await?
         .map(|row| row.id))
-}
-
-pub(crate) async fn find_oauth_access_token_with_account_by_bearer_token(
-    db: &D1Database,
-    token: &str,
-) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    let token_hash = oauth_bearer_token_hash(token);
-    if let Some(auth) = find_oauth_access_token_with_account_by_token_hash(db, &token_hash).await? {
-        return Ok(Some(auth));
-    }
-    let Some(auth) = find_legacy_oauth_access_token_with_account_by_plaintext(db, token).await?
-    else {
-        return Ok(None);
-    };
-    migrate_legacy_oauth_access_token_hash(db, token, &token_hash).await?;
-    Ok(Some(auth))
-}
-
-async fn find_oauth_access_token_with_account_by_token_hash(
-    db: &D1Database,
-    token_hash: &str,
-) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    find_oauth_access_token_with_account_by_column(db, "t.access_token_hash", token_hash).await
-}
-
-async fn find_legacy_oauth_access_token_with_account_by_plaintext(
-    db: &D1Database,
-    token: &str,
-) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    find_oauth_access_token_with_account_by_column(db, "t.access_token", token).await
-}
-
-async fn find_oauth_access_token_with_account_by_column(
-    db: &D1Database,
-    column: &str,
-    value: &str,
-) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    let binding = D1Type::Text(value);
-    let now_binding = D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
-    let legacy_only = column == "t.access_token";
-    let legacy_guard = if legacy_only {
-        " AND t.access_token_hash IS NULL"
-    } else {
-        ""
-    };
-    let sql = format!(
-        "SELECT t.access_token_hash AS access_token,
-                    t.oauth_app_id,
-                    t.scopes_json,
-                    a.id,
-                    a.username,
-                    a.access_email,
-                    a.display_name,
-                    a.bio_html,
-                    a.bio_text,
-                    a.fields_json,
-                    a.locked,
-                    a.bot,
-                    a.discoverable,
-                    a.default_post_visibility,
-                    a.default_quote_policy,
-                    a.default_sensitive,
-                    a.default_language,
-                    a.avatar_object_key,
-                    a.avatar_content_type,
-                    a.header_object_key,
-                    a.header_content_type,
-                    '' AS private_key_jwk,
-                    a.public_key_pem,
-                    a.created_at
-             FROM oauth_access_tokens t
-             LEFT JOIN accounts a ON a.id = t.account_id
-             WHERE {column} = ?1
-               AND (t.expires_at IS NULL OR t.expires_at > ?2){legacy_guard}
-             LIMIT 1"
-    );
-    let Some(row) = db
-        .prepare(&sql)
-        .bind_refs(&[binding, now_binding])?
-        .first::<serde_json::Value>(None)
-        .await?
-    else {
-        return Ok(None);
-    };
-
-    oauth_access_token_auth_from_joined_row(row)
-}
-
-fn oauth_access_token_auth_from_joined_row(
-    row: serde_json::Value,
-) -> Result<Option<OAuthAccessTokenWithAccount>> {
-    let token = serde_json::from_value::<OAuthAccessTokenRow>(row.clone()).map_err(|error| {
-        worker::Error::RustError(format!("failed to decode OAuth access token row: {error}"))
-    })?;
-    let account = match row.get("id").and_then(serde_json::Value::as_str) {
-        Some(_) => Some(
-            serde_json::from_value::<LocalAccountRecord>(row)
-                .map(LocalAccount::from_record)
-                .map_err(|error| {
-                    worker::Error::RustError(format!(
-                        "failed to decode OAuth access token account row: {error}"
-                    ))
-                })?,
-        ),
-        None => None,
-    };
-
-    Ok(Some(OAuthAccessTokenWithAccount { token, account }))
-}
-
-async fn migrate_legacy_oauth_access_token_hash(
-    db: &D1Database,
-    token: &str,
-    token_hash: &str,
-) -> Result<()> {
-    let bindings = [
-        D1Type::Text(token_hash),
-        D1Type::Text(token_hash),
-        D1Type::Text(token),
-    ];
-    db.prepare(LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL)
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
-    Ok(())
-}
-
-const LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL: &str = "UPDATE oauth_access_tokens
-         SET access_token_hash = ?1,
-             access_token = ?2
-         WHERE access_token = ?3
-           AND access_token_hash IS NULL";
-
-async fn migrate_legacy_oauth_app_access_token_hash(
-    db: &D1Database,
-    token: &str,
-    token_hash: &str,
-) -> Result<()> {
-    let bindings = [
-        D1Type::Text(token_hash),
-        D1Type::Text(token_hash),
-        D1Type::Text(token),
-    ];
-    db.prepare(
-        "UPDATE oauth_app_access_tokens
-         SET access_token = ?1,
-             access_token_hash = ?2
-         WHERE access_token = ?3",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(())
 }
 
 pub(crate) async fn issue_oauth_access_token(
@@ -736,14 +466,6 @@ pub(crate) fn auth0_logout_url(
     Ok(logout_url)
 }
 
-fn auth0_domain_url(config: &cfwdon_core::AppConfig) -> std::result::Result<Url, String> {
-    let mut domain = config.auth0_domain.trim().trim_end_matches('/').to_owned();
-    if !domain.starts_with("http://") && !domain.starts_with("https://") {
-        domain = format!("https://{domain}");
-    }
-    Url::parse(&domain).map_err(|error| format!("invalid Auth0 domain: {error}"))
-}
-
 pub(crate) fn oauth_authorize_url_from_form(
     base_url: &Url,
     request: &OAuthAuthorizeRequest,
@@ -866,40 +588,6 @@ fn set_auth0_authorize_state_cookie(
     Ok(())
 }
 
-pub(crate) fn access_token_cookie_max_age(expires_in: Option<i64>) -> i64 {
-    expires_in
-        .filter(|value| *value > 0)
-        .unwrap_or(AUTH0_ACCESS_TOKEN_COOKIE_TTL_SECONDS)
-}
-
-fn auth0_session_cookie(name: &str, value: &str, max_age: i64) -> String {
-    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age={max_age}")
-}
-
-pub(crate) fn set_auth0_session_cookies(
-    response: &mut Response,
-    access_token: &str,
-    refresh_token: Option<&str>,
-    access_max_age: i64,
-) -> Result<()> {
-    response.headers_mut().append(
-        "Set-Cookie",
-        &auth0_session_cookie(AUTH0_SESSION_COOKIE, access_token, access_max_age),
-    )?;
-    if let Some(refresh_token) = refresh_token.filter(|value| !value.is_empty()) {
-        response.headers_mut().append(
-            "Set-Cookie",
-            &auth0_session_cookie(
-                AUTH0_REFRESH_COOKIE,
-                refresh_token,
-                AUTH0_WEB_SESSION_TTL_SECONDS,
-            ),
-        )?;
-    }
-    response.headers_mut().set("Cache-Control", "no-store")?;
-    Ok(())
-}
-
 fn clear_auth0_session_cookie(response: &mut Response) -> Result<()> {
     response.headers_mut().append(
         "Set-Cookie",
@@ -978,6 +666,12 @@ fn pkce_verifier_matches(verifier: &str, challenge: &str, method: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oauth_store::FIND_OAUTH_APP_BY_BEARER_TOKEN_SQL;
+    use crate::oauth_store::{
+        AUTH0_REFRESH_COOKIE, AUTH0_WEB_SESSION_TTL_SECONDS, LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL,
+        access_token_cookie_max_age, auth0_session_cookie, oauth_bearer_token_hash,
+        parse_bearer_authorization_header,
+    };
 
     #[test]
     fn redirect_fallback_body_is_browser_renderable_html() {

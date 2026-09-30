@@ -1,6 +1,6 @@
 use super::authorize_validation::{code_challenge_method_is_supported, validate_authorize_request};
 use super::{
-    OAUTH_AUTHORIZE_CSRF_COOKIE, OAuthAppRow, OAuthAuthorizeFailure, OAuthAuthorizeRequest,
+    OAUTH_AUTHORIZE_CSRF_COOKIE, OAuthAuthorizeFailure, OAuthAuthorizeRequest,
     auth0_login_configured, auth0_login_redirect_response, auth0_logout_url,
     authorization_redirect_with_params, constant_time_eq, escape_html, html_response,
     issue_oauth_authorization_code, load_account_password_hash, oauth_authorize_url_from_form,
@@ -13,6 +13,7 @@ use crate::auth::{
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
 use crate::identity::instance_base_url;
+use crate::oauth_store::OAuthAppRow;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use url::Url;
@@ -683,6 +684,7 @@ pub(crate) async fn oauth_authorize_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oauth_store::OAuthAppRow;
 
     fn oauth_app_fixture() -> OAuthAppRow {
         OAuthAppRow {

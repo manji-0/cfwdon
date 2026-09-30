@@ -4,10 +4,9 @@ use crate::db_utils::d1_results;
 use crate::delivery::{
     enqueue_add_featured_status_activity, enqueue_remove_featured_status_activity,
 };
-use crate::profile::require_authenticated_local_account;
 use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
-use crate::statuses::statuses_from_records;
+use crate::statuses::{find_authenticated_local_account, statuses_from_records};
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, LocalStatusRecord};
 use worker::d1::D1Type;
@@ -118,7 +117,7 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
     let db = bind_request_d1(&ctx, &config)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -140,7 +139,7 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing status id route parameter".to_owned()))?;
     let db = bind_request_d1(&ctx, &config)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
     };

@@ -1,5 +1,5 @@
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
-use crate::oauth_apps::{
+use crate::oauth_store::{
     find_oauth_access_token_with_account_by_bearer_token, oauth_access_token_has_any_scope,
 };
 use crate::tracked_d1::D1Database;

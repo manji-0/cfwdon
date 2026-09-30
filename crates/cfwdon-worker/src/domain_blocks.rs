@@ -1,8 +1,8 @@
 use crate::app_cache::{invalidate_account_capabilities, load_account_capabilities};
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
 use crate::instance::load_known_peer_domains;
-use crate::profile::require_authenticated_local_account;
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
@@ -245,7 +245,7 @@ pub(crate) async fn domain_blocks_preview_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let query: DomainBlocksPreviewQuery = req.query().unwrap_or_default();
             let limit = query
@@ -271,7 +271,7 @@ pub(crate) async fn domain_blocks_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let query: DomainBlocksQuery = req.query().unwrap_or_default();
             let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
@@ -310,7 +310,7 @@ pub(crate) async fn create_domain_block_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let domain = match parse_domain_block_request(&mut req).await {
                 Ok(domain) => domain,
@@ -329,7 +329,7 @@ pub(crate) async fn delete_domain_block_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let domain = match parse_domain_block_request(&mut req).await {
                 Ok(domain) => domain,

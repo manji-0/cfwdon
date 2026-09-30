@@ -1,3 +1,4 @@
+use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::identity::{actor_url, instance_base_url};
@@ -9,7 +10,6 @@ use crate::tracked_d1::D1Database;
 use std::collections::{HashMap, HashSet};
 
 use crate::auth::find_account_by_username;
-use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
 use serde::Deserialize;
@@ -335,7 +335,7 @@ pub(crate) async fn featured_tags_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -418,7 +418,7 @@ pub(crate) async fn featured_tag_suggestions_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -440,7 +440,7 @@ pub(crate) async fn feature_tag_response(
         .await
         .map_err(worker::Error::RustError)?;
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(req, &db, &config).await? {
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -473,7 +473,7 @@ pub(crate) async fn unfeature_tag_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

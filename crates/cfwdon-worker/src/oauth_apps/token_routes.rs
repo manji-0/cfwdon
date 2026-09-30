@@ -1,12 +1,12 @@
 use super::{
-    APP_ACCESS_TOKEN_TTL_SECONDS, OAuthAppRow, OAuthAuthorizationCodeRow,
-    build_oauth_token_document, delete_oauth_authorization_code, find_oauth_app_by_client_id,
-    issue_oauth_access_token, issue_oauth_app_access_token, load_oauth_authorization_code,
-    oauth_app_redirect_uris, oauth_app_scopes, oauth_bearer_token_hash,
-    parse_basic_authorization_header, pkce_verifier_matches, redirect_uri_matches_registered,
+    APP_ACCESS_TOKEN_TTL_SECONDS, OAuthAuthorizationCodeRow, build_oauth_token_document,
+    delete_oauth_authorization_code, find_oauth_app_by_client_id, issue_oauth_access_token,
+    issue_oauth_app_access_token, load_oauth_authorization_code, oauth_app_redirect_uris,
+    oauth_app_scopes, parse_basic_authorization_header, pkce_verifier_matches,
+    redirect_uri_matches_registered,
 };
 use crate::auth::find_account_by_id;
-use crate::meta_placeholder_routes::link_oauth_app_to_account;
+use crate::oauth_store::{OAuthAppRow, link_oauth_app_to_account, oauth_bearer_token_hash};
 use crate::runtime_config::load_config;
 use crate::time_html::now_unix_timestamp;
 use crate::tracked_d1::D1Database;
@@ -507,6 +507,7 @@ async fn revoke_oauth_access_token(db: &D1Database, oauth_app_id: i64, token: &s
 mod tests {
     use super::super::{OAuthAuthorizationCodeRow, pkce_code_challenge};
     use super::*;
+    use crate::oauth_store::OAuthAppRow;
 
     fn oauth_app_fixture() -> OAuthAppRow {
         OAuthAppRow {

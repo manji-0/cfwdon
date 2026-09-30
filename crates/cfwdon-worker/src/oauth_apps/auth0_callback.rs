@@ -1,13 +1,17 @@
 use super::{
-    Auth0TokenResponse, access_authenticated_without_account_response, access_token_cookie_max_age,
-    auth0_authorize_state_cookie, auth0_domain_url, clear_auth0_authorize_state_cookie,
-    constant_time_eq, oauth_authorize_error_response, redirect_response, set_auth0_session_cookies,
+    access_authenticated_without_account_response, auth0_authorize_state_cookie,
+    clear_auth0_authorize_state_cookie, constant_time_eq, oauth_authorize_error_response,
+    redirect_response,
 };
 use crate::auth::{find_account_by_email, verify_auth0_jwt};
 use crate::db_session::bind_request_d1;
+use crate::oauth_store::{
+    Auth0TokenResponse, access_token_cookie_max_age, post_auth0_token_form,
+    set_auth0_session_cookies,
+};
 use crate::runtime_config::load_config;
 use serde::Deserialize;
-use worker::{Fetch, Headers, Method, Request, RequestInit, Response, Result, RouteContext};
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Deserialize)]
 struct Auth0CallbackRequest {
@@ -144,50 +148,6 @@ async fn exchange_auth0_authorization_code(
         ],
     )
     .await
-}
-
-pub(crate) async fn exchange_auth0_refresh_token(
-    config: &cfwdon_core::AppConfig,
-    refresh_token: &str,
-) -> Result<Auth0TokenResponse> {
-    post_auth0_token_form(
-        config,
-        &[
-            ("grant_type", "refresh_token"),
-            ("client_id", config.auth0_client_id.trim()),
-            ("refresh_token", refresh_token),
-        ],
-    )
-    .await
-}
-
-async fn post_auth0_token_form(
-    config: &cfwdon_core::AppConfig,
-    pairs: &[(&str, &str)],
-) -> Result<Auth0TokenResponse> {
-    let mut token_url = auth0_domain_url(config).map_err(worker::Error::RustError)?;
-    token_url.set_path("/oauth/token");
-    token_url.set_query(None);
-    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-    for (name, value) in pairs {
-        serializer.append_pair(name, value);
-    }
-    let body = serializer.finish();
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/x-www-form-urlencoded")?;
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(wasm_bindgen::JsValue::from_str(&body)));
-    let request = Request::new_with_init(token_url.as_str(), &init)?;
-    let mut response = Fetch::Request(request).send().await?;
-    if response.status_code() / 100 != 2 {
-        return Err(worker::Error::RustError(format!(
-            "Auth0 token endpoint rejected request with HTTP {}",
-            response.status_code()
-        )));
-    }
-    response.json::<Auth0TokenResponse>().await
 }
 
 #[cfg(test)]
