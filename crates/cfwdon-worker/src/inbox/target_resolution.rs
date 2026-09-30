@@ -1,30 +1,21 @@
-use super::{
-    AppConfig, LocalAccount, activity_object_id, activitypub_has_type, ensure_account_keys,
-    extract_inbox_target_username, find_account_by_id, find_account_by_username,
-    find_follow_by_activity_id, find_local_status_by_object_uri,
-    find_status_poll_vote_by_activity_uri, first_local_follower_for_remote_actor,
-    list_local_follower_accounts_for_remote_actor, note_targets_account_or_followers,
-    object_has_activitypub_actor_type, object_has_supported_remote_status_type,
-    quote_target_uri_from_object,
+use crate::activitypub::{
+    activity_object_id, activitypub_has_type, extract_inbox_target_username,
+    note_targets_account_or_followers, object_has_activitypub_actor_type,
+    object_has_supported_remote_status_type, quote_target_uri_from_object,
 };
+use crate::auth::{ensure_account_keys, find_account_by_id, find_account_by_username};
+use crate::collections_alpha::local_collection_id_from_uri;
+use crate::relationship::{
+    find_follow_by_activity_id, first_local_follower_for_remote_actor,
+    list_local_follower_accounts_for_remote_actor,
+};
+use crate::statuses::find_local_status_by_object_uri;
+use crate::store::local_polls::find_status_poll_vote_by_activity_uri;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
-#[allow(dead_code)]
-pub(crate) async fn resolve_inbox_target_account(
-    db: &D1Database,
-    config: &AppConfig,
-    username: Option<&str>,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(
-        resolve_shared_inbox_target_accounts(db, config, username, activity)
-            .await?
-            .into_iter()
-            .next(),
-    )
-}
 
 pub(crate) async fn resolve_shared_inbox_target_accounts(
     db: &D1Database,
@@ -141,19 +132,6 @@ async fn resolve_local_interaction_target_account(
     Ok(None)
 }
 
-#[allow(dead_code)]
-pub(crate) async fn resolve_remote_status_activity_target_account(
-    db: &D1Database,
-    config: &AppConfig,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(
-        resolve_remote_status_activity_target_accounts(db, config, activity)
-            .await?
-            .and_then(|accounts| accounts.into_iter().next()),
-    )
-}
-
 pub(crate) async fn resolve_remote_status_activity_target_accounts(
     db: &D1Database,
     config: &AppConfig,
@@ -228,16 +206,6 @@ pub(crate) async fn resolve_remote_actor_update_target_account(
     };
 
     first_local_follower_for_remote_actor(db, actor_uri).await
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_remote_actor_announce_target_account(
-    db: &D1Database,
-    activity: &serde_json::Value,
-) -> Result<Option<LocalAccount>> {
-    Ok(resolve_remote_actor_announce_target_accounts(db, activity)
-        .await?
-        .and_then(|accounts| accounts.into_iter().next()))
 }
 
 pub(crate) async fn resolve_remote_actor_announce_target_accounts(
@@ -351,7 +319,7 @@ pub(crate) async fn resolve_feature_authorization_delete_target_account(
     else {
         return Ok(None);
     };
-    let Some(collection_id) = crate::local_collection_id_from_uri(config, collection_uri) else {
+    let Some(collection_id) = local_collection_id_from_uri(config, collection_uri) else {
         return Ok(None);
     };
     let Some(account_id) = find_first_account_id_by_query(

@@ -1,10 +1,9 @@
-use super::AccountRow;
-use cfwdon_domain::LocalAccount;
+use crate::db_utils::d1_results;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct LocalFollowNotificationRow {
     pub(crate) follower_account_id: String,
@@ -62,7 +61,7 @@ pub(crate) async fn list_local_follow_request_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<LocalFollowRequestNotificationRow>(&result)
+    d1_results::<LocalFollowRequestNotificationRow>(&result)
 }
 
 pub(crate) async fn list_remote_follow_request_notifications_for_account(
@@ -83,7 +82,7 @@ pub(crate) async fn list_remote_follow_request_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteFollowRequestNotificationRow>(&result)
+    d1_results::<RemoteFollowRequestNotificationRow>(&result)
 }
 
 pub(crate) async fn list_local_follow_notifications_for_account(
@@ -105,7 +104,7 @@ pub(crate) async fn list_local_follow_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<LocalFollowNotificationRow>(&result)
+    d1_results::<LocalFollowNotificationRow>(&result)
 }
 
 pub(crate) async fn list_admin_sign_up_notifications(
@@ -129,7 +128,7 @@ pub(crate) async fn list_admin_sign_up_notifications(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -153,7 +152,7 @@ pub(crate) async fn list_remote_follow_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteFollowNotificationRow>(&result)
+    d1_results::<RemoteFollowNotificationRow>(&result)
 }
 
 pub(crate) async fn list_favourite_notifications_for_account(
@@ -201,7 +200,7 @@ pub(crate) async fn list_favourite_notifications_for_account(
         .await?
     };
 
-    crate::d1_results::<FavouriteNotificationRow>(&result)
+    d1_results::<FavouriteNotificationRow>(&result)
 }
 
 pub(crate) async fn list_remote_favourite_notifications_for_account(
@@ -245,7 +244,7 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
         .await?
     };
 
-    crate::d1_results::<RemoteStatusInteractionRow>(&result)
+    d1_results::<RemoteStatusInteractionRow>(&result)
 }
 
 pub(crate) async fn list_remote_reblog_notifications_for_account(
@@ -268,5 +267,5 @@ pub(crate) async fn list_remote_reblog_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusInteractionRow>(&result)
+    d1_results::<RemoteStatusInteractionRow>(&result)
 }

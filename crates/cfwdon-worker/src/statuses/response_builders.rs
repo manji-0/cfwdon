@@ -12,30 +12,27 @@ mod quote_embed;
 mod reblog;
 mod remote;
 
-#[allow(unused_imports)]
 pub(crate) use local::{
     build_loaded_local_status_response, build_local_status_response,
-    build_local_status_response_with_filter_matcher, build_local_status_response_with_preloads,
     build_local_status_response_with_quote_count_preloads,
     build_local_status_response_with_timeline_preloads,
 };
-#[allow(unused_imports)]
 pub(crate) use remote::{
     build_remote_status_response, build_remote_status_response_with_filter_matcher,
-    build_remote_status_response_with_preloads,
     build_remote_status_response_with_timeline_preloads,
 };
 
 #[cfg(test)]
 mod tests {
+    use super::super::LocalAccount;
     use super::super::reblog_response::{
         local_reblog_wrapper_response_from_embedded, remote_reblog_wrapper_response_from_embedded,
     };
-    use super::super::{
-        AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow, RemoteStatusRow, StatusRow,
-    };
     use super::remote::remote_media_attachment_values;
-    use cfwdon_domain::LocalAccountRecord;
+    use crate::responses::MastodonStatusResponse;
+    use crate::store::remote::RemoteActorRow;
+    use cfwdon_core::AppConfig;
+    use cfwdon_domain::{LocalAccountRecord, LocalStatus, RemoteStatus};
 
     #[test]
     fn remote_media_attachment_values_allows_empty_attachments() {
@@ -119,8 +116,8 @@ mod tests {
         assert!(response.quote.is_none());
     }
 
-    fn remote_status_row_fixture(id: &str, object_uri: &str) -> RemoteStatusRow {
-        RemoteStatusRow {
+    fn remote_status_row_fixture(id: &str, object_uri: &str) -> RemoteStatus {
+        RemoteStatus {
             id: id.to_owned(),
             actor_uri: "https://remote.example/users/alice".to_owned(),
             object_uri: object_uri.to_owned(),
@@ -166,8 +163,8 @@ mod tests {
         }
     }
 
-    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> StatusRow {
-        StatusRow {
+    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> LocalStatus {
+        LocalStatus {
             id: id.to_owned(),
             account_id: "acct-1".to_owned(),
             ap_id: ap_id.map(str::to_owned),

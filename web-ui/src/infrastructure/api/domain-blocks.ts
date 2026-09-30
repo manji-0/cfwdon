@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { type ResultAsync } from "neverthrow";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,

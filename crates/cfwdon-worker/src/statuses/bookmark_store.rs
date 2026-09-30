@@ -1,5 +1,9 @@
-use super::{D1Database, Result, StatusRow, local_status_target_uri};
+use super::{D1Database, local_status_target_uri};
+use crate::app_cache::{invalidate_account_capabilities, load_account_capabilities};
+use crate::db_utils::d1_results;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
@@ -12,7 +16,7 @@ pub(crate) struct BookmarkEntryRow {
 pub(crate) async fn upsert_bookmark_local_status(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let target_uri = local_status_target_uri(status);
     let bindings = [
@@ -46,14 +50,14 @@ pub(crate) async fn upsert_bookmark_local_status(
     .run()
     .await?;
 
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
 pub(crate) async fn upsert_bookmark_remote_status(
     db: &D1Database,
     account_id: &str,
-    status: &super::RemoteStatusRow,
+    status: &RemoteStatus,
 ) -> Result<()> {
     let bindings = [
         D1Type::Text(account_id),
@@ -86,7 +90,7 @@ pub(crate) async fn upsert_bookmark_remote_status(
     .run()
     .await?;
 
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -105,14 +109,14 @@ pub(crate) async fn delete_bookmark_by_target_uri(
     .run()
     .await?;
 
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
 pub(crate) async fn is_local_status_bookmarked_by(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     if !account_has_bookmarks(db, account_id).await? {
         return Ok(false);
@@ -146,7 +150,7 @@ pub(crate) async fn is_remote_status_bookmarked_by(
 }
 
 pub(crate) async fn account_has_bookmarks(db: &D1Database, account_id: &str) -> Result<bool> {
-    Ok(crate::load_account_capabilities(db, account_id)
+    Ok(load_account_capabilities(db, account_id)
         .await?
         .has_bookmarks)
 }
@@ -190,5 +194,5 @@ pub(crate) async fn list_bookmarks_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<BookmarkEntryRow>(&result)
+    d1_results::<BookmarkEntryRow>(&result)
 }

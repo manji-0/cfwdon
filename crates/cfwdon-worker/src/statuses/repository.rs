@@ -1,9 +1,13 @@
 use super::{
-    D1Database, LocalAccount, MediaAttachmentRow, Result, StatusRow, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id,
-    find_remote_statuses_with_actors_by_ids, find_status_by_id, load_in_reply_to_account_id,
-    remote_account_rest_id,
+    D1Database, LocalAccount, can_view_local_status, find_remote_statuses_with_actors_by_ids,
+    find_status_by_id, load_in_reply_to_account_id,
 };
+use crate::auth::find_account_by_id;
+use crate::identity::remote_account_rest_id;
+use crate::media::find_media_attachments_by_status_id;
+use crate::store::media::MediaAttachmentRow;
+use cfwdon_domain::LocalStatus;
+use worker::Result;
 
 /// Resolves the author of a single replied-to status. A reply can point at a
 /// remote status, so fall back to the remote table like the batch variant
@@ -30,7 +34,7 @@ pub(crate) struct LocalStatusResponsePreload {
 }
 
 pub(crate) struct LoadedLocalStatusResponseSubject {
-    pub(crate) status: StatusRow,
+    pub(crate) status: LocalStatus,
     pub(crate) account: LocalAccount,
     pub(crate) preload: LocalStatusResponsePreload,
 }
@@ -53,7 +57,7 @@ pub(crate) async fn find_owned_local_status(
     db: &D1Database,
     status_id: &str,
     owner_id: &str,
-) -> Result<Option<StatusRow>> {
+) -> Result<Option<LocalStatus>> {
     let Some(status) = find_status_by_id(db, status_id).await? else {
         return Ok(None);
     };
@@ -65,7 +69,7 @@ pub(crate) async fn find_owned_local_status(
 
 pub(crate) async fn load_local_status_response_preload(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<LocalStatusResponsePreload> {
     Ok(LocalStatusResponsePreload {
         media: find_media_attachments_by_status_id(db, &status.id).await?,
@@ -76,7 +80,7 @@ pub(crate) async fn load_local_status_response_preload(
 pub(crate) async fn resolve_local_status_response_subject(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
-    status: StatusRow,
+    status: LocalStatus,
 ) -> Result<Option<ResolvedLocalStatusResponseSubject>> {
     let Some(account) = find_account_by_id(db, &status.account_id).await? else {
         return Ok(None);
@@ -97,7 +101,7 @@ pub(crate) async fn resolve_local_status_response_subject(
 pub(crate) async fn load_visible_local_status_response_subject(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
-    status: StatusRow,
+    status: LocalStatus,
 ) -> Result<Option<LoadedLocalStatusResponseSubject>> {
     match resolve_local_status_response_subject(db, viewer, status).await? {
         Some(ResolvedLocalStatusResponseSubject::Loaded(subject)) => Ok(Some(subject)),

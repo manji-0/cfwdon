@@ -1,10 +1,12 @@
 use super::ScheduledStatus;
-use crate::{
-    AppConfig, D1Database, MastodonMediaAttachmentResponse, Result, StatusDraft,
-    find_media_attachment_by_id,
-};
+use crate::response::MastodonMediaAttachmentResponse;
+use crate::store::media::find_media_attachment_by_id;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::StatusDraft;
+use worker::Result;
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn scheduled_status_document(id: &str) -> serde_json::Value {
     scheduled_status_document_with_params(id, "2099-01-01T00:00:00.000Z", None)
 }

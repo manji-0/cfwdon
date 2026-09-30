@@ -1,11 +1,13 @@
 use super::bindings::remote_status_quote_state_update_bindings;
 use super::lookups::find_remote_status_by_id;
-use super::records::RemoteStatusRow;
-use crate::{
-    AppConfig, D1Database, RemoteActorProfile, count_followers_by_actor, find_account_by_id,
-    find_local_status_by_object_uri,
-};
-use cfwdon_domain::{QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution};
+use crate::auth::find_account_by_id;
+use crate::federation::RemoteActorProfile;
+use crate::relationship::count_followers_by_actor;
+use crate::statuses::find_local_status_by_object_uri;
+use crate::store::relationship::is_blocking_actor;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{QuoteState, RemoteQuoteLocalTarget, RemoteQuoteResolution, RemoteStatus};
 use worker::{Error, Result};
 
 pub(super) async fn resolve_remote_quote_resolution(
@@ -29,7 +31,7 @@ pub(super) async fn resolve_remote_quote_resolution(
     };
     let remote_actor_follows_owner =
         count_followers_by_actor(db, owner.id(), &actor.actor_uri).await? > 0;
-    let blocked_by_owner = crate::is_blocking_actor(db, owner.id(), &actor.actor_uri).await?;
+    let blocked_by_owner = is_blocking_actor(db, owner.id(), &actor.actor_uri).await?;
     let policy = status.effective_quote_approval_policy();
     Ok(RemoteQuoteResolution::with_local_target(
         quote_of_uri.to_owned(),
@@ -42,8 +44,8 @@ pub(super) async fn resolve_remote_quote_resolution(
 
 pub(crate) async fn clear_remote_status_quote(
     db: &D1Database,
-    status: &RemoteStatusRow,
-) -> Result<RemoteStatusRow> {
+    status: &RemoteStatus,
+) -> Result<RemoteStatus> {
     update_remote_status_quote_state(
         db,
         &status.id,
@@ -56,7 +58,7 @@ pub(crate) async fn update_remote_status_quote_state(
     db: &D1Database,
     status_id: &str,
     quote_state: QuoteState,
-) -> Result<RemoteStatusRow> {
+) -> Result<RemoteStatus> {
     let bindings = remote_status_quote_state_update_bindings(quote_state.as_str(), status_id);
     db.prepare(
         "UPDATE remote_statuses

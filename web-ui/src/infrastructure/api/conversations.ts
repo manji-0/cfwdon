@@ -1,27 +1,20 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { Conversation } from "@/domain/conversations/conversation";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
+import type { PageQuery } from "@/domain/pagination";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
   mastodonPostJson,
+  pageParams,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseConversation, parseConversationList } from "@/infrastructure/mastodon/parsers/conversations";
 
-export type ConversationsQuery = Readonly<{
-  maxId?: string;
-  limit?: number;
-}>;
-
 export const fetchConversations = (
-  query: ConversationsQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<Conversation>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   return mastodonFetchJson(`/api/v1/conversations?${params}`).andThen((raw) =>
     parseMastodon(parseConversationList, raw),
   );

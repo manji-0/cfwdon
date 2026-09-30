@@ -1,21 +1,32 @@
-use super::{
-    AppConfig, LocalAccount, RemoteActorProfile, StatusRow, activity_object_id,
-    delete_remote_favourite, delete_remote_reblog, extract_remote_note_object,
-    fanout_and_delete_remote_status_by_object_uri_soft, fetch_remote_actor_profile,
-    find_cached_remote_actor_profile_by_actor_uri, find_conversation_id_by_status_id,
-    find_local_status_by_object_uri, find_remote_status_by_url_or_object_uri, is_blocking_actor,
-    is_public_activitypub_visibility, is_remote_actor_following_local_account,
-    list_conversation_participants, log_json_event,
-    publish_remote_status_interaction_notification_soft, resolve_remote_status_by_url,
-    upsert_remote_actor, upsert_remote_reblog, upsert_remote_reblog_status, upsert_remote_status,
-    visibility_from_activitypub_object,
+use super::fanout_and_delete_remote_status_by_object_uri_soft;
+use crate::activitypub::{
+    activity_object_id, activitypub_primary_type, extract_remote_note_object,
+    is_public_activitypub_visibility, visibility_from_activitypub_object,
 };
+use crate::conversation_store::{
+    find_conversation_id_by_status_id, list_conversation_participants,
+};
+use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile};
+use crate::notifications::publish_remote_status_interaction_notification_soft;
+use crate::observability::log_json_event;
+use crate::relationship::is_remote_actor_following_local_account;
+use crate::remote::{
+    find_remote_status_by_url_or_object_uri, resolve_remote_status_by_url,
+    upsert_remote_reblog_status, upsert_remote_status,
+};
+use crate::statuses::find_local_status_by_object_uri;
+use crate::store::relationship::is_blocking_actor;
+use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use crate::store::statuses::{
+    delete_remote_favourite, delete_remote_reblog, upsert_remote_favourite, upsert_remote_reblog,
+};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::{Env, Result};
-
-use crate::D1Database;
 pub(crate) async fn remote_actor_may_interact_with_local_status(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     remote_actor_uri: &str,
 ) -> Result<bool> {
     if is_blocking_actor(db, &status.account_id, remote_actor_uri).await? {
@@ -63,7 +74,7 @@ pub(crate) async fn handle_inbox_like(
         return Ok(());
     }
     let activity_uri = activity.get("id").and_then(serde_json::Value::as_str);
-    crate::upsert_remote_favourite(
+    upsert_remote_favourite(
         db,
         &remote_actor.actor_uri,
         &status.id,
@@ -281,7 +292,7 @@ pub(crate) async fn handle_inbox_interaction_undo(
     let Some(object) = activity.get("object") else {
         return Ok(());
     };
-    let activity_type = crate::activitypub_primary_type(object).unwrap_or_default();
+    let activity_type = activitypub_primary_type(object).unwrap_or_default();
     let target_uri = object
         .get("object")
         .and_then(|value| activity_object_id(Some(value)))

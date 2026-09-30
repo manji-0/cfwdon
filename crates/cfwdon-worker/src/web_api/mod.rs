@@ -1,6 +1,9 @@
-use crate::{Response, Result, find_authenticated_local_account, load_config, media_object_url};
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::response::media_object_url;
+use crate::runtime_config::load_config;
 use serde::Serialize;
-use worker::{Request, RouteContext};
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct WebSessionResponse {
@@ -18,7 +21,7 @@ pub(crate) fn is_web_api_path(path: &str) -> bool {
 
 pub(crate) async fn web_session_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Unauthorized", 401),

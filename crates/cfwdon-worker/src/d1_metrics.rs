@@ -1,3 +1,5 @@
+#[cfg(target_arch = "wasm32")]
+use crate::observability::{add_log_message, log_json_event};
 use std::cell::{Cell, RefCell};
 
 use worker::{Response, Result};
@@ -94,7 +96,7 @@ fn maybe_log_slow_d1_query(duration_ms: u64, identity: Option<&D1QueryIdentity>)
     let message = d1_slow_query_message(duration_ms, identity);
     // console logging is wasm-only; native unit tests still build the payload.
     #[cfg(target_arch = "wasm32")]
-    crate::log_json_event(crate::add_log_message(payload, message));
+    log_json_event(add_log_message(payload, message));
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (payload, message);
 }
@@ -421,7 +423,7 @@ fn log_d1_transient_retry(operation: &str, outcome: &str, attempt: u8, detail: O
         "attempt": attempt,
     });
     #[cfg(target_arch = "wasm32")]
-    crate::log_json_event(crate::add_log_message(payload, message));
+    log_json_event(add_log_message(payload, message));
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (payload, message);
 }

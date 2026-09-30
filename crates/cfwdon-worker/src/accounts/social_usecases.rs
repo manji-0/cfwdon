@@ -1,9 +1,11 @@
 use super::{
     set_relationship_email_subscription, set_relationship_endorsement, set_relationship_note,
 };
-use crate::{
-    AppConfig, D1Database, LocalAccount, build_relationship_for_target, find_follow_by_target,
-};
+use crate::relationships::{RelationshipResponse, build_relationship_for_target};
+use crate::store::relationship::find_follow_by_target;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::Error;
 
 pub(crate) struct ResolvedRelationshipTarget<'a> {
@@ -29,7 +31,7 @@ pub(crate) async fn endorse_relationship_target(
     config: &AppConfig,
     target: ResolvedRelationshipTarget<'_>,
     endorsed: bool,
-) -> std::result::Result<crate::RelationshipResponse, SocialActionError> {
+) -> std::result::Result<RelationshipResponse, SocialActionError> {
     let Some(follow) =
         find_follow_by_target(db, target.viewer.id(), target.target_actor_uri).await?
     else {
@@ -63,7 +65,7 @@ pub(crate) async fn note_relationship_target(
     config: &AppConfig,
     target: ResolvedRelationshipTarget<'_>,
     note: &str,
-) -> std::result::Result<crate::RelationshipResponse, SocialActionError> {
+) -> std::result::Result<RelationshipResponse, SocialActionError> {
     set_relationship_note(
         db,
         target.viewer.id(),

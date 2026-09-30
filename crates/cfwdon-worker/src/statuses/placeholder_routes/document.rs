@@ -9,8 +9,9 @@ use super::provider::{
 };
 use super::provider_client::{translate_text_with_deepl, translate_text_with_libretranslate};
 use super::provider_languages::load_translation_provider_languages;
-use crate::D1Database;
-use crate::statuses::{Result, now_iso_string};
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
+use worker::Result;
 
 pub(crate) fn build_translation_document_for_language(
     status: &serde_json::Value,
@@ -77,7 +78,7 @@ pub(crate) fn build_translation_document_for_language(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn build_translation_document(status: &serde_json::Value) -> serde_json::Value {
     let source_language = status
         .get("language")

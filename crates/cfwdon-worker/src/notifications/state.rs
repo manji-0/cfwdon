@@ -1,10 +1,10 @@
-use super::now_iso_string;
+use crate::db_utils::d1_results;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct NotificationDismissalRow {
     pub(crate) notification_id: String,
@@ -30,7 +30,7 @@ pub(crate) async fn load_dismissed_notification_ids(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<NotificationDismissalRow>(&result)?
+    Ok(d1_results::<NotificationDismissalRow>(&result)?
         .into_iter()
         .map(|row| row.notification_id)
         .collect())

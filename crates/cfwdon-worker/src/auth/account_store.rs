@@ -1,13 +1,10 @@
-use cfwdon_core::{AppConfig, AuthenticatedUser};
-use cfwdon_domain::{ComposingAccessProvision, LocalAccount};
-use worker::d1::D1Type;
-use worker::{Error, Result};
-
-use crate::AccountRow;
 use crate::crypto_keys::generate_account_key_material;
 use crate::secret_storage::{decrypt_secret, encrypt_secret, is_encrypted_secret};
-
-use crate::D1Database;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::{AppConfig, AuthenticatedUser};
+use cfwdon_domain::{ComposingAccessProvision, LocalAccount, LocalAccountRecord};
+use worker::d1::D1Type;
+use worker::{Error, Result};
 pub(crate) async fn resolve_local_account(
     db: &D1Database,
     config: &AppConfig,
@@ -251,7 +248,7 @@ pub(crate) async fn find_account_by_email(
              LIMIT 1",
         )
         .bind_refs(&email)?
-        .first::<AccountRow>(None)
+        .first::<LocalAccountRecord>(None)
         .await?;
 
     Ok(row.map(LocalAccount::from_record))
@@ -268,7 +265,7 @@ pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Opti
              LIMIT 1",
         )
         .bind_refs(&id)?
-        .first::<AccountRow>(None)
+        .first::<LocalAccountRecord>(None)
         .await?;
 
     Ok(row.map(LocalAccount::from_record))
@@ -289,7 +286,7 @@ pub(crate) async fn find_account_by_username(
              LIMIT 1",
         )
         .bind_refs(&username)?
-        .first::<AccountRow>(None)
+        .first::<LocalAccountRecord>(None)
         .await?;
 
     Ok(row.map(LocalAccount::from_record))
@@ -314,7 +311,7 @@ pub(crate) async fn find_any_local_account(db: &D1Database) -> Result<Option<Loc
                created_at ASC
              LIMIT 1",
         )
-        .first::<AccountRow>(None)
+        .first::<LocalAccountRecord>(None)
         .await?;
 
     Ok(row.map(LocalAccount::from_record))

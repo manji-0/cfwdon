@@ -1,16 +1,23 @@
-use crate::{
-    D1Database, Result, StreamingEvent, build_local_status_response, build_remote_status_response,
-    find_account_by_id, find_media_attachments_by_status_id, find_remote_actor_by_actor_uri,
-    find_remote_status_by_id, find_status_by_id, is_local_status_thread_muted_by, is_muted_actor,
-    load_in_reply_to_account_id, load_remote_status_updated_at, load_status_updated_at,
-    now_iso_string,
+use crate::auth::find_account_by_id;
+use crate::media::find_media_attachments_by_status_id;
+use crate::remote::{find_remote_status_by_id, load_remote_status_updated_at};
+use crate::statuses::{
+    build_local_status_response, build_remote_status_response, find_status_by_id,
+    is_local_status_thread_muted_by, load_in_reply_to_account_id, load_status_updated_at,
 };
+use crate::store::relationship::is_muted_actor;
+use crate::store::remote::find_remote_actor_by_actor_uri;
+use crate::streaming_types::StreamingEvent;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::HashSet;
+use worker::Result;
 
 pub(super) async fn streaming_status_delta_events(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     tracked_status_ids: &[String],
     deleted_status_ids: &mut HashSet<String>,
     updated_status_ids: &mut HashSet<String>,
@@ -36,7 +43,7 @@ pub(super) async fn streaming_status_delta_events(
 pub(super) async fn append_streaming_status_delta_event(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     status_id: &str,
     deleted_status_ids: &mut HashSet<String>,
     updated_status_ids: &mut HashSet<String>,
@@ -82,8 +89,8 @@ pub(super) fn streaming_status_delta_already_recorded(
 pub(super) async fn streaming_local_status_update_event(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
-    status: &crate::StatusRow,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    status: &LocalStatus,
 ) -> Result<Option<StreamingEvent>> {
     let Some(updated_at) = load_status_updated_at(db, &status.id).await? else {
         return Ok(None);
@@ -127,8 +134,8 @@ pub(super) async fn streaming_local_status_update_event(
 pub(super) async fn streaming_remote_status_update_event(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
-    status: &crate::RemoteStatusRow,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    status: &RemoteStatus,
 ) -> Result<Option<StreamingEvent>> {
     let Some(updated_at) = load_remote_status_updated_at(db, &status.id).await? else {
         return Ok(None);

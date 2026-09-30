@@ -4,17 +4,23 @@
 //! and detail builders so a page pays one query set instead of one per status.
 
 use super::{
-    AppConfig, LocalAccount, MastodonPollResponsePreload, RemoteActorRow, RemoteStatusRow,
-    StatusRow, config_with_resolved_custom_emojis, count_rows, find_oauth_app_by_id,
-    find_oauth_apps_by_ids, find_statuses_by_ap_ids, find_statuses_by_ids,
-    load_mastodon_poll_response, load_status_updated_at, local_status_identity_from_uri,
+    LocalAccount, find_statuses_by_ap_ids, find_statuses_by_ids, load_status_updated_at,
     local_status_ids_thread_muted_by, local_status_target_uri,
 };
+use crate::activitypub::local_status_identity_from_uri;
+use crate::app_cache::load_account_capabilities;
+use crate::custom_emojis::config_with_resolved_custom_emojis;
+use crate::db_utils::{count_rows, d1_results, json_string_array, sql_in_json_each};
+use crate::local_polls::{MastodonPollResponsePreload, load_mastodon_poll_response};
+use crate::oauth_apps::{find_oauth_app_by_id, find_oauth_apps_by_ids};
+use crate::store::relationship::list_active_muted_actor_uris;
+use crate::store::remote::RemoteActorRow;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
-
-use crate::{D1Database, json_string_array, sql_in_json_each};
 
 /// Resolves the custom emoji registry a status response needs.
 ///
@@ -82,7 +88,7 @@ impl StatusApplicationPreload {
 fn collect_status_application_id(
     application_ids: &mut Vec<i64>,
     seen_application_ids: &mut HashSet<i64>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) {
     if let Some(application_id) = status.application_id
         && seen_application_ids.insert(application_id)
@@ -95,7 +101,7 @@ fn collect_local_reblog_target_refs(
     config: &AppConfig,
     status_ids: &mut Vec<String>,
     ap_ids: &mut Vec<String>,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) {
     let Some(boost_of_uri) = status.boost_of_uri.as_deref() else {
         return;
@@ -110,7 +116,7 @@ fn collect_local_reblog_target_refs(
 pub(crate) async fn preload_status_applications(
     db: &D1Database,
     config: &AppConfig,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
 ) -> Result<StatusApplicationPreload> {
     let mut application_ids = Vec::new();
     let mut seen_application_ids = HashSet::new();
@@ -151,7 +157,7 @@ pub(crate) async fn preload_status_applications(
 
 pub(crate) async fn local_status_edited_at(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<String>> {
     let updated_at = match status.updated_at.as_deref() {
         Some(updated_at) => Some(updated_at.to_owned()),
@@ -229,17 +235,17 @@ pub(crate) struct LocalStatusViewerStatePreload {
 }
 
 impl LocalStatusViewerStatePreload {
-    fn favourited(&self, status: &StatusRow) -> bool {
+    fn favourited(&self, status: &LocalStatus) -> bool {
         self.favourited_target_uris
             .contains(&local_status_target_uri(status))
     }
 
-    fn reblogged(&self, status: &StatusRow) -> bool {
+    fn reblogged(&self, status: &LocalStatus) -> bool {
         self.reblogged_target_uris
             .contains(&local_status_target_uri(status))
     }
 
-    fn bookmarked(&self, status: &StatusRow) -> bool {
+    fn bookmarked(&self, status: &LocalStatus) -> bool {
         self.bookmarked_target_uris
             .contains(&local_status_target_uri(status))
     }
@@ -273,7 +279,7 @@ pub(crate) struct LocalStatusResponseViewerState {
 
 pub(crate) fn preloaded_local_status_response_viewer_state(
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     preload: Option<&LocalStatusViewerStatePreload>,
 ) -> Option<LocalStatusPreloadedViewerState> {
     match (viewer, preload) {
@@ -365,7 +371,7 @@ async fn load_viewer_target_uri_set(
     let bindings = [D1Type::Text(account_id), D1Type::Text(uris_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<TargetUriRow>(&result)?
+    Ok(d1_results::<TargetUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_uri)
         .collect())
@@ -392,7 +398,7 @@ async fn load_viewer_remote_status_id_set(
     let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<RemoteStatusIdRow>(&result)?
+    Ok(d1_results::<RemoteStatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.remote_status_id)
         .collect())
@@ -418,7 +424,7 @@ async fn load_viewer_pinned_status_ids(
     let bindings = [D1Type::Text(account_id), D1Type::Text(ids_json.as_str())];
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<StatusIdRow>(&result)?
+    Ok(d1_results::<StatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.status_id)
         .collect())
@@ -427,7 +433,7 @@ async fn load_viewer_pinned_status_ids(
 pub(crate) async fn preload_local_status_viewer_state(
     db: &D1Database,
     account_id: &str,
-    statuses: &[&StatusRow],
+    statuses: &[&LocalStatus],
     known_has_thread_mutes: Option<bool>,
 ) -> Result<LocalStatusViewerStatePreload> {
     let mut seen_targets = HashSet::new();
@@ -443,7 +449,7 @@ pub(crate) async fn preload_local_status_viewer_state(
         .filter(|id| seen_status_ids.insert(id.clone()))
         .collect::<Vec<_>>();
 
-    let caps = crate::load_account_capabilities(db, account_id).await?;
+    let caps = load_account_capabilities(db, account_id).await?;
     let (
         favourited_target_uris,
         reblogged_target_uris,
@@ -487,7 +493,7 @@ pub(crate) async fn preload_local_status_viewer_state(
 pub(crate) async fn preload_remote_status_viewer_state(
     db: &D1Database,
     account_id: &str,
-    statuses: &[(&RemoteStatusRow, &RemoteActorRow)],
+    statuses: &[(&RemoteStatus, &RemoteActorRow)],
 ) -> Result<RemoteStatusViewerStatePreload> {
     let mut seen_status_ids = HashSet::new();
     let status_ids = statuses
@@ -502,7 +508,7 @@ pub(crate) async fn preload_remote_status_viewer_state(
         .filter(|uri| seen_actor_uris.insert(uri.clone()))
         .collect::<Vec<_>>();
 
-    let caps = crate::load_account_capabilities(db, account_id).await?;
+    let caps = load_account_capabilities(db, account_id).await?;
     let (favourited_status_ids, reblogged_status_ids, bookmarked_status_ids, muted_actor_uris) = futures_util::try_join!(
         load_viewer_remote_status_id_set(db, "favourites", account_id, &status_ids),
         load_viewer_remote_status_id_set(db, "reblogs", account_id, &status_ids),
@@ -513,7 +519,7 @@ pub(crate) async fn preload_remote_status_viewer_state(
                 Ok(HashSet::new())
             }
         },
-        crate::list_active_muted_actor_uris(db, account_id, &actor_uris),
+        list_active_muted_actor_uris(db, account_id, &actor_uris),
     )?;
 
     Ok(RemoteStatusViewerStatePreload {
@@ -550,7 +556,7 @@ pub(crate) async fn preload_status_quote_counts(
     );
     let binding = D1Type::Text(uris_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let counts = crate::d1_results::<StatusQuoteCountRow>(&result)?
+    let counts = d1_results::<StatusQuoteCountRow>(&result)?
         .into_iter()
         .map(|row| (row.quote_of_uri, row.count))
         .collect::<HashMap<_, _>>();
@@ -799,8 +805,8 @@ mod tests {
         assert_eq!(state, Some(RemoteStatusResponseViewerState::default()));
     }
 
-    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> StatusRow {
-        StatusRow {
+    fn status_row_fixture(id: &str, ap_id: Option<&str>) -> LocalStatus {
+        LocalStatus {
             id: id.to_owned(),
             account_id: "acct-1".to_owned(),
             ap_id: ap_id.map(str::to_owned),

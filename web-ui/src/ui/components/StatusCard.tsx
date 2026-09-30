@@ -15,7 +15,7 @@ import { MediaLightbox } from "@/ui/components/MediaLightbox";
 import { PollCard } from "@/ui/components/PollCard";
 import { StatusContent } from "@/ui/components/StatusContent";
 import { useConfirm } from "@/ui/context/ConfirmContext";
-import type { StatusActionHandlers } from "@/ui/hooks/useStatusActions";
+import type { StatusActionHandlers } from "@/ui/components/useStatusActions";
 import { formatRelativeTime } from "@/ui/lib/time";
 
 type StatusCardProps = Readonly<{

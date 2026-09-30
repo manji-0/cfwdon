@@ -7,9 +7,8 @@
 //! row and discarded everything above the cursor, making deep pages progressively
 //! slower. Emitting the bound only when it exists lets the index seek straight to
 //! it.
-
-use crate::{
-    ResolvedTimelineCursor, append_resolved_timeline_cursor_bindings,
+use crate::timelines::{
+    ResolvedTimelineCursor, ResolvedTimelineCursorSlots, append_resolved_timeline_cursor_bindings,
     seekable_resolved_timeline_cursor_predicates,
 };
 use worker::d1::D1Type;
@@ -110,7 +109,7 @@ pub(crate) struct HomeTimelineCandidateQuery<'a> {
 }
 
 /// Bind slots assigned to whichever cursor bounds are present.
-type CursorSlots = crate::ResolvedTimelineCursorSlots;
+type CursorSlots = ResolvedTimelineCursorSlots;
 
 /// Builds the candidate query for one source.
 ///
@@ -172,6 +171,7 @@ fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timelines::ResolvedTimelineCursor;
 
     fn empty_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {

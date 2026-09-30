@@ -1,9 +1,11 @@
-use crate::profile::require_authenticated_local_account;
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
 use crate::runtime_config::load_config;
+use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
-use worker::Error;
 use worker::d1::D1Type;
-use worker::{Request, Response, Result, RouteContext};
+use worker::{Error, Request, Response, Result, RouteContext};
 
 const HOME_MARKER_SCOPE: &str = "home";
 const NOTIFICATIONS_MARKER_SCOPE: &str = "notifications";
@@ -27,7 +29,7 @@ struct SaveMarkersRequest {
 }
 
 async fn load_marker(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     scope: &str,
 ) -> Result<Option<serde_json::Value>> {
@@ -47,13 +49,13 @@ async fn load_marker(
             serde_json::json!({
                 "last_read_id": row.last_read_id,
                 "version": row.version,
-                "updated_at": crate::timestamp_to_mastodon_iso8601(&row.updated_at),
+                "updated_at": timestamp_to_mastodon_iso8601(&row.updated_at),
             })
         }))
 }
 
 async fn save_marker(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     scope: &str,
     marker: MarkerUpdateRequest,
@@ -65,7 +67,7 @@ async fn save_marker(
         ));
     }
 
-    let updated_at = crate::now_iso_string()?;
+    let updated_at = now_iso_string()?;
     let bindings = [
         D1Type::Text(account_id),
         D1Type::Text(scope),
@@ -117,8 +119,8 @@ fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
 
 pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -148,8 +150,8 @@ pub(crate) async fn save_markers_response(
         .json::<SaveMarkersRequest>()
         .await
         .map_err(|error| worker::Error::RustError(format!("invalid markers payload: {error}")))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

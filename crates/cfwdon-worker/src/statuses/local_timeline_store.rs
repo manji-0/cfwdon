@@ -1,12 +1,14 @@
-use super::{
-    D1Database, ResolvedTimelineCursor, Result, StatusRecord, StatusRow, normalize_hashtag,
-    status_from_record, statuses_from_records,
+use super::{D1Database, status_from_record, statuses_from_records};
+use crate::db_utils::d1_results;
+use crate::tags::normalize_hashtag;
+use crate::timelines::{
+    ResolvedTimelineCursor, append_min_timestamp_cursor_bindings,
+    append_resolved_timeline_cursor_bindings, seekable_min_timestamp_cursor_predicates,
+    seekable_resolved_timeline_cursor_predicates,
 };
-use crate::{
-    append_min_timestamp_cursor_bindings, append_resolved_timeline_cursor_bindings,
-    seekable_min_timestamp_cursor_predicates, seekable_resolved_timeline_cursor_predicates,
-};
+use cfwdon_domain::{LocalStatus, LocalStatusRecord};
 use std::collections::HashSet;
+use worker::Result;
 use worker::d1::D1Type;
 
 const LOCAL_STATUS_COLUMNS: &str = "id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, application_id, card_json, created_at, updated_at";
@@ -17,7 +19,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
     viewer_account_id: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     if cursor.max_timestamp.is_none()
         && let Some(min_timestamp) = cursor.min_timestamp.as_deref()
     {
@@ -34,7 +36,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
     let (sql, bindings) = local_home_timeline_sql(viewer_account_id, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn list_local_home_timeline_statuses_since(
@@ -43,12 +45,12 @@ async fn list_local_home_timeline_statuses_since(
     min_timestamp: &str,
     min_id: Option<&str>,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) =
         local_home_timeline_since_sql(viewer_account_id, min_timestamp, min_id, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_home_timeline_sql<'a>(
@@ -130,11 +132,11 @@ pub(crate) async fn list_local_public_timeline_statuses(
     db: &D1Database,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) = local_public_timeline_sql(cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_timeline_sql<'a>(
@@ -162,7 +164,7 @@ pub(crate) async fn list_local_public_statuses_by_tag(
     tag: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     list_local_public_statuses_by_tags(db, &[normalize_hashtag(tag)], cursor, limit).await
 }
 
@@ -171,7 +173,7 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (mut rows, tags) =
         list_local_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
     if rows.len() >= limit as usize {
@@ -201,7 +203,7 @@ async fn list_local_public_statuses_by_tags_indexed(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<(Vec<StatusRow>, Vec<String>)> {
+) -> Result<(Vec<LocalStatus>, Vec<String>)> {
     let tags = normalize_unique_tags(tags);
     if tags.is_empty() {
         return Ok((Vec::new(), tags));
@@ -211,7 +213,7 @@ async fn list_local_public_statuses_by_tags_indexed(
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     Ok((
-        crate::d1_results::<StatusRecord>(&result)?
+        d1_results::<LocalStatusRecord>(&result)?
             .into_iter()
             .map(status_from_record)
             .collect::<Result<Vec<_>>>()?,
@@ -265,12 +267,12 @@ async fn list_local_public_statuses_by_tags_legacy(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let patterns = local_public_statuses_by_tags_legacy_patterns(tags);
     let (sql, bindings) = local_public_statuses_by_tags_legacy_sql(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
@@ -313,7 +315,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
     urls: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     if urls.is_empty() {
         return Ok(Vec::new());
     }
@@ -322,7 +324,7 @@ pub(crate) async fn list_local_public_statuses_by_link(
     let (sql, bindings) = local_public_statuses_by_link_sql(&patterns, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_public_statuses_by_link_patterns(urls: &[String]) -> Vec<String> {
@@ -367,11 +369,11 @@ pub(crate) async fn list_local_direct_timeline_statuses(
     viewer_account_id: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) = local_direct_timeline_sql(viewer_account_id, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn local_direct_timeline_sql<'a>(

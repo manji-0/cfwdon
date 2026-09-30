@@ -1,13 +1,18 @@
-use super::{
-    AppConfig, LocalAccount, RemoteActorProfile, activity_object_id, apply_incoming_poll_vote,
-    delete_incoming_poll_vote, enqueue_status_update_activity, find_local_status_by_object_uri,
-    find_status_by_id, find_status_poll_by_status_id,
-    find_status_poll_vote_for_remote_actor_by_activity_uri, is_iso_timestamp_in_past,
+use crate::activitypub::activity_object_id;
+use crate::delivery::enqueue_status_update_activity;
+use crate::federation::RemoteActorProfile;
+use crate::inbox::remote_actor_may_interact_with_local_status;
+use crate::local_polls::{apply_incoming_poll_vote, delete_incoming_poll_vote};
+use crate::statuses::{find_local_status_by_object_uri, find_status_by_id};
+use crate::store::local_polls::{
+    find_status_poll_by_status_id, find_status_poll_vote_for_remote_actor_by_activity_uri,
     list_status_poll_options,
 };
+use crate::time_html::is_iso_timestamp_in_past;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn handle_inbox_poll_vote_undo(
     db: &D1Database,
     activity: &serde_json::Value,
@@ -93,9 +98,7 @@ pub(crate) async fn handle_inbox_poll_vote(
     if status.account_id != account.id() {
         return Ok(false);
     }
-    if !crate::remote_actor_may_interact_with_local_status(db, &status, &remote_actor.actor_uri)
-        .await?
-    {
+    if !remote_actor_may_interact_with_local_status(db, &status, &remote_actor.actor_uri).await? {
         return Ok(false);
     }
     let Some(poll) = find_status_poll_by_status_id(db, &status.id).await? else {

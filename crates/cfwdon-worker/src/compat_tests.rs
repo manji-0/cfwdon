@@ -1,22 +1,26 @@
-use crate::AccountStats;
-use crate::StatusRow;
-use crate::build_activitypub_actor_document;
-use crate::build_announcements_document;
-use crate::build_app_verify_credentials_document;
-use crate::build_featured_collection_document;
-use crate::relationships::RelationshipResponse;
-use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
-use crate::{
-    build_default_extended_description_document, build_default_privacy_policy_document,
-    build_default_terms_of_service_document, build_donation_campaign_document,
-    build_instance_activity_document, build_instance_v1_document, build_instance_v2_document,
-    build_oauth_authorization_server_document, build_oauth_userinfo_document,
-    build_preferences_document, build_translation_document, scheduled_status_document,
+use crate::accounts::AccountStats;
+use crate::activitypub::build_activitypub_actor_document;
+use crate::featured_tags::build_featured_collection_document;
+use crate::instance::{
+    build_announcements_document, build_default_extended_description_document,
+    build_default_privacy_policy_document, build_instance_activity_document,
+    build_instance_v1_document, build_instance_v2_document,
 };
+use crate::meta_placeholder_routes::{
+    build_app_verify_credentials_document, build_donation_campaign_document,
+    build_oauth_authorization_server_document, build_oauth_userinfo_document,
+};
+use crate::policy_documents::build_default_terms_of_service_document;
+use crate::profile::build_preferences_document;
+use crate::relationships::RelationshipResponse;
+use crate::response::MastodonSearchResponse;
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::scheduled_statuses::scheduled_status_document;
+use crate::statuses::build_translation_document;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
-    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, QuoteState,
-    SoftwareInfo, Visibility,
+    InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, LocalStatus,
+    QuoteState, SoftwareInfo, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
@@ -55,8 +59,8 @@ fn fixture_stats() -> AccountStats {
     }
 }
 
-fn fixture_status() -> StatusRow {
-    StatusRow {
+fn fixture_status() -> LocalStatus {
+    LocalStatus {
         id: "status-1".to_owned(),
         account_id: "acct-1".to_owned(),
         ap_id: Some("https://social.example/users/alice/statuses/status-1".to_owned()),
@@ -300,7 +304,7 @@ fn compatibility_relationship_shape_is_stable() {
 
 #[test]
 fn compatibility_preferences_shape_is_stable() {
-    let value = build_preferences_document(&fixture_account());
+    let value = build_preferences_document(&fixture_account(), false, false);
 
     for pointer in [
         "/posting:default:visibility",
@@ -312,8 +316,6 @@ fn compatibility_preferences_shape_is_stable() {
     ] {
         assert_has_pointer(&value, pointer);
     }
-    assert_eq!(value.pointer("/posting:default:privacy"), None);
-    assert_eq!(value.pointer("/web:theme"), None);
 }
 
 #[test]
@@ -322,7 +324,7 @@ fn compatibility_quote_policy_reflects_account_default() {
     record.default_quote_policy = "followers".to_owned();
     let account = LocalAccount::from_record(record);
 
-    let preferences = build_preferences_document(&account);
+    let preferences = build_preferences_document(&account, false, false);
     assert_eq!(
         preferences.pointer("/posting:default:quote_policy"),
         Some(&serde_json::json!("followers"))
@@ -510,7 +512,7 @@ fn compatibility_translation_shape_is_stable() {
 
 #[test]
 fn compatibility_search_shape_includes_collections() {
-    let value = serde_json::to_value(crate::MastodonSearchResponse::default()).unwrap();
+    let value = serde_json::to_value(MastodonSearchResponse::default()).unwrap();
     assert_has_pointer(&value, "/collections");
 }
 

@@ -1,10 +1,11 @@
-use super::normalize_hashtag;
+use crate::remote::find_remote_status_by_id;
+use crate::statuses::find_status_by_id;
+use crate::tags::normalize_hashtag;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::HashSet;
 use url::Url;
 use worker::{Request, Result};
-
-use crate::D1Database;
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub(crate) struct TimelinePaginationQuery {
     pub(crate) limit: Option<u32>,
@@ -350,10 +351,10 @@ async fn resolve_timeline_cursor_timestamp(
         return Ok(None);
     };
 
-    if let Some(status) = crate::find_status_by_id(db, cursor_id).await? {
+    if let Some(status) = find_status_by_id(db, cursor_id).await? {
         return Ok(Some(status.created_at));
     }
-    if let Some(status) = crate::find_remote_status_by_id(db, cursor_id).await? {
+    if let Some(status) = find_remote_status_by_id(db, cursor_id).await? {
         return Ok(Some(status.published_at));
     }
 
@@ -434,3 +435,6 @@ pub(crate) fn matches_tag_timeline_filters(
 
     true
 }
+
+#[cfg(test)]
+mod unit_tests;

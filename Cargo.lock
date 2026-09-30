@@ -222,6 +222,7 @@ name = "cfwdon-core"
 version = "0.10.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -2,7 +2,9 @@ use super::{
     FilterKeywordRow, FilterRow, FilterStatusRow, V1FilterRow, list_filter_keywords,
     list_filter_statuses,
 };
-use crate::Result;
+use crate::time_html::timestamp_to_mastodon_iso8601_opt;
+use crate::tracked_d1::D1Database;
+use worker::Result;
 
 pub(in crate::filters) fn split_filter_context(value: &str) -> Vec<String> {
     value
@@ -33,7 +35,7 @@ pub(in crate::filters) fn filter_summary_document(row: &FilterRow) -> serde_json
         "id": row.id,
         "title": row.title,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
+        "expires_at": timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "filter_action": row.filter_action,
     })
 }
@@ -43,7 +45,7 @@ pub(in crate::filters) fn v1_filter_document(row: &V1FilterRow) -> serde_json::V
         "id": row.id,
         "phrase": row.phrase,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
+        "expires_at": timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "irreversible": row.filter_action == "hide",
         "whole_word": row.whole_word != 0,
     })
@@ -64,7 +66,7 @@ pub(in crate::filters) fn v2_filter_document_from_parts(
         "id": row.id,
         "title": row.title,
         "context": split_filter_context(&row.context_csv),
-        "expires_at": crate::timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
+        "expires_at": timestamp_to_mastodon_iso8601_opt(row.expires_at.as_deref()),
         "filter_action": row.filter_action,
         "keywords": keywords,
         "statuses": statuses,
@@ -72,7 +74,7 @@ pub(in crate::filters) fn v2_filter_document_from_parts(
 }
 
 pub(in crate::filters) async fn v2_filter_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     row: &FilterRow,
 ) -> Result<serde_json::Value> {
     let (keywords, statuses) = futures_util::try_join!(

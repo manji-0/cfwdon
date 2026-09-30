@@ -1,13 +1,13 @@
-use super::{
-    StatusRow, enqueue_addressed_delete_activity, enqueue_direct_delete_activity,
-    outbox_delete_insert_statement, reblog_wrapper_status_target_bindings,
+use super::reblog_wrapper_status_target_bindings;
+use crate::delivery::{
+    enqueue_addressed_delete_activity, enqueue_direct_delete_activity,
+    outbox_delete_insert_statement,
 };
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 
 pub(crate) async fn delete_reblog_wrapper_status_by_target_uri(
     db: &D1Database,
@@ -60,7 +60,7 @@ pub(crate) async fn delete_local_status_with_outbox(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     enqueue_direct_delete_activity(db, config, account, status).await?;
     enqueue_addressed_delete_activity(db, config, account, status).await?;

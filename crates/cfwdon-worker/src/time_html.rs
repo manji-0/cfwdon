@@ -1,5 +1,5 @@
-use super::{Error, Result};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use worker::{Error, Result};
 
 pub(crate) fn now_iso_string() -> Result<String> {
     #[cfg(target_arch = "wasm32")]
@@ -104,9 +104,48 @@ pub(crate) fn escape_html(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Normalize persisted timestamps into ISO-8601 for Mastodon API exposure.
+///
+/// Already-ISO values (containing `T`) are preserved as-is. SQLite
+/// `YYYY-MM-DD HH:MM:SS` values are treated as UTC and rewritten with
+/// Mastodon-style millisecond precision.
+pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    if value.contains('T') {
+        return value.to_owned();
+    }
+    let normalized = activitypub_datetime_string(value);
+    if normalized.ends_with('Z') && !normalized.contains('.') {
+        format!("{}.000Z", &normalized[..normalized.len() - 1])
+    } else {
+        normalized
+    }
+}
+
+pub(crate) fn timestamp_to_mastodon_iso8601_opt(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(timestamp_to_mastodon_iso8601)
+}
+
+pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
+    let normalized = timestamp_to_mastodon_iso8601(value);
+    let date = normalized.split(['T', ' ']).next().unwrap_or("1970-01-01");
+    if date.len() >= 10 {
+        format!("{}T00:00:00.000Z", &date[..10])
+    } else {
+        "1970-01-01T00:00:00.000Z".to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::activitypub_datetime_string;
+    use crate::time_html::timestamp_to_mastodon_iso8601;
 
     #[test]
     fn activitypub_datetime_string_normalizes_sqlite_timestamp() {
@@ -129,5 +168,17 @@ mod tests {
     fn activitypub_datetime_string_leaves_empty() {
         assert_eq!(activitypub_datetime_string(""), "");
         assert_eq!(activitypub_datetime_string("   "), "");
+    }
+
+    #[test]
+    fn timestamp_to_mastodon_iso8601_normalizes_sqlite_timestamp() {
+        assert_eq!(
+            timestamp_to_mastodon_iso8601("2026-05-09 13:40:48"),
+            "2026-05-09T13:40:48.000Z"
+        );
+        assert_eq!(
+            timestamp_to_mastodon_iso8601("2026-05-09T13:40:48.000Z"),
+            "2026-05-09T13:40:48.000Z"
+        );
     }
 }

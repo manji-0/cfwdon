@@ -1,29 +1,32 @@
-use crate::statuses::{
-    Request, Result, RouteContext, find_authenticated_local_account,
-    find_local_status_by_object_uri, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, load_config,
-    status_id_from_context,
-};
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::{D1RequestSession, open_bound_request_session};
+use crate::remote::{find_remote_status_by_id, find_remote_status_by_url_or_object_uri};
+use crate::request_utils::status_id_from_context;
+use crate::runtime_config::load_config;
+use crate::statuses::{find_local_status_by_object_uri, find_status_by_id};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
+use worker::{Request, Result, RouteContext};
 
 pub(crate) enum ResolvedStatus {
-    Local(crate::StatusRow),
-    Remote(crate::RemoteStatusRow),
+    Local(LocalStatus),
+    Remote(RemoteStatus),
 }
 
 pub(super) struct StatusDetailBaseContext {
     pub(super) config: cfwdon_core::AppConfig,
-    pub(super) session: crate::D1RequestSession,
-    pub(super) db: crate::D1Database,
+    pub(super) session: D1RequestSession,
+    pub(super) db: D1Database,
     pub(super) status_id: String,
 }
 
 pub(super) struct StatusDetailRequestContext {
     pub(super) base: StatusDetailBaseContext,
-    pub(super) viewer: Option<crate::LocalAccount>,
+    pub(super) viewer: Option<cfwdon_domain::LocalAccount>,
 }
 
 pub(crate) async fn resolve_status_reference(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     id: &str,
 ) -> Result<Option<ResolvedStatus>> {
@@ -61,7 +64,7 @@ pub(super) fn resolve_status_detail_base_context(
         Err(_) => return Ok(None),
     };
     let config = load_config(ctx);
-    let (session, db) = crate::open_bound_request_session(ctx, &config, req)?;
+    let (session, db) = open_bound_request_session(ctx, &config, req)?;
     Ok(Some(StatusDetailBaseContext {
         config,
         session,

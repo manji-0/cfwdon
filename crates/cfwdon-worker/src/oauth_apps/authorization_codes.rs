@@ -1,11 +1,10 @@
 use super::{escape_html, html_response, redirect_response};
 use crate::id_utils::generate_entity_id;
 use crate::time_html::now_unix_timestamp;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use url::Url;
 use worker::{Response, Result, d1::D1Type};
-
-use crate::D1Database;
 
 const AUTHORIZATION_CODE_TTL_SECONDS: i64 = 600;
 

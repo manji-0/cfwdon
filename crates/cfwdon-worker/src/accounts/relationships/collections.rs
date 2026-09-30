@@ -1,7 +1,6 @@
-use crate::{
-    MastodonAccountResponse, Request, Response, Result, build_internal_cursor_link_header,
-    parse_internal_pagination_id,
-};
+use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::responses::MastodonAccountResponse;
+use worker::{Request, Response, Result};
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct AccountCollectionQuery {

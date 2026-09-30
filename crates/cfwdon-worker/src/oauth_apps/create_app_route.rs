@@ -1,6 +1,12 @@
-use super::{OAuthAppRow, oauth_app_redirect_uris, oauth_app_scopes};
+use super::{oauth_app_redirect_uris, oauth_app_scopes};
+use crate::d1_metrics::{
+    d1_error_is_transient, d1_transient_exhausted_response, run_d1_with_transient_retry,
+};
+use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
+use crate::oauth_store::OAuthAppRow;
 use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use url::Url;
 use worker::{FormData, Request, Response, Result, RouteContext, d1::D1Type};
@@ -210,7 +216,7 @@ fn parsed_create_app_request(
 }
 
 async fn insert_oauth_app(
-    db: &crate::D1Database,
+    db: &D1Database,
     request: &ParsedCreateAppRequest,
 ) -> Result<OAuthAppRow> {
     let scopes_json = serde_json::to_string(&request.scopes).map_err(|error| {
@@ -235,7 +241,7 @@ async fn insert_oauth_app(
         D1Type::Text(client_id.as_str()),
         D1Type::Text(client_secret.as_str()),
     ];
-    crate::run_d1_with_transient_retry("oauth_apps.insert", async || {
+    run_d1_with_transient_retry("oauth_apps.insert", async || {
         db.prepare(
             "INSERT INTO oauth_apps (
             name,
@@ -264,7 +270,7 @@ async fn insert_oauth_app(
     .await?;
 
     let client_id_binding = D1Type::Text(client_id.as_str());
-    crate::run_d1_with_transient_retry("oauth_apps.reload", async || {
+    run_d1_with_transient_retry("oauth_apps.reload", async || {
         db.prepare(
             "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
                 client_id, client_secret, client_secret_expires_at
@@ -285,15 +291,15 @@ pub(crate) async fn create_app_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let request = match parse_create_app_request(&mut req).await {
         Ok(request) => request,
         Err(message) => return Response::error(&message, 422),
     };
     let app = match insert_oauth_app(&db, &request).await {
         Ok(app) => app,
-        Err(error) if crate::d1_error_is_transient(&error.to_string()) => {
-            return crate::d1_transient_exhausted_response();
+        Err(error) if d1_error_is_transient(&error.to_string()) => {
+            return d1_transient_exhausted_response();
         }
         Err(error) => return Err(error),
     };

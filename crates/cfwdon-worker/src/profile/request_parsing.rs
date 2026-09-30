@@ -1,7 +1,9 @@
-use super::{
-    MAX_IMAGE_UPLOAD_BYTES, ProfileMediaUpload, classify_media_kind,
-    normalize_quote_approval_policy, parse_optional_bool,
-};
+use super::ProfileMediaUpload;
+use crate::custom_emojis::sanitize_emoji_shortcodes;
+use crate::request_utils::parse_optional_bool;
+use crate::runtime_config::MAX_IMAGE_UPLOAD_BYTES;
+use crate::statuses::normalize_quote_approval_policy;
+use crate::store::media::{MediaKind, classify_media_kind};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde::de::Deserializer;
@@ -162,7 +164,7 @@ fn normalize_update_credentials_source(
         *privacy = privacy.trim().to_ascii_lowercase();
         if privacy.is_empty() {
             source.privacy = None;
-        } else if super::Visibility::parse(privacy).is_err() {
+        } else if cfwdon_domain::Visibility::parse(privacy).is_err() {
             return Err(
                 "source[privacy] must be one of: public, unlisted, private, direct".to_owned(),
             );
@@ -231,7 +233,7 @@ where
 
 pub(crate) fn sanitize_update_credentials_request(
     request: &mut UpdateCredentialsRequest,
-    config: &crate::AppConfig,
+    config: &cfwdon_core::AppConfig,
 ) {
     sanitize_optional_text(&mut request.display_name, config);
     sanitize_optional_text(&mut request.note, config);
@@ -241,18 +243,18 @@ pub(crate) fn sanitize_update_credentials_request(
     if let FieldsAttributesUpdate::Set(fields) = &mut request.fields_attributes {
         for field in fields {
             if let Some(name) = field.name.as_mut() {
-                *name = crate::sanitize_emoji_shortcodes(name, config);
+                *name = sanitize_emoji_shortcodes(name, config);
             }
             if let Some(value) = field.value.as_mut() {
-                *value = crate::sanitize_emoji_shortcodes(value, config);
+                *value = sanitize_emoji_shortcodes(value, config);
             }
         }
     }
 }
 
-fn sanitize_optional_text(value: &mut Option<String>, config: &crate::AppConfig) {
+fn sanitize_optional_text(value: &mut Option<String>, config: &cfwdon_core::AppConfig) {
     if let Some(current) = value.as_mut() {
-        *current = crate::sanitize_emoji_shortcodes(current, config);
+        *current = sanitize_emoji_shortcodes(current, config);
     }
 }
 
@@ -420,7 +422,7 @@ async fn parse_profile_media_upload(
     }
     let kind = classify_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
-    if kind != super::MediaKind::Image {
+    if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));
     }
     let bytes = file
@@ -470,7 +472,7 @@ fn parse_profile_media_data_url(
     }
     let kind = classify_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
-    if kind != super::MediaKind::Image {
+    if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));
     }
     let bytes = STANDARD

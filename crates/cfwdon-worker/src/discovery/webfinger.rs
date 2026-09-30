@@ -1,9 +1,14 @@
-use crate::{
-    CACHE_TTL_STATIC_METADATA, Request, Response, Result, RouteContext, account_profile_page_url,
-    actor_url, authorize_interaction_object_template, authorize_interaction_subscribe_template,
-    cache_public_json_response, find_account_by_username, instance_host, load_config,
-    media_object_url, parse_webfinger_resource, share_create_template,
+use crate::auth::find_account_by_username;
+use crate::db_session::bind_request_d1;
+use crate::identity::{
+    account_profile_page_url, actor_url, authorize_interaction_object_template,
+    authorize_interaction_subscribe_template, instance_host, parse_webfinger_resource,
+    share_create_template,
 };
+use crate::response::media_object_url;
+use crate::response_utils::{CACHE_TTL_STATIC_METADATA, cache_public_json_response};
+use crate::runtime_config::load_config;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedWebFingerQuery {
@@ -100,7 +105,7 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
         return Response::error("resource not found", 404);
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &handle.username).await? else {
         return Response::error("resource not found", 404);
     };
@@ -187,26 +192,26 @@ fn filter_webfinger_links(links: Vec<WebFingerLink>, rels: &[String]) -> Vec<Web
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{
+        account_profile_page_url, actor_url, authorize_interaction_object_template,
+        authorize_interaction_subscribe_template,
+    };
 
     #[test]
     fn webfinger_document_matches_mastodon_shape() {
         let config = cfwdon_core::AppConfig::new("example.com", "cfwdon", "test instance");
         let username = "alice";
-        let actor = crate::actor_url(&config, username);
-        let profile = crate::account_profile_page_url(&config, username);
+        let actor = actor_url(&config, username);
+        let profile = account_profile_page_url(&config, username);
         let document = WebFingerResponse {
-            subject: format!("acct:{username}@{}", crate::instance_host(&config)),
+            subject: format!("acct:{username}@{}", instance_host(&config)),
             aliases: vec![profile.clone(), actor.clone()],
             links: vec![
                 WebFingerLink::profile_page_link(profile),
                 WebFingerLink::self_link(actor),
-                WebFingerLink::subscribe_link(crate::authorize_interaction_subscribe_template(
-                    &config,
-                )),
-                WebFingerLink::create_intent_link(crate::share_create_template(&config)),
-                WebFingerLink::object_intent_link(crate::authorize_interaction_object_template(
-                    &config,
-                )),
+                WebFingerLink::subscribe_link(authorize_interaction_subscribe_template(&config)),
+                WebFingerLink::create_intent_link(share_create_template(&config)),
+                WebFingerLink::object_intent_link(authorize_interaction_object_template(&config)),
             ],
         };
         let value = serde_json::to_value(document).unwrap();

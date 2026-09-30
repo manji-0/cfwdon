@@ -1,16 +1,21 @@
-use super::{
-    AppConfig, Error, LocalAccount, StatusRow, Visibility, activitypub_audiences_for_status,
-    build_add_featured_activity, build_announce_activity, build_remove_featured_activity,
-    build_status_update_activity, build_undo_announce_activity, enqueue_targeted_outbox_activity,
-    filter_delivery_inboxes_for_domain_blocks, is_public_activitypub_visibility,
-    list_all_account_domain_blocks, list_follower_delivery_targets,
-    load_remote_actor_delivery_inbox, local_status_target_uri, local_username_from_actor_uri,
+use super::{enqueue_targeted_outbox_activity, list_follower_delivery_targets};
+use crate::activitypub::{
+    activitypub_audiences_for_status, build_add_featured_activity, build_announce_activity,
+    build_remove_featured_activity, build_status_update_activity, build_undo_announce_activity,
+    build_update_person_activity, is_public_activitypub_visibility, local_username_from_actor_uri,
 };
+use crate::domain_blocks::{
+    delivery_inbox_blocked_by_domains, filter_delivery_inboxes_for_domain_blocks,
+    list_all_account_domain_blocks,
+};
+use crate::relationship::load_remote_actor_delivery_inbox;
+use crate::statuses::local_status_target_uri;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus, Visibility};
 use std::collections::HashSet;
-use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
+use worker::{Error, Result};
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct OutboundActivityDescriptor {
     pub(crate) activity_id: String,
@@ -157,7 +162,7 @@ async fn follower_delivery_inboxes(db: &D1Database, account_id: &str) -> Result<
 }
 
 fn delivery_inbox_blocked(inbox: &str, blocked_domains: &[String]) -> bool {
-    crate::delivery_inbox_blocked_by_domains(inbox, blocked_domains)
+    delivery_inbox_blocked_by_domains(inbox, blocked_domains)
 }
 
 async fn merge_author_inbox(
@@ -247,7 +252,7 @@ pub(crate) async fn enqueue_profile_update_activities(
     config: &AppConfig,
     account: &LocalAccount,
 ) -> Result<()> {
-    let payload_json = crate::build_update_person_activity(config, account)?;
+    let payload_json = build_update_person_activity(config, account)?;
     let inboxes = follower_delivery_inboxes(db, account.id()).await?;
     // Profile Update has no status row; status_id must stay NULL to satisfy the FK.
     enqueue_targeted_outbox_activity(db, account.id(), None, &payload_json, &inboxes).await
@@ -257,7 +262,7 @@ pub(crate) async fn enqueue_status_update_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     let payload_json = build_status_update_activity(db, config, account, status).await?;
     let blocked_domains = list_all_account_domain_blocks(db, account.id()).await?;
@@ -337,7 +342,7 @@ pub(crate) async fn enqueue_add_featured_status_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());
@@ -360,7 +365,7 @@ pub(crate) async fn enqueue_remove_featured_status_activity(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<()> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(());

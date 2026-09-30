@@ -1,12 +1,15 @@
-use super::{
-    AppConfig, Error, Result, StatusRecord, StatusRow, find_account_by_id,
-    find_remote_statuses_with_actors_by_ids, json_string_array, local_status_identity_from_uri,
-    remote_account_rest_id, sql_in_json_each, status_from_record, statuses_from_records,
-    unique_ordered_refs,
-};
-use crate::{D1Database, append_local_status_id_cursor_parts, format_with_clauses};
+use super::{find_remote_statuses_with_actors_by_ids, status_from_record, statuses_from_records};
+use crate::activitypub::local_status_identity_from_uri;
+use crate::auth::find_account_by_id;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
+use crate::identity::remote_account_rest_id;
+use crate::timelines::{append_local_status_id_cursor_parts, format_with_clauses};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, LocalStatusRecord};
 use std::collections::HashMap;
 use worker::d1::D1Type;
+use worker::{Error, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AccountStatusVisibilityScope {
@@ -27,7 +30,7 @@ pub(crate) struct AccountStatusListOptions<'a> {
     pub(crate) tagged: Option<&'a str>,
 }
 
-pub(crate) async fn require_status_by_id(db: &D1Database, status_id: &str) -> Result<StatusRow> {
+pub(crate) async fn require_status_by_id(db: &D1Database, status_id: &str) -> Result<LocalStatus> {
     find_status_by_id(db, status_id)
         .await?
         .ok_or_else(|| Error::RustError("status not found".to_owned()))
@@ -36,7 +39,7 @@ pub(crate) async fn require_status_by_id(db: &D1Database, status_id: &str) -> Re
 pub(crate) async fn find_status_by_id(
     db: &D1Database,
     status_id: &str,
-) -> Result<Option<StatusRow>> {
+) -> Result<Option<LocalStatus>> {
     let status_id = D1Type::Text(status_id);
     db.prepare(
         "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
@@ -45,7 +48,7 @@ pub(crate) async fn find_status_by_id(
          LIMIT 1",
     )
     .bind_refs(&status_id)?
-    .first::<StatusRecord>(None)
+    .first::<LocalStatusRecord>(None)
     .await
     .and_then(|row| row.map(status_from_record).transpose())
 }
@@ -53,7 +56,7 @@ pub(crate) async fn find_status_by_id(
 pub(crate) async fn find_statuses_by_ids(
     db: &D1Database,
     status_ids: &[String],
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let ids = unique_ordered_refs(status_ids);
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -69,13 +72,13 @@ pub(crate) async fn find_statuses_by_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn find_status_by_ap_id(
     db: &D1Database,
     ap_id: &str,
-) -> Result<Option<StatusRow>> {
+) -> Result<Option<LocalStatus>> {
     let ap_id = D1Type::Text(ap_id);
     db.prepare(
         "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
@@ -84,7 +87,7 @@ pub(crate) async fn find_status_by_ap_id(
          LIMIT 1",
     )
     .bind_refs(&ap_id)?
-    .first::<StatusRecord>(None)
+    .first::<LocalStatusRecord>(None)
     .await
     .and_then(|row| row.map(status_from_record).transpose())
 }
@@ -92,7 +95,7 @@ pub(crate) async fn find_status_by_ap_id(
 pub(crate) async fn find_statuses_by_ap_ids(
     db: &D1Database,
     ap_ids: &[String],
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let ap_ids = unique_ordered_refs(ap_ids);
     if ap_ids.is_empty() {
         return Ok(Vec::new());
@@ -108,12 +111,12 @@ pub(crate) async fn find_statuses_by_ap_ids(
     let binding = D1Type::Text(ap_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn load_in_reply_to_account_id(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<String>> {
     if let Some(ref stored) = status.in_reply_to_account_id {
         return Ok(Some(stored.clone()));
@@ -126,7 +129,7 @@ pub(crate) async fn load_in_reply_to_account_id(
 
 pub(crate) async fn load_in_reply_to_account_ids(
     db: &D1Database,
-    statuses: &[StatusRow],
+    statuses: &[LocalStatus],
 ) -> Result<HashMap<String, String>> {
     // Seed the result map from statuses that already have the column stored.
     let mut result_map: HashMap<String, String> = statuses
@@ -165,7 +168,7 @@ pub(crate) async fn load_in_reply_to_account_ids(
     );
     let binding = D1Type::Text(reply_ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
-    let mut reply_accounts_by_status_id = crate::d1_results::<ReplyAccountIdRow>(&result)?
+    let mut reply_accounts_by_status_id = d1_results::<ReplyAccountIdRow>(&result)?
         .into_iter()
         .map(|row| (row.id, row.account_id))
         .collect::<HashMap<_, _>>();
@@ -202,7 +205,7 @@ pub(crate) async fn list_public_outbox_statuses(
     db: &D1Database,
     account_id: &str,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     list_public_outbox_statuses_page(db, account_id, limit, 0).await
 }
 
@@ -211,7 +214,7 @@ pub(crate) async fn list_public_outbox_statuses_page(
     account_id: &str,
     limit: u32,
     offset: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let account_id = D1Type::Text(account_id);
     let limit = D1Type::Integer(limit as i32);
     let offset = D1Type::Integer(offset as i32);
@@ -228,7 +231,7 @@ pub(crate) async fn list_public_outbox_statuses_page(
         .all()
         .await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn count_public_outbox_statuses(db: &D1Database, account_id: &str) -> Result<u64> {
@@ -256,7 +259,7 @@ pub(crate) async fn list_account_statuses(
     db: &D1Database,
     account_id: &str,
     options: AccountStatusListOptions<'_>,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let tagged_pattern = options
         .tagged
         .map(|tag| tag.trim().trim_start_matches('#').to_ascii_lowercase())
@@ -325,7 +328,7 @@ pub(crate) async fn list_account_statuses(
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_public_account_statuses(
@@ -334,11 +337,11 @@ pub(crate) async fn list_public_account_statuses(
     max_id: Option<&str>,
     min_id: Option<&str>,
     limit: u32,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) = public_account_statuses_sql(account_id, max_id, min_id, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn public_account_statuses_sql<'a>(
@@ -372,7 +375,7 @@ fn public_account_statuses_sql<'a>(
 pub(crate) async fn list_direct_local_replies(
     db: &D1Database,
     status_id: &str,
-) -> Result<Vec<StatusRow>> {
+) -> Result<Vec<LocalStatus>> {
     let status_id = D1Type::Text(status_id);
     let result = db
         .prepare(
@@ -385,10 +388,10 @@ pub(crate) async fn list_direct_local_replies(
         .all()
         .await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
-pub(crate) fn local_status_target_uri(status: &StatusRow) -> String {
+pub(crate) fn local_status_target_uri(status: &LocalStatus) -> String {
     status
         .ap_id
         .clone()
@@ -399,7 +402,7 @@ pub(crate) async fn find_local_status_by_object_uri(
     db: &D1Database,
     config: &AppConfig,
     object_uri: &str,
-) -> Result<Option<StatusRow>> {
+) -> Result<Option<LocalStatus>> {
     if let Some(status) = find_status_by_ap_id(db, object_uri).await? {
         return Ok(Some(status));
     }

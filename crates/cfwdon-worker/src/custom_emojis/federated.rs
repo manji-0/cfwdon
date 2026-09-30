@@ -1,11 +1,11 @@
 use super::{custom_emoji_to_json, extract_emoji_shortcodes};
-use crate::sanitize_remote_http_url;
+use crate::content_helpers::sanitize_remote_http_url;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::tracked_d1::D1Database;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
-
-use crate::D1Database;
 pub(crate) type FederatedEmojiMap = HashMap<String, CustomEmoji>;
 
 #[derive(Debug, Default)]
@@ -33,12 +33,12 @@ pub(crate) async fn preload_remote_status_federated_emojis(
 
     // O(1) binds — large trending/notification batches exceed D1's 100-parameter limit
     // when using per-id `IN (?1, ?2, …)` placeholders (#23).
-    let ids_json = crate::json_string_array(status_ids);
+    let ids_json = json_string_array(status_ids);
     let query = format!(
         "SELECT id, raw_object_json
          FROM remote_statuses
          WHERE id {}",
-        crate::sql_in_json_each(1)
+        sql_in_json_each(1)
     );
     let binding = D1Type::Text(ids_json.as_str());
     let rows = db
@@ -46,7 +46,7 @@ pub(crate) async fn preload_remote_status_federated_emojis(
         .bind_refs(&binding)?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<RemoteStatusRawObjectRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<RemoteStatusRawObjectRow>(&__d1))?;
 
     let mut by_status_id = HashMap::with_capacity(rows.len());
     for row in rows {

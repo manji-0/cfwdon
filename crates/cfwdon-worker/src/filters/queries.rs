@@ -1,6 +1,10 @@
 use super::{FilterKeywordRow, FilterRow, FilterStatusRow, V1FilterRow};
-use crate::{Result, generate_entity_id};
+use crate::app_cache::invalidate_account_capabilities;
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::tracked_d1::D1Database;
 use std::collections::HashMap;
+use worker::Result;
 use worker::d1::D1Type;
 
 const LOAD_LATEST_FILTER_UPDATED_AT_SQL: &str = "SELECT MAX(updated_at) AS updated_at
@@ -21,7 +25,7 @@ const LOAD_LATEST_FILTER_UPDATED_AT_SQL: &str = "SELECT MAX(updated_at) AS updat
              )";
 
 pub(crate) async fn load_latest_filter_updated_at(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<Option<String>> {
     let account_id = D1Type::Text(account_id);
@@ -39,7 +43,7 @@ pub(crate) async fn load_latest_filter_updated_at(
 }
 
 pub(in crate::filters) async fn list_filters(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<Vec<FilterRow>> {
     let account_id = D1Type::Text(account_id);
@@ -53,11 +57,11 @@ pub(in crate::filters) async fn list_filters(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<FilterRow>(&result)
+    d1_results::<FilterRow>(&result)
 }
 
 pub(in crate::filters) async fn find_filter(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     filter_id: &str,
 ) -> Result<Option<FilterRow>> {
@@ -75,7 +79,7 @@ pub(in crate::filters) async fn find_filter(
 }
 
 pub(in crate::filters) async fn list_filter_keywords(
-    db: &crate::D1Database,
+    db: &D1Database,
     filter_id: &str,
 ) -> Result<Vec<FilterKeywordRow>> {
     let filter_id = D1Type::Text(filter_id);
@@ -89,11 +93,11 @@ pub(in crate::filters) async fn list_filter_keywords(
         .bind_refs(&filter_id)?
         .all()
         .await?;
-    crate::d1_results::<FilterKeywordRow>(&result)
+    d1_results::<FilterKeywordRow>(&result)
 }
 
 pub(in crate::filters) async fn list_filter_keywords_for_filters(
-    db: &crate::D1Database,
+    db: &D1Database,
     filters: &[FilterRow],
 ) -> Result<HashMap<String, Vec<FilterKeywordRow>>> {
     if filters.is_empty() {
@@ -116,7 +120,7 @@ pub(in crate::filters) async fn list_filter_keywords_for_filters(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     let mut by_filter_id = HashMap::new();
-    for keyword in crate::d1_results::<FilterKeywordRow>(&result)? {
+    for keyword in d1_results::<FilterKeywordRow>(&result)? {
         by_filter_id
             .entry(keyword.filter_id.clone())
             .or_insert_with(Vec::new)
@@ -127,7 +131,7 @@ pub(in crate::filters) async fn list_filter_keywords_for_filters(
 }
 
 pub(in crate::filters) async fn find_filter_keyword(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     keyword_id: &str,
 ) -> Result<Option<FilterKeywordRow>> {
@@ -146,7 +150,7 @@ pub(in crate::filters) async fn find_filter_keyword(
 }
 
 pub(in crate::filters) async fn list_filter_statuses(
-    db: &crate::D1Database,
+    db: &D1Database,
     filter_id: &str,
 ) -> Result<Vec<FilterStatusRow>> {
     let filter_id = D1Type::Text(filter_id);
@@ -160,11 +164,11 @@ pub(in crate::filters) async fn list_filter_statuses(
         .bind_refs(&filter_id)?
         .all()
         .await?;
-    crate::d1_results::<FilterStatusRow>(&result)
+    d1_results::<FilterStatusRow>(&result)
 }
 
 pub(in crate::filters) async fn list_filter_statuses_for_filters(
-    db: &crate::D1Database,
+    db: &D1Database,
     filters: &[FilterRow],
 ) -> Result<HashMap<String, Vec<FilterStatusRow>>> {
     if filters.is_empty() {
@@ -187,7 +191,7 @@ pub(in crate::filters) async fn list_filter_statuses_for_filters(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
     let mut by_filter_id = HashMap::new();
-    for status in crate::d1_results::<FilterStatusRow>(&result)? {
+    for status in d1_results::<FilterStatusRow>(&result)? {
         by_filter_id
             .entry(status.filter_id.clone())
             .or_insert_with(Vec::new)
@@ -198,7 +202,7 @@ pub(in crate::filters) async fn list_filter_statuses_for_filters(
 }
 
 pub(in crate::filters) async fn find_filter_status(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     status_filter_id: &str,
 ) -> Result<Option<FilterStatusRow>> {
@@ -217,7 +221,7 @@ pub(in crate::filters) async fn find_filter_status(
 }
 
 pub(in crate::filters) async fn list_v1_filters(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<Vec<V1FilterRow>> {
     let account_id = D1Type::Text(account_id);
@@ -232,11 +236,11 @@ pub(in crate::filters) async fn list_v1_filters(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<V1FilterRow>(&result)
+    d1_results::<V1FilterRow>(&result)
 }
 
 pub(in crate::filters) async fn find_v1_filter(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     keyword_id: &str,
 ) -> Result<Option<V1FilterRow>> {
@@ -255,7 +259,7 @@ pub(in crate::filters) async fn find_v1_filter(
 }
 
 pub(in crate::filters) async fn create_filter_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     title: &str,
     contexts: &[String],
@@ -282,12 +286,12 @@ pub(in crate::filters) async fn create_filter_row(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(filter_id)
 }
 
 pub(in crate::filters) async fn update_filter_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     filter_id: &str,
     title: &str,
@@ -322,7 +326,7 @@ pub(in crate::filters) async fn update_filter_row(
 }
 
 pub(in crate::filters) async fn delete_filter_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     filter_id: &str,
 ) -> Result<bool> {
@@ -343,13 +347,13 @@ pub(in crate::filters) async fn delete_filter_row(
         .await?;
     let changed = did_change(&result)?;
     if changed {
-        crate::invalidate_account_capabilities(account_id).await;
+        invalidate_account_capabilities(account_id).await;
     }
     Ok(changed)
 }
 
 pub(in crate::filters) async fn replace_filter_keywords(
-    db: &crate::D1Database,
+    db: &D1Database,
     filter_id: &str,
     keywords: &[(String, bool)],
 ) -> Result<()> {
@@ -379,7 +383,7 @@ pub(in crate::filters) async fn replace_filter_keywords(
 }
 
 pub(in crate::filters) async fn create_filter_keyword_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     filter_id: &str,
     keyword: &str,
     whole_word: bool,
@@ -402,7 +406,7 @@ pub(in crate::filters) async fn create_filter_keyword_row(
 }
 
 pub(in crate::filters) async fn update_filter_keyword_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     keyword_id: &str,
     keyword: &str,
     whole_word: bool,
@@ -427,7 +431,7 @@ pub(in crate::filters) async fn update_filter_keyword_row(
 }
 
 pub(in crate::filters) async fn delete_filter_keyword_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     keyword_id: &str,
 ) -> Result<Option<String>> {
     let keyword_id_binding = D1Type::Text(keyword_id);
@@ -453,7 +457,7 @@ pub(in crate::filters) async fn delete_filter_keyword_row(
 }
 
 pub(in crate::filters) async fn create_filter_status_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     filter_id: &str,
     status_id: &str,
 ) -> Result<String> {
@@ -474,7 +478,7 @@ pub(in crate::filters) async fn create_filter_status_row(
 }
 
 pub(in crate::filters) async fn delete_filter_status_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     status_filter_id: &str,
 ) -> Result<bool> {
     let status_filter_id_binding = D1Type::Text(status_filter_id);

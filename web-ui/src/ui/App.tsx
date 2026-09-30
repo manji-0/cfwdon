@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { loadSession } from "@/application/load-session";
 import { SessionState } from "@/domain/session/session";
+import { fetchWebSession } from "@/infrastructure/api/web-session";
 import { LoginPanel } from "@/ui/components/LoginPanel";
 import { SessionProvider, createSessionContextValue } from "@/ui/context/SessionContext";
 import { appRouter } from "@/ui/router";
@@ -14,7 +15,7 @@ export const App = () => {
 
   useEffect(() => {
     let active = true;
-    void loadSession().then((result) => {
+    void loadSession(fetchWebSession).then((result) => {
       if (active && result.isOk()) {
         setSession((current) =>
           current.kind === "Loading" ? SessionState.resolve(current, result.value) : current,

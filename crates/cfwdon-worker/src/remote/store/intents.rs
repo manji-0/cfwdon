@@ -1,7 +1,8 @@
 use crate::remote::adapters::{
     activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
 };
-use crate::{RemoteActorProfile, now_iso_string};
+use crate::remote::store::RemoteActorProfile;
+use crate::time_html::now_iso_string;
 use cfwdon_domain::{
     RemoteQuoteResolution, StatusId, StoredRemoteReblogIntent, StoredRemoteStatusIntent,
 };
@@ -80,6 +81,7 @@ pub(super) fn build_remote_reblog_store_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::federation::RemoteActorProfile;
     use serde_json::json;
 
     fn remote_actor_profile_fixture() -> RemoteActorProfile {

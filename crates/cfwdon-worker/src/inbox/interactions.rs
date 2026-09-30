@@ -1,12 +1,17 @@
 use super::{
-    AppConfig, LocalAccount, RemoteActorProfile, actor_url, delete_follower_by_actor,
-    delete_remote_follow_request_by_actor, find_follower_follow_activity_id,
-    find_pending_remote_follow_request_by_actor, follow_targets_local_actor,
-    handle_inbox_interaction_undo, handle_inbox_poll_vote_undo, is_follow_undo,
+    delete_follower_by_actor, find_follower_follow_activity_id, handle_inbox_interaction_undo,
+    handle_inbox_poll_vote_undo,
 };
+use crate::activitypub::{follow_targets_local_actor, is_follow_undo};
+use crate::federation::RemoteActorProfile;
+use crate::follow_requests::{
+    delete_remote_follow_request_by_actor, find_pending_remote_follow_request_by_actor,
+};
+use crate::identity::actor_url;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::{Env, Result};
-
-use crate::D1Database;
 async fn string_undo_matches_known_follow(
     db: &D1Database,
     account: &LocalAccount,

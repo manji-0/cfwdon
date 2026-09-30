@@ -9,3 +9,6 @@ publish = false
 [dependencies]
 cfwdon-domain.workspace = true
 stateright.workspace = true
+
+[lints]
+workspace = true

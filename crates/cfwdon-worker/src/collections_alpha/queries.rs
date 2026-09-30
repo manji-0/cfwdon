@@ -3,11 +3,16 @@ use super::{
     MAX_REMOTE_APPROVAL_REVALIDATIONS, RemoteCollectionDraft, RemoteCollectionItemRevalidationRow,
     RemoteCollectionItemRow, RemoteCollectionRow, activitypub_value_id,
 };
-use crate::{AccountReference, Result, generate_entity_id, remote_account_rest_id};
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::identity::remote_account_rest_id;
+use crate::remote::AccountReference;
+use crate::tracked_d1::D1Database;
+use worker::Result;
 use worker::d1::D1Type;
 
 pub(in crate::collections_alpha) async fn collection_row_by_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
 ) -> Result<Option<CollectionRow>> {
     let collection_id = D1Type::Text(collection_id);
@@ -32,7 +37,7 @@ pub(in crate::collections_alpha) async fn collection_row_by_id(
 }
 
 pub(in crate::collections_alpha) async fn list_collection_rows_for_account(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     include_private: bool,
     offset: u32,
@@ -65,11 +70,11 @@ pub(in crate::collections_alpha) async fn list_collection_rows_for_account(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<CollectionRow>(&result)
+    d1_results::<CollectionRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn count_collection_rows_for_account(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     include_private: bool,
 ) -> Result<u64> {
@@ -91,7 +96,7 @@ pub(in crate::collections_alpha) async fn count_collection_rows_for_account(
 }
 
 pub(in crate::collections_alpha) async fn count_in_collection_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<u64> {
     let bindings = [D1Type::Text(account_id)];
@@ -111,7 +116,7 @@ pub(in crate::collections_alpha) async fn count_in_collection_rows(
 }
 
 pub(in crate::collections_alpha) async fn remote_collection_row_by_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
 ) -> Result<Option<RemoteCollectionRow>> {
     let collection_id = D1Type::Text(collection_id);
@@ -140,7 +145,7 @@ pub(in crate::collections_alpha) async fn remote_collection_row_by_id(
 }
 
 pub(in crate::collections_alpha) async fn remote_collection_row_by_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_uri: &str,
 ) -> Result<Option<RemoteCollectionRow>> {
     let collection_uri = D1Type::Text(collection_uri);
@@ -169,7 +174,7 @@ pub(in crate::collections_alpha) async fn remote_collection_row_by_uri(
 }
 
 pub(in crate::collections_alpha) async fn list_remote_collection_rows_for_actor(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
     offset: u32,
     limit: u32,
@@ -204,11 +209,11 @@ pub(in crate::collections_alpha) async fn list_remote_collection_rows_for_actor(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<RemoteCollectionRow>(&result)
+    d1_results::<RemoteCollectionRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn count_remote_collection_rows_for_actor(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
 ) -> Result<u64> {
     let actor_uri = D1Type::Text(actor_uri);
@@ -226,7 +231,7 @@ pub(in crate::collections_alpha) async fn count_remote_collection_rows_for_actor
 }
 
 pub(in crate::collections_alpha) async fn count_remote_in_collection_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     target_actor_uri: &str,
 ) -> Result<u64> {
     let target_actor_uri = D1Type::Text(target_actor_uri);
@@ -246,7 +251,7 @@ pub(in crate::collections_alpha) async fn count_remote_in_collection_rows(
 }
 
 pub(in crate::collections_alpha) async fn list_collection_items(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     include_pending: bool,
 ) -> Result<Vec<CollectionItemRow>> {
@@ -270,11 +275,11 @@ pub(in crate::collections_alpha) async fn list_collection_items(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<CollectionItemRow>(&result)
+    d1_results::<CollectionItemRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn list_remote_collection_items(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     include_pending: bool,
 ) -> Result<Vec<RemoteCollectionItemRow>> {
@@ -300,11 +305,11 @@ pub(in crate::collections_alpha) async fn list_remote_collection_items(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<RemoteCollectionItemRow>(&result)
+    d1_results::<RemoteCollectionItemRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn remote_collection_item_by_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<Option<RemoteCollectionItemRow>> {
@@ -328,7 +333,7 @@ pub(in crate::collections_alpha) async fn remote_collection_item_by_id(
 }
 
 pub(in crate::collections_alpha) async fn list_remote_collection_items_due_for_approval_revalidation(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
 ) -> Result<Vec<RemoteCollectionItemRow>> {
     let bindings = [
@@ -359,11 +364,11 @@ pub(in crate::collections_alpha) async fn list_remote_collection_items_due_for_a
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<RemoteCollectionItemRow>(&result)
+    d1_results::<RemoteCollectionItemRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn list_stale_remote_collection_items_for_approval_revalidation(
-    db: &crate::D1Database,
+    db: &D1Database,
     limit: i32,
 ) -> Result<Vec<RemoteCollectionItemRevalidationRow>> {
     let result = db
@@ -387,11 +392,11 @@ pub(in crate::collections_alpha) async fn list_stale_remote_collection_items_for
         .bind_refs(&[D1Type::Integer(limit)])?
         .all()
         .await?;
-    crate::d1_results::<RemoteCollectionItemRevalidationRow>(&result)
+    d1_results::<RemoteCollectionItemRevalidationRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn list_remote_in_collection_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     target_actor_uri: &str,
     limit: u32,
 ) -> Result<Vec<RemoteCollectionRow>> {
@@ -426,11 +431,11 @@ pub(in crate::collections_alpha) async fn list_remote_in_collection_rows(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<RemoteCollectionRow>(&result)
+    d1_results::<RemoteCollectionRow>(&result)
 }
 
 pub(in crate::collections_alpha) async fn list_local_in_collection_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     target_account_id: &str,
     limit: u32,
 ) -> Result<Vec<CollectionRow>> {
@@ -461,7 +466,7 @@ pub(in crate::collections_alpha) async fn list_local_in_collection_rows(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<CollectionRow>(&result)
+    d1_results::<CollectionRow>(&result)
 }
 
 fn in_collection_entry_sort_key(entry: &InCollectionPageEntry) -> (&str, &str) {
@@ -483,7 +488,7 @@ pub(in crate::collections_alpha) fn sort_in_collection_page_entries(
     });
 }
 pub(in crate::collections_alpha) async fn upsert_remote_collection_draft(
-    db: &crate::D1Database,
+    db: &D1Database,
     draft: &RemoteCollectionDraft,
 ) -> Result<()> {
     let bindings = [
@@ -542,7 +547,7 @@ pub(in crate::collections_alpha) async fn upsert_remote_collection_draft(
     .map(|_| ())
 }
 pub(in crate::collections_alpha) async fn update_remote_collection_item_approval_verification(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     target_actor_uri: &str,
     state: &str,
@@ -568,7 +573,7 @@ pub(in crate::collections_alpha) async fn update_remote_collection_item_approval
     Ok(())
 }
 pub(in crate::collections_alpha) async fn delete_remote_collection_by_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
     collection_uri: &str,
 ) -> Result<()> {
@@ -585,7 +590,7 @@ pub(in crate::collections_alpha) async fn delete_remote_collection_by_uri(
 }
 
 pub(in crate::collections_alpha) async fn delete_remote_collection_item_by_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     object: &serde_json::Value,
 ) -> Result<()> {
@@ -613,7 +618,7 @@ pub(in crate::collections_alpha) async fn delete_remote_collection_item_by_objec
 }
 
 pub(in crate::collections_alpha) async fn revoke_remote_collection_item(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {
@@ -637,7 +642,7 @@ pub(in crate::collections_alpha) async fn revoke_remote_collection_item(
 }
 
 pub(in crate::collections_alpha) async fn insert_collection(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     request: &CollectionRequest,
 ) -> Result<CollectionRow> {
@@ -697,7 +702,7 @@ pub(in crate::collections_alpha) async fn insert_collection(
 }
 
 pub(in crate::collections_alpha) async fn update_collection(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     request: &CollectionRequest,
 ) -> Result<Option<CollectionRow>> {
@@ -763,7 +768,7 @@ pub(in crate::collections_alpha) async fn update_collection(
 }
 
 pub(in crate::collections_alpha) async fn delete_collection(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
 ) -> Result<bool> {
     if collection_row_by_id(db, collection_id).await?.is_none() {
@@ -778,7 +783,7 @@ pub(in crate::collections_alpha) async fn delete_collection(
 }
 
 pub(in crate::collections_alpha) async fn insert_collection_item(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     target: &AccountReference,
 ) -> Result<CollectionItemRow> {
@@ -829,7 +834,7 @@ pub(in crate::collections_alpha) async fn insert_collection_item(
 }
 
 pub(in crate::collections_alpha) async fn collection_item_by_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<Option<CollectionItemRow>> {
@@ -846,7 +851,7 @@ pub(in crate::collections_alpha) async fn collection_item_by_id(
 }
 
 pub(in crate::collections_alpha) async fn collection_item_by_feature_request_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     activity_uri: &str,
 ) -> Result<Option<(CollectionRow, CollectionItemRow)>> {
     let activity_uri_binding = D1Type::Text(activity_uri);
@@ -882,7 +887,7 @@ pub(in crate::collections_alpha) async fn collection_item_by_feature_request_uri
 }
 
 pub(in crate::collections_alpha) async fn update_collection_item_feature_request_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
     activity_uri: &str,
@@ -905,7 +910,7 @@ pub(in crate::collections_alpha) async fn update_collection_item_feature_request
 }
 
 pub(in crate::collections_alpha) async fn update_collection_item_feature_state(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
     state: &str,
@@ -932,7 +937,7 @@ pub(in crate::collections_alpha) async fn update_collection_item_feature_state(
 }
 
 pub(in crate::collections_alpha) async fn delete_collection_item(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {
@@ -954,7 +959,7 @@ pub(in crate::collections_alpha) async fn delete_collection_item(
 }
 
 pub(in crate::collections_alpha) async fn revoke_collection_item(
-    db: &crate::D1Database,
+    db: &D1Database,
     collection_id: &str,
     item_id: &str,
 ) -> Result<bool> {

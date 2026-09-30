@@ -1,11 +1,12 @@
-use super::{
-    AccountReference, CreateReportRequest, Error, ReportRow, Result, generate_entity_id,
-    remote_account_rest_id,
-};
+use super::{CreateReportRequest, ReportRow};
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::identity::remote_account_rest_id;
+use crate::remote::AccountReference;
+use crate::tracked_d1::D1Database;
 use cfwdon_domain::StoredReportIntent;
 use worker::d1::D1Type;
-
-use crate::D1Database;
+use worker::{Error, Result};
 fn stored_report_intent(
     report_id: String,
     request: &CreateReportRequest,
@@ -155,7 +156,7 @@ pub(crate) async fn list_reports_filtered(
         .all()
         .await?;
 
-    crate::d1_results::<ReportRow>(&result)
+    d1_results::<ReportRow>(&result)
 }
 
 pub(crate) async fn resolve_report(
@@ -196,7 +197,7 @@ pub(crate) async fn list_report_status_ids(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value
@@ -210,14 +211,15 @@ pub(crate) async fn list_report_status_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::remote::RemoteActorRow;
     use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 
     fn local_account() -> LocalAccount {
         LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice"))
     }
 
-    fn remote_actor(actor_uri: &str) -> crate::RemoteActorRow {
-        crate::RemoteActorRow {
+    fn remote_actor(actor_uri: &str) -> RemoteActorRow {
+        RemoteActorRow {
             actor_uri: actor_uri.to_owned(),
             username: "bob".to_owned(),
             domain: "remote.example".to_owned(),

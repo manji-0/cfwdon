@@ -1,17 +1,20 @@
-use super::notifications::{
-    NotificationEntry, notification_account_matches_filter, notification_type_allowed,
-};
 use super::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, StatusRow, actor_url,
-    build_status_notification_entry, can_view_local_status,
+    NotificationsQuery, build_status_notification_entry,
     list_local_quote_notifications_for_account, list_quoted_update_notifications_for_account,
     list_remote_quote_notifications_for_account, notification_timestamp_sort_token,
-    preload_notification_statuses, remote_account_rest_id,
+    preload_notification_statuses,
 };
-use cfwdon_domain::LocalAccount;
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::notifications::{
+    NotificationEntry, QuotedUpdateNotificationRow, notification_account_matches_filter,
+    notification_type_allowed,
+};
+use crate::responses::MastodonAccountResponse;
+use crate::statuses::can_view_local_status;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn collect_quote_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,
@@ -201,8 +204,8 @@ pub(crate) async fn collect_quoted_update_notification_entries(
 
 use cfwdon_domain::{QuoteState, Visibility};
 
-fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> StatusRow {
-    StatusRow {
+fn quoted_update_status_row(update: &QuotedUpdateNotificationRow) -> LocalStatus {
+    LocalStatus {
         id: update.id.clone(),
         account_id: update.account_id.clone(),
         ap_id: update.ap_id.clone(),
@@ -228,7 +231,7 @@ fn quoted_update_status_row(update: &crate::QuotedUpdateNotificationRow) -> Stat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::QuotedUpdateNotificationRow;
+    use crate::notifications::QuotedUpdateNotificationRow;
 
     #[test]
     fn quoted_update_status_row_preserves_status_fields() {

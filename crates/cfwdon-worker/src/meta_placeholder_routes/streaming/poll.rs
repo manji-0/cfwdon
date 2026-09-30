@@ -5,11 +5,11 @@ use super::batches::{
 };
 use super::budget::{streaming_error_is_subrequest_limit, streaming_poll_budget_exhausted};
 use super::status_deltas::streaming_status_delta_events;
-use crate::{
-    D1Database, Result, StreamingBatch, StreamingEvent, StreamingLoopState,
-    load_latest_filter_updated_at, streaming_home_batch,
-};
-use worker::console_error;
+use crate::filters::load_latest_filter_updated_at;
+use crate::streaming_home_batch::streaming_home_batch;
+use crate::streaming_types::{StreamingBatch, StreamingEvent, StreamingLoopState};
+use crate::tracked_d1::D1Database;
+use worker::{Result, console_error};
 
 pub(super) async fn yield_streaming_poll_round(
     db: &D1Database,
@@ -17,7 +17,7 @@ pub(super) async fn yield_streaming_poll_round(
     stream_name: &str,
     tag: Option<&str>,
     list: Option<&str>,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     state: &mut StreamingLoopState,
     poll_rounds: &mut u32,
 ) -> StreamingPollYield {
@@ -101,7 +101,7 @@ pub(super) fn streaming_event_key(event: &StreamingEvent) -> String {
 pub(super) async fn append_user_stream_state_events(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
     state: &mut StreamingLoopState,
     is_initial_poll: bool,
     events: &mut Vec<StreamingEvent>,
@@ -112,7 +112,7 @@ pub(super) async fn append_user_stream_state_events(
 
 pub(super) async fn append_user_filter_state_events(
     db: &D1Database,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
     state: &mut StreamingLoopState,
     is_initial_poll: bool,
     events: &mut Vec<StreamingEvent>,
@@ -143,7 +143,7 @@ pub(super) async fn poll_streaming_events(
     stream_name: &str,
     tag: Option<&str>,
     list: Option<&str>,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     state: &mut StreamingLoopState,
 ) -> Result<Vec<StreamingEvent>> {
     let is_initial_poll = !state.initialized;
@@ -171,7 +171,7 @@ pub(super) async fn streaming_batch_for_stream(
     stream_name: &str,
     tag: Option<&str>,
     list: Option<&str>,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     state: &StreamingLoopState,
 ) -> Result<StreamingBatch> {
     match stream_name {
@@ -214,9 +214,9 @@ pub(super) async fn streaming_batch_for_stream(
 }
 
 pub(super) fn required_streaming_viewer<'a>(
-    viewer: Option<&'a crate::LocalAccount>,
+    viewer: Option<&'a cfwdon_domain::LocalAccount>,
     stream_label: &str,
-) -> Result<&'a crate::LocalAccount> {
+) -> Result<&'a cfwdon_domain::LocalAccount> {
     viewer.ok_or_else(|| {
         worker::Error::RustError(format!(
             "missing authenticated viewer for {stream_label} stream"
@@ -233,7 +233,7 @@ pub(super) async fn append_streaming_poll_side_effect_events(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     stream_name: &str,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     state: &mut StreamingLoopState,
     is_initial_poll: bool,
     events: &mut Vec<StreamingEvent>,
@@ -268,6 +268,7 @@ pub(super) fn retain_new_streaming_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::streaming_types::StreamingEvent;
 
     #[test]
     fn streaming_filter_update_changed_only_after_initial_state() {

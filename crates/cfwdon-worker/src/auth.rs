@@ -1,22 +1,19 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::oauth_store::{
+    AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, OAuthAccessTokenRow, access_token_cookie_max_age,
+    app_bearer_token_from_request, exchange_auth0_refresh_token,
+    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
+    oauth_access_token_has_any_scope, parse_bearer_authorization_header, set_auth0_session_cookies,
+};
+use crate::observability::log_federation_event;
+use crate::tracked_d1::D1Database;
 
 mod account_store;
 mod jwt;
-#[allow(unused_imports)]
 pub(crate) use account_store::*;
-#[allow(unused_imports)]
 pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;
 pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
-use super::oauth_apps::{
-    OAuthAccessTokenRow, access_token_cookie_max_age, app_bearer_token_from_request,
-    exchange_auth0_refresh_token, find_oauth_access_token_with_account_by_bearer_token,
-    find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,
-    parse_bearer_authorization_header, set_auth0_session_cookies,
-};
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
 use std::cell::RefCell;
@@ -25,9 +22,6 @@ use worker::{Error, Request, Response, Result};
 pub(crate) use self::account_store::{
     ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
 };
-
-pub(crate) const AUTH0_SESSION_COOKIE: &str = "cfwdon_auth0_access_token";
-pub(crate) const AUTH0_REFRESH_COOKIE: &str = "cfwdon_auth0_refresh_token";
 
 #[derive(Clone, Debug)]
 struct PendingAuth0WebSession {

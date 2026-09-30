@@ -1,10 +1,10 @@
-use super::RemoteStatusRecord;
-use super::{RemoteStatusRow, remote_status_from_record};
+use crate::db_utils::d1_results;
+use crate::remote::remote_status_from_record;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{RemoteStatus, RemoteStatusRecord};
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNotificationRow {
     pub(crate) id: String,
@@ -21,7 +21,7 @@ pub(crate) struct UpdateNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
-    #[serde(default = "crate::default_remote_quote_state")]
+    #[serde(default = "crate::remote::default_remote_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) published_at: String,
     pub(crate) remote_updated_at: String,
@@ -50,11 +50,11 @@ pub(crate) async fn list_update_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<UpdateNotificationRow>(&result)
+    d1_results::<UpdateNotificationRow>(&result)
 }
 
 impl UpdateNotificationRow {
-    pub(crate) fn as_remote_status_row(&self) -> Result<RemoteStatusRow> {
+    pub(crate) fn as_remote_status_row(&self) -> Result<RemoteStatus> {
         remote_status_from_record(RemoteStatusRecord {
             id: self.id.clone(),
             actor_uri: self.actor_uri.clone(),

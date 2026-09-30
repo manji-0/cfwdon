@@ -7,7 +7,6 @@ import {
   parseStatusTranslation,
 } from "@/infrastructure/mastodon/parsers/status-extra";
 import { parseFollowedTag } from "@/infrastructure/mastodon/parsers/tag";
-import { parseTrendLinkList } from "@/infrastructure/mastodon/parsers/trend-link";
 import { parseAccountProfile } from "@/infrastructure/mastodon/parsers/account";
 import { parseScheduledStatus } from "@/infrastructure/mastodon/parsers/scheduled";
 import { parseAnnouncement } from "@/infrastructure/mastodon/parsers/announcement";
@@ -57,7 +56,7 @@ describe("high-priority Mastodon parsers", () => {
     expect(result.keywords).toEqual([{ id: "kw-1", keyword: "ads", wholeWord: false }]);
   });
 
-  it("parses custom emojis, followed tags, and trend links", () => {
+  it("parses custom emojis and followed tags", () => {
     const emojis = parseCustomEmojiList([
       {
         shortcode: "blobcat",
@@ -82,19 +81,6 @@ describe("high-priority Mastodon parsers", () => {
     expect(isArkError(tag)).toBe(false);
     if (!isArkError(tag)) {
       expect(tag.following).toBe(true);
-    }
-
-    const links = parseTrendLinkList([
-      {
-        url: "https://example.com/story",
-        title: "Story",
-        description: "A link",
-        image: null,
-      },
-    ]);
-    expect(isArkError(links)).toBe(false);
-    if (!isArkError(links)) {
-      expect(links[0]?.title).toBe("Story");
     }
   });
 });

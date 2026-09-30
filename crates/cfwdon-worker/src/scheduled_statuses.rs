@@ -1,5 +1,5 @@
-use crate::{Result, StatusDraft};
-use cfwdon_domain::{QuoteApprovalPolicy, Visibility};
+use cfwdon_domain::{QuoteApprovalPolicy, StatusDraft, Visibility};
+use worker::Result;
 
 mod documents;
 mod publishing;
@@ -236,3 +236,6 @@ mod tests {
         assert!(scheduled_status_from_value(&value).is_err());
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

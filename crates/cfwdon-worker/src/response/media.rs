@@ -1,7 +1,7 @@
-use crate::{
-    AppConfig, MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind,
-    instance_base_url, media_kind_label,
-};
+use crate::identity::instance_base_url;
+use crate::media::RemoteStatusAttachmentRow;
+use crate::store::media::{MediaAttachmentRow, MediaKind, classify_media_kind, media_kind_label};
+use cfwdon_core::AppConfig;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

@@ -130,4 +130,12 @@ pub(crate) struct MastodonReportResponse {
     pub(crate) rule_ids: Option<Vec<String>>,
 }
 
-pub(crate) use crate::response::*;
+#[derive(Debug, Serialize)]
+pub(crate) struct MastodonTagHistoryEntry {
+    pub(crate) day: String,
+    pub(crate) uses: String,
+    pub(crate) accounts: String,
+}
+
+#[cfg(test)]
+mod unit_tests;

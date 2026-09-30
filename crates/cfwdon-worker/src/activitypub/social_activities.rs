@@ -1,8 +1,10 @@
-use super::{
-    LocalAccount, activitypub_audiences_for_visibility, activitypub_datetime_string, actor_url,
-    generate_entity_id, now_iso_string,
-};
+use super::activitypub_audiences_for_visibility;
+use crate::activitypub::activity_object_id;
+use crate::id_utils::generate_entity_id;
+use crate::identity::actor_url;
+use crate::time_html::{activitypub_datetime_string, now_iso_string};
 use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::{Error, Result};
 
 pub(crate) fn build_accept_activity(
@@ -189,7 +191,7 @@ pub(crate) fn build_relay_undo_follow_activity(
 pub(crate) fn relay_follow_activity_id_from_accept(activity: &serde_json::Value) -> Option<String> {
     activity
         .get("object")
-        .and_then(|object| crate::activity_object_id(Some(object)).map(str::to_owned))
+        .and_then(|object| activity_object_id(Some(object)).map(str::to_owned))
 }
 
 pub(crate) fn build_like_activity(

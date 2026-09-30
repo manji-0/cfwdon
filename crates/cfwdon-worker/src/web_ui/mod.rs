@@ -1,7 +1,8 @@
-use crate::{
-    WEB_UI_INDEX_PATH, auth0_login_redirect_response, auth0_logout_redirect_response, escape_html,
-    instance_base_url, load_config, serve_ui_asset,
-};
+use crate::identity::instance_base_url;
+use crate::oauth_apps::{auth0_login_redirect_response, auth0_logout_redirect_response};
+use crate::runtime_config::load_config;
+use crate::time_html::escape_html;
+use crate::ui_assets::{WEB_UI_INDEX_PATH, serve_ui_asset};
 use url::Url;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -48,12 +49,12 @@ pub(crate) fn accept_prefers_web_ui_html(req: &Request) -> Result<bool> {
     Ok(accept_header_prefers_web_ui_html(&accept))
 }
 
-fn web_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {
+fn web_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
     let return_url = web_app_url(config, req)?;
     auth0_login_redirect_response(config, &return_url, &return_url)
 }
 
-pub(crate) fn web_app_url(config: &crate::AppConfig, req: &Request) -> Result<Url> {
+pub(crate) fn web_app_url(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Url> {
     let request_url = req.url()?;
     web_app_url_from_request_url(&request_url, &instance_base_url(config))
 }

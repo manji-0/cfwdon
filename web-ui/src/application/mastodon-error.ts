@@ -1,4 +1,4 @@
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 
 export const mastodonErrorMessage = (error: MastodonFetchError): string => {
   switch (error.kind) {
@@ -8,7 +8,5 @@ export const mastodonErrorMessage = (error: MastodonFetchError): string => {
       return "ネットワークエラーが発生しました";
     case "ValidationError":
       return "サーバー応答の形式が不正です";
-    case "NotImplemented":
-      return `${error.feature} はまだ利用できません`;
   }
 };

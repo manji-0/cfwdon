@@ -20,6 +20,7 @@ import {
   type ViewCacheContextValue,
 } from "@/ui/context/ViewCacheContext";
 import { resetAnnouncementBannerCache } from "@/ui/components/AnnouncementBanner";
+import { ComposeSheet } from "@/ui/components/ComposeSheet";
 import type { AccountSummary } from "@/domain/session/account";
 import { createAppRouter } from "@/ui/router";
 
@@ -75,11 +76,12 @@ const AppTestProviders = ({ children }: Readonly<{ children: ReactNode }>) => {
       <ViewCacheContextProvider value={createMemoryViewCache()}>
         <ConfirmProvider>
           <ComposeProvider>
-          <UnreadMessagesContextProvider value={unreadMessages}>
-            <UnreadNotificationsContextProvider value={unreadNotifications}>
-              {children}
-            </UnreadNotificationsContextProvider>
-          </UnreadMessagesContextProvider>
+            <ComposeSheet />
+            <UnreadMessagesContextProvider value={unreadMessages}>
+              <UnreadNotificationsContextProvider value={unreadNotifications}>
+                {children}
+              </UnreadNotificationsContextProvider>
+            </UnreadMessagesContextProvider>
           </ComposeProvider>
         </ConfirmProvider>
       </ViewCacheContextProvider>

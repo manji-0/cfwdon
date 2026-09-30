@@ -1,6 +1,7 @@
+use crate::lists::list_timeline_response;
 use crate::timelines::{
     direct_timeline_response, home_timeline_response, link_timeline_response,
-    list_timeline_response, public_timeline_response, tag_timeline_response,
+    public_timeline_response, tag_timeline_response,
 };
 use worker::Router;
 

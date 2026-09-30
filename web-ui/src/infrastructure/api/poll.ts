@@ -1,6 +1,6 @@
 import { type ResultAsync } from "neverthrow";
 import type { Poll } from "@/domain/status/poll";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parsePoll } from "@/infrastructure/mastodon/parsers/poll";

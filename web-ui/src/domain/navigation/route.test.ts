@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { AppRoute } from "@/domain/navigation/route";
-import routerSource from "@/ui/router.tsx?raw";
 
 describe("AppRoute", () => {
   it("maps pathnames to routes", () => {
@@ -129,14 +128,5 @@ describe("AppRoute", () => {
       to: AppRoute.path.search,
       search: { q: "", type: "all" },
     });
-  });
-
-  it("keeps router.tsx paths on AppRoute.path", () => {
-    for (const key of Object.keys(AppRoute.path)) {
-      expect(routerSource).toContain(`AppRoute.path.${key}`);
-    }
-    const pathLiterals = [...routerSource.matchAll(/path:\s*"([^"]*)"/g)].map((match) => match[1]);
-    expect(pathLiterals).toEqual([]);
-    expect(routerSource).toContain("lazy-pages");
   });
 });

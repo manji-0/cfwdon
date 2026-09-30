@@ -1,9 +1,10 @@
-use crate::{
-    Error, Request, Response, Result, RouteContext, escape_html, find_account_by_username,
-    instance_host, load_config, parse_webfinger_resource,
-};
+use crate::auth::find_account_by_username;
+use crate::db_session::bind_request_d1;
+use crate::identity::{instance_host, parse_webfinger_resource};
+use crate::runtime_config::load_config;
+use crate::time_html::escape_html;
 use url::Url;
-use worker::ResponseBody;
+use worker::{Error, Request, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn remote_follow_response(
     req: Request,
@@ -23,7 +24,7 @@ pub(crate) async fn remote_follow_response(
         Ok(base) => base,
         Err(error) => return Response::error(error.to_string(), 400),
     };
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };

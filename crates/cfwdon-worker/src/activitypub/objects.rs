@@ -1,18 +1,26 @@
-use super::{
-    AppConfig, LocalAccount, MediaAttachmentRow, StatusRow, activitypub_datetime_string, actor_url,
-    apply_activitypub_poll_fields, classify_media_kind, count_poll_voters,
-    extract_account_handles_from_text, extract_hashtags_from_text, find_account_by_id,
-    find_account_by_username, find_local_status_by_object_uri, find_media_attachments_by_status_id,
-    find_remote_actor_by_username_domain, find_remote_status_by_id, find_status_by_id,
-    find_status_poll_by_status_id, is_iso_timestamp_in_past, list_status_poll_options,
-    media_attachment_url, media_kind_label, quote_authorization_uri, status_has_active_quote,
-    tag_url,
+use super::{AppConfig, quote_authorization_uri};
+use crate::auth::{find_account_by_id, find_account_by_username};
+use crate::content_helpers::{
+    extract_account_handles_from_text, extract_hashtags_from_text, tag_url,
 };
-use cfwdon_domain::{QuoteState, Visibility};
+use crate::identity::actor_url;
+use crate::local_polls::apply_activitypub_poll_fields;
+use crate::media::find_media_attachments_by_status_id;
+use crate::remote::find_remote_status_by_id;
+use crate::response::media_attachment_url;
+use crate::statuses::{
+    find_local_status_by_object_uri, find_status_by_id, status_has_active_quote,
+};
+use crate::store::local_polls::{
+    count_poll_voters, find_status_poll_by_status_id, list_status_poll_options,
+};
+use crate::store::media::{MediaAttachmentRow, classify_media_kind, media_kind_label};
+use crate::store::remote::find_remote_actor_by_username_domain;
+use crate::time_html::{activitypub_datetime_string, is_iso_timestamp_in_past};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalAccount, LocalStatus, QuoteState, Visibility};
 use std::collections::HashSet;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
     matches!(visibility, "public" | "unlisted")
 }
@@ -20,7 +28,7 @@ pub(crate) fn is_public_activitypub_visibility(visibility: &str) -> bool {
 pub(crate) fn local_status_ap_id(
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> String {
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
@@ -78,7 +86,7 @@ pub(crate) async fn activitypub_audiences_for_status(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<(serde_json::Value, serde_json::Value)> {
     if status.visibility == Visibility::Direct {
         return direct_activitypub_audiences(db, config, account, status).await;
@@ -106,7 +114,7 @@ async fn collect_addressed_actor_uris(
     db: &D1Database,
     config: &AppConfig,
     author: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Vec<String>> {
     let mut recipients = Vec::new();
     let mut seen = HashSet::new();
@@ -146,7 +154,7 @@ async fn resolve_reply_actor_uri(
     db: &D1Database,
     config: &AppConfig,
     author: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Option<String>> {
     let Some(reply_id) = status.in_reply_to_id.as_deref() else {
         return Ok(None);
@@ -166,7 +174,7 @@ async fn resolve_reply_actor_uri(
     Ok(None)
 }
 
-async fn resolve_reply_object_uri(db: &D1Database, status: &StatusRow) -> Result<Option<String>> {
+async fn resolve_reply_object_uri(db: &D1Database, status: &LocalStatus) -> Result<Option<String>> {
     let Some(reply_id) = status.in_reply_to_id.as_deref() else {
         return Ok(None);
     };
@@ -188,7 +196,7 @@ async fn direct_activitypub_audiences(
     db: &D1Database,
     config: &AppConfig,
     author: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<(serde_json::Value, serde_json::Value)> {
     let recipients = collect_addressed_actor_uris(db, config, author, status).await?;
     Ok((audience_json(recipients), serde_json::json!([])))
@@ -198,7 +206,7 @@ async fn build_activitypub_note_tags(
     db: &D1Database,
     config: &AppConfig,
     author: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<Vec<serde_json::Value>> {
     let mut tags = Vec::new();
     let mut seen_mentions = HashSet::new();
@@ -299,7 +307,7 @@ pub(crate) async fn build_activitypub_note(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     include_context: bool,
     attachment_override: Option<&[MediaAttachmentRow]>,
 ) -> Result<serde_json::Value> {
@@ -392,7 +400,7 @@ pub(crate) async fn build_activitypub_note(
 async fn quote_authorization_stamp_uri(
     db: &D1Database,
     config: &AppConfig,
-    quote_status: &StatusRow,
+    quote_status: &LocalStatus,
     quote_target_uri: &str,
 ) -> Result<Option<String>> {
     let Some(target_status) = find_local_status_by_object_uri(db, config, quote_target_uri).await?

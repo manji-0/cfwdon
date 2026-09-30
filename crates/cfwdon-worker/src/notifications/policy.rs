@@ -1,8 +1,8 @@
-use super::{
-    Error, Request, Response, Result, RouteContext, resolve_authenticated_notification_context,
-};
+use super::resolve_authenticated_notification_context;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 const DEFAULT_FOR_NOT_FOLLOWING: &str = "accept";
 const DEFAULT_FOR_NOT_FOLLOWERS: &str = "accept";
@@ -53,7 +53,7 @@ fn build_notification_policy_document(row: &NotificationPolicyRow) -> serde_json
 }
 
 pub(crate) async fn load_notification_policy_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<NotificationPolicyRow> {
     let account_id = D1Type::Text(account_id);

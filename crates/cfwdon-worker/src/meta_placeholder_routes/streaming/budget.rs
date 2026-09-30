@@ -1,4 +1,4 @@
-use crate::snapshot_d1_request_metrics;
+use crate::d1_metrics::snapshot_d1_request_metrics;
 
 pub(super) const STREAMING_MAX_POLL_ROUNDS_PER_INVOCATION: u32 = 90;
 
@@ -22,7 +22,7 @@ pub(super) fn streaming_error_is_subrequest_limit(error: &worker::Error) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{record_d1_query_duration, reset_d1_request_metrics};
+    use crate::d1_metrics::{record_d1_query_duration, reset_d1_request_metrics};
 
     #[test]
     fn streaming_poll_budget_exhausts_before_cloudflare_subrequest_limit() {

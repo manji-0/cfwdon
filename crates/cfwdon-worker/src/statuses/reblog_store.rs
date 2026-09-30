@@ -1,13 +1,13 @@
-use super::{
-    AppConfig, RemoteStatusRow, StatusRow, local_status_target_uri,
-    publish_local_status_interaction_notification_soft, send_push_notification,
-};
-use cfwdon_domain::LocalAccount;
+use super::local_status_target_uri;
+use crate::db_utils::d1_results;
+use crate::notifications::publish_local_status_interaction_notification_soft;
+use crate::push::send_push_notification;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Env, Result};
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogActivityRow {
     pub(crate) ap_activity_id: Option<String>,
@@ -29,7 +29,7 @@ pub(crate) async fn upsert_reblog_local_status(
     config: &AppConfig,
     env: Option<&Env>,
     actor: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
     visibility: &str,
     ap_activity_id: Option<&str>,
 ) -> Result<()> {
@@ -107,7 +107,7 @@ pub(crate) async fn upsert_reblog_local_status(
 pub(crate) async fn upsert_reblog_remote_status(
     db: &D1Database,
     account_id: &str,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     visibility: &str,
     ap_activity_id: Option<&str>,
 ) -> Result<()> {
@@ -195,7 +195,7 @@ pub(crate) async fn find_reblog_activity_by_target_uri(
 pub(crate) async fn is_local_status_reblogged_by(
     db: &D1Database,
     account_id: &str,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     is_reblog_target_for_account(db, account_id, &local_status_target_uri(status)).await
 }
@@ -306,7 +306,7 @@ async fn list_interaction_account_ids(
     let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<InteractionAccountIdRow>(&result)?
+    Ok(d1_results::<InteractionAccountIdRow>(&result)?
         .into_iter()
         .map(|row| row.account_id)
         .collect())
@@ -321,7 +321,7 @@ async fn list_interaction_actor_uris(
     let bindings = [D1Type::Text(target_id), D1Type::Integer(limit as i32)];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<InteractionActorUriRow>(&result)?
+    Ok(d1_results::<InteractionActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.remote_actor_uri)
         .collect())

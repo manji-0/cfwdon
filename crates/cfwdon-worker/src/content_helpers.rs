@@ -1,8 +1,11 @@
-use super::{AppConfig, MastodonTagHistoryEntry, StatusRow, instance_base_url, instance_host};
-use cfwdon_domain::AccountHandle;
+use crate::identity::{instance_base_url, instance_host};
+use crate::responses::MastodonTagHistoryEntry;
+use crate::time_html::render_status_html;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{AccountHandle, LocalStatus};
 use std::collections::HashSet;
 
-pub(crate) fn status_contains_tag(status: &StatusRow, tag: &str) -> bool {
+pub(crate) fn status_contains_tag(status: &LocalStatus, tag: &str) -> bool {
     let normalized_tag = tag.trim().trim_start_matches('#').to_ascii_lowercase();
     if normalized_tag.is_empty() {
         return true;
@@ -158,7 +161,7 @@ pub(crate) fn strip_html_tags(html: &str) -> String {
 /// remote tags removes stored XSS while preserving readable text.
 pub(crate) fn sanitize_remote_status_html(html: &str) -> String {
     let plain = decode_basic_html_entities(&strip_html_tags(html));
-    crate::render_status_html(&plain)
+    render_status_html(&plain)
 }
 
 pub(crate) fn sanitize_remote_plain_text(value: &str) -> String {
@@ -242,3 +245,6 @@ mod tests {
 pub(crate) fn tag_history_stub() -> Vec<MastodonTagHistoryEntry> {
     Vec::new()
 }
+
+#[cfg(test)]
+mod unit_tests;

@@ -1,18 +1,23 @@
-use super::authorize_validation::{code_challenge_method_is_supported, validate_authorize_request};
+use super::authorize_validation::validate_authorize_request;
 use super::{
-    OAUTH_AUTHORIZE_CSRF_COOKIE, OAuthAppRow, OAuthAuthorizeFailure, OAuthAuthorizeRequest,
+    OAUTH_AUTHORIZE_CSRF_COOKIE, OAuthAuthorizeFailure, OAuthAuthorizeRequest,
     auth0_login_configured, auth0_login_redirect_response, auth0_logout_url,
     authorization_redirect_with_params, constant_time_eq, escape_html, html_response,
     issue_oauth_authorization_code, load_account_password_hash, oauth_authorize_url_from_form,
     redirect_response, request_cookie_value, verify_account_password_hash,
 };
-use crate::auth::{find_account_by_email, find_account_by_username};
+use crate::auth::{
+    extract_authenticated_user, find_account_by_email, find_account_by_username,
+    find_authenticated_local_account,
+};
+use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
+use crate::identity::instance_base_url;
+use crate::oauth_store::OAuthAppRow;
 use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use url::Url;
 use worker::{Request, Response, Result, RouteContext};
-
-use crate::D1Database;
 
 #[derive(Debug, Default)]
 struct OAuthAuthorizeLoginRequest {
@@ -217,7 +222,7 @@ pub(in crate::oauth_apps) fn access_authenticated_without_account_response(
         .unwrap_or_default();
     Ok(Response::from_json(&serde_json::json!({
         "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
-        "registration_url": format!("{}/auth/sign_up", crate::instance_base_url(config)),
+        "registration_url": format!("{}/auth/sign_up", instance_base_url(config)),
         "logout_url": logout_url,
     }))?
     .with_status(403))
@@ -322,11 +327,6 @@ fn build_oauth_authorize_error_redirect_url(
         }
     }
     Ok(url.to_string())
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn authorize_failure_should_use_html_page(failure: &OAuthAuthorizeFailure) -> bool {
-    matches!(failure, OAuthAuthorizeFailure::Html { .. })
 }
 
 fn access_authorize_get_action(
@@ -448,51 +448,6 @@ fn oauth_login_page(
 ) -> Result<Response> {
     oauth_authorize_consent_response(request, app, error, true, error.map(|_| 401).unwrap_or(200))
 }
-#[cfg_attr(not(test), allow(dead_code))]
-fn normalize_authorize_request(
-    request: OAuthAuthorizeRequest,
-) -> std::result::Result<OAuthAuthorizeRequest, String> {
-    let response_type = request
-        .response_type
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "code".to_owned());
-    if response_type != "code" {
-        return Err("Only response_type=code is supported".to_owned());
-    }
-    let client_id = request
-        .client_id
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "client_id is required".to_owned())?;
-    let redirect_uri = request
-        .redirect_uri
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "redirect_uri is required".to_owned())?;
-    let code_challenge_method = request
-        .code_challenge_method
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let code_challenge = request
-        .code_challenge
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    if code_challenge.is_some()
-        && !code_challenge_method_is_supported(code_challenge_method.as_deref())
-    {
-        return Err("unsupported code_challenge_method".to_owned());
-    }
-    Ok(OAuthAuthorizeRequest {
-        response_type: Some(response_type),
-        client_id: Some(client_id),
-        redirect_uri: Some(redirect_uri),
-        scope: request.scope.map(|value| value.trim().to_owned()),
-        state: request.state.map(|value| value.trim().to_owned()),
-        code_challenge,
-        code_challenge_method,
-    })
-}
 
 async fn parse_oauth_authorize_login_request(
     req: &mut Request,
@@ -585,7 +540,7 @@ pub(crate) async fn oauth_authorize_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     if req.method().as_ref() == "POST" {
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
@@ -599,7 +554,7 @@ pub(crate) async fn oauth_authorize_response(
         if auth0_login_configured(&config) {
             let base_url = req.url()?;
             let authenticated_account =
-                crate::find_authenticated_local_account(&req, &db, &config).await?;
+                find_authenticated_local_account(&req, &db, &config).await?;
             let password_account =
                 authorize_account_by_password(&db, login.username, login.password).await?;
             let csrf_valid = oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())?;
@@ -629,8 +584,7 @@ pub(crate) async fn oauth_authorize_response(
         if !oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())? {
             return Response::error("Invalid OAuth authorization CSRF token.", 403);
         }
-        let authenticated_account =
-            crate::find_authenticated_local_account(&req, &db, &config).await?;
+        let authenticated_account = find_authenticated_local_account(&req, &db, &config).await?;
         let account = if login.approve {
             authenticated_account
         } else {
@@ -652,13 +606,11 @@ pub(crate) async fn oauth_authorize_response(
         Ok(value) => value,
         Err(failure) => return oauth_authorize_failure_response(failure),
     };
-    let authenticated_account = crate::find_authenticated_local_account(&req, &db, &config).await?;
+    let authenticated_account = find_authenticated_local_account(&req, &db, &config).await?;
     if auth0_login_configured(&config) {
         let action = access_authorize_get_action(
             authenticated_account.is_some(),
-            crate::extract_authenticated_user(&req, &config)
-                .await?
-                .is_some(),
+            extract_authenticated_user(&req, &config).await?.is_some(),
         );
         return match action {
             Auth0AuthorizeGetAction::RedirectToLogin => {
@@ -682,6 +634,7 @@ pub(crate) async fn oauth_authorize_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oauth_store::OAuthAppRow;
 
     fn oauth_app_fixture() -> OAuthAppRow {
         OAuthAppRow {
@@ -791,23 +744,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_authorize_request_rejects_plain_pkce() {
-        let error = normalize_authorize_request(OAuthAuthorizeRequest {
-            response_type: Some("code".to_owned()),
-            client_id: Some("client".to_owned()),
-            redirect_uri: Some("https://client.example/callback".to_owned()),
-            code_challenge: Some("challenge".to_owned()),
-            code_challenge_method: Some("plain".to_owned()),
-            ..OAuthAuthorizeRequest::default()
-        })
-        .expect_err("plain pkce");
-
-        assert_eq!(error, "unsupported code_challenge_method");
-        assert!(!code_challenge_method_is_supported(Some("plain")));
-        assert!(code_challenge_method_is_supported(Some("S256")));
-    }
-
-    #[test]
     fn authorize_error_redirect_includes_state() {
         let location = build_oauth_authorize_error_redirect_url(
             "https://client.example/callback",
@@ -821,21 +757,5 @@ mod tests {
         assert!(location.contains("error=invalid_scope"));
         assert!(location.contains("state=state-123"));
         assert!(location.contains("error_description="));
-    }
-
-    #[test]
-    fn authorize_failure_keeps_html_for_invalid_redirect() {
-        let failure = OAuthAuthorizeFailure::Html {
-            message: "Redirect URI is not registered for this OAuth client".to_owned(),
-        };
-        assert!(authorize_failure_should_use_html_page(&failure));
-
-        let redirect_failure = OAuthAuthorizeFailure::Redirect {
-            redirect_uri: "https://client.example/callback".to_owned(),
-            state: Some("abc".to_owned()),
-            error: "invalid_request",
-            description: "unsupported code_challenge_method".to_owned(),
-        };
-        assert!(!authorize_failure_should_use_html_page(&redirect_failure));
     }
 }

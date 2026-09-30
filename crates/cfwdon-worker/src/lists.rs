@@ -1,12 +1,15 @@
 use crate::accounts::load_account_stats;
 use crate::auth::{find_account_by_id, find_account_by_username};
+use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
-use crate::instance::parse_lookup_handle;
-use crate::remote::{
-    AccountReference, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
-    resolve_account_reference,
+use crate::identity::parse_lookup_handle;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::responses::MastodonAccountResponse;
+use crate::store::remote::{
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
 };
 use crate::timelines::TimelinePaginationQuery;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Request, Result, RouteContext};
@@ -167,10 +170,7 @@ async fn parse_list_accounts_request(
     }
 }
 
-async fn list_rows_for_account(
-    db: &crate::D1Database,
-    account_id: &str,
-) -> Result<Vec<AccountListRow>> {
+async fn list_rows_for_account(db: &D1Database, account_id: &str) -> Result<Vec<AccountListRow>> {
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
@@ -182,11 +182,11 @@ async fn list_rows_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<AccountListRow>(&result)
+    d1_results::<AccountListRow>(&result)
 }
 
 pub(crate) async fn list_row_by_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     list_id: &str,
 ) -> Result<Option<AccountListRow>> {
@@ -213,7 +213,7 @@ fn list_document(row: &AccountListRow) -> serde_json::Value {
 }
 
 async fn create_list_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     request: &ListRequest,
 ) -> Result<AccountListRow> {
@@ -242,7 +242,7 @@ async fn create_list_row(
 }
 
 async fn update_list_row(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     list_id: &str,
     request: &ListRequest,
@@ -277,7 +277,7 @@ async fn update_list_row(
     list_row_by_id(db, account_id, list_id).await
 }
 
-async fn delete_list_row(db: &crate::D1Database, account_id: &str, list_id: &str) -> Result<bool> {
+async fn delete_list_row(db: &D1Database, account_id: &str, list_id: &str) -> Result<bool> {
     if list_row_by_id(db, account_id, list_id).await?.is_none() {
         return Ok(false);
     }
@@ -319,7 +319,7 @@ pub(crate) fn local_status_visible_on_list_timeline(
 }
 
 pub(crate) async fn list_local_account_list_stream_fanout(
-    db: &crate::D1Database,
+    db: &D1Database,
     membership_refs: &[String; 2],
 ) -> Result<ListStreamFanout> {
     let probe_limit = STREAM_HUB_LIST_FANOUT_LIMIT + 1;
@@ -341,7 +341,7 @@ pub(crate) async fn list_local_account_list_stream_fanout(
         .all()
         .await?;
 
-    let lists = crate::d1_results::<ListStreamFanoutRow>(&result)?;
+    let lists = d1_results::<ListStreamFanoutRow>(&result)?;
     let truncated = lists.len() > STREAM_HUB_LIST_FANOUT_LIMIT as usize;
     let lists = if truncated {
         lists
@@ -356,7 +356,7 @@ pub(crate) async fn list_local_account_list_stream_fanout(
 }
 
 pub(crate) async fn list_membership_refs(
-    db: &crate::D1Database,
+    db: &D1Database,
     list_id: &str,
 ) -> Result<Vec<AccountListMembershipRow>> {
     let list_id = D1Type::Text(list_id);
@@ -370,11 +370,11 @@ pub(crate) async fn list_membership_refs(
         .bind_refs(&list_id)?
         .all()
         .await?;
-    crate::d1_results::<AccountListMembershipRow>(&result)
+    d1_results::<AccountListMembershipRow>(&result)
 }
 
 async fn add_accounts_to_list(
-    db: &crate::D1Database,
+    db: &D1Database,
     list_id: &str,
     account_refs: &[String],
 ) -> Result<()> {
@@ -397,7 +397,7 @@ async fn add_accounts_to_list(
 }
 
 async fn remove_accounts_from_list(
-    db: &crate::D1Database,
+    db: &D1Database,
     list_id: &str,
     account_refs: &[String],
 ) -> Result<()> {
@@ -420,19 +420,19 @@ async fn remove_accounts_from_list(
 }
 
 async fn resolve_list_member_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<serde_json::Value>> {
     if let Some(account) = find_account_by_id(db, account_ref).await? {
         let stats = load_account_stats(db, account.id()).await?;
         return Ok(Some(serde_json::to_value(
-            crate::MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
         )?));
     }
     if let Some(actor) = find_remote_actor_by_actor_uri(db, account_ref).await? {
         return Ok(Some(serde_json::to_value(
-            crate::MastodonAccountResponse::from_remote_actor(&actor),
+            MastodonAccountResponse::from_remote_actor(&actor),
         )?));
     }
     if account_ref.contains('@') {
@@ -445,7 +445,7 @@ async fn resolve_list_member_document(
                 find_remote_actor_by_username_domain(db, &handle.username, domain).await?
         {
             return Ok(Some(serde_json::to_value(
-                crate::MastodonAccountResponse::from_remote_actor(&actor),
+                MastodonAccountResponse::from_remote_actor(&actor),
             )?));
         }
     }
@@ -469,9 +469,7 @@ pub(crate) fn list_membership_variants_for_local_account(
     ]
 }
 
-pub(crate) fn list_membership_variants_for_remote_actor(
-    actor: &crate::RemoteActorRow,
-) -> [String; 2] {
+pub(crate) fn list_membership_variants_for_remote_actor(actor: &RemoteActorRow) -> [String; 2] {
     [
         actor.actor_uri.clone(),
         format!("{}@{}", actor.username, actor.domain),
@@ -479,7 +477,7 @@ pub(crate) fn list_membership_variants_for_remote_actor(
 }
 
 async fn requested_account_membership_variants(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<Vec<String>>> {
@@ -639,7 +637,7 @@ mod tests {
 
     #[test]
     fn list_membership_variants_cover_remote_actor_uri_and_address() {
-        let actor = crate::RemoteActorRow {
+        let actor = RemoteActorRow {
             actor_uri: "https://remote.example/users/alice".to_owned(),
             username: "alice".to_owned(),
             domain: "remote.example".to_owned(),

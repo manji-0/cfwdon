@@ -1,28 +1,62 @@
-use crate::auth::find_account_by_email;
-use crate::crypto_keys::generate_account_key_material;
-use crate::{
-    AccountReference, D1Database, LocalApiAuthentication, Request, Response, Result, RouteContext,
-    actor_url, app_bearer_token_from_request, authenticate_local_api_request,
-    build_app_verify_credentials_document_from_parts,
-    build_app_verify_credentials_document_from_row, build_local_status_response,
-    build_oauth_token_document, build_reject_follow_activity, build_relationship_for_target,
-    build_remote_status_response, cache_public_response, can_view_local_status,
-    delete_follow_by_target, delete_follower_by_actor, delete_remote_follow_request_by_actor,
-    escape_html, find_account_by_id, find_account_by_username, find_authenticated_local_account,
-    find_follower_follow_activity_id, find_local_status_by_object_uri,
-    find_media_attachments_by_status_id, find_oauth_app_by_bearer_token,
-    find_oauth_app_id_by_bearer_token, find_pending_remote_follow_request_by_actor,
-    find_remote_actor_by_actor_uri, generate_entity_id, instance_base_url,
-    is_public_activitypub_visibility, issue_oauth_access_token, load_account_stats, load_config,
-    load_config_from_env, load_in_reply_to_account_id, local_status_ap_id, media_object_url,
-    now_iso_string, oauth_access_token_has_any_scope, oauth_app_has_any_scope, oauth_app_scopes,
-    parse_optional_bool, parse_relationship_query_ids, queue_remote_actor_activity_required,
-    remote_account_rest_id, resolve_account_reference, resolve_status_reference,
-    send_push_notification, store_account_password, store_account_private_key,
+use crate::accounts::{load_account_stats, parse_relationship_query_ids};
+use crate::activitypub::{
+    build_reject_follow_activity, is_public_activitypub_visibility, local_status_ap_id,
 };
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, find_account_by_email,
+    find_account_by_id, find_account_by_username, find_authenticated_local_account,
+    store_account_private_key,
+};
+use crate::crypto_keys::generate_account_key_material;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::delivery::queue_remote_actor_activity_required;
+use crate::follow_requests::{
+    delete_remote_follow_request_by_actor, find_pending_remote_follow_request_by_actor,
+};
+use crate::id_utils::generate_entity_id;
+use crate::identity::{actor_url, instance_base_url, remote_account_rest_id};
+use crate::inbox::{delete_follower_by_actor, find_follower_follow_activity_id};
+use crate::media::find_media_attachments_by_status_id;
+use crate::oauth_apps::{
+    build_app_verify_credentials_document_from_row, build_oauth_token_document,
+    find_oauth_app_id_by_bearer_token, issue_oauth_access_token, oauth_app_has_any_scope,
+    oauth_app_scopes, store_account_password,
+};
+use crate::oauth_store::{
+    app_bearer_token_from_request, find_oauth_app_by_bearer_token, link_oauth_app_to_account,
+    oauth_access_token_has_any_scope,
+};
+use crate::observability::log_json_event;
+use crate::push::send_push_notification;
+use crate::relationships::build_relationship_for_target;
+use crate::remote::{
+    AccountReference, resolve_account_reference, resolve_account_reference_with_fetch,
+};
+use crate::request_utils::parse_optional_bool;
+use crate::response::{
+    RemoteCollectionFetchContext, enrich_remote_account_response,
+    fetch_remote_actor_profile_with_context, media_object_url,
+    reconcile_remote_account_status_summary,
+};
+use crate::response_utils::{CACHE_TTL_OAUTH_DISCOVERY, CACHE_TTL_OEMBED, cache_public_response};
+use crate::responses::MastodonAccountResponse;
+use crate::runtime_config::{load_config, load_config_from_env};
+use crate::statuses::{
+    ResolvedStatus, build_local_status_response, build_remote_status_response,
+    can_view_local_status, find_local_status_by_object_uri, load_in_reply_to_account_id,
+    resolve_status_reference,
+};
+use crate::store::relationship::delete_follow_by_target;
+use crate::store::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::time_html::{escape_html, now_iso_string, timestamp_to_mastodon_iso8601};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use worker::{Env, Fetch, Headers, Method, RequestInit, ResponseBody, d1::D1Type};
+use worker::{
+    Env, Fetch, Headers, Method, Request, RequestInit, Response, ResponseBody, Result,
+    RouteContext, d1::D1Type,
+};
 
 pub(crate) mod streaming;
 
@@ -331,11 +365,11 @@ fn build_oembed_document(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn build_app_verify_credentials_document(
     config: &cfwdon_core::AppConfig,
 ) -> serde_json::Value {
-    build_app_verify_credentials_document_from_parts(
+    crate::oauth_apps::build_app_verify_credentials_document_from_parts(
         "0",
         &config.instance_name,
         None,
@@ -374,7 +408,7 @@ fn annual_report_document(row: &AnnualReportRow) -> serde_json::Value {
 }
 
 async fn list_generated_annual_reports(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     pending_only: bool,
 ) -> Result<Vec<AnnualReportRow>> {
@@ -395,11 +429,11 @@ async fn list_generated_annual_reports(
         .bind_refs(&D1Type::Text(account_id))?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<AnnualReportRow>(&__d1))
+        .and_then(|__d1| d1_results::<AnnualReportRow>(&__d1))
 }
 
 async fn find_generated_annual_report(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     year: i32,
 ) -> Result<Option<AnnualReportRow>> {
@@ -417,7 +451,7 @@ async fn find_generated_annual_report(
 }
 
 async fn count_account_statuses_between(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     start: &str,
     end: &str,
@@ -442,7 +476,7 @@ async fn count_account_statuses_between(
 }
 
 async fn list_recent_public_status_ids_between(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     start: &str,
     end: &str,
@@ -468,14 +502,14 @@ async fn list_recent_public_status_ids_between(
         .bind_refs(bindings.iter())?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<StatusIdRow>(&__d1))?
+        .and_then(|__d1| d1_results::<StatusIdRow>(&__d1))?
         .into_iter()
         .map(|row| row.id)
         .collect())
 }
 
 async fn create_generated_annual_report(
-    db: &crate::D1Database,
+    db: &D1Database,
     account: &cfwdon_domain::LocalAccount,
     year: i32,
 ) -> Result<AnnualReportRow> {
@@ -492,7 +526,7 @@ async fn create_generated_annual_report(
             account.display_name().to_owned()
         },
         "username": account.username(),
-        "joined_at": crate::timestamp_to_mastodon_iso8601(account.created_at()),
+        "joined_at": timestamp_to_mastodon_iso8601(account.created_at()),
         "posts_count": posts_count,
         "followers_count": stats.followers_count,
         "following_count": stats.following_count,
@@ -538,7 +572,7 @@ async fn create_generated_annual_report(
 }
 
 async fn mark_generated_annual_report_viewed(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     year: i32,
 ) -> Result<()> {
@@ -563,7 +597,7 @@ async fn mark_generated_annual_report_viewed(
 
 async fn is_authenticated_request(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<bool> {
     Ok(find_authenticated_local_account(req, db, config)
@@ -731,32 +765,6 @@ async fn insert_registered_account(
         }
     }
     Ok(id)
-}
-
-pub(crate) async fn link_oauth_app_to_account(
-    db: &D1Database,
-    oauth_app_id: i64,
-    account_id: &str,
-) -> Result<()> {
-    let bindings = [
-        D1Type::Integer(oauth_app_id as i32),
-        D1Type::Text(account_id),
-    ];
-    db.prepare(
-        "INSERT OR REPLACE INTO oauth_app_accounts (
-            oauth_app_id,
-            account_id,
-            created_at
-        ) VALUES (
-            ?1,
-            ?2,
-            CURRENT_TIMESTAMP
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-    Ok(())
 }
 
 async fn upsert_pending_email_confirmation(
@@ -1005,10 +1013,12 @@ pub(crate) fn oauth_authorization_server_response_from_env(env: &Env) -> Result<
     oauth_authorization_server_response_for_config(&config)
 }
 
-fn oauth_authorization_server_response_for_config(config: &crate::AppConfig) -> Result<Response> {
+fn oauth_authorization_server_response_for_config(
+    config: &cfwdon_core::AppConfig,
+) -> Result<Response> {
     cache_public_response(
         Response::from_json(&build_oauth_authorization_server_document(config))?,
-        crate::CACHE_TTL_OAUTH_DISCOVERY,
+        CACHE_TTL_OAUTH_DISCOVERY,
     )
 }
 
@@ -1017,7 +1027,7 @@ pub(crate) async fn oauth_userinfo_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match authenticate_local_api_request(&req, &db, &config).await? {
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["profile"]) {
@@ -1046,7 +1056,7 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
             return Response::error("Bad Request", 400);
         }
     }
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(status) = find_local_status_by_object_uri(&db, &config, &query.url).await? else {
         return Response::error("Record not found", 404);
     };
@@ -1074,7 +1084,7 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
             query.maxwidth,
             query.maxheight,
         ))?,
-        crate::CACHE_TTL_OEMBED,
+        CACHE_TTL_OEMBED,
     )
 }
 
@@ -1083,7 +1093,7 @@ pub(crate) async fn donation_campaigns_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     if !is_authenticated_request(&req, &db, &config).await? {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "This method requires an authenticated user",
@@ -1101,7 +1111,7 @@ pub(crate) async fn annual_reports_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1119,7 +1129,7 @@ pub(crate) async fn annual_report_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1138,7 +1148,7 @@ pub(crate) async fn annual_report_action_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1172,7 +1182,7 @@ pub(crate) async fn annual_report_state_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1201,7 +1211,7 @@ pub(crate) async fn app_verify_credentials_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(token) = app_bearer_token_from_request(&req)? else {
         return Response::error("The access token is invalid", 401);
     };
@@ -1218,7 +1228,7 @@ pub(crate) async fn create_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let (account, request_oauth_app_id) =
         match authenticate_local_api_request(&req, &db, &config).await? {
             LocalApiAuthentication::OAuthToken(auth) => {
@@ -1285,7 +1295,7 @@ pub(crate) async fn email_confirmation_page_response(
             422,
         );
     };
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(pending) = find_pending_email_confirmation_by_token(&db, token).await? else {
         return email_confirmation_html_response(
             "Confirmation token is invalid",
@@ -1315,7 +1325,7 @@ pub(crate) async fn check_email_confirmation_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return invalid_access_token_response();
     };
@@ -1331,7 +1341,7 @@ pub(crate) async fn statuses_index_placeholder_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
@@ -1341,7 +1351,7 @@ pub(crate) async fn statuses_index_placeholder_response(
         };
 
         match status {
-            crate::ResolvedStatus::Local(status) => {
+            ResolvedStatus::Local(status) => {
                 let Some(account) = find_account_by_id(&db, &status.account_id).await? else {
                     continue;
                 };
@@ -1364,7 +1374,7 @@ pub(crate) async fn statuses_index_placeholder_response(
                     .await?,
                 );
             }
-            crate::ResolvedStatus::Remote(status) => {
+            ResolvedStatus::Remote(status) => {
                 if !is_public_activitypub_visibility(status.visibility.as_str()) {
                     continue;
                 }
@@ -1388,64 +1398,56 @@ pub(crate) async fn accounts_index_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {
-        let fetch_context =
-            crate::RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
-        match crate::resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context))
-            .await?
-        {
+        let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
+        match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
             Some(AccountReference::Local(account)) => {
                 let stats = load_account_stats(&db, account.id()).await?;
-                response.push(crate::MastodonAccountResponse::from_account_with_stats(
+                response.push(MastodonAccountResponse::from_account_with_stats(
                     &account, &config, &stats,
                 ));
             }
             Some(AccountReference::Remote(actor)) => {
-                let fetched = crate::fetch_remote_actor_profile_with_context(
-                    &actor.actor_uri,
-                    Some(&fetch_context),
-                )
-                .await;
+                let fetched =
+                    fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context))
+                        .await;
                 let mut account = match fetched.as_ref() {
                     Ok(fetched) => {
-                        if let Err(error) = crate::upsert_remote_actor(&db, &fetched.profile).await
-                        {
-                            crate::log_json_event(serde_json::json!({
+                        if let Err(error) = upsert_remote_actor(&db, &fetched.profile).await {
+                            log_json_event(serde_json::json!({
                                 "event": "remote_actor_upsert_failed",
                                 "actor_uri": fetched.profile.actor_uri,
                                 "error": error.to_string(),
                             }));
                         }
-                        match crate::find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
+                        match find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
                             .await?
                         {
-                            Some(cached) => {
-                                crate::MastodonAccountResponse::from_remote_actor(&cached)
+                            Some(cached) => MastodonAccountResponse::from_remote_actor(&cached),
+                            None => {
+                                MastodonAccountResponse::from_remote_actor_profile(&fetched.profile)
                             }
-                            None => crate::MastodonAccountResponse::from_remote_actor_profile(
-                                &fetched.profile,
-                            ),
                         }
                     }
                     Err(error) => {
-                        crate::log_json_event(serde_json::json!({
+                        log_json_event(serde_json::json!({
                             "event": "remote_actor_refresh_failed",
                             "actor_uri": actor.actor_uri,
                             "error": error.to_string(),
                         }));
-                        crate::MastodonAccountResponse::from_remote_actor(&actor)
+                        MastodonAccountResponse::from_remote_actor(&actor)
                     }
                 };
                 if let Ok(fetched) = fetched.as_ref() {
                     let social_counts_updated_at =
-                        crate::find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
+                        find_remote_actor_by_actor_uri(&db, &fetched.profile.actor_uri)
                             .await?
                             .and_then(|row| row.social_counts_updated_at);
-                    crate::enrich_remote_account_response(
+                    enrich_remote_account_response(
                         &db,
                         &fetched.profile.actor_uri,
                         social_counts_updated_at.as_deref(),
@@ -1454,14 +1456,11 @@ pub(crate) async fn accounts_index_response(
                         Some(&fetch_context),
                     )
                     .await?;
-                } else if let Err(error) = crate::reconcile_remote_account_status_summary(
-                    &db,
-                    &actor.actor_uri,
-                    &mut account,
-                )
-                .await
+                } else if let Err(error) =
+                    reconcile_remote_account_status_summary(&db, &actor.actor_uri, &mut account)
+                        .await
                 {
-                    crate::log_json_event(serde_json::json!({
+                    log_json_event(serde_json::json!({
                         "event": "remote_account_enrichment_failed",
                         "actor_uri": actor.actor_uri,
                         "stage": "status_summary",
@@ -1482,7 +1481,7 @@ pub(crate) async fn create_account_placeholder_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(token) = app_bearer_token_from_request(&req)? else {
         return invalid_access_token_response();
     };
@@ -1564,7 +1563,7 @@ pub(crate) async fn remove_from_followers_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -1743,3 +1742,6 @@ mod tests {
         assert!(!html.contains("Post by @alice\"onclick=x"));
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

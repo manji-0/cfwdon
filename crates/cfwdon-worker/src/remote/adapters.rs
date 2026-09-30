@@ -1,10 +1,10 @@
+use crate::activitypub::activity_object_id;
+use crate::content_helpers::{
+    sanitize_remote_http_url, sanitize_remote_plain_text, sanitize_remote_status_html,
+};
+use crate::time_html::render_status_html;
 use cfwdon_domain::{ActivityPubReblogInput, ActivityPubStatusInput};
 use serde_json::Value;
-
-use crate::{
-    render_status_html, sanitize_remote_http_url, sanitize_remote_plain_text,
-    sanitize_remote_status_html,
-};
 
 pub(crate) fn activity_pub_status_input_from_object(object: &Value) -> ActivityPubStatusInput {
     ActivityPubStatusInput {
@@ -54,7 +54,7 @@ pub(crate) fn activity_pub_reblog_input_from_activity(activity: &Value) -> Activ
             .map(str::to_owned),
         boost_of_uri: activity
             .get("object")
-            .and_then(|value| crate::activity_object_id(Some(value)))
+            .and_then(|value| activity_object_id(Some(value)))
             .map(str::to_owned),
         quote_uri: activity
             .get("quoteUri")

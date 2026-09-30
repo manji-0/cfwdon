@@ -1,12 +1,14 @@
 use super::custom_emoji_to_json;
 use super::gif_static::gif_static_bytes;
-use crate::{
-    D1Database, Result, generate_entity_id, log_r2_operation, media_object_url,
-    observability_started_at_ms,
-};
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::observability::observability_started_at_ms;
+use crate::response::media_object_url;
+use crate::store::media::log_r2_operation;
+use crate::tracked_d1::D1Database;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;
-use worker::{Bucket, HttpMetadata, d1::D1Type};
+use worker::{Bucket, HttpMetadata, Result, d1::D1Type};
 
 const CUSTOM_EMOJI_MAX_BYTES: usize = 256 * 1024;
 
@@ -64,7 +66,7 @@ pub(crate) async fn list_custom_emojis_from_db(
         )
         .all()
         .await?;
-    let rows = crate::d1_results::<CustomEmojiRow>(&result)?;
+    let rows = d1_results::<CustomEmojiRow>(&result)?;
 
     Ok(rows
         .into_iter()
@@ -84,7 +86,7 @@ pub(crate) async fn list_admin_custom_emojis(
         )
         .all()
         .await?;
-    let rows = crate::d1_results::<CustomEmojiRow>(&result)?;
+    let rows = d1_results::<CustomEmojiRow>(&result)?;
 
     Ok(rows
         .into_iter()

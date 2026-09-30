@@ -1,38 +1,60 @@
 use super::selection::FastRouterKind;
-use crate::{
-    account_directory, account_email_subscriptions_response, account_endorsements_response,
-    account_featured_tags_response, account_followers_response, account_following_response,
-    account_lists_response, account_lookup, account_relationships, account_response,
-    account_search, account_statuses_response, accounts_index_response, announcements_response,
-    approve_quote_response, auth0_callback_response, authorize_follow_request_response,
-    authorize_interaction_response, authorize_interaction_submit_response, block_account,
-    blocks_response, bookmark_status, bookmarks_response, create_account_placeholder_response,
-    create_media_attachment, create_status, custom_emojis_response, delete_media_attachment,
-    delete_status, direct_timeline_response, donation_campaigns_response, endorse_account_response,
-    endorsements_response, familiar_followers_response, favourite_status, favourites_response,
-    follow_account, follow_request_response, follow_requests_response, followed_tags_response,
-    home_timeline_response, host_meta_json_response, host_meta_response, identity_proofs_response,
-    instance_activity_response, instance_domain_blocks_response,
-    instance_extended_description_response, instance_languages_response, instance_peers_response,
-    instance_privacy_policy_response, instance_rules_response, instance_summary_response,
-    instance_terms_of_service_response, instance_terms_of_service_version_response,
-    instance_translation_languages_response, instance_v2_response, link_timeline_response,
-    list_timeline_response, media_content_response, media_metadata_response, mute_account,
-    mute_status_response, mutes_response, nodeinfo_21_response, nodeinfo_links_response,
-    nodeinfo_response, note_account_response, oauth_authorization_server_response,
-    oauth_authorize_response, oauth_revoke_response, oauth_token_response, oauth_userinfo_response,
-    oembed_response, pin_account_response, pin_status_response, public_timeline_response,
-    reblog_status, reject_follow_request_response, reject_quote_response,
-    remove_from_followers_response, revoke_quote_response, share_response, share_submit_response,
-    status_api_response, status_card_response, status_context_response,
-    status_favourited_by_response, status_history_response, status_interaction_policy_response,
-    status_quotes_response, status_reblogged_by_response, status_source_response,
-    statuses_index_placeholder_response, tag_timeline_response, translate_status_response,
-    trending_links_response, trending_statuses_response, trending_tags_response, unblock_account,
-    unbookmark_status, unendorse_account_response, unfavourite_status, unfollow_account,
-    unmute_account, unmute_status_response, unpin_account_response, unpin_status_response,
-    unreblog_status, update_credentials, update_media_attachment, update_status,
-    verify_credentials, webfinger_response,
+use crate::accounts::{
+    account_email_subscriptions_response, account_endorsements_response,
+    account_followers_response, account_following_response, account_relationships,
+    account_statuses_response, block_account, blocks_response, endorse_account_response,
+    endorsements_response, familiar_followers_response, follow_account, identity_proofs_response,
+    mute_account, mutes_response, note_account_response, pin_account_response, unblock_account,
+    unendorse_account_response, unfollow_account, unmute_account, unpin_account_response,
+};
+use crate::authorize_interaction::{
+    authorize_interaction_response, authorize_interaction_submit_response,
+};
+use crate::discovery::{host_meta_json_response, host_meta_response, webfinger_response};
+use crate::featured_tags::account_featured_tags_response;
+use crate::follow_requests::{
+    authorize_follow_request_response, follow_request_response, follow_requests_response,
+    reject_follow_request_response,
+};
+use crate::instance::{
+    announcements_response, custom_emojis_response, instance_activity_response,
+    instance_domain_blocks_response, instance_extended_description_response,
+    instance_languages_response, instance_peers_response, instance_privacy_policy_response,
+    instance_rules_response, instance_summary_response, instance_terms_of_service_response,
+    instance_terms_of_service_version_response, instance_translation_languages_response,
+    instance_v2_response, nodeinfo_21_response, nodeinfo_links_response, nodeinfo_response,
+    trending_links_response, trending_statuses_response, trending_tags_response,
+};
+use crate::lists::{account_lists_response, list_timeline_response};
+use crate::media::{
+    create_media_attachment, delete_media_attachment, media_content_response,
+    media_metadata_response, update_media_attachment,
+};
+use crate::meta_placeholder_routes::{
+    accounts_index_response, create_account_placeholder_response, donation_campaigns_response,
+    oauth_authorization_server_response, oauth_userinfo_response, oembed_response,
+    remove_from_followers_response, statuses_index_placeholder_response,
+};
+use crate::oauth_apps::{
+    auth0_callback_response, oauth_authorize_response, oauth_revoke_response, oauth_token_response,
+};
+use crate::profile::{account_lookup, account_response, update_credentials, verify_credentials};
+use crate::search::{account_directory, account_search};
+use crate::share::{share_response, share_submit_response};
+use crate::statuses::{
+    approve_quote_response, bookmark_status, bookmarks_response, create_status, delete_status,
+    favourite_status, favourites_response, mute_status_response, pin_status_response,
+    reblog_status, reject_quote_response, revoke_quote_response, status_api_response,
+    status_card_response, status_context_response, status_favourited_by_response,
+    status_history_response, status_interaction_policy_response, status_quotes_response,
+    status_reblogged_by_response, status_source_response, translate_status_response,
+    unbookmark_status, unfavourite_status, unmute_status_response, unpin_status_response,
+    unreblog_status, update_status,
+};
+use crate::tag_actions::followed_tags_response;
+use crate::timelines::{
+    direct_timeline_response, home_timeline_response, link_timeline_response,
+    public_timeline_response, tag_timeline_response,
 };
 use worker::{Env, Request, Response, Result, Router};
 

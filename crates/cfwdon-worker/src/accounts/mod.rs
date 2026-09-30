@@ -37,3 +37,6 @@ pub(crate) use social_repository::*;
 pub(crate) use social_usecases::*;
 pub(crate) use statuses::*;
 pub(crate) use store::*;
+
+#[cfg(test)]
+mod unit_tests;

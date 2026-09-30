@@ -10,7 +10,7 @@ import { ViewReadiness } from "@/domain/cache/view-readiness";
 import { AppRoute } from "@/domain/navigation/route";
 import { Status } from "@/domain/status/status";
 import type { FeaturedTag } from "@/domain/tags/featured-tag";
-import { fetchAccountStatuses } from "@/infrastructure/api/account";
+import { fetchAccountStatuses, profileSnapshotSource } from "@/infrastructure/api/account";
 import {
   blockAccount,
   fetchRelationship,
@@ -30,7 +30,7 @@ import { StatusCard } from "@/ui/components/StatusCard";
 import { useConfirm } from "@/ui/context/ConfirmContext";
 import { useSession } from "@/ui/context/SessionContext";
 import { useViewCache } from "@/ui/context/ViewCacheContext";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useWindowScrollY } from "@/ui/hooks/useWindowScrollY";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
@@ -152,7 +152,7 @@ export const ProfilePage = () => {
         break;
       case "Load":
       case "Revalidate":
-        void Promise.resolve(loadProfileSnapshot(accountId))
+        void Promise.resolve(loadProfileSnapshot(profileSnapshotSource, accountId))
           .then((result) => {
             if (!active) {
               return;

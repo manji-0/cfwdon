@@ -1,4 +1,6 @@
-use crate::{add_log_message, log_json_event};
+use crate::observability::add_log_message;
+
+use crate::observability::log_json_event;
 
 pub(crate) fn stream_hub_error_is_inactive_instance(message: &str) -> bool {
     let message = message.to_ascii_lowercase();

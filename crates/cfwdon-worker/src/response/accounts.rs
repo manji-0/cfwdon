@@ -1,13 +1,23 @@
-use crate::{
-    AccountStats, AppConfig, D1Database, FetchedRemoteActorProfile, LocalAccount,
-    MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource, ProfileField,
-    RemoteActorProfile, RemoteActorRow, actor_url, custom_emojis_used_in_texts, escape_html,
-    fetch_remote_activitypub_document, fetch_signed_activitypub_document,
-    load_remote_actor_status_summary, log_json_event, media_object_url,
-    parse_remote_actor_profile_document, remote_account_rest_id,
-    resolve_account_emojis_from_document, update_remote_actor_social_counts,
-    validate_remote_actor_profile_urls,
+use crate::accounts::AccountStats;
+use crate::content_helpers::sanitize_remote_status_html;
+use crate::custom_emojis::{custom_emojis_used_in_texts, resolve_account_emojis_from_document};
+use crate::federation::{
+    FetchedRemoteActorProfile, RemoteActorProfile, fetch_remote_activitypub_document,
+    parse_remote_actor_profile_document, validate_remote_actor_profile_urls,
 };
+use crate::http::fetch_signed_activitypub_document;
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::observability::log_json_event;
+use crate::response::media_object_url;
+use crate::responses::{MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource};
+use crate::store::remote::{
+    RemoteActorRow, RemoteActorSocialCounts, load_remote_actor_status_summary,
+    update_remote_actor_social_counts,
+};
+use crate::time_html::{escape_html, timestamp_to_mastodon_account_created_at};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, ProfileField};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use url::Url;
@@ -20,21 +30,6 @@ pub(crate) const REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS: f64 = 60.0 * 60.0 * 1000.0;
 thread_local! {
     static REMOTE_ACTOR_COLLECTION_COUNT_CACHE: RefCell<HashMap<String, (u64, f64)>> =
         RefCell::new(HashMap::new());
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct RemoteActorSocialCounts {
-    pub(crate) followers_count: Option<u64>,
-    pub(crate) following_count: Option<u64>,
-    pub(crate) statuses_count: Option<u64>,
-}
-
-impl RemoteActorSocialCounts {
-    pub(crate) fn has_any(self) -> bool {
-        self.followers_count.is_some()
-            || self.following_count.is_some()
-            || self.statuses_count.is_some()
-    }
 }
 
 /// Controls whether ActivityPub GETs may use HTTP signatures.
@@ -286,14 +281,11 @@ async fn remote_actor_collection_count(
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Option<u64> {
     let value = actor_document.get(field)?;
-    if let Some(count) = activitypub_collection_total_items(value) {
+    if let Some(count) = activitypub_collection_count(value) {
         return Some(count);
     }
     if value.get("first").is_some() {
         return resolve_collection_count_via_first(value, fetch_context).await;
-    }
-    if let Some(count) = activitypub_collection_items_len(value) {
-        return Some(count);
     }
     let collection_uri = activitypub_reference_uri(value)?;
     if let Some(count) = remote_actor_collection_count_cache_hit(&collection_uri) {
@@ -311,14 +303,13 @@ async fn resolve_fetched_collection_count(
     collection: &serde_json::Value,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Option<u64> {
-    if let Some(count) = activitypub_collection_total_items(collection) {
+    if let Some(count) = activitypub_collection_count(collection) {
         return Some(count);
     }
     if collection.get("first").is_some() {
         return resolve_collection_count_via_first(collection, fetch_context).await;
     }
-    // Fully embedded collection with no pagination link: items length is the total.
-    activitypub_collection_items_len(collection)
+    None
 }
 
 async fn resolve_collection_count_via_first(
@@ -408,8 +399,9 @@ fn activitypub_collection_items_len(collection: &serde_json::Value) -> Option<u6
         .map(|items| items.len() as u64)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn activitypub_collection_count(collection: &serde_json::Value) -> Option<u64> {
+/// Collection size known without fetching: `totalItems`, else the embedded item
+/// count for a fully embedded collection (no `first` page link).
+fn activitypub_collection_count(collection: &serde_json::Value) -> Option<u64> {
     activitypub_collection_total_items(collection).or_else(|| {
         if collection.get("first").is_some() {
             None
@@ -476,18 +468,6 @@ pub(crate) fn render_profile_field_value_html(value: &str) -> String {
         );
     }
     escape_html(trimmed)
-}
-
-#[allow(dead_code)]
-pub(crate) fn build_preferences_document(account: &LocalAccount) -> serde_json::Value {
-    serde_json::json!({
-        "posting:default:visibility": account.default_visibility().as_str(),
-        "posting:default:sensitive": account.default_sensitive(),
-        "posting:default:language": account.default_language(),
-        "posting:default:quote_policy": account.default_quote_policy().as_str(),
-        "reading:expand:media": "default",
-        "reading:expand:spoilers": false,
-    })
 }
 
 fn account_emojis(account: &LocalAccount, config: &AppConfig) -> Vec<serde_json::Value> {
@@ -668,7 +648,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at,
-            note: crate::sanitize_remote_status_html(&actor.summary_html),
+            note: sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -714,7 +694,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at: "1970-01-01T00:00:00.000Z".to_owned(),
-            note: crate::sanitize_remote_status_html(&actor.summary_html),
+            note: sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -735,59 +715,10 @@ impl MastodonAccountResponse {
     }
 }
 
-/// Normalize persisted timestamps into ISO-8601 for Mastodon API exposure.
-///
-/// Already-ISO values (containing `T`) are preserved as-is. SQLite
-/// `YYYY-MM-DD HH:MM:SS` values are treated as UTC and rewritten with
-/// Mastodon-style millisecond precision.
-pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        return String::new();
-    }
-    if value.contains('T') {
-        return value.to_owned();
-    }
-    let normalized = crate::activitypub_datetime_string(value);
-    if normalized.ends_with('Z') && !normalized.contains('.') {
-        format!("{}.000Z", &normalized[..normalized.len() - 1])
-    } else {
-        normalized
-    }
-}
-
-pub(crate) fn timestamp_to_mastodon_iso8601_opt(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(timestamp_to_mastodon_iso8601)
-}
-
-pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
-    let normalized = timestamp_to_mastodon_iso8601(value);
-    let date = normalized.split(['T', ' ']).next().unwrap_or("1970-01-01");
-    if date.len() >= 10 {
-        format!("{}T00:00:00.000Z", &date[..10])
-    } else {
-        "1970-01-01T00:00:00.000Z".to_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn timestamp_to_mastodon_iso8601_normalizes_sqlite_timestamp() {
-        assert_eq!(
-            timestamp_to_mastodon_iso8601("2026-05-09 13:40:48"),
-            "2026-05-09T13:40:48.000Z"
-        );
-        assert_eq!(
-            timestamp_to_mastodon_iso8601("2026-05-09T13:40:48.000Z"),
-            "2026-05-09T13:40:48.000Z"
-        );
-    }
+    use crate::store::remote::RemoteActorSocialCounts;
 
     #[test]
     fn activitypub_collection_count_reads_numeric_and_string_total_items() {

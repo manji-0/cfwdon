@@ -1,6 +1,17 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::activitypub::activitypub_primary_type;
+use crate::collections_alpha::{handle_inbox_collection_add, handle_inbox_collection_remove};
+use crate::db_session::bind_request_d1;
+use crate::federation::RemoteActorProfile;
+use crate::http::{
+    extract_activity_actor_uri, inbox_activity_dedupe_id, verify_incoming_activitypub_delivery,
+    verify_incoming_activitypub_request,
+};
+use crate::observability::log_federation_event;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
+use worker::{Request, Response, Result, RouteContext};
 
 mod activity_store;
 mod actor_updates;
@@ -209,7 +220,7 @@ pub(crate) async fn shared_inbox_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let body = req.bytes().await?;
     let activity = match parse_activitypub_payload(&body) {
         Ok(activity) => activity,
@@ -289,7 +300,7 @@ pub(crate) async fn inbox_response(mut req: Request, ctx: RouteContext<()>) -> R
         Ok(activity) => activity,
         Err(message) => return Response::error(message, 400),
     };
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let accounts =
         resolve_shared_inbox_target_accounts(&db, &config, Some(username.as_str()), &activity)
             .await?;

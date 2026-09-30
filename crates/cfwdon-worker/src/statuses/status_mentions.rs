@@ -1,10 +1,12 @@
+use super::D1Database;
 use super::response_mentions::{
     load_mention_local_accounts, load_mention_remote_actors, mention_lookup_keys,
 };
-use super::{
-    AppConfig, D1Database, actor_url, extract_account_handles_from_text,
-    find_remote_actor_by_actor_uri,
-};
+use crate::content_helpers::extract_account_handles_from_text;
+use crate::db_utils::d1_results;
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::store::remote::find_remote_actor_by_actor_uri;
+use cfwdon_core::AppConfig;
 use worker::{Result, d1::D1Type};
 
 struct MentionRow {
@@ -298,7 +300,7 @@ pub(crate) async fn load_stored_status_mentions(
         .bind_refs(&binding)?
         .all()
         .await?;
-    let rows = crate::d1_results::<StoredMentionRow>(&result)?;
+    let rows = d1_results::<StoredMentionRow>(&result)?;
     if rows.is_empty() {
         return Ok(None);
     }
@@ -321,7 +323,7 @@ pub(crate) async fn load_stored_remote_status_mentions(
         .bind_refs(&binding)?
         .all()
         .await?;
-    let rows = crate::d1_results::<StoredMentionRow>(&result)?;
+    let rows = d1_results::<StoredMentionRow>(&result)?;
     if rows.is_empty() {
         return Ok(None);
     }
@@ -341,7 +343,7 @@ fn stored_mention_to_json(row: StoredMentionRow) -> serde_json::Value {
     let id = row
         .account_id
         .clone()
-        .or_else(|| row.actor_uri.as_deref().map(crate::remote_account_rest_id))
+        .or_else(|| row.actor_uri.as_deref().map(remote_account_rest_id))
         .unwrap_or_default();
     serde_json::json!({
         "id": id,

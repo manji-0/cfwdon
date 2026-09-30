@@ -1,17 +1,21 @@
 use crate::accounts::load_account_stats;
-use crate::auth::find_account_by_id;
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::conversation_store::{
-    delete_conversation_for_account, find_conversation_for_account, list_conversation_participants,
-    list_conversations_for_account, mark_conversation_read, mark_conversation_unread,
+    ConversationRow, delete_conversation_for_account, find_conversation_for_account,
+    list_conversation_participants, list_conversations_for_account, mark_conversation_read,
+    mark_conversation_unread,
 };
-use crate::instance::parse_lookup_handle;
+use crate::db_session::bind_request_d1;
+use crate::identity::parse_lookup_handle;
 use crate::media::find_media_attachments_by_status_id;
-use crate::profile::require_authenticated_local_account;
-use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain};
 use crate::request_utils::build_internal_cursor_link_for_url;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::statuses::{build_local_status_response, find_status_by_id};
+use crate::statuses::{
+    build_local_status_response, find_status_by_id, load_in_reply_to_account_id,
+};
+use crate::store::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};
 
@@ -28,7 +32,7 @@ fn conversations_limit(value: Option<u32>) -> u32 {
 }
 
 pub(crate) async fn participant_account_documents(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     conversation_id: &str,
@@ -78,7 +82,7 @@ pub(crate) async fn participant_account_documents(
 }
 
 pub(crate) async fn last_status_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     last_status_id: Option<&str>,
@@ -93,7 +97,7 @@ pub(crate) async fn last_status_document(
         return Ok(None);
     };
     let media = find_media_attachments_by_status_id(db, &status.id).await?;
-    let in_reply_to_account_id = crate::load_in_reply_to_account_id(db, &status).await?;
+    let in_reply_to_account_id = load_in_reply_to_account_id(db, &status).await?;
     Ok(Some(serde_json::to_value(
         build_local_status_response(
             db,
@@ -109,10 +113,10 @@ pub(crate) async fn last_status_document(
 }
 
 pub(crate) async fn conversation_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
-    row: &crate::ConversationRow,
+    row: &ConversationRow,
 ) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "id": row.id,
@@ -149,8 +153,8 @@ pub(crate) async fn conversations_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: ConversationsQuery = req.query().unwrap_or_default();
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let owner = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -197,8 +201,8 @@ pub(crate) async fn delete_conversation_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let owner = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -220,8 +224,8 @@ pub(crate) async fn read_conversation_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let owner = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -246,8 +250,8 @@ pub(crate) async fn unread_conversation_response(
         .ok_or_else(|| {
             worker::Error::RustError("missing conversation id route parameter".to_owned())
         })?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let owner = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let owner = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(owner) => owner,
         None => return Response::error("Auth0 authentication required", 401),
     };

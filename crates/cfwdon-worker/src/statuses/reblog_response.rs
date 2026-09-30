@@ -1,11 +1,13 @@
-use super::{
-    AppConfig, LocalAccount, MastodonAccountResponse, MastodonStatusResponse, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url,
-};
+use super::LocalAccount;
+use crate::identity::actor_url;
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::store::remote::RemoteActorRow;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 
 pub(super) fn remote_reblog_wrapper_response_from_embedded(
     embedded: Option<MastodonStatusResponse>,
-    wrapper_status: &RemoteStatusRow,
+    wrapper_status: &RemoteStatus,
     wrapper_actor: &RemoteActorRow,
     config: &AppConfig,
 ) -> MastodonStatusResponse {
@@ -31,7 +33,7 @@ pub(super) fn remote_reblog_wrapper_response_from_embedded(
 
 pub(super) fn local_reblog_wrapper_response_from_embedded(
     embedded: Option<MastodonStatusResponse>,
-    wrapper_status: &StatusRow,
+    wrapper_status: &LocalStatus,
     wrapper_account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     config: &AppConfig,

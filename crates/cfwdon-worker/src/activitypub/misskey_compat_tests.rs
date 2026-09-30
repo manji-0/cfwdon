@@ -1,6 +1,6 @@
 use super::*;
-use crate::activity_pub_status_input_from_object;
 use crate::federation::parse_remote_actor_profile_document;
+use crate::remote::activity_pub_status_input_from_object;
 
 fn misskey_note_with_mfm_source() -> serde_json::Value {
     serde_json::json!({

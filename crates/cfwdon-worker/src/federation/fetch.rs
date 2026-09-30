@@ -1,3 +1,4 @@
+use crate::content_helpers::sanitize_remote_status_html;
 use cfwdon_domain::{
     AccountHandle, RemoteActorAuthorityIssue, remote_actor_id_authority_allowed,
     remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
@@ -35,14 +36,6 @@ pub(crate) struct RemoteActorProfile {
 pub(crate) struct FetchedRemoteActorProfile {
     pub(crate) document: serde_json::Value,
     pub(crate) profile: RemoteActorProfile,
-}
-
-#[allow(dead_code)]
-pub(crate) async fn fetch_remote_account_profile_by_handle_with_document(
-    handle: &AccountHandle,
-) -> Result<FetchedRemoteActorProfile> {
-    let actor_uri = resolve_webfinger_actor_uri(handle).await?;
-    fetch_remote_actor_profile_with_document(&actor_uri).await
 }
 
 pub(crate) async fn resolve_webfinger_actor_uri(handle: &AccountHandle) -> Result<String> {
@@ -284,7 +277,7 @@ fn sanitize_remote_actor_summary_html(summary: &str) -> String {
     if summary.trim().is_empty() {
         return String::new();
     }
-    crate::sanitize_remote_status_html(summary)
+    sanitize_remote_status_html(summary)
 }
 
 fn required_remote_actor_string(

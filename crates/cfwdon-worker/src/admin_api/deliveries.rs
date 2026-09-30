@@ -1,7 +1,10 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{Response, Result, RouteContext};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::Serialize;
-use worker::{Request, d1::D1Type};
+use worker::{Request, Response, Result, RouteContext, d1::D1Type};
 
 #[derive(Debug, Serialize)]
 struct AdminDeliveryResponse {
@@ -52,8 +55,8 @@ pub(crate) async fn admin_deliveries_response(
     }
 
     let query: AdminDeliveriesQuery = req.query().unwrap_or_default();
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let state_filter = normalize_delivery_state_filter(query.state.as_deref());
     let mut deliveries = list_outbound_admin_deliveries(&db, state_filter).await?;
     deliveries.extend(list_outbox_admin_deliveries(&db, state_filter).await?);
@@ -84,8 +87,8 @@ pub(crate) async fn admin_retry_delivery_response(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("outbound");
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
 
     let retried = match source {
         "outbox" => retry_outbox_delivery(&db, &delivery_id).await?,
@@ -112,7 +115,7 @@ fn normalize_delivery_state_filter(value: Option<&str>) -> Option<&'static str> 
 }
 
 async fn list_outbound_admin_deliveries(
-    db: &crate::D1Database,
+    db: &D1Database,
     state_filter: Option<&str>,
 ) -> Result<Vec<AdminDeliveryResponse>> {
     let (sql, bindings) = if let Some(state) = state_filter {
@@ -141,14 +144,14 @@ async fn list_outbound_admin_deliveries(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(crate::d1_results::<AdminDeliveryRow>(&result)?
+    Ok(d1_results::<AdminDeliveryRow>(&result)?
         .into_iter()
         .map(|row| row_to_admin_delivery(row, "outbound"))
         .collect())
 }
 
 async fn list_outbox_admin_deliveries(
-    db: &crate::D1Database,
+    db: &D1Database,
     state_filter: Option<&str>,
 ) -> Result<Vec<AdminDeliveryResponse>> {
     let (sql, bindings) = if let Some(state) = state_filter {
@@ -177,13 +180,13 @@ async fn list_outbox_admin_deliveries(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    Ok(crate::d1_results::<AdminDeliveryRow>(&result)?
+    Ok(d1_results::<AdminDeliveryRow>(&result)?
         .into_iter()
         .map(|row| row_to_admin_delivery(row, "outbox"))
         .collect())
 }
 
-async fn retry_outbound_delivery(db: &crate::D1Database, delivery_id: &str) -> Result<bool> {
+async fn retry_outbound_delivery(db: &D1Database, delivery_id: &str) -> Result<bool> {
     let bindings = [D1Type::Text(delivery_id)];
     let result = db
         .prepare(
@@ -200,7 +203,7 @@ async fn retry_outbound_delivery(db: &crate::D1Database, delivery_id: &str) -> R
     Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
-async fn retry_outbox_delivery(db: &crate::D1Database, delivery_id: &str) -> Result<bool> {
+async fn retry_outbox_delivery(db: &D1Database, delivery_id: &str) -> Result<bool> {
     let bindings = [D1Type::Text(delivery_id)];
     let result = db
         .prepare(

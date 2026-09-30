@@ -1,12 +1,13 @@
-use super::{
-    AccountRow, AppConfig, LocalAccount, REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow, actor_url,
-    json_string_array, sql_in_json_each,
-};
-use cfwdon_domain::AccountHandle;
+use super::LocalAccount;
+use crate::content_helpers::extract_account_handles_from_text;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::store::remote::{REMOTE_ACTOR_ROW_COLUMNS, RemoteActorRow};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{AccountHandle, LocalAccountRecord};
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
-
-use crate::D1Database;
 pub(crate) async fn build_status_mentions(
     db: &D1Database,
     config: &AppConfig,
@@ -32,7 +33,7 @@ pub(crate) async fn preload_mention_accounts_from_texts(
     let mut seen_remote = HashSet::new();
 
     for text in texts {
-        let handles = crate::extract_account_handles_from_text(text, config);
+        let handles = extract_account_handles_from_text(text, config);
         let keys = mention_lookup_keys(&handles, &config.instance_domain);
         for username in keys.local_usernames {
             if seen_local.insert(username.clone()) {
@@ -63,7 +64,7 @@ pub(crate) async fn build_status_mentions_with_preload(
     text: &str,
     preload: Option<&MentionAccountsPreload>,
 ) -> Result<Vec<serde_json::Value>> {
-    let handles = crate::extract_account_handles_from_text(text, config);
+    let handles = extract_account_handles_from_text(text, config);
     if handles.is_empty() {
         return Ok(Vec::new());
     }
@@ -152,7 +153,7 @@ fn local_mention_document(config: &AppConfig, account: &LocalAccount) -> serde_j
 
 fn remote_mention_document(actor: &RemoteActorRow) -> serde_json::Value {
     serde_json::json!({
-        "id": crate::remote_account_rest_id(&actor.actor_uri),
+        "id": remote_account_rest_id(&actor.actor_uri),
         "username": actor.username,
         "url": actor.profile_url.clone().unwrap_or_else(|| actor.actor_uri.clone()),
         "acct": format!("{}@{}", actor.username, actor.domain),
@@ -172,7 +173,7 @@ pub(super) async fn load_mention_local_accounts(
     db: &D1Database,
     usernames: &[String],
 ) -> Result<HashMap<String, LocalAccount>> {
-    let usernames = crate::unique_ordered_refs(usernames);
+    let usernames = unique_ordered_refs(usernames);
     if usernames.is_empty() {
         return Ok(HashMap::new());
     }
@@ -185,7 +186,7 @@ pub(super) async fn load_mention_local_accounts(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -234,7 +235,7 @@ pub(super) async fn load_mention_remote_actors(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<RemoteActorRow>(&result)?
+    Ok(d1_results::<RemoteActorRow>(&result)?
         .into_iter()
         .map(|row| {
             (

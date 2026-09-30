@@ -1,11 +1,12 @@
 use super::bindings::remote_status_object_uri_bindings;
 use super::intents::serialize_remote_status_snapshot_json;
-use super::records::{RemoteStatusRecord, RemoteStatusRow, remote_status_from_record};
-use crate::{
-    AppConfig, D1Database, build_remote_status_response, find_remote_actor_by_actor_uri,
-    insert_remote_status_edit_snapshot, normalize_status_history_entry,
-};
-use cfwdon_domain::StoredRemoteStatusIntent;
+use super::records::{RemoteStatusRecord, remote_status_from_record};
+use crate::remote::insert_remote_status_edit_snapshot;
+use crate::statuses::{build_remote_status_response, normalize_status_history_entry};
+use crate::store::remote::find_remote_actor_by_actor_uri;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{RemoteStatus, StoredRemoteStatusIntent};
 use serde::Deserialize;
 use worker::Result;
 
@@ -17,7 +18,7 @@ pub(super) struct RemoteStatusEditStateRow {
 }
 
 impl RemoteStatusEditStateRow {
-    pub(super) fn status_row(&self) -> Result<RemoteStatusRow> {
+    pub(super) fn status_row(&self) -> Result<RemoteStatus> {
         remote_status_from_record(self.record.clone())
     }
 }

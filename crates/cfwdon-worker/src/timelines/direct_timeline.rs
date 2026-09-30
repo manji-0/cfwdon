@@ -5,23 +5,30 @@ use super::{
     select_public_timeline_candidates, timeline_fetch_limit, timeline_limit,
     timeline_response_from_entries,
 };
-use crate::instance::instance_host;
+use crate::content_helpers::extract_mentions_from_text;
+use crate::db_session::{open_bound_request_session, with_d1_bookmark};
+use crate::filters::load_account_filter_matcher;
+use crate::identity::instance_host;
 use crate::runtime_config::load_config;
-use crate::{
-    account_has_thread_mutes, list_active_muted_actor_uris, list_local_direct_timeline_statuses,
-    list_remote_direct_statuses_mentioning_viewer, load_account_filter_matcher,
-    open_bound_request_session, require_authenticated_local_account, with_d1_bookmark,
+use crate::statuses::{
+    account_has_thread_mutes, list_local_direct_timeline_statuses,
+    list_remote_direct_statuses_mentioning_viewer,
 };
+use crate::store::relationship::list_active_muted_actor_uris;
+use crate::store::remote::RemoteActorRow;
+use crate::timelines::find_authenticated_local_account;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::{Request, Response, Result, RouteContext};
 
 async fn preload_muted_timeline_actor_uris(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: &crate::LocalAccount,
-    local_statuses: &[&crate::StatusRow],
-    remote_statuses: &[&(crate::RemoteStatusRow, crate::RemoteActorRow)],
-    accounts_by_id: &HashMap<String, crate::LocalAccount>,
+    viewer: &cfwdon_domain::LocalAccount,
+    local_statuses: &[&LocalStatus],
+    remote_statuses: &[&(RemoteStatus, RemoteActorRow)],
+    accounts_by_id: &HashMap<String, cfwdon_domain::LocalAccount>,
 ) -> Result<HashSet<String>> {
     let mut actor_uris = local_statuses
         .iter()
@@ -45,7 +52,7 @@ pub(crate) async fn direct_timeline_response(
     let limit = timeline_limit(&query);
     let query_limit = timeline_fetch_limit(limit);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
-    let viewer = match require_authenticated_local_account(&req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -64,7 +71,7 @@ pub(crate) async fn direct_timeline_response(
         .into_iter()
         .filter(|(status, _)| {
             let text = status.plain_text();
-            crate::extract_mentions_from_text(&text, &config)
+            extract_mentions_from_text(&text, &config)
                 .into_iter()
                 .any(|handle| handle.username == viewer.username())
         })

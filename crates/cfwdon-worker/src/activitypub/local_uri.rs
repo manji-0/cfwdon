@@ -1,4 +1,5 @@
-use super::{AppConfig, instance_host};
+use super::AppConfig;
+use crate::identity::instance_host;
 use url::Url;
 
 pub(crate) fn local_username_from_audience_uri(config: &AppConfig, uri: &str) -> Option<String> {

@@ -3,14 +3,18 @@ use super::{
     delete_remote_collection_by_uri, delete_remote_collection_item_by_object,
     enqueue_collection_item_add_activity, is_remote_actor_collections_target,
     local_collection_id_from_uri, remote_account_rest_id, remote_collection_row_by_uri,
-    update_collection_item_feature_state, upsert_remote_actor,
-    upsert_remote_collection_from_object, upsert_remote_collection_item_from_object,
+    update_collection_item_feature_state, upsert_remote_collection_from_object,
+    upsert_remote_collection_item_from_object,
 };
-use crate::{RemoteActorProfile, Result, find_account_by_id};
+use crate::auth::find_account_by_id;
+use crate::federation::RemoteActorProfile;
+use crate::store::remote::upsert_remote_actor;
+use crate::tracked_d1::D1Database;
+use worker::Result;
 use worker::d1::D1Type;
 
 pub(crate) async fn handle_inbox_collection_add(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -37,7 +41,7 @@ pub(crate) async fn handle_inbox_collection_add(
 }
 
 pub(crate) async fn handle_inbox_collection_update(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -54,7 +58,7 @@ pub(crate) async fn handle_inbox_collection_update(
 }
 
 pub(crate) async fn handle_inbox_collection_remove(
-    db: &crate::D1Database,
+    db: &D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
 ) -> Result<()> {
@@ -93,7 +97,7 @@ fn feature_response_result_uri(activity: &serde_json::Value) -> Option<&str> {
 }
 
 pub(crate) async fn handle_inbox_collection_feature_accept(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
@@ -131,7 +135,7 @@ pub(crate) async fn handle_inbox_collection_feature_accept(
 }
 
 pub(crate) async fn handle_inbox_collection_feature_reject(
-    db: &crate::D1Database,
+    db: &D1Database,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,
 ) -> Result<bool> {
@@ -152,7 +156,7 @@ pub(crate) async fn handle_inbox_collection_feature_reject(
 }
 
 pub(crate) async fn handle_inbox_collection_feature_authorization_delete(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     activity: &serde_json::Value,
     remote_actor: &RemoteActorProfile,

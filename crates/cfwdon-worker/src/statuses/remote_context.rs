@@ -1,18 +1,31 @@
 use super::{
-    AppConfig, LocalAccount, MastodonContextResponse, MastodonStatusResponse, RemoteActorRow,
-    RemoteStatusRow, build_loaded_local_status_response, build_remote_status_response,
-    context_descendant_max_depth, extract_remote_note_object, fetch_remote_activitypub_document,
-    fetch_remote_actor_profile, find_account_by_id, find_remote_actor_by_actor_uri,
-    find_remote_status_by_object_uri, find_status_by_ap_id, find_status_by_id,
-    is_public_activitypub_visibility, list_direct_remote_replies_by_uri, now_iso_string,
-    remote_context_fetch_payload, resolve_remote_status_by_url, soft_enqueue_background_job,
-    trim_context_ancestors, trim_context_descendants, upsert_remote_actor, upsert_remote_status,
+    LocalAccount, build_loaded_local_status_response, build_remote_status_response,
+    find_status_by_ap_id, find_status_by_id, list_direct_remote_replies_by_uri,
+};
+use crate::activitypub::{
+    extract_remote_note_object, is_public_activitypub_visibility,
     visibility_from_activitypub_object,
 };
+use crate::auth::find_account_by_id;
+use crate::background_jobs::{
+    JOB_REMOTE_CONTEXT_FETCH, remote_context_fetch_payload, soft_enqueue_background_job,
+};
+use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
+use crate::remote::{
+    find_remote_status_by_object_uri, resolve_remote_status_by_url, upsert_remote_status,
+};
+use crate::response::{
+    MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
+    trim_context_descendants,
+};
+use crate::responses::MastodonStatusResponse;
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::RemoteStatus;
 use std::collections::HashSet;
 use worker::Result;
-
-use crate::D1Database;
 const REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT: usize = 8;
 const REMOTE_CONTEXT_REPLY_ITEM_FETCH_LIMIT: usize = 128;
 
@@ -36,7 +49,7 @@ pub(crate) async fn build_remote_status_context(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     root_actor: &RemoteActorRow,
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
@@ -57,7 +70,7 @@ async fn collect_ancestors_for_remote_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let mut ancestors = Vec::new();
     let mut current = root.in_reply_to_uri.clone();
@@ -103,7 +116,7 @@ async fn collect_ancestors_for_remote_root(
                 if let Ok(now) = now_iso_string() {
                     let _ = soft_enqueue_background_job(
                         db,
-                        crate::JOB_REMOTE_CONTEXT_FETCH,
+                        JOB_REMOTE_CONTEXT_FETCH,
                         &remote_context_fetch_payload(&object_uri),
                         &now,
                     )
@@ -132,7 +145,7 @@ async fn collect_descendants_for_remote_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     _root_actor: &RemoteActorRow,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
@@ -217,7 +230,7 @@ impl RemoteReplyReference {
 async fn hydrate_remote_descendants_for_context(
     db: &D1Database,
     config: &AppConfig,
-    root: &RemoteStatusRow,
+    root: &RemoteStatus,
     root_actor: &RemoteActorRow,
     depth: usize,
 ) -> Result<()> {

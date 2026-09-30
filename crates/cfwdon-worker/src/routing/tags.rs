@@ -1,7 +1,10 @@
-use crate::{
-    feature_tag_response, feature_tag_v1_response, featured_tag_suggestions_response,
-    featured_tags_response, follow_tag_response, tag_response, unfeature_tag_response,
-    unfeature_tag_v1_response, unfollow_tag_response,
+use crate::discovery::tag_response;
+use crate::featured_tags::{
+    feature_tag_response, featured_tag_suggestions_response, featured_tags_response,
+    unfeature_tag_response,
+};
+use crate::tag_actions::{
+    feature_tag_v1_response, follow_tag_response, unfeature_tag_v1_response, unfollow_tag_response,
 };
 use worker::Router;
 

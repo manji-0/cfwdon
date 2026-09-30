@@ -1,15 +1,18 @@
-use super::{
-    AppConfig, FollowAccountRequest, LocalAccount, RemoteActorRow, actor_url,
-    build_follow_activity, build_undo_follow_activity, delete_follow_by_target,
-    load_follow_activity_id, queue_remote_actor_activity, queue_remote_actor_activity_required,
-    remote_account_rest_id, timestamp_to_mastodon_iso8601_opt, upsert_remote_follow,
-};
+use crate::accounts::FollowAccountRequest;
+use crate::activitypub::{build_follow_activity, build_undo_follow_activity};
+use crate::delivery::{queue_remote_actor_activity, queue_remote_actor_activity_required};
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::relationship::{load_follow_activity_id, upsert_remote_follow};
+use crate::store::relationship::delete_follow_by_target;
+use crate::store::remote::RemoteActorRow;
+use crate::time_html::timestamp_to_mastodon_iso8601_opt;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use js_sys::Date;
 use serde::{Deserialize, Serialize};
 use worker::d1::D1Type;
 use worker::{Error, Result};
-
-use crate::D1Database;
 #[derive(Debug, Serialize)]
 pub(crate) struct RelationshipResponse {
     pub(crate) id: String,

@@ -1,3 +1,10 @@
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::identity::configured_instance_languages;
+use crate::oauth_apps::oauth_app_has_any_scope;
+use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
+use crate::runtime_config::load_config;
+use worker::{Request, Response, Result, RouteContext};
 mod cache;
 mod document;
 mod interaction_policy;
@@ -8,21 +15,13 @@ mod provider_languages;
 
 // The cache fingerprint and provider request/response helpers are exercised
 // from `unit_tests`, so the lib build sees these re-exports as unused.
-#[allow(unused_imports)]
-pub(crate) use cache::*;
 pub(crate) use document::*;
 pub(crate) use interaction_policy::*;
 pub(crate) use languages::*;
 pub(crate) use provider::*;
-#[allow(unused_imports)]
-pub(crate) use provider_client::*;
 pub(crate) use provider_languages::*;
 
-use super::{
-    Request, Response, Result, RouteContext, app_bearer_token_from_request,
-    configured_instance_languages, find_authenticated_local_account,
-    find_oauth_app_by_bearer_token, load_config, oauth_app_has_any_scope, status_api_response,
-};
+use super::status_api_response;
 use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize)]
@@ -80,7 +79,7 @@ pub(crate) async fn translate_status_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bearer_token = app_bearer_token_from_request(&req)?;
     let app = match bearer_token.as_deref() {
         Some(token) => match find_oauth_app_by_bearer_token(&db, token).await? {

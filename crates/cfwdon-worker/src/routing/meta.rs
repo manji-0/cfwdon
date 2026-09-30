@@ -1,14 +1,20 @@
-use crate::{
+use crate::custom_emojis::{
     admin_create_custom_emoji_response, admin_custom_emojis_response,
     admin_delete_custom_emoji_response, admin_update_custom_emoji_response,
-    announcement_reaction_mutation_response, announcements_response, annual_report_action_response,
-    annual_report_response, annual_report_state_response, annual_reports_response,
-    check_email_confirmation_response, create_email_confirmation_response, create_report,
-    custom_emojis_response, dismiss_announcement_mutation_response, donation_campaigns_response,
-    email_confirmation_page_response, markers_response, oembed_response, save_markers_response,
-    streaming_placeholder_response, trending_links_response, trending_statuses_response,
+};
+use crate::instance::{
+    announcement_reaction_mutation_response, announcements_response, custom_emojis_response,
+    dismiss_announcement_mutation_response, trending_links_response, trending_statuses_response,
     trending_tags_response,
 };
+use crate::markers::{markers_response, save_markers_response};
+use crate::meta_placeholder_routes::{
+    annual_report_action_response, annual_report_response, annual_report_state_response,
+    annual_reports_response, check_email_confirmation_response, create_email_confirmation_response,
+    donation_campaigns_response, email_confirmation_page_response, oembed_response,
+    streaming_placeholder_response,
+};
+use crate::reports::create_report;
 use worker::Router;
 
 pub(crate) fn add_meta_routes(router: Router<'static, ()>) -> Router<'static, ()> {

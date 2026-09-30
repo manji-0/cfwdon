@@ -1,3 +1,4 @@
+use cfwdon_domain::RemoteStatus;
 mod attachments;
 mod bindings;
 mod edit_snapshots;
@@ -8,21 +9,31 @@ mod quotes;
 mod records;
 mod upsert_sql;
 
+use crate::activitypub::quote_target_uri_from_object;
+use crate::background_jobs::{
+    JOB_CARD_UNFURL, JOB_REMOTE_STATUS_NOTIFY, JOB_RESOLVE_IN_REPLY_TO, card_unfurl_payload,
+    resolve_in_reply_to_payload, soft_enqueue_background_job,
+};
+use crate::custom_emojis::extract_federated_emojis_from_activitypub_object;
+use crate::federation::RemoteActorProfile;
+use crate::id_utils::generate_entity_id;
+use crate::media::{RemoteStatusAttachmentRow, replace_remote_status_attachments};
+use crate::remote::{
+    delete_remote_status_poll_by_status_id, extract_remote_poll_draft, upsert_remote_status_poll,
+};
+use crate::statuses::{
+    build_remote_status_card_value, find_local_status_by_object_uri, replace_remote_status_mentions,
+};
+use crate::tags::replace_remote_status_hashtags;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
 pub(crate) use attachments::*;
 pub(crate) use lookups::*;
 pub(crate) use notifications::*;
 pub(crate) use quotes::*;
 pub(crate) use records::*;
 
-use crate::{
-    AppConfig, D1Database, RemoteActorProfile, RemoteStatusAttachmentRow,
-    build_remote_status_card_value, card_unfurl_payload, delete_remote_status_poll_by_status_id,
-    extract_federated_emojis_from_activitypub_object, extract_remote_poll_draft,
-    find_local_status_by_object_uri, generate_entity_id, now_iso_string,
-    quote_target_uri_from_object, replace_remote_status_attachments,
-    replace_remote_status_hashtags, replace_remote_status_mentions, resolve_in_reply_to_payload,
-    soft_enqueue_background_job, upsert_remote_status_poll,
-};
+use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     StatusId, StoredRemoteReblogIntent, StoredRemoteStatusIntent,
     merged_quote_state_for_remote_upsert,
@@ -56,7 +67,7 @@ async fn upsert_remote_status_draft(
 async fn reload_upserted_remote_status(
     db: &D1Database,
     intent: &StoredRemoteStatusIntent,
-) -> Result<RemoteStatusRow> {
+) -> Result<RemoteStatus> {
     find_remote_status_by_object_uri(db, &intent.object_uri)
         .await?
         .ok_or_else(|| Error::RustError("cached remote status could not be reloaded".to_owned()))
@@ -65,7 +76,7 @@ async fn reload_upserted_remote_status(
 async fn replace_remote_status_dependents(
     db: &D1Database,
     config: &AppConfig,
-    status: &RemoteStatusRow,
+    status: &RemoteStatus,
     object: &serde_json::Value,
 ) -> Result<Vec<RemoteStatusAttachmentRow>> {
     replace_remote_status_hashtags(
@@ -176,7 +187,7 @@ pub(crate) async fn upsert_remote_status(
     // Soft-enqueue a card unfurl job for link preview enrichment.
     let _ = soft_enqueue_background_job(
         db,
-        crate::JOB_CARD_UNFURL,
+        JOB_CARD_UNFURL,
         &card_unfurl_payload("remote", &status.id),
         &intent.revision_at,
     )
@@ -186,7 +197,7 @@ pub(crate) async fn upsert_remote_status(
     if status.in_reply_to_id.is_none() && status.in_reply_to_uri.is_some() {
         let _ = soft_enqueue_background_job(
             db,
-            crate::JOB_RESOLVE_IN_REPLY_TO,
+            JOB_RESOLVE_IN_REPLY_TO,
             &resolve_in_reply_to_payload(&status.id),
             &intent.revision_at,
         )
@@ -206,7 +217,7 @@ pub(crate) async fn upsert_remote_status(
     if let Some(kind) = notification_kind {
         let _ = soft_enqueue_background_job(
             db,
-            crate::JOB_REMOTE_STATUS_NOTIFY,
+            JOB_REMOTE_STATUS_NOTIFY,
             &remote_status_notify_payload(&status.id, &actor.actor_uri, kind),
             &intent.revision_at,
         )

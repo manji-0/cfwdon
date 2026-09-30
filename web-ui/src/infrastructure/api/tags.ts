@@ -1,7 +1,7 @@
 import { type ResultAsync } from "neverthrow";
 import type { FeaturedTag } from "@/domain/tags/featured-tag";
 import type { FollowedTag } from "@/domain/tags/followed-tag";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,

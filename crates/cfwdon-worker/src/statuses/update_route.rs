@@ -1,13 +1,21 @@
 use super::{
-    LocalStatusResponsePreload, Request, Response, Result, RouteContext, UpdateLocalStatusInput,
-    UpdateStatusRequest, apply_local_status_update, build_local_status_response,
-    config_with_resolved_custom_emojis, count_poll_voters, find_authenticated_local_account,
-    find_owned_local_status, find_status_poll_by_status_id, invalidate_status_api_cache,
-    is_iso_timestamp_in_past, list_status_poll_options, load_config,
-    load_local_status_response_preload, normalize_status_poll, parse_update_status_request,
-    resolve_editable_media, sanitize_emoji_shortcodes, status_id_from_context,
+    LocalStatusResponsePreload, UpdateLocalStatusInput, UpdateStatusRequest,
+    apply_local_status_update, build_local_status_response, find_owned_local_status,
+    load_local_status_response_preload, parse_update_status_request,
 };
-use worker::Error;
+use crate::auth::find_authenticated_local_account;
+use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_emoji_shortcodes};
+use crate::db_session::bind_request_d1;
+use crate::local_polls::normalize_status_poll;
+use crate::media::resolve_editable_media;
+use crate::request_utils::status_id_from_context;
+use crate::response_cache::invalidate_status_api_cache;
+use crate::runtime_config::load_config;
+use crate::store::local_polls::{
+    count_poll_voters, find_status_poll_by_status_id, list_status_poll_options,
+};
+use crate::time_html::is_iso_timestamp_in_past;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -19,7 +27,7 @@ pub(crate) async fn update_status(mut req: Request, ctx: RouteContext<()>) -> Re
         Ok(request) => request,
         Err(message) => return Response::error(message, 422),
     };
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,

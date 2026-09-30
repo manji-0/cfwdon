@@ -1,7 +1,6 @@
-use super::super::{AccountFilterMatcher, load_status_filtered};
+use crate::filters::{AccountFilterMatcher, load_status_filtered};
+use crate::tracked_d1::D1Database;
 use worker::Result;
-
-use crate::D1Database;
 
 pub(super) async fn filtered_status_for_viewer(
     db: &D1Database,

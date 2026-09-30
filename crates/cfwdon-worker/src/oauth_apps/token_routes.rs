@@ -1,14 +1,15 @@
 use super::{
-    APP_ACCESS_TOKEN_TTL_SECONDS, OAuthAppRow, OAuthAuthorizationCodeRow,
-    build_oauth_token_document, delete_oauth_authorization_code, find_oauth_app_by_client_id,
-    issue_oauth_access_token, issue_oauth_app_access_token, load_oauth_authorization_code,
-    oauth_app_redirect_uris, oauth_app_scopes, oauth_bearer_token_hash,
-    parse_basic_authorization_header, pkce_verifier_matches, redirect_uri_matches_registered,
+    APP_ACCESS_TOKEN_TTL_SECONDS, OAuthAuthorizationCodeRow, build_oauth_token_document,
+    delete_oauth_authorization_code, find_oauth_app_by_client_id, issue_oauth_access_token,
+    issue_oauth_app_access_token, load_oauth_authorization_code, oauth_app_redirect_uris,
+    oauth_app_scopes, parse_basic_authorization_header, pkce_verifier_matches,
+    redirect_uri_matches_registered,
 };
-use crate::D1Database;
 use crate::auth::find_account_by_id;
+use crate::oauth_store::{OAuthAppRow, link_oauth_app_to_account, oauth_bearer_token_hash};
 use crate::runtime_config::load_config;
 use crate::time_html::now_unix_timestamp;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext, d1::D1Type};
 
@@ -95,18 +96,6 @@ fn with_oauth_token_cache_headers(mut response: Response) -> Result<Response> {
     response.headers_mut().set("Cache-Control", "no-store")?;
     response.headers_mut().set("Pragma", "no-cache")?;
     Ok(response)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn oauth_token_error_code(status: u16, error: &str) -> &'static str {
-    match (status, error) {
-        (401, "invalid_client") => "invalid_client",
-        (400, "invalid_grant") => "invalid_grant",
-        (400, "invalid_scope") => "invalid_scope",
-        (400, "unsupported_grant_type") => "unsupported_grant_type",
-        (400, "invalid_request") => "invalid_request",
-        _ => "invalid_request",
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -217,7 +206,7 @@ async fn oauth_authorization_code_token_response(
 
     let scopes = serde_json::from_str::<Vec<String>>(&code_row.scopes_json).unwrap_or_default();
     let access_token = issue_oauth_access_token(db, app.id, &code_row.account_id, &scopes).await?;
-    crate::link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
+    link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
     delete_oauth_authorization_code(db, &code_row.code).await?;
     if find_account_by_id(db, &code_row.account_id)
         .await?
@@ -326,7 +315,7 @@ pub(crate) async fn oauth_token_response(
         .get("Authorization")?
         .as_deref()
         .and_then(parse_basic_authorization_header);
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
+    let db = D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     if grant_type == "authorization_code" {
         return oauth_authorization_code_token_response(&db, request, header_credentials).await;
     }
@@ -432,7 +421,7 @@ pub(crate) async fn oauth_revoke_response(
     let (Some(client_id), Some(client_secret)) = (client_id, client_secret) else {
         return oauth_invalid_client_response();
     };
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
+    let db = D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
         return oauth_invalid_client_response();
     };
@@ -506,6 +495,7 @@ async fn revoke_oauth_access_token(db: &D1Database, oauth_app_id: i64, token: &s
 mod tests {
     use super::super::{OAuthAuthorizationCodeRow, pkce_code_challenge};
     use super::*;
+    use crate::oauth_store::OAuthAppRow;
 
     fn oauth_app_fixture() -> OAuthAppRow {
         OAuthAppRow {
@@ -677,19 +667,5 @@ mod tests {
                 "Content-Type must be application/x-www-form-urlencoded, multipart/form-data, or application/json."
             )
         );
-    }
-
-    #[test]
-    fn invalid_grant_maps_to_http_400() {
-        assert_eq!(
-            oauth_token_error_code(400, "invalid_grant"),
-            "invalid_grant"
-        );
-        assert_eq!(
-            oauth_token_error_code(401, "invalid_client"),
-            "invalid_client"
-        );
-        assert_eq!(oauth_invalid_grant_status(), 400);
-        assert_eq!(oauth_invalid_client_status(), 401);
     }
 }

@@ -1,5 +1,6 @@
 use super::preview_card::collapsed_whitespace;
-use crate::statuses::{Error, Result, parse_remote_http_url};
+use crate::federation::parse_remote_http_url;
+use worker::{Error, Result};
 
 pub(super) const REMOTE_PREVIEW_HTML_LIMIT: usize = 65_536;
 

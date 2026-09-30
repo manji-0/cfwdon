@@ -1,4 +1,4 @@
-use crate::{admin_ui_response, is_admin_ui_path};
+use crate::admin_ui::{admin_ui_response, is_admin_ui_path};
 use dashboard::admin_dashboard_response;
 use deliveries::{admin_deliveries_response, admin_retry_delivery_response};
 use domain_blocks::{

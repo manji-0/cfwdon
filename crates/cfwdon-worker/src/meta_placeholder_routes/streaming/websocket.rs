@@ -6,17 +6,19 @@ use super::channels::{
 };
 use super::hub_routing::stream_hub_proxy_target;
 use super::poll::poll_streaming_events;
-use crate::{
-    D1Database, Request, Response, Result, StreamHubUpgradeParams, StreamingEvent,
-    StreamingLoopState, snapshot_d1_request_metrics, stream_hub_session_id_name,
-    upgrade_stream_hub_websocket,
+use crate::d1_metrics::snapshot_d1_request_metrics;
+use crate::stream_hub::{
+    StreamHubUpgradeParams, stream_hub_session_id_name, upgrade_stream_hub_websocket,
 };
+use crate::streaming_types::{StreamingEvent, StreamingLoopState};
+use crate::tracked_d1::D1Database;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
 use std::collections::HashMap;
 use std::time::Duration;
 use wasm_bindgen_futures::spawn_local;
 use worker::{
-    Env, WebSocket, WebSocketPair, console_error, console_log, ws_events::WebsocketEvent,
+    Env, Request, Response, Result, WebSocket, WebSocketPair, console_error, console_log,
+    ws_events::WebsocketEvent,
 };
 
 pub(super) struct StreamingWebSocketSubscription {
@@ -125,7 +127,7 @@ pub(super) fn handle_streaming_websocket_client_message(
     websocket: &WebSocket,
     subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
     text: &str,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
 ) -> bool {
     let message = match serde_json::from_str::<StreamingWebSocketClientMessage>(text) {
         Ok(message) => message,
@@ -197,7 +199,7 @@ pub(super) async fn poll_streaming_websocket_subscriptions(
     websocket: &WebSocket,
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     subscriptions: &mut HashMap<String, StreamingWebSocketSubscription>,
 ) -> bool {
     for subscription in subscriptions.values_mut() {
@@ -257,7 +259,7 @@ pub(super) async fn run_streaming_websocket(
     initial_stream: Option<String>,
     initial_tag: Option<String>,
     initial_list: Option<String>,
-    viewer: Option<crate::LocalAccount>,
+    viewer: Option<cfwdon_domain::LocalAccount>,
 ) {
     let mut subscriptions = HashMap::<String, StreamingWebSocketSubscription>::new();
     if let Some(stream_name) = initial_stream {
@@ -398,7 +400,7 @@ pub(super) fn stream_hub_websocket_upgrade_plan(
 pub(super) async fn streaming_websocket_upgrade_response(
     env: &Env,
     req: Request,
-    db: crate::D1Database,
+    db: D1Database,
     config: cfwdon_core::AppConfig,
     initial_stream: Option<String>,
     tag: Option<String>,
@@ -460,6 +462,7 @@ pub(super) async fn streaming_websocket_upgrade_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::streaming_types::StreamingEvent;
 
     #[test]
     fn streaming_websocket_event_message_matches_mastodon_shape() {

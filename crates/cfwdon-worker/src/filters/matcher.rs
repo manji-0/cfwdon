@@ -2,8 +2,11 @@ use super::{
     AccountFilterMatcher, filter_summary_document, list_filter_keywords_for_filters,
     list_filter_statuses_for_filters, list_filters,
 };
-use crate::Result;
+use crate::app_cache::load_account_capabilities;
+use crate::time_html::now_unix_timestamp;
+use crate::tracked_d1::D1Database;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use worker::Result;
 
 fn phrase_matches_text(text: &str, phrase: &str, whole_word: bool) -> bool {
     if phrase.is_empty() {
@@ -33,7 +36,7 @@ fn filter_is_expired(expires_at: Option<&str>) -> bool {
         let Ok(datetime) = OffsetDateTime::parse(value, &Rfc3339) else {
             return false;
         };
-        let Ok(now) = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp()) else {
+        let Ok(now) = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()) else {
             return false;
         };
         datetime <= now
@@ -97,13 +100,10 @@ impl AccountFilterMatcher {
 }
 
 pub(crate) async fn load_account_filter_matcher(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<AccountFilterMatcher> {
-    if !crate::load_account_capabilities(db, account_id)
-        .await?
-        .has_filters
-    {
+    if !load_account_capabilities(db, account_id).await?.has_filters {
         return Ok(AccountFilterMatcher::default());
     }
 
@@ -125,7 +125,7 @@ pub(crate) async fn load_account_filter_matcher(
 }
 
 pub(crate) async fn load_status_filtered(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     status_id: &str,
     text: &str,

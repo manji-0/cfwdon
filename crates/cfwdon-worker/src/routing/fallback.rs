@@ -18,7 +18,7 @@ use super::{
     tags::add_tag_routes,
     timelines::add_timeline_routes,
 };
-use crate::root_document;
+use crate::runtime_config::root_document;
 use worker::{Env, Request, Response, Result, Router};
 
 pub(crate) async fn run_fallback_router(req: Request, env: Env) -> Result<Response> {

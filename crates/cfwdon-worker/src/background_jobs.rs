@@ -1,9 +1,17 @@
-use crate::{
-    AppConfig, D1Database, build_remote_status_card_value, build_status_card_value,
-    enrich_card_with_remote_preview, find_remote_status_by_id,
-    find_remote_status_by_url_or_object_uri, find_status_by_id, generate_entity_id, now_iso_string,
-    resolve_remote_status_by_url,
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::id_utils::generate_entity_id;
+use crate::media::find_remote_status_attachments_by_status_id;
+use crate::remote::{
+    dispatch_remote_status_notifications, find_remote_status_by_id,
+    find_remote_status_by_url_or_object_uri, resolve_remote_status_by_url,
 };
+use crate::statuses::{
+    build_remote_status_card_value, build_status_card_value, enrich_card_with_remote_preview,
+    find_local_status_by_object_uri, find_status_by_id,
+};
+use crate::time_html::{add_seconds_to_iso_string, now_iso_string};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
 use serde::Deserialize;
 use worker::{Env, Error, Result, d1::D1Type};
 
@@ -197,18 +205,17 @@ pub(crate) async fn process_due_background_jobs(
         .all()
         .await?;
 
-    let jobs = crate::d1_results::<BackgroundJobRow>(&job_ids_result)?;
+    let jobs = d1_results::<BackgroundJobRow>(&job_ids_result)?;
     if jobs.is_empty() {
         return Ok(0);
     }
 
-    let ids_json =
-        crate::json_string_array(&jobs.iter().map(|j| j.id.as_str()).collect::<Vec<_>>());
+    let ids_json = json_string_array(&jobs.iter().map(|j| j.id.as_str()).collect::<Vec<_>>());
     let ids_binding = D1Type::Text(&ids_json);
     db.prepare(format!(
         "UPDATE background_jobs SET status = 'running', updated_at = ?1
          WHERE id {}",
-        crate::sql_in_json_each(2)
+        sql_in_json_each(2)
     ))
     .bind_refs(&[D1Type::Text(&now), ids_binding])?
     .run()
@@ -239,8 +246,8 @@ pub(crate) async fn process_due_background_jobs(
                     let backoff_secs = BASE_BACKOFF_SECS * (1i64 << next_attempts.min(6));
                     let backoff_secs_u64 =
                         u64::try_from(backoff_secs).unwrap_or(BASE_BACKOFF_SECS as u64);
-                    let next = crate::add_seconds_to_iso_string(&now, backoff_secs_u64)
-                        .unwrap_or(now.clone());
+                    let next =
+                        add_seconds_to_iso_string(&now, backoff_secs_u64).unwrap_or(now.clone());
                     ("pending".to_owned(), next)
                 };
                 let error_msg = err.to_string();
@@ -327,8 +334,7 @@ async fn handle_card_unfurl(db: &D1Database, payload_json: &str) -> Result<()> {
             let Some(status) = find_remote_status_by_id(db, &payload.status_id).await? else {
                 return Ok(());
             };
-            let attachments =
-                crate::find_remote_status_attachments_by_status_id(db, &status.id).await?;
+            let attachments = find_remote_status_attachments_by_status_id(db, &status.id).await?;
             let text = status.plain_text();
             let Some(mut card) = build_remote_status_card_value(&text, &attachments) else {
                 return Ok(());
@@ -379,7 +385,7 @@ async fn handle_resolve_in_reply_to(
     let resolved_id = if let Some(remote) = find_remote_status_by_url_or_object_uri(db, uri).await?
     {
         Some(remote.id)
-    } else if let Some(local) = crate::find_local_status_by_object_uri(db, config, uri).await? {
+    } else if let Some(local) = find_local_status_by_object_uri(db, config, uri).await? {
         Some(local.id)
     } else {
         None
@@ -454,7 +460,7 @@ async fn handle_remote_status_notify(
         serde_json::from_str(payload_json).map_err(|error| {
             Error::RustError(format!("invalid remote_status_notify payload: {error}"))
         })?;
-    crate::dispatch_remote_status_notifications(
+    dispatch_remote_status_notifications(
         env,
         db,
         config,

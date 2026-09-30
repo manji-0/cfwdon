@@ -1,17 +1,18 @@
-use super::notifications::{
+use super::{
+    NotificationsQuery, build_status_notification_entry, list_reblog_notifications_for_account,
+    list_remote_reblog_notifications_for_account, preload_notification_statuses,
+};
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::notifications::{
     NotificationEntry, notification_account_matches_filter, notification_type_allowed,
 };
-use super::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, StatusRow, actor_url,
-    build_status_notification_entry, find_statuses_by_ids, list_reblog_notifications_for_account,
-    list_remote_reblog_notifications_for_account, preload_notification_statuses,
-    remote_account_rest_id,
-};
-use cfwdon_domain::LocalAccount;
+use crate::responses::MastodonAccountResponse;
+use crate::statuses::find_statuses_by_ids;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use std::collections::HashMap;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn collect_reblog_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,
@@ -37,7 +38,7 @@ pub(crate) async fn collect_reblog_notification_entries(
         .await?
         .into_iter()
         .map(|status| (status.id.clone(), status))
-        .collect::<HashMap<String, StatusRow>>();
+        .collect::<HashMap<String, LocalStatus>>();
     let local_actor_ids = local_reblogs
         .iter()
         .map(|reblog| reblog.account_id.clone())

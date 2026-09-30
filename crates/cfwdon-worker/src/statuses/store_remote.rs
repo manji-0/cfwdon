@@ -1,13 +1,17 @@
-use super::{
-    AccountStatusVisibilityScope, RemoteActorRow, RemoteStatusRecord, RemoteStatusRow,
-    ResolvedTimelineCursor, Result, json_string_array, normalize_hashtag,
-    remote_status_from_record, remote_statuses_from_records, sql_in_json_each, unique_ordered_refs,
+use super::AccountStatusVisibilityScope;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
+use crate::remote::{remote_status_from_record, remote_statuses_from_records};
+use crate::store::remote::RemoteActorRow;
+use crate::tags::normalize_hashtag;
+use crate::timelines::{
+    ResolvedTimelineCursor, StatusIdCursorParts, append_remote_status_id_cursor_parts,
+    append_resolved_timeline_cursor_bindings, format_with_clauses,
+    seekable_resolved_timeline_cursor_predicates,
 };
-use crate::{
-    D1Database, append_remote_status_id_cursor_parts, append_resolved_timeline_cursor_bindings,
-    format_with_clauses, seekable_resolved_timeline_cursor_predicates,
-};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{RemoteStatus, RemoteStatusRecord};
 use std::collections::HashSet;
+use worker::Result;
 use worker::d1::D1Type;
 
 const REMOTE_STATUS_WITH_ACTOR_SELECT: &str = "rs.id,
@@ -59,7 +63,7 @@ pub(crate) async fn list_remote_public_timeline_statuses(
     db: &D1Database,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let (sql, bindings) = remote_public_timeline_statuses_sql(cursor, limit);
     query_remote_statuses_with_actor(db, &sql, &bindings).await
 }
@@ -92,7 +96,7 @@ pub(crate) async fn list_remote_home_timeline_statuses(
     viewer_account_id: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let (sql, bindings) = remote_home_timeline_statuses_sql(viewer_account_id, cursor, limit);
     query_remote_statuses_with_actor(db, &sql, &bindings).await
 }
@@ -128,7 +132,7 @@ fn remote_home_timeline_statuses_sql<'a>(
 pub(crate) async fn find_remote_statuses_with_actors_by_ids(
     db: &D1Database,
     status_ids: &[String],
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let ids = unique_ordered_refs(status_ids);
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -157,7 +161,7 @@ pub(crate) async fn list_remote_public_statuses_by_tag(
     tag: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     list_remote_public_statuses_by_tags(db, &[normalize_hashtag(tag)], cursor, limit).await
 }
 
@@ -166,7 +170,7 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let (mut rows, tags) =
         list_remote_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
     if rows.len() >= limit as usize {
@@ -198,7 +202,7 @@ async fn list_remote_public_statuses_by_tags_indexed(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<(Vec<(RemoteStatusRow, RemoteActorRow)>, Vec<String>)> {
+) -> Result<(Vec<(RemoteStatus, RemoteActorRow)>, Vec<String>)> {
     let tags = normalized_unique_remote_status_tags(tags);
     if tags.is_empty() {
         return Ok((Vec::new(), tags));
@@ -261,7 +265,7 @@ async fn list_remote_public_statuses_by_tags_legacy(
     tags: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let patterns = remote_public_statuses_by_tags_legacy_patterns(tags);
     let (sql, bindings) = remote_public_statuses_by_tags_legacy_sql(&patterns, cursor, limit);
 
@@ -311,7 +315,7 @@ pub(crate) async fn list_remote_public_statuses_by_link(
     urls: &[String],
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     if urls.is_empty() {
         return Ok(Vec::new());
     }
@@ -366,7 +370,7 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
     db: &D1Database,
     actor_uri: &str,
     options: RemoteAccountStatusListOptions<'_>,
-) -> Result<Vec<RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatus>> {
     let tagged_pattern = remote_actor_status_tagged_pattern(options.tagged);
     let query_bindings =
         remote_actor_statuses_by_actor_uri_bindings(actor_uri, options, tagged_pattern.as_deref());
@@ -383,7 +387,7 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
 
 struct RemoteActorStatusQueryBindings<'a> {
     bindings: Vec<D1Type<'a>>,
-    cursor_parts: crate::StatusIdCursorParts,
+    cursor_parts: StatusIdCursorParts,
     tagged_binding: Option<usize>,
     limit_binding: usize,
 }
@@ -463,7 +467,7 @@ fn remote_actor_status_filter_predicates(
 
 fn remote_actor_statuses_by_actor_uri_sql(
     predicates: &[String],
-    cursor_parts: &crate::StatusIdCursorParts,
+    cursor_parts: &StatusIdCursorParts,
     limit_binding: usize,
 ) -> String {
     let with_clause = format_with_clauses(&cursor_parts.with_clauses);
@@ -486,7 +490,7 @@ pub(crate) async fn list_public_remote_statuses_by_actor_uri(
     max_id: Option<&str>,
     min_id: Option<&str>,
     limit: u32,
-) -> Result<Vec<RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatus>> {
     let (sql, bindings) = public_remote_statuses_by_actor_uri_sql(actor_uri, max_id, min_id, limit);
     query_remote_status_rows(db, &sql, &bindings).await
 }
@@ -523,7 +527,7 @@ fn public_remote_statuses_by_actor_uri_sql<'a>(
 pub(crate) async fn list_direct_remote_replies_by_uri(
     db: &D1Database,
     object_uri: &str,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let sql = direct_remote_replies_by_uri_sql();
     query_remote_statuses_with_actor(db, &sql, &direct_remote_replies_by_uri_bindings(object_uri))
         .await
@@ -534,7 +538,7 @@ pub(crate) async fn list_remote_direct_statuses_mentioning_viewer(
     mention_pattern: &str,
     cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let (sql, bindings) =
         remote_direct_statuses_mentioning_viewer_sql(mention_pattern, cursor, limit);
     query_remote_statuses_with_actor(db, &sql, &bindings).await
@@ -585,9 +589,9 @@ async fn query_remote_statuses_with_actor(
     db: &D1Database,
     sql: &str,
     bindings: &[D1Type<'_>],
-) -> Result<Vec<(RemoteStatusRow, RemoteActorRow)>> {
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
-    let values = crate::d1_results::<serde_json::Value>(&result)?;
+    let values = d1_results::<serde_json::Value>(&result)?;
     Ok(values
         .into_iter()
         .filter_map(|value| {
@@ -602,12 +606,12 @@ async fn query_remote_status_rows(
     db: &D1Database,
     sql: &str,
     bindings: &[D1Type<'_>],
-) -> Result<Vec<RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatus>> {
     let result = db.prepare(sql).bind_refs(bindings)?.all().await?;
-    crate::d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
+    d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
 }
 
-fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatusRow> {
+fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatus> {
     remote_status_from_record(RemoteStatusRecord {
         id: json_string(value, "id"),
         actor_uri: json_string(value, "actor_uri"),
@@ -670,6 +674,7 @@ fn json_optional_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timelines::ResolvedTimelineCursor;
 
     #[test]
     fn normalized_unique_remote_status_tags_trims_normalizes_and_deduplicates() {
@@ -905,7 +910,7 @@ mod tests {
             "actor_uri = ?1".to_owned(),
             "boost_of_uri IS NULL".to_owned(),
         ];
-        let cursor_parts = crate::StatusIdCursorParts {
+        let cursor_parts = StatusIdCursorParts {
             with_clauses: vec!["max_cursor AS (SELECT id, created_at FROM remote_statuses WHERE id = ?2 LIMIT 1)".to_owned()],
             predicates: vec!["EXISTS (SELECT 1 FROM max_cursor WHERE remote_statuses.published_at < max_cursor.published_at)".to_owned()],
         };

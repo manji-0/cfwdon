@@ -1,14 +1,12 @@
-use crate::accounts::AccountRow;
-use crate::db_utils::{sql_placeholders, unique_ordered_refs};
-use crate::relationship::{FollowerTargetRow, UsernameRow};
-use crate::remote::RemoteActorRow;
-use cfwdon_domain::LocalAccount;
+use crate::db_utils::{d1_results, sql_placeholders, unique_ordered_refs};
+use crate::store::relationship::{FollowerTargetRow, UsernameRow};
+use crate::store::remote::RemoteActorRow;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct LocalFollowAccountEntryRow {
     pub(crate) cursor_id: i64,
@@ -65,7 +63,7 @@ pub(crate) async fn list_local_follower_usernames(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<UsernameRow>(&result)?
+    Ok(d1_results::<UsernameRow>(&result)?
         .into_iter()
         .map(|row| row.username)
         .collect())
@@ -88,7 +86,7 @@ pub(crate) async fn list_following_actor_uris(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
+    Ok(d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())
@@ -118,7 +116,7 @@ pub(crate) async fn list_accepted_follow_target_uris(
     bindings.extend(uris.iter().map(|uri| D1Type::Text(uri.as_str())));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
+    Ok(d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .collect())
@@ -192,7 +190,7 @@ pub(crate) async fn list_local_follower_accounts_for_remote_actor(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    let rows = crate::d1_results::<AccountRow>(&result)?;
+    let rows = d1_results::<LocalAccountRecord>(&result)?;
     Ok(rows.into_iter().map(LocalAccount::from_record).collect())
 }
 
@@ -259,7 +257,7 @@ pub(crate) async fn list_familiar_local_accounts_for_local_target(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -294,7 +292,7 @@ pub(crate) async fn list_familiar_remote_actors_for_local_target(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteActorRow>(&result)
+    d1_results::<RemoteActorRow>(&result)
 }
 
 pub(crate) async fn list_familiar_local_accounts_for_remote_target(
@@ -327,7 +325,7 @@ pub(crate) async fn list_familiar_local_accounts_for_remote_target(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(LocalAccount::from_record)
         .collect())
@@ -402,7 +400,7 @@ async fn list_local_follower_account_ids_for_fanout(
     ];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    let ids = crate::d1_results::<FollowerAccountIdRow>(&result)?
+    let ids = d1_results::<FollowerAccountIdRow>(&result)?
         .into_iter()
         .map(|row| row.follower_account_id)
         .collect::<Vec<_>>();
@@ -465,7 +463,7 @@ pub(crate) async fn list_local_followers_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<LocalFollowAccountEntryRow>(&result)
+    d1_results::<LocalFollowAccountEntryRow>(&result)
 }
 
 pub(crate) async fn list_remote_followers_for_account(
@@ -483,7 +481,7 @@ pub(crate) async fn list_remote_followers_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<RemoteFollowAccountEntryRow>(&result)
+    d1_results::<RemoteFollowAccountEntryRow>(&result)
 }
 
 pub(crate) async fn list_local_following_for_account(
@@ -503,7 +501,7 @@ pub(crate) async fn list_local_following_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<LocalFollowAccountEntryRow>(&result)
+    d1_results::<LocalFollowAccountEntryRow>(&result)
 }
 
 pub(crate) async fn list_remote_following_for_account(
@@ -523,7 +521,7 @@ pub(crate) async fn list_remote_following_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<RemoteFollowAccountEntryRow>(&result)
+    d1_results::<RemoteFollowAccountEntryRow>(&result)
 }
 
 pub(crate) async fn list_local_followers_for_remote_actor(
@@ -542,7 +540,7 @@ pub(crate) async fn list_local_followers_for_remote_actor(
         .bind_refs(&actor_uri)?
         .all()
         .await?;
-    crate::d1_results::<LocalFollowAccountEntryRow>(&result)
+    d1_results::<LocalFollowAccountEntryRow>(&result)
 }
 
 pub(crate) async fn list_local_following_for_remote_actor(
@@ -560,5 +558,5 @@ pub(crate) async fn list_local_following_for_remote_actor(
         .bind_refs(&actor_uri)?
         .all()
         .await?;
-    crate::d1_results::<LocalFollowAccountEntryRow>(&result)
+    d1_results::<LocalFollowAccountEntryRow>(&result)
 }

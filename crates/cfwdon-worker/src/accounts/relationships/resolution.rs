@@ -1,14 +1,17 @@
-use crate::AccountReference;
-use crate::{
-    RemoteCollectionFetchContext, Result, ensure_remote_actor_username_matches_handle,
-    fetch_remote_actor_profile_with_context, find_account_by_username,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, log_json_event,
-    parse_lookup_handle, resolve_account_reference_with_fetch, resolve_webfinger_actor_uri,
-    upsert_remote_actor,
+use crate::auth::find_account_by_username;
+use crate::federation::{ensure_remote_actor_username_matches_handle, resolve_webfinger_actor_uri};
+use crate::identity::parse_lookup_handle;
+use crate::observability::log_json_event;
+use crate::remote::{AccountReference, resolve_account_reference_with_fetch};
+use crate::response::{RemoteCollectionFetchContext, fetch_remote_actor_profile_with_context};
+use crate::store::remote::{
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain, upsert_remote_actor,
 };
+use crate::tracked_d1::D1Database;
+use worker::Result;
 
 pub(crate) async fn resolve_requested_account_reference(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Option<AccountReference>> {

@@ -1,10 +1,15 @@
-use crate::{
-    CACHE_TTL_FEDERATION, Error, Request, Response, Result, RouteContext, actor_url,
-    build_outbox_activities, cache_public_json_response, count_public_outbox_statuses,
-    find_account_by_username, list_follower_actor_uris, list_following_actor_uris,
-    list_local_follower_usernames, list_public_outbox_statuses_page, load_config,
+use crate::auth::find_account_by_username;
+use crate::db_session::bind_request_d1;
+use crate::delivery::list_follower_actor_uris;
+use crate::identity::actor_url;
+use crate::relationship::{list_following_actor_uris, list_local_follower_usernames};
+use crate::response_utils::{CACHE_TTL_FEDERATION, cache_public_json_response};
+use crate::runtime_config::load_config;
+use crate::statuses::{
+    build_outbox_activities, count_public_outbox_statuses, list_public_outbox_statuses_page,
 };
 use std::collections::HashSet;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct CollectionPagingQuery {
@@ -25,7 +30,7 @@ pub(crate) async fn followers_collection_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -59,7 +64,7 @@ pub(crate) async fn following_collection_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -84,7 +89,7 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };

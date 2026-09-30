@@ -495,4 +495,86 @@ mod tests {
         assert_eq!(account.default_quote_policy(), QuoteApprovalPolicy::Public);
         assert_eq!(account.public_key_pem(), "pem");
     }
+
+    #[test]
+    fn validate_account_registration_request_requires_core_fields() {
+        use crate::ComposingRegistration;
+
+        let details = ComposingRegistration {
+            username: None,
+            email: None,
+            password_present: false,
+            agreement: None,
+        }
+        .validate()
+        .err()
+        .map(|errors| errors.into_api_details())
+        .unwrap_or_default();
+        assert_eq!(
+            details.get("username"),
+            Some(&vec!["can't be blank".to_owned()])
+        );
+        assert_eq!(
+            details.get("email"),
+            Some(&vec!["can't be blank".to_owned()])
+        );
+        assert_eq!(
+            details.get("password"),
+            Some(&vec!["can't be blank".to_owned()])
+        );
+        assert_eq!(
+            details.get("agreement"),
+            Some(&vec!["must be accepted".to_owned()])
+        );
+    }
+
+    #[test]
+    fn validate_account_registration_request_rejects_invalid_username() {
+        use crate::ComposingRegistration;
+
+        let details = ComposingRegistration {
+            username: Some("alice-bob".to_owned()),
+            email: Some("alice@example.com".to_owned()),
+            password_present: true,
+            agreement: Some(true),
+        }
+        .validate()
+        .err()
+        .map(|errors| errors.into_api_details())
+        .unwrap_or_default();
+        assert_eq!(
+            details.get("username"),
+            Some(&vec![
+                "must contain only letters, numbers and underscores".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn finalize_registration_validation_rejects_taken_username() {
+        use crate::{
+            ComposingRegistration, RegistrationFieldIssue, RegistrationUniquenessFacts,
+            finalize_registration_validation,
+        };
+
+        let composing = ComposingRegistration {
+            username: Some("alice".to_owned()),
+            email: Some("alice@example.com".to_owned()),
+            password_present: true,
+            agreement: Some(true),
+        };
+        let errors = finalize_registration_validation(
+            composing.validate(),
+            RegistrationUniquenessFacts {
+                username_taken: true,
+                email_taken: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(errors.username, Some(RegistrationFieldIssue::Taken));
+        assert_eq!(
+            errors.into_api_details().get("username"),
+            Some(&vec!["has already been taken".to_owned()])
+        );
+    }
 }

@@ -1,8 +1,11 @@
-use crate::{
-    D1Database, Result, StreamingEvent, StreamingLoopState, build_announcements_document,
-    list_announcement_read_ids, load_announcement_reaction_state, now_iso_string,
+use crate::instance::{
+    build_announcements_document, list_announcement_read_ids, load_announcement_reaction_state,
 };
+use crate::streaming_types::{StreamingEvent, StreamingLoopState};
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
 use std::collections::{BTreeMap, HashMap};
+use worker::Result;
 
 pub(super) fn announcement_reaction_entries_for_id(
     state: &HashMap<(String, String), (u64, bool)>,
@@ -74,7 +77,7 @@ pub(super) fn announcement_stream_entry(
 pub(super) async fn append_user_announcement_state_events(
     config: &cfwdon_core::AppConfig,
     db: &D1Database,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
     state: &mut StreamingLoopState,
     is_initial_poll: bool,
     events: &mut Vec<StreamingEvent>,
@@ -109,7 +112,7 @@ pub(super) async fn append_user_announcement_state_events(
 pub(super) async fn load_current_announcement_stream_state(
     config: &cfwdon_core::AppConfig,
     db: &D1Database,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
 ) -> Result<CurrentAnnouncementStreamState> {
     let read_ids = list_announcement_read_ids(db, viewer.id()).await?;
     let reactions = load_announcement_reaction_state(db, viewer.id()).await?;

@@ -1,3 +1,4 @@
+use worker::{Request, Response, Result, RouteContext};
 mod announcements;
 mod auth;
 mod batches;
@@ -10,7 +11,8 @@ mod status_deltas;
 mod websocket;
 
 use super::invalid_access_token_response;
-use crate::{Request, Response, Result, RouteContext, load_config};
+use crate::db_session::bind_request_d1;
+use crate::runtime_config::load_config;
 use auth::{StreamingAuthOutcome, resolve_streaming_auth};
 use channels::{StreamingQuery, streaming_bad_request_response, websocket_protocol_access_token};
 use sse::streaming_sse_response;
@@ -57,7 +59,7 @@ pub(crate) async fn streaming_placeholder_response(
         }
     };
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let authenticated = match resolve_streaming_auth(
         &req,
         &db,
@@ -110,3 +112,6 @@ pub(crate) async fn streaming_placeholder_response(
         authenticated,
     )
 }
+
+#[cfg(test)]
+mod unit_tests;

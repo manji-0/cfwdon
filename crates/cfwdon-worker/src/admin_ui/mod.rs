@@ -1,8 +1,13 @@
-use crate::{
-    ADMIN_UI_INDEX_PATH, auth0_login_redirect_response, auth0_logout_redirect_response,
-    auth0_relogin_redirect_response, escape_html, find_authenticated_local_account_with_roles,
-    instance_base_url, is_admin_authorized, load_config, serve_ui_asset,
+use crate::auth::find_authenticated_local_account_with_roles;
+use crate::db_session::bind_request_d1;
+use crate::identity::instance_base_url;
+use crate::notifications::is_admin_authorized;
+use crate::oauth_apps::{
+    auth0_login_redirect_response, auth0_logout_redirect_response, auth0_relogin_redirect_response,
 };
+use crate::runtime_config::load_config;
+use crate::time_html::escape_html;
+use crate::ui_assets::{ADMIN_UI_INDEX_PATH, serve_ui_asset};
 use url::Url;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
@@ -19,7 +24,7 @@ pub(crate) async fn admin_ui_response(req: Request, ctx: RouteContext<()>) -> Re
         return admin_relogin_redirect(&config, &req);
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account_with_roles(&req, &db, &config).await? {
         Some((account, roles)) if is_admin_authorized(&config, &account, &roles) => account,
         Some(_) => return forbidden_html_response(),
@@ -38,17 +43,17 @@ fn is_public_admin_asset_path(path: &str) -> bool {
     path.starts_with("/admin/assets/")
 }
 
-fn admin_login_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {
+fn admin_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
     let return_url = admin_return_url(config, req)?;
     auth0_login_redirect_response(config, &return_url, &return_url)
 }
 
-fn admin_relogin_redirect(config: &crate::AppConfig, req: &Request) -> Result<Response> {
+fn admin_relogin_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
     let return_url = admin_return_url(config, req)?;
     auth0_relogin_redirect_response(config, &return_url)
 }
 
-fn admin_return_url(config: &crate::AppConfig, req: &Request) -> Result<Url> {
+fn admin_return_url(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Url> {
     let mut return_url = req.url()?;
     return_url.set_path("/admin/");
     return_url.set_query(None);

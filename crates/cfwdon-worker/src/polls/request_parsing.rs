@@ -1,6 +1,7 @@
-use super::{FormEntry, Request};
+use super::Request;
 use serde::Deserialize;
 use std::collections::BTreeSet;
+use worker::FormEntry;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PollVoteRequest {

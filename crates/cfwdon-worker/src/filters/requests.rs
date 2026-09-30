@@ -1,6 +1,8 @@
 use super::{KeywordInput, KeywordRequest, StatusFilterRequest, V1FilterRequest, V2FilterRequest};
-use crate::{Error, Request, parse_optional_bool};
+use crate::request_utils::parse_optional_bool;
+use crate::time_html::now_unix_timestamp;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use worker::{Error, Request};
 
 pub(in crate::filters) fn normalize_contexts(
     contexts: Vec<String>,
@@ -51,7 +53,7 @@ pub(in crate::filters) fn expires_at_from_seconds(
     let Some(seconds) = seconds else {
         return Ok(None);
     };
-    let now = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp())
+    let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp())
         .map_err(|error| Error::RustError(format!("invalid current unix timestamp: {error}")))?;
     let expires_at = (now + Duration::seconds(seconds))
         .format(&Rfc3339)

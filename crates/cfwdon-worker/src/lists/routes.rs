@@ -4,7 +4,8 @@ use super::{
     parse_list_request, remove_accounts_from_list, requested_account_membership_variants,
     resolve_list_member_document, update_list_row,
 };
-use crate::profile::require_authenticated_local_account;
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
 use crate::runtime_config::load_config;
 use std::collections::HashSet;
 use worker::{Request, Response, Result, RouteContext};
@@ -19,8 +20,8 @@ pub(crate) async fn account_lists_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -47,8 +48,8 @@ pub(crate) async fn account_lists_response(
 
 pub(crate) async fn lists_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -68,8 +69,8 @@ pub(crate) async fn create_list_response(
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -79,8 +80,8 @@ pub(crate) async fn create_list_response(
 
 pub(crate) async fn list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -100,8 +101,8 @@ pub(crate) async fn update_list_response(
     let request = parse_list_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -114,8 +115,8 @@ pub(crate) async fn update_list_response(
 pub(crate) async fn delete_list_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let list_id = list_id_from_context(&ctx)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -130,8 +131,8 @@ pub(crate) async fn list_accounts_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -174,8 +175,8 @@ pub(crate) async fn add_list_accounts_response(
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -196,8 +197,8 @@ pub(crate) async fn delete_list_accounts_response(
     let request = parse_list_accounts_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

@@ -1,5 +1,5 @@
 import { type ResultAsync } from "neverthrow";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import { mastodonPostJson } from "@/infrastructure/http/mastodon-fetch";
 
 export type CreateReportInput = Readonly<{

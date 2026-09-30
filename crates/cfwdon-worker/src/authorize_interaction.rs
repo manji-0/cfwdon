@@ -1,10 +1,12 @@
-use super::{
-    AccountReference, FollowAccountRequest, Request, Response, Result, RouteContext,
-    auth0_login_redirect_response, build_relationship_for_target, escape_html,
-    follow_remote_account, load_config, require_authenticated_local_account,
-    resolve_account_reference, resolve_search_account, upsert_local_follow,
-};
-use worker::ResponseBody;
+use crate::accounts::{FollowAccountRequest, upsert_local_follow};
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::oauth_apps::auth0_login_redirect_response;
+use crate::relationships::{build_relationship_for_target, follow_remote_account};
+use crate::remote::{AccountReference, resolve_account_reference, resolve_search_account};
+use crate::runtime_config::load_config;
+use crate::time_html::escape_html;
+use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 #[derive(Debug, serde::Deserialize)]
 struct AuthorizeInteractionQuery {
@@ -17,7 +19,7 @@ pub(crate) async fn authorize_interaction_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AuthorizeInteractionQuery = req.query()?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match resolve_search_account(&db, &config, &query.uri).await? {
         Some(account) => account,
         None => return Response::error("remote interaction target not found", 404),
@@ -37,8 +39,8 @@ pub(crate) async fn authorize_interaction_submit_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let uri = authorize_interaction_uri(&mut req).await?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let follower = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let follower = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return access_login_redirect(&config, &req, &uri),
     };
@@ -191,7 +193,14 @@ pub(crate) fn authorize_interaction_url_from_base(
     authorize_url
 }
 
-fn access_login_redirect(config: &super::AppConfig, req: &Request, uri: &str) -> Result<Response> {
+fn access_login_redirect(
+    config: &cfwdon_core::AppConfig,
+    req: &Request,
+    uri: &str,
+) -> Result<Response> {
     let authorize_url = authorize_interaction_url_for_uri(req, uri)?;
     auth0_login_redirect_response(config, &authorize_url, &authorize_url)
 }
+
+#[cfg(test)]
+mod unit_tests;

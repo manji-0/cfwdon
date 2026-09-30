@@ -1,3 +1,5 @@
+use crate::media::RemoteStatusAttachmentRow;
+use crate::store::media::classify_media_kind;
 use url::Url;
 
 pub(crate) fn first_url_from_text(text: &str) -> Option<String> {
@@ -118,8 +120,8 @@ pub(crate) fn build_status_card_value(text: &str) -> Option<serde_json::Value> {
 }
 
 pub(super) fn remote_status_attachment_card_candidate(
-    attachments: &[crate::RemoteStatusAttachmentRow],
-) -> Option<&crate::RemoteStatusAttachmentRow> {
+    attachments: &[RemoteStatusAttachmentRow],
+) -> Option<&RemoteStatusAttachmentRow> {
     attachments.iter().find(|attachment| {
         if Url::parse(&attachment.remote_url).is_err() {
             return false;
@@ -140,13 +142,13 @@ pub(super) fn remote_status_attachment_card_candidate(
             .unwrap_or_default()
             .trim();
         matches!(content_type, "text/html" | "application/xhtml+xml")
-            || crate::classify_media_kind(content_type).is_none()
+            || classify_media_kind(content_type).is_none()
     })
 }
 
 pub(crate) fn build_remote_status_card_value(
     text: &str,
-    attachments: &[crate::RemoteStatusAttachmentRow],
+    attachments: &[RemoteStatusAttachmentRow],
 ) -> Option<serde_json::Value> {
     let mut card = build_status_card_value(text)?;
     let Some(attachment) = remote_status_attachment_card_candidate(attachments) else {

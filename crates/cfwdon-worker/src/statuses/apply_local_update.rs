@@ -1,22 +1,30 @@
 use super::{
-    AppConfig, Env, LocalAccount, MastodonStatusResponse, MediaAttachmentRow, Result,
-    StatusMediaAttributeRequest, StatusRow, UpdateMediaRequest, apply_media_update,
-    build_loaded_local_status_response, build_local_status_response,
-    enqueue_status_update_activity, find_media_attachments_by_status_id,
-    insert_status_edit_snapshot, load_local_status_response_preload,
-    normalize_status_history_entry, now_iso_string, preload_status_counts,
-    preload_status_quote_counts, publish_local_status_update_stream_fanout_soft,
-    publish_user_stream_hub_event_soft, replace_status_media, replace_status_poll,
-    send_status_update_notifications, update_local_status,
+    LocalAccount, StatusMediaAttributeRequest, build_loaded_local_status_response,
+    build_local_status_response, insert_status_edit_snapshot, load_local_status_response_preload,
+    normalize_status_history_entry, preload_status_quote_counts, replace_status_poll,
+    update_local_status,
 };
-use cfwdon_domain::PollDraft;
-use worker::console_error;
-
-use crate::D1Database;
+use crate::activitypub::local_status_ap_id;
+use crate::delivery::enqueue_status_update_activity;
+use crate::media::{
+    UpdateMediaRequest, apply_media_update, find_media_attachments_by_status_id,
+    replace_status_media,
+};
+use crate::push::send_status_update_notifications;
+use crate::responses::MastodonStatusResponse;
+use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::preload_status_counts;
+use crate::stream_hub::publish_user_stream_hub_event_soft;
+use crate::stream_hub_publish::publish_local_status_update_stream_fanout_soft;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalStatus, PollDraft};
+use worker::{Env, Result, console_error};
 
 pub(crate) struct UpdateLocalStatusInput<'a> {
     pub(crate) account: &'a LocalAccount,
-    pub(crate) status: &'a StatusRow,
+    pub(crate) status: &'a LocalStatus,
     pub(crate) current_media: Vec<MediaAttachmentRow>,
     pub(crate) current_in_reply_to_account_id: Option<String>,
     pub(crate) next_text: &'a str,
@@ -140,7 +148,7 @@ pub(crate) async fn apply_local_status_update(
         let response_preload = load_local_status_response_preload(db, &status).await?;
         let has_media = !response_preload.media.is_empty();
         let status_ids = vec![status.id.clone()];
-        let quote_count_uris = vec![crate::local_status_ap_id(config, input.account, &status)];
+        let quote_count_uris = vec![local_status_ap_id(config, input.account, &status)];
         let (counts_preload, quote_counts_preload) = futures_util::try_join!(
             preload_status_counts(db, &status_ids, &[]),
             preload_status_quote_counts(db, &quote_count_uris),

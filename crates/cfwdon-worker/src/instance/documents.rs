@@ -1,9 +1,12 @@
-use super::{
-    AppConfig, InstanceSummary, MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES,
+use crate::identity::{
     configured_instance_languages, extended_description_url, instance_base_url,
-    instance_supported_mime_types, normalize_policy_body, privacy_policy_url, render_status_html,
-    terms_of_service_url,
+    instance_supported_mime_types, privacy_policy_url, terms_of_service_url,
 };
+use crate::policy_documents::normalize_policy_body;
+use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
+use crate::time_html::render_status_html;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::InstanceSummary;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 const INSTANCE_API_VERSION: u64 = 8;
@@ -326,7 +329,8 @@ mod tests {
     use super::{
         build_instance_v1_document, build_instance_v2_document, instance_open_registrations,
     };
-    use crate::{AppConfig, InstanceCapabilities, InstanceSummary, SoftwareInfo};
+    use cfwdon_core::AppConfig;
+    use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 
     fn sample_summary() -> InstanceSummary {
         InstanceSummary {

@@ -1,5 +1,5 @@
-use super::{Error, FormData, FormEntry, Request, Result, RouteContext};
 use url::Url;
+use worker::{Error, FormData, FormEntry, Request, Result, RouteContext};
 
 pub(crate) fn build_internal_cursor_link_header(
     req: &Request,
@@ -159,3 +159,6 @@ pub(crate) fn parse_media_id_fields<const N: usize>(
         Some(media_ids)
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

@@ -1,13 +1,18 @@
-use super::{
-    AppConfig, RemoteActorProfile, Result, VerifiedActivityPubDelivery, activitypub_has_type,
-    fetch_remote_actor_profile, handle_inbox_delete, mark_federation_relay_accepted,
-    mark_federation_relay_rejected, note_targets_public, object_attributed_to_remote_actor,
-    object_has_supported_remote_status_type, relay_delivery_is_enabled,
-    relay_follow_activity_id_from_accept, upsert_remote_actor, upsert_remote_status,
+use super::handle_inbox_delete;
+use crate::activitypub::{
+    activitypub_has_type, note_targets_public, object_attributed_to_remote_actor,
+    object_has_supported_remote_status_type, relay_follow_activity_id_from_accept,
 };
-use worker::Env;
-
-use crate::D1Database;
+use crate::federation::{RemoteActorProfile, fetch_remote_actor_profile};
+use crate::http::VerifiedActivityPubDelivery;
+use crate::relays::{
+    mark_federation_relay_accepted, mark_federation_relay_rejected, relay_delivery_is_enabled,
+};
+use crate::remote::upsert_remote_status;
+use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use worker::{Env, Result};
 
 pub(crate) async fn handle_relay_delivered_activity(
     db: &D1Database,
@@ -58,8 +63,7 @@ pub(crate) async fn handle_relay_delivered_activity(
 }
 
 async fn load_relay_content_actor(db: &D1Database, actor_uri: &str) -> Result<RemoteActorProfile> {
-    if let Some(actor) = crate::find_cached_remote_actor_profile_by_actor_uri(db, actor_uri).await?
-    {
+    if let Some(actor) = find_cached_remote_actor_profile_by_actor_uri(db, actor_uri).await? {
         return Ok(actor);
     }
     let actor = fetch_remote_actor_profile(actor_uri).await?;

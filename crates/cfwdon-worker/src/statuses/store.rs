@@ -1,18 +1,16 @@
-use super::{
-    D1Database, LocalAccount, Result, is_local_follower_authorized,
-    is_public_activitypub_visibility, local_account_participates_in_direct_status,
-};
+use super::{D1Database, LocalAccount};
+use crate::activitypub::is_public_activitypub_visibility;
+use crate::conversation_store::local_account_participates_in_direct_status;
+use crate::relationship::is_local_follower_authorized;
 use cfwdon_domain::{LocalStatus, LocalStatusRecord, Visibility, local_status_default_quote_state};
+use worker::Result;
 
-pub(crate) type StatusRecord = LocalStatusRecord;
-pub(crate) type StatusRow = LocalStatus;
-
-pub(crate) fn status_from_record(record: StatusRecord) -> Result<StatusRow> {
+pub(crate) fn status_from_record(record: LocalStatusRecord) -> Result<LocalStatus> {
     LocalStatus::try_from_record(record)
         .map_err(|error| worker::Error::RustError(error.to_string()))
 }
 
-pub(crate) fn statuses_from_records(records: Vec<StatusRecord>) -> Result<Vec<StatusRow>> {
+pub(crate) fn statuses_from_records(records: Vec<LocalStatusRecord>) -> Result<Vec<LocalStatus>> {
     records.into_iter().map(status_from_record).collect()
 }
 
@@ -20,18 +18,18 @@ pub(crate) fn default_quote_state() -> String {
     local_status_default_quote_state()
 }
 
-pub(crate) fn effective_status_quote_state(status: &StatusRow) -> &'static str {
+pub(crate) fn effective_status_quote_state(status: &LocalStatus) -> &'static str {
     status.effective_quote_state().as_str()
 }
 
-pub(crate) fn status_has_active_quote(status: &StatusRow) -> bool {
+pub(crate) fn status_has_active_quote(status: &LocalStatus) -> bool {
     status.has_active_quote()
 }
 
 /// Mirrors quote revoke API guard: only the quote author may revoke an active quote.
 pub(crate) fn local_quote_revoke_allowed(
     requester_account_id: &str,
-    quote: &StatusRow,
+    quote: &LocalStatus,
     target_uri: &str,
 ) -> bool {
     quote.account_id == requester_account_id
@@ -55,7 +53,7 @@ pub(crate) fn local_status_allows_viewer(
 
 pub(crate) async fn can_view_local_status(
     db: &D1Database,
-    status: &StatusRow,
+    status: &LocalStatus,
     viewer: Option<&LocalAccount>,
     owner: &LocalAccount,
 ) -> Result<bool> {

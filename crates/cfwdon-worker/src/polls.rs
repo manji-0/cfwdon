@@ -1,6 +1,15 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::db_session::bind_request_d1;
+use crate::delivery::enqueue_status_update_activity;
+use crate::local_polls::build_mastodon_poll_response;
+use crate::push::send_poll_end_notifications;
+use crate::remote::{
+    build_remote_mastodon_poll_response, find_remote_status_by_id, refresh_remote_poll_if_needed,
+    remote_poll_is_visible_to_viewer,
+};
+use crate::statuses::{can_view_local_status, find_status_by_id};
+use crate::store::local_polls::find_status_poll_by_id;
+use crate::store::remote::{find_remote_status_poll_by_id, find_remote_status_poll_by_status_id};
+use crate::tracked_d1::D1Database;
 
 mod expiration_store;
 mod request_parsing;
@@ -9,19 +18,11 @@ pub(crate) use expiration_store::*;
 pub(crate) use request_parsing::*;
 pub(crate) use vote_route::vote_in_poll;
 
-use super::auth::{
+use crate::auth::{
     extract_authenticated_user, find_account_by_id, find_authenticated_local_account,
 };
-use super::enqueue_status_update_activity;
-use super::runtime_config::load_config;
-use super::time_html::is_iso_timestamp_in_past;
-use super::{
-    apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
-    build_remote_mastodon_poll_response, can_view_local_status, find_remote_actor_by_actor_uri,
-    find_remote_status_by_id, find_remote_status_poll_by_id, find_remote_status_poll_by_status_id,
-    find_status_by_id, find_status_poll_by_id, refresh_remote_poll_if_needed,
-    remote_poll_is_visible_to_viewer, send_poll_end_notifications,
-};
+use crate::runtime_config::load_config;
+use crate::time_html::is_iso_timestamp_in_past;
 use cfwdon_core::AppConfig;
 use serde::{Deserialize, Serialize};
 use worker::{Env, Error, Request, Response, Result, RouteContext};
@@ -45,7 +46,7 @@ pub(crate) async fn poll_response(req: Request, ctx: RouteContext<()>) -> Result
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing poll id route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     if let Some(poll) = find_status_poll_by_id(&db, &poll_id).await? {
         let Some(status) = find_status_by_id(&db, &poll.status_id).await? else {
@@ -132,7 +133,10 @@ pub(crate) async fn process_expired_polls(req: Request, ctx: RouteContext<()>) -
         None => return Response::error("Auth0 authentication required", 401),
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let summary = process_expired_polls_for_config(&db, &config, Some(&ctx.env)).await?;
     Response::from_json(&summary)
 }
+
+#[cfg(test)]
+mod unit_tests;

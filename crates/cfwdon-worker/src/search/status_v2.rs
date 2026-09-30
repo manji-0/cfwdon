@@ -1,3 +1,29 @@
+use crate::activitypub::{is_public_activitypub_visibility, local_status_ap_id};
+use crate::auth::{find_account_by_id, find_account_by_username};
+use crate::filters::load_account_filter_matcher;
+use crate::identity::parse_lookup_handle;
+use crate::local_polls::preload_mastodon_poll_responses;
+use crate::media::{
+    find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
+    find_remote_status_attachments_by_status_id,
+};
+use crate::remote::{AccountReference, find_remote_status_by_id, resolve_account_reference};
+use crate::responses::MastodonStatusResponse;
+use crate::statuses::{
+    build_local_status_response_with_quote_count_preloads, build_remote_status_card_value,
+    build_remote_status_response, build_status_card_value, can_view_local_status,
+    find_status_by_id, is_local_status_bookmarked_by, is_local_status_favourited_by,
+    is_local_status_reblogged_by, is_remote_status_bookmarked_by, is_remote_status_favourited_by,
+    is_remote_status_reblogged_by, load_in_reply_to_account_id, preload_local_status_viewer_state,
+    preload_status_applications, preload_status_quote_counts,
+};
+use crate::store::local_polls::find_status_poll_by_status_id;
+use crate::store::remote::{
+    RemoteActorRow, find_remote_actor_by_username_domain, find_remote_status_poll_by_status_id,
+};
+use crate::store::statuses::preload_status_counts;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
 use std::cmp::Reverse;
 
 use super::status_store::{search_local_status_rows, search_remote_status_rows};
@@ -7,22 +33,6 @@ use super::statuses::{
     status_matches_search_syntax, status_matches_search_timestamp, status_search_query_terms,
     status_search_rank, text_mentions_search_library_viewer,
 };
-use crate::{
-    AccountReference, D1Database, MastodonStatusResponse,
-    build_local_status_response_with_quote_count_preloads, build_remote_status_card_value,
-    build_remote_status_response, build_status_card_value, can_view_local_status,
-    find_account_by_id, find_account_by_username, find_media_attachments_by_status_id,
-    find_media_attachments_by_status_ids, find_remote_actor_by_username_domain,
-    find_remote_status_attachments_by_status_id, find_remote_status_by_id,
-    find_remote_status_poll_by_status_id, find_status_by_id, find_status_poll_by_status_id,
-    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_reblogged_by,
-    is_public_activitypub_visibility, is_remote_status_bookmarked_by,
-    is_remote_status_favourited_by, is_remote_status_reblogged_by, load_account_filter_matcher,
-    load_in_reply_to_account_id, local_status_ap_id, parse_lookup_handle,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses,
-    preload_status_applications, preload_status_counts, preload_status_quote_counts,
-    resolve_account_reference,
-};
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccount};
 use worker::Result;
@@ -31,13 +41,13 @@ type SearchStatusSortKey = ((u8, u8, u8), Reverse<String>, Reverse<String>);
 
 enum SearchStatusCandidate {
     Local {
-        status: crate::StatusRow,
+        status: LocalStatus,
         owner: LocalAccount,
         in_reply_to_account_id: Option<String>,
     },
     Remote {
-        status: crate::RemoteStatusRow,
-        actor: crate::RemoteActorRow,
+        status: RemoteStatus,
+        actor: RemoteActorRow,
     },
 }
 
@@ -165,7 +175,7 @@ async fn local_status_is_in_search_library(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    status: &crate::StatusRow,
+    status: &LocalStatus,
 ) -> Result<bool> {
     if status.account_id == viewer.id() {
         return Ok(true);
@@ -189,7 +199,7 @@ async fn remote_status_is_in_search_library(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
-    status: &crate::RemoteStatusRow,
+    status: &RemoteStatus,
 ) -> Result<bool> {
     if is_remote_status_favourited_by(db, viewer.id(), &status.id).await? {
         return Ok(true);

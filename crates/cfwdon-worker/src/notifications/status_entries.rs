@@ -1,19 +1,21 @@
-use super::notifications::{
+use super::{
+    NotificationsQuery, RemoteStatusNotificationRow, list_local_status_notifications_for_account,
+    list_remote_status_notifications_for_account,
+};
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
     notification_type_allowed, push_notification_entry,
 };
-use super::{
-    AppConfig, LocalAccount, MastodonAccountResponse, MastodonStatusResponse, NotificationsQuery,
-    RemoteStatusNotificationRow, RemoteStatusRecord, RemoteStatusRow, actor_url,
-    can_view_local_status, list_local_status_notifications_for_account,
-    list_remote_status_notifications_for_account, remote_account_rest_id,
-    remote_status_from_record,
-};
+use crate::remote::remote_status_from_record;
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::statuses::can_view_local_status;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};
 use worker::Result;
 
-use crate::D1Database;
-
-fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatusRow> {
+fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Option<RemoteStatus> {
     remote_status_from_record(RemoteStatusRecord {
         id: status.id.clone(),
         actor_uri: status.actor_uri.clone(),

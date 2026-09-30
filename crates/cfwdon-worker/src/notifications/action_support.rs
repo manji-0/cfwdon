@@ -1,7 +1,8 @@
-use super::{
-    D1RequestSession, Error, Request, Result, RouteContext, load_config,
-    open_bound_request_session, require_authenticated_local_account,
-};
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::{D1RequestSession, open_bound_request_session};
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
+use worker::{Error, Request, Result, RouteContext};
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct NotificationsQuery {
@@ -23,7 +24,7 @@ pub(crate) struct NotificationsQuery {
 
 pub(crate) struct AuthenticatedNotificationContext {
     pub(crate) session: D1RequestSession,
-    pub(crate) db: crate::D1Database,
+    pub(crate) db: D1Database,
     pub(crate) config: cfwdon_core::AppConfig,
     pub(crate) viewer: cfwdon_domain::LocalAccount,
 }
@@ -34,7 +35,7 @@ pub(crate) async fn resolve_authenticated_notification_context(
 ) -> Result<Option<AuthenticatedNotificationContext>> {
     let config = load_config(ctx);
     let (session, db) = open_bound_request_session(ctx, &config, req)?;
-    let viewer = match require_authenticated_local_account(req, &db, &config).await? {
+    let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Ok(None),
     };

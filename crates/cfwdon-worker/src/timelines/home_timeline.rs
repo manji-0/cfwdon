@@ -6,16 +6,18 @@ use super::{
     timeline_invalid_access_token_response, timeline_limit,
     timeline_outside_authorized_scopes_response, timeline_response_from_entries,
 };
+use crate::app_cache::load_account_capabilities;
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
-use crate::oauth_apps::oauth_access_token_has_any_scope;
-use crate::relationship::list_active_muted_actor_uris_for_account;
-use crate::runtime_config::load_config;
-use crate::{
+use crate::db_session::{open_bound_request_session, with_d1_bookmark};
+use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
+use crate::home_timeline::{
     HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
-    find_remote_statuses_with_actors_by_ids, find_statuses_by_ids,
-    list_home_timeline_candidate_ids, load_account_filter_matcher, open_bound_request_session,
-    with_d1_bookmark,
+    list_home_timeline_candidate_ids,
 };
+use crate::oauth_store::oauth_access_token_has_any_scope;
+use crate::runtime_config::load_config;
+use crate::statuses::{find_remote_statuses_with_actors_by_ids, find_statuses_by_ids};
+use crate::store::relationship::list_active_muted_actor_uris_for_account;
 use std::collections::{HashMap, HashSet};
 use worker::{Request, Response, Result, RouteContext};
 
@@ -49,13 +51,13 @@ pub(crate) async fn home_timeline_response(
         return with_d1_bookmark(empty_timeline_response()?, &session);
     }
     let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = {
-        let caps = crate::load_account_capabilities(&db, viewer.id()).await?;
+        let caps = load_account_capabilities(&db, viewer.id()).await?;
         let (filter_matcher, muted_actor_uris) = futures_util::try_join!(
             async {
                 if caps.has_filters {
                     load_account_filter_matcher(&db, viewer.id()).await
                 } else {
-                    Ok(crate::AccountFilterMatcher::default())
+                    Ok(AccountFilterMatcher::default())
                 }
             },
             list_active_muted_actor_uris_for_account(&db, viewer.id()),

@@ -1,6 +1,6 @@
-use crate::D1Database;
-use crate::statuses::Result;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
@@ -138,4 +138,65 @@ pub(super) async fn store_cached_translation_document(
     .run()
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn translation_cache_source_fingerprint_tracks_translatable_fields() {
+        let base = serde_json::json!({
+            "content": "<p>Hello</p>",
+            "spoiler_text": "cw",
+            "language": "en",
+            "account": { "display_name": "Alice" },
+            "media_attachments": [
+                { "id": "media-1", "description": "alt text", "url": "https://media.example/1" }
+            ],
+            "poll": {
+                "id": "poll-1",
+                "options": [
+                    { "title": "One", "votes_count": 1 }
+                ]
+            }
+        });
+        let same_translatable_fields = serde_json::json!({
+            "content": "<p>Hello</p>",
+            "spoiler_text": "cw",
+            "language": "en",
+            "account": { "display_name": "Changed" },
+            "media_attachments": [
+                { "id": "media-1", "description": "alt text", "url": "https://media.example/changed" }
+            ],
+            "poll": {
+                "id": "poll-1",
+                "options": [
+                    { "title": "One", "votes_count": 99 }
+                ]
+            }
+        });
+        let edited_content = serde_json::json!({
+            "content": "<p>Hello edited</p>",
+            "spoiler_text": "cw",
+            "language": "en",
+            "media_attachments": [
+                { "id": "media-1", "description": "alt text" }
+            ],
+            "poll": {
+                "options": [
+                    { "title": "One" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            translation_cache_source_fingerprint(&base).unwrap(),
+            translation_cache_source_fingerprint(&same_translatable_fields).unwrap()
+        );
+        assert_ne!(
+            translation_cache_source_fingerprint(&base).unwrap(),
+            translation_cache_source_fingerprint(&edited_content).unwrap()
+        );
+    }
 }

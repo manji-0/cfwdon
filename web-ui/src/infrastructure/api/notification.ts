@@ -1,9 +1,10 @@
 import { type ResultAsync } from "neverthrow";
 import type { Notification } from "@/domain/notification/notification";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
 import {
   mastodonFetchJson,
   mastodonPostJson,
+  pageParams,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import { parseNotificationList } from "@/infrastructure/mastodon/parsers/notification";
@@ -18,11 +19,7 @@ export type NotificationsQuery = Readonly<{
 export const fetchNotifications = (
   query: NotificationsQuery = {},
 ): ResultAsync<ReadonlyArray<Notification>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   for (const typeName of query.types ?? []) {
     params.append("types[]", typeName);
   }

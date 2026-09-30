@@ -1,5 +1,5 @@
-use crate::{Request, Response, Result};
 use serde::Deserialize;
+use worker::{Request, Response, Result};
 
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct StreamingQuery {

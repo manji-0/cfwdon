@@ -1,7 +1,9 @@
 use super::{
-    AppConfig, LocalAccount, actor_url, local_username_from_actor_uri,
-    local_username_from_audience_uri, local_username_from_status_uri,
+    AppConfig, local_username_from_actor_uri, local_username_from_audience_uri,
+    local_username_from_status_uri,
 };
+use crate::identity::actor_url;
+use cfwdon_domain::LocalAccount;
 
 pub(crate) fn activitypub_type_strings(value: Option<&serde_json::Value>) -> Vec<&str> {
     match value {

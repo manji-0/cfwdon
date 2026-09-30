@@ -22,3 +22,16 @@ stateright = "0.31.0"
 thiserror = "2.0.18"
 worker = { version = "0.8.5", features = ["d1", "queue"] }
 worker-macros = "0.8.5"
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+items_after_test_module = "allow"
+large_enum_variant = "allow"
+
+[profile.dev]
+# Line tables keep panics/backtraces useful while cutting debuginfo size,
+# link time, and CI cache volume.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

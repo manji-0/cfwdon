@@ -2,15 +2,15 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { ForegroundResume } from "@/domain/cache/foreground-resume";
 import { Status } from "@/domain/status/status";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
-import type { TimelineQuery } from "@/infrastructure/api/status";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
+import type { PageQuery } from "@/domain/pagination";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { StatusCard } from "@/ui/components/StatusCard";
 import { useSession } from "@/ui/context/SessionContext";
 import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
-import { useStatusActions } from "@/ui/hooks/useStatusActions";
+import { useStatusActions } from "@/ui/components/useStatusActions";
 import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
 import type { ResultAsync } from "neverthrow";
 
@@ -18,7 +18,7 @@ type StatusCollectionPageProps = Readonly<{
   title: string;
   emptyMessage: string;
   header?: ReactNode;
-  fetchPage: (query: TimelineQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
+  fetchPage: (query: PageQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
 }>;
 
 export const StatusCollectionPage = ({

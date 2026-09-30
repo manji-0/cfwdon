@@ -1,12 +1,15 @@
-use crate::notifications::{
+use crate::follow_requests::{
     accept_notification_request_response, accept_notification_requests_response,
     dismiss_notification_request_response, dismiss_notification_requests_response,
-    notification_dismiss_response, notification_group_accounts_response,
-    notification_group_dismiss_response, notification_group_response,
     notification_request_response, notification_requests_merged_response,
-    notification_requests_response, notification_response, notifications_clear_response,
-    notifications_policy_response, notifications_response, notifications_unread_count_response,
-    notifications_v2_response, update_notifications_policy_response,
+    notification_requests_response,
+};
+use crate::notifications::{
+    notification_dismiss_response, notification_group_accounts_response,
+    notification_group_dismiss_response, notification_group_response, notification_response,
+    notifications_clear_response, notifications_policy_response, notifications_response,
+    notifications_unread_count_response, notifications_v2_response,
+    update_notifications_policy_response,
 };
 use worker::Router;
 

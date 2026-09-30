@@ -1,7 +1,9 @@
-use crate::{
-    LocalApiAuthentication, Request, Result, authenticate_local_api_request,
+use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::oauth_store::{
     find_oauth_access_token_with_account_by_bearer_token, oauth_access_token_has_any_scope,
 };
+use crate::tracked_d1::D1Database;
+use worker::{Request, Result};
 
 pub(super) enum StreamingAuthOutcome {
     Viewer(Option<cfwdon_domain::LocalAccount>),
@@ -10,7 +12,7 @@ pub(super) enum StreamingAuthOutcome {
 
 pub(super) async fn resolve_streaming_auth(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     query_access_token: Option<&str>,
     websocket_protocol_token: Option<&str>,

@@ -186,3 +186,37 @@ describe("parseStatus high-priority fields", () => {
     expect(body.pinned).toBe(false);
   });
 });
+
+describe("parseStatus bookmarked", () => {
+  const baseStatus = {
+    id: "status-1",
+    created_at: "2026-08-11T00:00:00.000Z",
+    content: "<p>hello</p>",
+    visibility: "public",
+    account: {
+      id: "acct-1",
+      username: "alice",
+      acct: "alice",
+      display_name: "Alice",
+      avatar: "https://example.com/a.png",
+    },
+  } as const;
+
+  it("defaults bookmarked to false when missing", () => {
+    const result = parseStatus(baseStatus);
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(Status.displayBody(result).bookmarked).toBe(false);
+  });
+
+  it("parses bookmarked true", () => {
+    const result = parseStatus({ ...baseStatus, bookmarked: true });
+    expect(isArkError(result)).toBe(false);
+    if (isArkError(result)) {
+      return;
+    }
+    expect(Status.displayBody(result).bookmarked).toBe(true);
+  });
+});

@@ -1,13 +1,16 @@
-use crate::{
-    AccountReference, LocalApiAuthentication, RemoteActorProfile, RemoteActorRow, Request,
-    Response, Result, actor_url, app_bearer_token_from_request, authenticate_local_api_request,
-    fetch_remote_activitypub_document, find_follow_by_target, is_blocking_actor,
-    local_username_from_actor_uri, oauth_access_token_has_any_scope, parse_optional_bool,
-    remote_account_rest_id, upsert_remote_actor,
-};
+use crate::activitypub::local_username_from_actor_uri;
+use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::federation::{RemoteActorProfile, fetch_remote_activitypub_document};
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::oauth_store::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
+use crate::remote::AccountReference;
+use crate::request_utils::parse_optional_bool;
+use crate::store::relationship::{find_follow_by_target, is_blocking_actor};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use worker::d1::D1Type;
+use worker::{Request, Response, Result};
 
 mod activity;
 mod documents;
@@ -281,7 +284,7 @@ fn validation_failed_response(details: BTreeMap<&'static str, Vec<String>>) -> R
 
 async fn optional_collection_viewer(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<CollectionViewer, Response>> {
     if app_bearer_token_from_request(req)?.is_some() {
@@ -319,7 +322,7 @@ async fn optional_collection_viewer(
 
 async fn require_collection_reader(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
@@ -338,7 +341,7 @@ async fn require_collection_reader(
 
 async fn require_collection_writer(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<cfwdon_domain::LocalAccount, Response>> {
     match authenticate_local_api_request(req, db, config).await? {
@@ -524,7 +527,7 @@ fn collection_update_requires_activity(
 }
 
 async fn account_blocks_viewer(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account: &cfwdon_domain::LocalAccount,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -539,7 +542,7 @@ async fn account_blocks_viewer(
 }
 
 async fn owner_follows_actor(
-    db: &crate::D1Database,
+    db: &D1Database,
     owner: &cfwdon_domain::LocalAccount,
     target_actor_uri: &str,
 ) -> Result<bool> {
@@ -550,7 +553,7 @@ async fn owner_follows_actor(
 }
 
 async fn account_reference_featureable_by_owner(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     target: &AccountReference,
@@ -703,7 +706,7 @@ fn remote_collection_draft_from_object(
 }
 
 async fn upsert_remote_collection_from_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     remote_actor: &RemoteActorProfile,
     object: &serde_json::Value,
@@ -722,7 +725,7 @@ async fn upsert_remote_collection_from_object(
 }
 
 async fn replace_remote_collection_items_from_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     collection_id: &str,
     collection_uri: &str,
@@ -788,7 +791,7 @@ async fn verify_remote_collection_item_approval(
 }
 
 async fn revalidate_remote_collection_item_approvals(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     collection: &RemoteCollectionRow,
 ) -> Result<()> {
@@ -824,7 +827,7 @@ async fn revalidate_remote_collection_item_approvals(
 }
 
 pub(crate) async fn revalidate_stale_remote_collection_item_approvals(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     limit: i32,
 ) -> Result<u32> {
@@ -858,7 +861,7 @@ pub(crate) async fn revalidate_stale_remote_collection_item_approvals(
 }
 
 async fn upsert_remote_collection_item_from_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     collection_id: &str,
     collection_uri: &str,
@@ -944,6 +947,7 @@ mod tests {
     use super::notifications::merge_collection_notification_policy_action;
     use super::routes::build_collection_offset_link_header_for_url;
     use super::*;
+    use crate::identity::actor_url;
 
     fn fixture_config() -> cfwdon_core::AppConfig {
         cfwdon_core::AppConfig::new("https://social.example", "cfwdon", "test")

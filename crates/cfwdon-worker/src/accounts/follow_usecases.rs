@@ -2,10 +2,12 @@ use super::{
     follow_local_account, follow_remote_account_relationship, unfollow_local_account,
     unfollow_remote_account_relationship,
 };
-use crate::{
-    AccountReference, AppConfig, D1Database, FollowAccountRequest, LocalAccount,
-    resolve_account_reference,
-};
+use crate::accounts::FollowAccountRequest;
+use crate::relationships::RelationshipResponse;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::{Env, Error};
 
 pub(crate) enum FollowActionError {
@@ -27,7 +29,7 @@ pub(crate) async fn follow_account_usecase(
     follower: &LocalAccount,
     target_account_id: &str,
     request: &FollowAccountRequest,
-) -> std::result::Result<crate::RelationshipResponse, FollowActionError> {
+) -> std::result::Result<RelationshipResponse, FollowActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             if follower.id() == target.id() {
@@ -51,7 +53,7 @@ pub(crate) async fn unfollow_account_usecase(
     config: &AppConfig,
     follower: &LocalAccount,
     target_account_id: &str,
-) -> std::result::Result<crate::RelationshipResponse, FollowActionError> {
+) -> std::result::Result<RelationshipResponse, FollowActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             unfollow_local_account(db, config, follower, &target)

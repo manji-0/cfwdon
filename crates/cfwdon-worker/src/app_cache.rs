@@ -1,3 +1,4 @@
+use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -97,7 +98,7 @@ async fn kv_delete_account_capabilities(account_id: &str) {
     let _ = kv.delete(&account_capabilities_key(account_id)).await;
 }
 
-async fn account_has_any_row(db: &crate::D1Database, account_id: &str, sql: &str) -> Result<bool> {
+async fn account_has_any_row(db: &D1Database, account_id: &str, sql: &str) -> Result<bool> {
     let account_id = D1Type::Text(account_id);
     Ok(db
         .prepare(sql)
@@ -108,7 +109,7 @@ async fn account_has_any_row(db: &crate::D1Database, account_id: &str, sql: &str
 }
 
 async fn probe_account_capabilities(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<AccountCapabilities> {
     let (has_thread_mutes, has_followed_tags, has_filters, has_domain_blocks, has_bookmarks) = futures_util::try_join!(
@@ -164,7 +165,7 @@ async fn probe_account_capabilities(
 
 /// Load cached account capability bits, probing D1 once on miss.
 pub(crate) async fn load_account_capabilities(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<AccountCapabilities> {
     if let Some(caps) = l1_get(account_id) {

@@ -1,3 +1,19 @@
+use crate::activitypub::is_public_activitypub_visibility;
+use crate::async_refreshes::build_finished_context_async_refresh_header;
+use crate::db_session::with_d1_bookmark;
+use crate::media::find_remote_status_attachments_by_status_id;
+use crate::remote::{
+    find_remote_status_by_id, list_remote_status_edit_snapshots, load_remote_status_updated_at,
+};
+use crate::response_cache::{cache_status_api_response, cached_status_api_response};
+use crate::response_utils::{CACHE_TTL_STATUS_API, cache_public_json_response};
+use crate::responses::MastodonStatusResponse;
+use crate::statuses::{list_status_edit_snapshots, load_status_updated_at};
+use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
+use crate::time_html::timestamp_to_mastodon_iso8601;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalStatus, RemoteStatus};
+use worker::{Request, Response, Result, RouteContext};
 mod html_preview;
 mod interaction_accounts;
 mod object_routes;
@@ -11,23 +27,17 @@ pub(crate) use preview_card::*;
 pub(crate) use request_context::*;
 
 use super::{
-    CACHE_TTL_STATUS_API, Request, Response, Result, RouteContext,
-    build_finished_context_async_refresh_header, build_local_status_context,
-    build_local_status_response, build_remote_status_context, build_remote_status_response,
-    cache_public_json_response, cache_status_api_response, cached_status_api_response,
-    find_remote_actor_by_actor_uri, find_remote_status_attachments_by_status_id,
-    find_remote_status_by_id, find_visible_local_status_response_subject,
-    is_public_activitypub_visibility, list_remote_status_edit_snapshots,
-    load_remote_status_updated_at, load_visible_local_status_response_subject,
-    resolve_local_status_response_subject, timestamp_to_mastodon_iso8601,
+    build_local_status_context, build_local_status_response, build_remote_status_context,
+    build_remote_status_response, find_visible_local_status_response_subject,
+    load_visible_local_status_response_subject, resolve_local_status_response_subject,
 };
 use serde::Serialize;
 
 enum LoadedStatusApiSubject {
     Local(super::LoadedLocalStatusResponseSubject),
     Remote {
-        status: crate::RemoteStatusRow,
-        actor: crate::RemoteActorRow,
+        status: RemoteStatus,
+        actor: RemoteActorRow,
     },
 }
 
@@ -120,7 +130,7 @@ pub(crate) async fn status_card_response(req: Request, ctx: RouteContext<()>) ->
     .unwrap_or(serde_json::Value::Null);
     let _ = enrich_card_with_remote_preview(&mut card).await;
 
-    crate::with_d1_bookmark(Response::from_json(&card)?, &detail.session)
+    with_d1_bookmark(Response::from_json(&card)?, &detail.session)
 }
 
 pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -164,15 +174,15 @@ pub(crate) async fn status_api_response(req: Request, ctx: RouteContext<()>) -> 
             CACHE_TTL_STATUS_API,
             &[("Cache-Tag", &format!("status-{}", detail.base.status_id))],
         )?;
-        return crate::with_d1_bookmark(cached, &detail.base.session);
+        return with_d1_bookmark(cached, &detail.base.session);
     }
-    crate::with_d1_bookmark(Response::from_json(&response)?, &detail.base.session)
+    with_d1_bookmark(Response::from_json(&response)?, &detail.base.session)
 }
 
 async fn load_status_api_subject(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     status: ResolvedStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     match status {
@@ -184,11 +194,11 @@ async fn load_status_api_subject(
 }
 
 async fn build_status_api_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     subject: LoadedStatusApiSubject,
-) -> Result<crate::MastodonStatusResponse> {
+) -> Result<MastodonStatusResponse> {
     match subject {
         LoadedStatusApiSubject::Local(subject) => {
             let super::LoadedLocalStatusResponseSubject {
@@ -218,10 +228,10 @@ async fn build_status_api_document(
 }
 
 async fn load_local_status_api_subject(
-    db: &crate::D1Database,
+    db: &D1Database,
     _config: &cfwdon_core::AppConfig,
-    viewer: Option<&crate::LocalAccount>,
-    status: crate::StatusRow,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
+    status: LocalStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     match resolve_local_status_response_subject(db, viewer, status).await? {
         Some(super::ResolvedLocalStatusResponseSubject::Loaded(subject)) => {
@@ -232,8 +242,8 @@ async fn load_local_status_api_subject(
 }
 
 async fn load_remote_status_api_subject(
-    db: &crate::D1Database,
-    status: crate::RemoteStatusRow,
+    db: &D1Database,
+    status: RemoteStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
     if !is_public_activitypub_visibility(status.visibility.as_str()) {
         return Ok(None);
@@ -245,7 +255,7 @@ async fn load_remote_status_api_subject(
 }
 
 async fn context_response_with_async_refresh<T: Serialize>(
-    db: &crate::D1Database,
+    db: &D1Database,
     status_id: &str,
     viewer_present: bool,
     context: &T,
@@ -261,7 +271,7 @@ async fn context_response_with_async_refresh<T: Serialize>(
 }
 
 fn status_history_response_from_parts(
-    response: crate::MastodonStatusResponse,
+    response: MastodonStatusResponse,
     created_at: String,
     snapshots: Vec<serde_json::Value>,
 ) -> Result<Response> {
@@ -298,7 +308,7 @@ pub(crate) async fn status_source_response(
     };
     let super::LoadedLocalStatusResponseSubject { status, .. } = subject;
 
-    crate::with_d1_bookmark(
+    with_d1_bookmark(
         Response::from_json(&StatusSourceResponse {
             id: status.id,
             text: status.text,
@@ -381,7 +391,7 @@ pub(crate) async fn status_context_response(
             .await?
         }
     };
-    crate::with_d1_bookmark(response, &detail.base.session)
+    with_d1_bookmark(response, &detail.base.session)
 }
 
 pub(crate) async fn status_history_response(
@@ -414,14 +424,14 @@ pub(crate) async fn status_history_response(
             preload.media,
         )
         .await?;
-        let created_at = crate::load_status_updated_at(&detail.base.db, &status.id)
+        let created_at = load_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.created_at.clone());
-        return crate::with_d1_bookmark(
+        return with_d1_bookmark(
             status_history_response_from_parts(
                 response,
                 created_at,
-                crate::list_status_edit_snapshots(&detail.base.db, &status.id).await?,
+                list_status_edit_snapshots(&detail.base.db, &status.id).await?,
             )?,
             &detail.base.session,
         );
@@ -448,7 +458,7 @@ pub(crate) async fn status_history_response(
         let created_at = load_remote_status_updated_at(&detail.base.db, &status.id)
             .await?
             .unwrap_or_else(|| status.published_at.clone());
-        return crate::with_d1_bookmark(
+        return with_d1_bookmark(
             status_history_response_from_parts(
                 response,
                 created_at,

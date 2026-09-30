@@ -1,7 +1,6 @@
+use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 pub(crate) async fn set_account_email_subscription(
     db: &D1Database,
     account_id: &str,

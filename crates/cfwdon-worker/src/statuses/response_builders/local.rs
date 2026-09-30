@@ -1,24 +1,30 @@
 use super::super::{
-    AccountFilterMatcher, AppConfig, BoostTargetPreload, LocalAccount, LocalStatusResponseDetails,
-    LocalStatusResponseViewerState, LocalStatusViewerStatePreload, MastodonPollResponsePreload,
-    MastodonStatusResponse, MediaAttachmentRow, MentionAccountsPreload, StatusApplicationPreload,
-    StatusCountsPreload, StatusQuoteCountsPreload, StatusRow, build_local_quote_approval,
-    build_status_application, build_status_card_value, build_status_mentions_with_preload,
-    effective_status_quote_state, is_local_status_bookmarked_by, is_local_status_favourited_by,
-    is_local_status_pinned_by, is_local_status_reblogged_by, is_local_status_thread_muted_by,
-    load_local_status_counts, load_local_status_response_preload, load_stored_status_mentions,
-    local_status_edited_at, local_status_poll_response,
-    preloaded_local_status_response_viewer_state, status_quotes_count, status_response_config,
+    BoostTargetPreload, LocalAccount, LocalStatusResponseViewerState,
+    LocalStatusViewerStatePreload, MentionAccountsPreload, StatusApplicationPreload,
+    StatusQuoteCountsPreload, build_local_quote_approval, build_status_application,
+    build_status_card_value, build_status_mentions_with_preload, effective_status_quote_state,
+    is_local_status_bookmarked_by, is_local_status_favourited_by, is_local_status_pinned_by,
+    is_local_status_reblogged_by, is_local_status_thread_muted_by,
+    load_local_status_response_preload, load_stored_status_mentions, local_status_edited_at,
+    local_status_poll_response, preloaded_local_status_response_viewer_state, status_quotes_count,
+    status_response_config,
 };
+use crate::filters::AccountFilterMatcher;
+use crate::local_polls::MastodonPollResponsePreload;
+use crate::response::LocalStatusResponseDetails;
+use crate::responses::MastodonStatusResponse;
+use crate::store::media::MediaAttachmentRow;
+use crate::store::statuses::{StatusCountsPreload, load_local_status_counts};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalStatus;
 use worker::Result;
-
-use crate::D1Database;
 
 pub(crate) async fn build_local_status_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -40,7 +46,7 @@ pub(crate) async fn build_loaded_local_status_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
 ) -> Result<MastodonStatusResponse> {
     let preload = load_local_status_response_preload(db, status).await?;
@@ -60,7 +66,7 @@ pub(crate) async fn build_local_status_response_with_filter_matcher(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -84,7 +90,7 @@ pub(crate) async fn build_local_status_response_with_preloads(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -116,7 +122,7 @@ pub(crate) async fn build_local_status_response_with_quote_count_preloads(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -153,7 +159,7 @@ pub(crate) async fn build_local_status_response_with_timeline_preloads(
     config: &AppConfig,
     resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -193,7 +199,7 @@ pub(super) async fn build_local_status_response_inner(
     config: &AppConfig,
     resolved_config: Option<&AppConfig>,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     in_reply_to_account_id: Option<String>,
     media_attachments: Vec<MediaAttachmentRow>,
@@ -265,7 +271,7 @@ async fn load_local_status_response_details(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     account: &LocalAccount,
     status_uri: &str,
     filter_matcher: Option<&AccountFilterMatcher>,
@@ -344,7 +350,7 @@ async fn load_local_status_response_details(
     })
 }
 
-fn local_status_is_pinnable(viewer: &LocalAccount, status: &StatusRow) -> bool {
+fn local_status_is_pinnable(viewer: &LocalAccount, status: &LocalStatus) -> bool {
     viewer.id() == status.account_id
         && status.boost_of_uri.is_none()
         && matches!(
@@ -365,7 +371,7 @@ pub(super) struct LocalViewerInteractionFields {
 
 pub(super) fn local_viewer_interaction_fields(
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     viewer_state: LocalStatusResponseViewerState,
 ) -> LocalViewerInteractionFields {
     let Some(viewer) = viewer else {
@@ -389,7 +395,7 @@ pub(super) fn local_viewer_interaction_fields(
 pub(super) async fn local_status_response_viewer_state(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     preload: Option<&LocalStatusViewerStatePreload>,
 ) -> Result<LocalStatusResponseViewerState> {
     if let Some(state) = preloaded_local_status_response_viewer_state(viewer, status, preload) {
@@ -431,7 +437,7 @@ pub(super) async fn local_status_response_viewer_state(
 pub(super) async fn local_status_filtered_for_viewer(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
-    status: &StatusRow,
+    status: &LocalStatus,
     filter_matcher: Option<&AccountFilterMatcher>,
 ) -> Result<Vec<serde_json::Value>> {
     let Some(viewer) = viewer else {

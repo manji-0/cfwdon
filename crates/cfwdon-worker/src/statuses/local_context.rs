@@ -1,18 +1,25 @@
 use super::{
-    AppConfig, LocalAccount, MastodonContextResponse, MastodonStatusResponse, StatusRow, actor_url,
-    build_loaded_local_status_response, build_remote_status_response, can_view_local_status,
-    context_descendant_max_depth, find_account_by_id, find_status_by_id,
-    is_public_activitypub_visibility, list_direct_local_replies, list_direct_remote_replies_by_uri,
-    trim_context_ancestors, trim_context_descendants,
+    LocalAccount, build_loaded_local_status_response, build_remote_status_response,
+    can_view_local_status, find_status_by_id, list_direct_local_replies,
+    list_direct_remote_replies_by_uri,
 };
+use crate::activitypub::is_public_activitypub_visibility;
+use crate::auth::find_account_by_id;
+use crate::identity::actor_url;
+use crate::response::{
+    MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
+    trim_context_descendants,
+};
+use crate::responses::MastodonStatusResponse;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalStatus;
 use std::collections::HashSet;
 use worker::Result;
-
-use crate::D1Database;
 fn local_context_object_uri(
     config: &AppConfig,
     owner: &LocalAccount,
-    status: &StatusRow,
+    status: &LocalStatus,
 ) -> String {
     status.ap_id.clone().unwrap_or_else(|| {
         format!(
@@ -53,7 +60,7 @@ pub(crate) async fn build_local_status_context(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &StatusRow,
+    root: &LocalStatus,
     root_owner: &LocalAccount,
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
@@ -95,7 +102,7 @@ async fn collect_descendants_for_local_root(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    root: &StatusRow,
+    root: &LocalStatus,
     root_uri: &str,
 ) -> Result<Vec<MastodonStatusResponse>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());

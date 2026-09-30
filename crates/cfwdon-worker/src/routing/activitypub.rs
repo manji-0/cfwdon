@@ -1,10 +1,13 @@
-use crate::{
-    account_statuses_by_username_response, actor_response, featured_collection_response,
-    featured_tags_collection_response, followers_collection_response,
-    following_collection_response, host_meta_json_response, host_meta_response, inbox_response,
-    nodeinfo_21_response, nodeinfo_links_response, nodeinfo_response, outbox_response,
-    process_outbox_deliveries, remote_follow_response, shared_inbox_response, webfinger_response,
+use crate::accounts::account_statuses_by_username_response;
+use crate::delivery::process_outbox_deliveries;
+use crate::discovery::{
+    actor_response, followers_collection_response, following_collection_response,
+    host_meta_json_response, host_meta_response, outbox_response, remote_follow_response,
+    webfinger_response,
 };
+use crate::featured_tags::{featured_collection_response, featured_tags_collection_response};
+use crate::inbox::{inbox_response, shared_inbox_response};
+use crate::instance::{nodeinfo_21_response, nodeinfo_links_response, nodeinfo_response};
 use worker::{Response, Result, Router};
 
 pub(crate) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";

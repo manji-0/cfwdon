@@ -1,13 +1,12 @@
-use crate::{
-    D1Database, json_string_array, sql_in_json_each, sql_placeholders, unique_ordered_refs,
+use crate::db_utils::{
+    d1_results, json_string_array, sql_in_json_each, sql_placeholders, unique_ordered_refs,
 };
+use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
 use std::collections::HashMap;
 use worker::Result;
 use worker::d1::D1Type;
-
-pub(crate) type AccountRow = LocalAccountRecord;
 
 #[derive(Debug, Deserialize)]
 struct DiscoverableAccountRow {
@@ -98,12 +97,12 @@ pub(crate) async fn list_discoverable_accounts_with_sort_key(
     ];
     let result = db.prepare(sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<DiscoverableAccountRow>(&result)?
+    Ok(d1_results::<DiscoverableAccountRow>(&result)?
         .into_iter()
         .map(|row| {
             let sort_key = row.sort_key.clone();
             (
-                LocalAccount::from_record(AccountRow {
+                LocalAccount::from_record(LocalAccountRecord {
                     id: row.id,
                     username: row.username,
                     access_email: row.access_email,
@@ -196,7 +195,7 @@ pub(crate) async fn load_account_stats_map(
         .collect::<Vec<_>>();
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<AccountStatsMapRow>(&result)?
+    Ok(d1_results::<AccountStatsMapRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -231,7 +230,7 @@ pub(crate) async fn find_accounts_by_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(crate::d1_results::<AccountRow>(&result)?
+    Ok(d1_results::<LocalAccountRecord>(&result)?
         .into_iter()
         .map(|row| {
             let id = row.id.clone();

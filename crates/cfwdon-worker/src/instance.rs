@@ -1,22 +1,38 @@
-#[allow(unused_imports)]
-pub(crate) use crate::*;
-
 mod announcements;
 mod documents;
-mod identity;
 mod nodeinfo_documents;
 mod nodeinfo_routes;
-mod policy_documents;
-mod store;
 mod trending_links;
+use crate::custom_emojis::{config_with_resolved_custom_emojis, list_custom_emojis};
+use crate::d1_metrics::d1_pressure_load_shed_response;
+use crate::db_session::{bind_request_d1, open_bound_request_session, with_d1_bookmark};
+use crate::identity::configured_instance_languages;
+use crate::policy_documents::{build_default_terms_of_service_document, configured_html_document};
+use crate::public_endpoint_cache::{
+    PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
+};
+use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
+use crate::runtime_config::{load_config, load_config_from_env};
+use crate::store::instance::{
+    count_accounts_created_by_week_offset, count_local_statuses_by_week_offset,
+    load_active_month_users, load_instance_summary, load_known_peer_domains,
+    load_total_local_accounts, load_total_local_statuses,
+};
+use crate::tags::trending_tags_documents;
+use crate::time_html::now_unix_timestamp;
+use crate::timelines::trending_status_documents;
+use crate::tracked_d1::D1Database;
+use crate::trends_cache::{
+    TRENDING_STATUSES_CACHE_SIZE, load_trending_statuses_cache, load_trending_tags_cache,
+    slice_trending_cache, store_trending_statuses_cache,
+};
 pub(crate) use announcements::*;
+use cfwdon_core::AppConfig;
 pub(crate) use documents::*;
-pub(crate) use identity::*;
 pub(crate) use nodeinfo_documents::*;
 pub(crate) use nodeinfo_routes::*;
-pub(crate) use policy_documents::*;
-pub(crate) use store::*;
 pub(crate) use trending_links::*;
+use worker::{Request, Response, Result, RouteContext};
 
 use crate::statuses::{
     configured_translation_provider, configured_translation_provider_from_env,
@@ -33,19 +49,19 @@ struct TrendsQuery {
 
 pub(crate) async fn instance_summary_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     instance_summary_response_for_config(&db, config).await
 }
 
 pub(crate) async fn instance_summary_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     instance_summary_response_for_config(&db, config).await
 }
 
 async fn instance_summary_response_for_config(
-    db: &crate::D1Database,
-    config: super::AppConfig,
+    db: &D1Database,
+    config: cfwdon_core::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
     let active_month = load_active_month_users(db).await?;
@@ -68,14 +84,14 @@ async fn instance_summary_response_for_config(
 
 pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     instance_v2_response_for_config(&db, config, configured_translation_provider(&ctx).is_some())
         .await
 }
 
 pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     instance_v2_response_for_config(
         &db,
         config,
@@ -85,8 +101,8 @@ pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response>
 }
 
 async fn instance_v2_response_for_config(
-    db: &crate::D1Database,
-    config: super::AppConfig,
+    db: &D1Database,
+    config: cfwdon_core::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
     let (summary, active_month) = futures_util::try_join!(
@@ -101,7 +117,7 @@ async fn instance_v2_response_for_config(
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
 
     cache_public_response(
         Response::from_json(&load_known_peer_domains(&db, &config).await?)?,
@@ -120,7 +136,7 @@ pub(crate) async fn instance_peers_search_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: PeerSearchQuery = req.query().unwrap_or_default();
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let mut domains = load_known_peer_domains(&db, &config).await?;
 
     if let Some(q) = query
@@ -140,7 +156,7 @@ pub(crate) async fn instance_activity_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+    if let Some(response) = d1_pressure_load_shed_response()? {
         return Ok(response);
     }
 
@@ -148,14 +164,12 @@ pub(crate) async fn instance_activity_response(
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
 
     let document = if let Some(cached) =
-        crate::load_public_endpoint_cache(&db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY).await?
+        load_public_endpoint_cache(&db, PUBLIC_CACHE_INSTANCE_ACTIVITY).await?
     {
         cached
     } else {
         let live = compute_instance_activity_document(&db).await?;
-        let _ =
-            crate::store_public_endpoint_cache(&db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY, &live)
-                .await;
+        let _ = store_public_endpoint_cache(&db, PUBLIC_CACHE_INSTANCE_ACTIVITY, &live).await;
         live
     };
 
@@ -166,7 +180,7 @@ pub(crate) async fn instance_activity_response(
 }
 
 pub(crate) async fn compute_instance_activity_document(
-    db: &crate::D1Database,
+    db: &D1Database,
 ) -> Result<serde_json::Value> {
     // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
     let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()).map_err(|error| {
@@ -207,9 +221,9 @@ pub(crate) async fn compute_instance_activity_document(
     Ok(build_instance_activity_document(week_floor, &weekly_totals))
 }
 
-pub(crate) async fn refresh_instance_activity_cache(db: &crate::D1Database) -> Result<()> {
+pub(crate) async fn refresh_instance_activity_cache(db: &D1Database) -> Result<()> {
     let document = compute_instance_activity_document(db).await?;
-    crate::store_public_endpoint_cache(db, crate::PUBLIC_CACHE_INSTANCE_ACTIVITY, &document).await
+    store_public_endpoint_cache(db, PUBLIC_CACHE_INSTANCE_ACTIVITY, &document).await
 }
 
 pub(crate) async fn instance_rules_response(_ctx: RouteContext<()>) -> Result<Response> {
@@ -285,7 +299,7 @@ pub(crate) fn instance_languages_response_from_env(env: &Env) -> Result<Response
     instance_languages_response_for_config(&config)
 }
 
-fn instance_languages_response_for_config(config: &super::AppConfig) -> Result<Response> {
+fn instance_languages_response_for_config(config: &cfwdon_core::AppConfig) -> Result<Response> {
     cache_public_response(
         Response::from_json(&configured_instance_languages(config))?,
         300,
@@ -306,7 +320,7 @@ pub(crate) async fn trending_statuses_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+    if let Some(response) = d1_pressure_load_shed_response()? {
         return Ok(response);
     }
 
@@ -316,18 +330,18 @@ pub(crate) async fn trending_statuses_response(
     let offset = query.offset.unwrap_or(0);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
 
-    let statuses = if let Some(cached) = crate::load_trending_statuses_cache().await {
-        crate::slice_trending_cache(cached, offset, limit)
+    let statuses = if let Some(cached) = load_trending_statuses_cache().await {
+        slice_trending_cache(cached, offset, limit)
     } else {
         let live = trending_status_documents(
             &db,
             &config,
-            crate::TRENDING_STATUSES_CACHE_SIZE,
+            TRENDING_STATUSES_CACHE_SIZE,
             0,
-            crate::TRENDING_STATUSES_CACHE_SIZE,
+            TRENDING_STATUSES_CACHE_SIZE,
         )
         .await?;
-        crate::slice_trending_cache(live, offset, limit)
+        slice_trending_cache(live, offset, limit)
     };
 
     with_d1_bookmark(
@@ -337,25 +351,25 @@ pub(crate) async fn trending_statuses_response(
 }
 
 pub(crate) async fn refresh_trending_statuses_cache(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &AppConfig,
 ) -> Result<()> {
     let statuses = trending_status_documents(
         db,
         config,
-        crate::TRENDING_STATUSES_CACHE_SIZE,
+        TRENDING_STATUSES_CACHE_SIZE,
         0,
-        crate::TRENDING_STATUSES_CACHE_SIZE,
+        TRENDING_STATUSES_CACHE_SIZE,
     )
     .await?;
-    crate::store_trending_statuses_cache(&statuses).await
+    store_trending_statuses_cache(&statuses).await
 }
 
 pub(crate) async fn trending_tags_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    if let Some(response) = crate::d1_pressure_load_shed_response()? {
+    if let Some(response) = d1_pressure_load_shed_response()? {
         return Ok(response);
     }
 
@@ -363,10 +377,10 @@ pub(crate) async fn trending_tags_response(
     let query: TrendsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(10).clamp(1, 20);
     let offset = query.offset.unwrap_or(0);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
 
-    let documents = if let Some(cached) = crate::load_trending_tags_cache().await {
-        crate::slice_trending_cache(cached, offset, limit)
+    let documents = if let Some(cached) = load_trending_tags_cache().await {
+        slice_trending_cache(cached, offset, limit)
     } else {
         let live = trending_tags_documents(&db, &config, offset, limit).await?;
         live.into_iter()
@@ -379,7 +393,7 @@ pub(crate) async fn trending_tags_response(
 
 pub(crate) async fn custom_emojis_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     custom_emojis_response_direct(&config)
 }
@@ -390,7 +404,10 @@ pub(crate) fn custom_emojis_response_direct(config: &AppConfig) -> Result<Respon
 
 pub(crate) async fn custom_emojis_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     custom_emojis_response_direct(&config)
 }
+
+#[cfg(test)]
+mod unit_tests;

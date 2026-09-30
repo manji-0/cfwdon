@@ -1,12 +1,19 @@
-use crate::{
-    AppConfig, D1Database, Error, LocalAccount, MediaAttachmentRow, OrphanMediaRow, Result,
-    UpdateMediaRequest, enqueue_addressed_create_activity, enqueue_direct_create_activity,
-    json_string_array, outbox_create_insert_statement_with_attachments, parse_media_focus,
-    sql_in_json_each,
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::delivery::{
+    enqueue_addressed_create_activity, enqueue_direct_create_activity,
+    outbox_create_insert_statement_with_attachments,
 };
+use crate::media::{UpdateMediaRequest, parse_media_focus};
+use crate::store::media::{
+    MediaAttachmentRow, OrphanMediaRow, find_media_attachment_by_id, require_media_attachment_by_id,
+};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::d1::D1Type;
+use worker::{Error, Result};
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct RemoteStatusAttachmentRow {
@@ -20,31 +27,6 @@ pub(crate) struct RemoteStatusAttachmentRow {
     pub(crate) width: Option<u32>,
     pub(crate) height: Option<u32>,
     pub(crate) created_at: String,
-}
-
-pub(crate) async fn require_media_attachment_by_id(
-    db: &D1Database,
-    media_id: &str,
-) -> Result<MediaAttachmentRow> {
-    find_media_attachment_by_id(db, media_id)
-        .await?
-        .ok_or_else(|| Error::RustError("media attachment not found".to_owned()))
-}
-
-pub(crate) async fn find_media_attachment_by_id(
-    db: &D1Database,
-    media_id: &str,
-) -> Result<Option<MediaAttachmentRow>> {
-    let media_id = D1Type::Text(media_id);
-    db.prepare(
-        "SELECT id, account_id, status_id, object_key, content_type, description, focus_x, focus_y, width, height, created_at
-         FROM media_attachments
-         WHERE id = ?1
-         LIMIT 1",
-    )
-    .bind_refs(&media_id)?
-    .first::<MediaAttachmentRow>(None)
-    .await
 }
 
 pub(crate) async fn apply_media_update(
@@ -104,7 +86,7 @@ pub(crate) async fn find_media_attachments_by_status_id(
         .all()
         .await?;
 
-    crate::d1_results::<MediaAttachmentRow>(&result)
+    d1_results::<MediaAttachmentRow>(&result)
 }
 
 pub(crate) async fn find_media_attachments_by_status_ids(
@@ -131,7 +113,7 @@ pub(crate) async fn find_media_attachments_by_status_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for row in crate::d1_results::<MediaAttachmentRow>(&result)? {
+    for row in d1_results::<MediaAttachmentRow>(&result)? {
         by_status_id
             .entry(row.status_id.clone().unwrap_or_default())
             .or_insert_with(Vec::new)
@@ -157,7 +139,7 @@ pub(crate) async fn find_remote_status_attachments_by_status_id(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusAttachmentRow>(&result)
+    d1_results::<RemoteStatusAttachmentRow>(&result)
 }
 
 pub(crate) async fn find_remote_status_attachments_by_status_ids(
@@ -184,7 +166,7 @@ pub(crate) async fn find_remote_status_attachments_by_status_ids(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
     let mut by_status_id = HashMap::new();
-    for row in crate::d1_results::<RemoteStatusAttachmentRow>(&result)? {
+    for row in d1_results::<RemoteStatusAttachmentRow>(&result)? {
         by_status_id
             .entry(row.status_id.clone())
             .or_insert_with(Vec::new)
@@ -309,7 +291,7 @@ pub(crate) async fn find_remote_status_ids_with_media(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<RemoteMediaStatusIdRow>(&result)?
+    Ok(d1_results::<RemoteMediaStatusIdRow>(&result)?
         .into_iter()
         .map(|row| row.status_id)
         .collect())
@@ -336,20 +318,7 @@ pub(crate) async fn list_orphan_media(
         .all()
         .await?;
 
-    crate::d1_results::<OrphanMediaRow>(&result)
-}
-
-pub(crate) async fn delete_media_attachment_row(db: &D1Database, media_id: &str) -> Result<()> {
-    let media_id = D1Type::Text(media_id);
-    db.prepare(
-        "DELETE FROM media_attachments
-         WHERE id = ?1",
-    )
-    .bind_refs(&media_id)?
-    .run()
-    .await?;
-
-    Ok(())
+    d1_results::<OrphanMediaRow>(&result)
 }
 
 pub(crate) async fn resolve_attachable_media(
@@ -388,7 +357,7 @@ pub(crate) async fn attach_media_and_enqueue_outbox(
     db: &D1Database,
     config: &AppConfig,
     account: &LocalAccount,
-    status: &crate::StatusRow,
+    status: &LocalStatus,
     media: &[MediaAttachmentRow],
 ) -> Result<()> {
     if media.is_empty() {

@@ -1,9 +1,16 @@
 use super::{
-    Env, Response, Result, RouteContext, build_nodeinfo_21_document,
-    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document, cache_public_response,
-    load_active_halfyear_users, load_active_month_users, load_config, load_config_from_env,
-    load_instance_summary, load_total_local_accounts, load_total_local_statuses,
+    Env, build_nodeinfo_21_document, build_nodeinfo_document_with_halfyear,
+    build_nodeinfo_links_document,
 };
+use crate::db_session::bind_request_d1;
+use crate::response_utils::cache_public_response;
+use crate::runtime_config::{load_config, load_config_from_env};
+use crate::store::instance::{
+    load_active_halfyear_users, load_active_month_users, load_instance_summary,
+    load_total_local_accounts, load_total_local_statuses,
+};
+use crate::tracked_d1::D1Database;
+use worker::{Response, Result, RouteContext};
 
 pub(crate) async fn nodeinfo_links_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -24,18 +31,18 @@ fn nodeinfo_links_response_for_config(config: &super::AppConfig) -> Result<Respo
 
 pub(crate) async fn nodeinfo_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     nodeinfo_response_for_config(&db, config).await
 }
 
 pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     nodeinfo_response_for_config(&db, config).await
 }
 
 async fn nodeinfo_response_for_config(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
@@ -59,18 +66,18 @@ async fn nodeinfo_response_for_config(
 
 pub(crate) async fn nodeinfo_21_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     nodeinfo_21_response_for_config(&db, config).await
 }
 
 pub(crate) async fn nodeinfo_21_response_from_env(env: &Env) -> Result<Response> {
     let config = load_config_from_env(env);
-    let db = crate::D1Database::new(env.d1(&config.database_binding)?);
+    let db = D1Database::new(env.d1(&config.database_binding)?);
     nodeinfo_21_response_for_config(&db, config).await
 }
 
 async fn nodeinfo_21_response_for_config(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;

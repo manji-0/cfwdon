@@ -1,13 +1,22 @@
-use crate::{
-    AppConfig, CACHE_TTL_FEDERATION, CACHE_TTL_TRENDS, Error, Request, Response, Result,
-    RouteContext, actor_url, build_activitypub_actor_document, build_tag_response,
-    cache_actor_json_response, cache_actor_profile_html_response, cache_public_json_response,
-    cache_public_response, cache_public_response_with_options, cached_actor_json_response,
-    cached_actor_profile_html_response, ensure_account_keys, find_account_by_username,
-    find_media_attachments_by_status_ids, instance_base_url, instance_host,
-    list_public_outbox_statuses, load_account_stats, load_config, local_status_html_item,
-    normalize_hashtag,
+use crate::accounts::{load_account_stats, local_status_html_item};
+use crate::activitypub::build_activitypub_actor_document;
+use crate::auth::{ensure_account_keys, find_account_by_username};
+use crate::db_session::bind_request_d1;
+use crate::identity::{actor_url, instance_base_url, instance_host};
+use crate::media::find_media_attachments_by_status_ids;
+use crate::response_cache::{
+    cache_actor_json_response, cache_actor_profile_html_response, cached_actor_json_response,
+    cached_actor_profile_html_response,
 };
+use crate::response_utils::{
+    CACHE_TTL_FEDERATION, CACHE_TTL_TRENDS, cache_public_json_response, cache_public_response,
+    cache_public_response_with_options,
+};
+use crate::runtime_config::load_config;
+use crate::statuses::list_public_outbox_statuses;
+use crate::tags::{build_tag_response, normalize_hashtag};
+use cfwdon_core::AppConfig;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 mod collections;
 mod host_meta;
@@ -34,7 +43,7 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
         return Ok(response);
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -125,10 +134,13 @@ pub(crate) async fn tag_response(ctx: RouteContext<()>) -> Result<Response> {
         .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing tag route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
 
     cache_public_response(
         Response::from_json(&build_tag_response(&db, &config, &tag).await?)?,
         CACHE_TTL_TRENDS,
     )
 }
+
+#[cfg(test)]
+mod unit_tests;

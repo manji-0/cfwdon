@@ -1,11 +1,13 @@
 import { type ResultAsync } from "neverthrow";
 import type { PollDraft } from "@/domain/status/poll";
 import type { ScheduledStatus } from "@/domain/status/scheduled";
-import type { MastodonFetchError } from "@/infrastructure/http/mastodon-fetch";
+import type { MastodonFetchError } from "@/domain/errors/http-error";
+import type { PageQuery } from "@/domain/pagination";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
   mastodonPostJson,
+  pageParams,
 } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import {
@@ -58,19 +60,10 @@ export const createScheduledStatus = (
   );
 };
 
-export type ScheduledStatusesQuery = Readonly<{
-  maxId?: string;
-  limit?: number;
-}>;
-
 export const fetchScheduledStatuses = (
-  query: ScheduledStatusesQuery = {},
+  query: PageQuery = {},
 ): ResultAsync<ReadonlyArray<ScheduledStatus>, MastodonFetchError> => {
-  const params = new URLSearchParams();
-  params.set("limit", String(query.limit ?? 20));
-  if (query.maxId) {
-    params.set("max_id", query.maxId);
-  }
+  const params = pageParams(query);
   return mastodonFetchJson(`/api/v1/scheduled_statuses?${params}`).andThen((raw) =>
     parseMastodon(parseScheduledStatusList, raw),
   );

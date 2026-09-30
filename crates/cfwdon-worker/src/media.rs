@@ -1,40 +1,21 @@
+use crate::auth::find_authenticated_local_account;
+use crate::response::{MastodonMediaAttachmentResponse, media_object_url};
+use crate::store::media::{
+    delete_media_attachment_row, delete_orphan_media, delete_queued_media,
+    find_media_attachment_by_id, log_r2_operation, store_media_attachment,
+};
+use worker::{Error, Request, Response, Result, RouteContext};
 mod attachment_store;
 mod request_parsing;
-mod storage;
 
+use crate::db_session::bind_request_d1;
+use crate::observability::observability_started_at_ms;
+use crate::runtime_config::load_config;
+use crate::store::media::delete_r2_object;
 pub(crate) use attachment_store::*;
 pub(crate) use request_parsing::*;
-pub(crate) use storage::*;
-
-use super::{
-    Error, MastodonMediaAttachmentResponse, Request, Response, Result, RouteContext, load_config,
-    media_object_url, observability_started_at_ms, require_authenticated_local_account,
-};
 use serde::{Deserialize, Serialize};
 use url::Url;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MediaKind {
-    Image,
-    Video,
-    Audio,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(crate) struct MediaAttachmentRow {
-    pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) status_id: Option<String>,
-    pub(crate) object_key: String,
-    pub(crate) content_type: String,
-    pub(crate) description: String,
-    pub(crate) focus_x: Option<f64>,
-    pub(crate) focus_y: Option<f64>,
-    pub(crate) width: Option<u32>,
-    pub(crate) height: Option<u32>,
-    #[serde(rename = "created_at")]
-    pub(crate) _created_at: String,
-}
 
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct OrphanMediaPruneResponse {
@@ -47,16 +28,10 @@ pub(crate) struct UpdateMediaRequest {
     pub(crate) focus: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct OrphanMediaRow {
-    pub(crate) id: String,
-    pub(crate) object_key: String,
-}
-
 pub(crate) async fn prune_orphan_media(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    match find_authenticated_local_account(&req, &db, &config).await? {
         Some(_) => {}
         None => return Response::error("Auth0 authentication required", 401),
     }
@@ -79,9 +54,9 @@ pub(crate) async fn create_media_attachment(
         Err(message) => return Response::error(message, 422),
     };
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -98,7 +73,7 @@ pub(crate) async fn media_content_response(ctx: RouteContext<()>) -> Result<Resp
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing media id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(media) = find_media_attachment_by_id(&db, &media_id).await? else {
         return Response::error("media not found", 404);
     };
@@ -151,7 +126,7 @@ pub(crate) async fn media_metadata_response(ctx: RouteContext<()>) -> Result<Res
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing media id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(media) = find_media_attachment_by_id(&db, &media_id).await? else {
         return Response::error("media not found", 404);
     };
@@ -177,8 +152,8 @@ pub(crate) async fn update_media_attachment(
         Err(message) => return Response::error(message, 422),
     };
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -205,8 +180,8 @@ pub(crate) async fn delete_media_attachment(
         None => return Response::error("missing media id route parameter", 400),
     };
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
@@ -219,7 +194,10 @@ pub(crate) async fn delete_media_attachment(
     }
 
     let bucket = ctx.bucket(&config.media_binding)?;
-    crate::delete_r2_object(&bucket, &media.object_key, "delete").await?;
+    delete_r2_object(&bucket, &media.object_key, "delete").await?;
     delete_media_attachment_row(&db, &media.id).await?;
     Response::from_json(&serde_json::json!({}))
 }
+
+#[cfg(test)]
+mod unit_tests;

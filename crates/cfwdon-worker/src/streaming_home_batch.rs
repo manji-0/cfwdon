@@ -1,44 +1,59 @@
+use crate::accounts::find_accounts_by_ids;
+use crate::custom_emojis::{
+    RemoteStatusFederatedEmojisPreload, config_with_resolved_custom_emojis,
+    preload_remote_status_federated_emojis,
+};
+use crate::identity::actor_url;
+use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
+use crate::media::{
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
+    find_remote_status_attachments_by_status_ids,
+};
+use crate::remote::{
+    RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
+    preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
+};
+use crate::statuses::{
+    BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
+    RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
+    account_has_thread_mutes, build_local_status_response_with_timeline_preloads,
+    build_remote_status_response_with_timeline_preloads, list_local_home_timeline_statuses,
+    list_local_public_statuses_by_tag, list_remote_home_timeline_statuses,
+    list_remote_public_statuses_by_tag, load_in_reply_to_account_ids,
+    local_status_ids_thread_muted_by, preload_boost_targets, preload_local_status_viewer_state,
+    preload_mention_accounts_from_texts, preload_remote_status_viewer_state,
+    preload_status_applications, preload_status_quote_counts,
+};
+use crate::store::media::MediaAttachmentRow;
+use crate::store::relationship::list_active_muted_actor_uris_for_account;
+use crate::store::remote::RemoteActorRow;
+use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
+use crate::streaming_types::{StreamingBatch, StreamingEntry, streaming_batch_from_entries};
+use crate::tag_actions::list_followed_tag_names;
 use crate::timelines::{
     ResolvedTimelineCursor, TimelinePaginationQuery, resolve_timeline_cursor, timeline_fetch_limit,
 };
-use crate::{
-    BoostTargetPreload, D1Database, LocalAccount, LocalStatusViewerStatePreload,
-    MastodonPollResponsePreload, MentionAccountsPreload, RemoteMastodonPollResponsePreload,
-    RemoteStatusEditUpdatedAtPreload, RemoteStatusFederatedEmojisPreload,
-    RemoteStatusViewerStatePreload, Result, StatusApplicationPreload, StatusCountsPreload,
-    StatusQuoteCountsPreload, StreamingBatch, StreamingEntry, account_has_thread_mutes, actor_url,
-    build_local_status_response_with_timeline_preloads,
-    build_remote_status_response_with_timeline_preloads, config_with_resolved_custom_emojis,
-    find_accounts_by_ids, find_media_attachments_by_status_ids,
-    find_remote_status_attachments_by_status_ids, list_active_muted_actor_uris_for_account,
-    list_followed_tag_names, list_local_home_timeline_statuses, list_local_public_statuses_by_tag,
-    list_remote_home_timeline_statuses, list_remote_public_statuses_by_tag,
-    load_in_reply_to_account_ids, local_status_ids_thread_muted_by, preload_boost_targets,
-    preload_local_status_viewer_state, preload_mastodon_poll_responses,
-    preload_mention_accounts_from_texts, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, preload_remote_status_federated_emojis,
-    preload_remote_status_viewer_state, preload_status_applications,
-    preload_status_counts_for_remote_rows, preload_status_quote_counts,
-    streaming_batch_from_entries,
-};
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
+use worker::Result;
 
 enum StreamingHomeCandidate {
-    Local(crate::StatusRow),
-    Remote(crate::RemoteStatusRow, crate::RemoteActorRow),
+    Local(LocalStatus),
+    Remote(RemoteStatus, RemoteActorRow),
 }
 
 enum PreparedStreamingHomeCandidate<'a> {
     Local {
-        status: crate::StatusRow,
-        media: Vec<crate::MediaAttachmentRow>,
+        status: LocalStatus,
+        media: Vec<MediaAttachmentRow>,
         account: &'a LocalAccount,
     },
     Remote {
-        status: crate::RemoteStatusRow,
-        actor: crate::RemoteActorRow,
-        attachments: Vec<crate::RemoteStatusAttachmentRow>,
+        status: RemoteStatus,
+        actor: RemoteActorRow,
+        attachments: Vec<RemoteStatusAttachmentRow>,
     },
 }
 
@@ -51,7 +66,7 @@ struct StreamingHomeCandidateLoad {
 struct StreamingHomeRenderPlan {
     local_status_ids: Vec<String>,
     remote_status_ids: Vec<String>,
-    local_statuses_for_replies: Vec<crate::StatusRow>,
+    local_statuses_for_replies: Vec<LocalStatus>,
     quote_status_uris: Vec<String>,
     mention_texts: Vec<String>,
     boost_of_uris: Vec<String>,
@@ -215,8 +230,8 @@ fn collect_streaming_home_render_plan(
 fn streaming_home_status_refs<'c>(
     candidates: &'c [PreparedStreamingHomeCandidate<'_>],
 ) -> (
-    Vec<&'c crate::StatusRow>,
-    Vec<(&'c crate::RemoteStatusRow, &'c crate::RemoteActorRow)>,
+    Vec<&'c LocalStatus>,
+    Vec<(&'c RemoteStatus, &'c RemoteActorRow)>,
 ) {
     let local_status_refs = candidates
         .iter()

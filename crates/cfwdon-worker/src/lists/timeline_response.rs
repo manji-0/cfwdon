@@ -3,16 +3,16 @@ use super::{
     list_membership_variants_for_local_account, list_membership_variants_for_remote_actor,
     list_row_by_id,
 };
-use crate::auth::find_account_by_id;
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
+use crate::db_session::bind_request_d1;
 use crate::media::find_media_attachments_by_status_id;
-use crate::profile::require_authenticated_local_account;
-use crate::relationship::is_muted_actor;
 use crate::runtime_config::load_config;
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, list_local_public_timeline_statuses,
     list_remote_public_timeline_statuses, load_in_reply_to_account_id,
     local_status_ids_thread_muted_by,
 };
+use crate::store::relationship::is_muted_actor;
 use crate::timelines::{
     build_timeline_link_header, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
 };
@@ -29,8 +29,8 @@ pub(crate) async fn list_timeline_response(
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
     let list_id = list_id_from_context(&ctx)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
-    let account = match require_authenticated_local_account(&req, &db, &config).await? {
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };

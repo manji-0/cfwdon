@@ -1,4 +1,6 @@
-use super::{AppConfig, NotificationsQuery, remote_account_rest_id};
+use super::NotificationsQuery;
+use crate::identity::remote_account_rest_id;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 
 fn normalize_notification_types(values: Option<&Vec<String>>) -> Vec<String> {

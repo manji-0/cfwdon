@@ -1,4 +1,8 @@
-use crate::{RemoteStatusAttachmentRow, now_iso_string};
+use crate::time_html::now_iso_string;
+
+use crate::activitypub::activity_object_id;
+
+use crate::media::RemoteStatusAttachmentRow;
 
 pub(crate) fn remote_status_attachments_from_object(
     status_id: &str,
@@ -56,9 +60,7 @@ pub(super) fn attachment_uri(value: &serde_json::Value) -> Option<String> {
             .and_then(|url| match url {
                 serde_json::Value::String(uri) => Some(uri.clone()),
                 serde_json::Value::Array(values) => values.iter().find_map(attachment_uri),
-                serde_json::Value::Object(_) => {
-                    crate::activity_object_id(Some(url)).map(str::to_owned)
-                }
+                serde_json::Value::Object(_) => activity_object_id(Some(url)).map(str::to_owned),
                 _ => None,
             })
             .or_else(|| {
