@@ -42,9 +42,7 @@ use crate::instance::{
     build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
     instance_open_registrations, set_instance_translation_enabled,
 };
-use crate::local_polls::{
-    StatusPollOptionRow, StatusPollRow, apply_activitypub_poll_fields, normalize_status_poll,
-};
+use crate::local_polls::{apply_activitypub_poll_fields, normalize_status_poll};
 use crate::media::{RemoteStatusAttachmentRow, image_dimensions, parse_media_focus};
 use crate::meta_placeholder_routes::streaming::{
     StreamingChannelValidationError, streaming_channel_requires_auth,
@@ -119,6 +117,7 @@ use crate::statuses::{
     translation_provider_language_matches, translation_provider_supported_target_language,
     translation_target_language, validate_scheduled_at_minimum_offset,
 };
+use crate::store::local_polls::{StatusPollOptionRow, StatusPollRow};
 use crate::store::media::{MediaAttachmentRow, classify_media_kind, media_kind_label};
 use crate::store::remote::{
     RemoteStatusPollOptionRow, RemoteStatusPollRow, RemoteStatusPollVoteRow,

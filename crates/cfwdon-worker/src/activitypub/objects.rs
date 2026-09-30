@@ -4,15 +4,15 @@ use crate::content_helpers::{
     extract_account_handles_from_text, extract_hashtags_from_text, tag_url,
 };
 use crate::identity::actor_url;
-use crate::local_polls::{
-    apply_activitypub_poll_fields, count_poll_voters, find_status_poll_by_status_id,
-    list_status_poll_options,
-};
+use crate::local_polls::apply_activitypub_poll_fields;
 use crate::media::find_media_attachments_by_status_id;
 use crate::remote::{find_remote_actor_by_username_domain, find_remote_status_by_id};
 use crate::response::media_attachment_url;
 use crate::statuses::{
     find_local_status_by_object_uri, find_status_by_id, status_has_active_quote,
+};
+use crate::store::local_polls::{
+    count_poll_voters, find_status_poll_by_status_id, list_status_poll_options,
 };
 use crate::store::media::{MediaAttachmentRow, classify_media_kind, media_kind_label};
 use crate::time_html::{activitypub_datetime_string, is_iso_timestamp_in_past};

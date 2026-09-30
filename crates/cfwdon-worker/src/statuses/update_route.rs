@@ -6,14 +6,14 @@ use super::{
 use crate::auth::find_authenticated_local_account;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_emoji_shortcodes};
 use crate::db_session::bind_request_d1;
-use crate::local_polls::{
-    count_poll_voters, find_status_poll_by_status_id, list_status_poll_options,
-    normalize_status_poll,
-};
+use crate::local_polls::normalize_status_poll;
 use crate::media::resolve_editable_media;
 use crate::request_utils::status_id_from_context;
 use crate::response_cache::invalidate_status_api_cache;
 use crate::runtime_config::load_config;
+use crate::store::local_polls::{
+    count_poll_voters, find_status_poll_by_status_id, list_status_poll_options,
+};
 use crate::time_html::is_iso_timestamp_in_past;
 use worker::{Error, Request, Response, Result, RouteContext};
 

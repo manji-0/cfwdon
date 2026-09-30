@@ -1,10 +1,10 @@
-use super::store::{
+use crate::id_utils::generate_entity_id;
+use crate::polls::validate_poll_vote_submission;
+use crate::store::local_polls::{
     PollVoteIdRow, PollVoteTargetRow, StatusPollRow,
     find_status_poll_vote_for_remote_actor_by_activity_uri, find_status_poll_vote_id_by_position,
     list_poll_vote_positions_for_account, list_status_poll_options,
 };
-use crate::id_utils::generate_entity_id;
-use crate::polls::validate_poll_vote_submission;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::StoredLocalPollVoteIntent;
 use worker::d1::D1Type;

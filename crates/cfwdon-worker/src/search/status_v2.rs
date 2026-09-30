@@ -2,7 +2,7 @@ use crate::activitypub::{is_public_activitypub_visibility, local_status_ap_id};
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::filters::load_account_filter_matcher;
 use crate::identity::parse_lookup_handle;
-use crate::local_polls::{find_status_poll_by_status_id, preload_mastodon_poll_responses};
+use crate::local_polls::preload_mastodon_poll_responses;
 use crate::media::{
     find_media_attachments_by_status_id, find_media_attachments_by_status_ids,
     find_remote_status_attachments_by_status_id,
@@ -20,6 +20,7 @@ use crate::statuses::{
     is_remote_status_reblogged_by, load_in_reply_to_account_id, preload_local_status_viewer_state,
     preload_status_applications, preload_status_counts, preload_status_quote_counts,
 };
+use crate::store::local_polls::find_status_poll_by_status_id;
 use crate::store::remote::find_remote_status_poll_by_status_id;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};

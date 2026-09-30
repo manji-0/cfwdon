@@ -2,11 +2,12 @@ use crate::activitypub::activity_object_id;
 use crate::delivery::enqueue_status_update_activity;
 use crate::federation::RemoteActorProfile;
 use crate::inbox::remote_actor_may_interact_with_local_status;
-use crate::local_polls::{
-    apply_incoming_poll_vote, delete_incoming_poll_vote, find_status_poll_by_status_id,
-    find_status_poll_vote_for_remote_actor_by_activity_uri, list_status_poll_options,
-};
+use crate::local_polls::{apply_incoming_poll_vote, delete_incoming_poll_vote};
 use crate::statuses::{find_local_status_by_object_uri, find_status_by_id};
+use crate::store::local_polls::{
+    find_status_poll_by_status_id, find_status_poll_vote_for_remote_actor_by_activity_uri,
+    list_status_poll_options,
+};
 use crate::time_html::is_iso_timestamp_in_past;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;

@@ -5,12 +5,13 @@ use super::{
 use crate::auth::find_account_by_id;
 use crate::db_session::bind_request_d1;
 use crate::delivery::enqueue_status_update_activity;
-use crate::local_polls::{apply_poll_vote, build_mastodon_poll_response, find_status_poll_by_id};
+use crate::local_polls::{apply_poll_vote, build_mastodon_poll_response};
 use crate::remote::{
     apply_remote_poll_vote, build_remote_mastodon_poll_response, find_remote_actor_by_actor_uri,
     find_remote_status_by_id, refresh_remote_poll_if_needed, remote_poll_is_visible_to_viewer,
 };
 use crate::statuses::{can_view_local_status, find_status_by_id};
+use crate::store::local_polls::find_status_poll_by_id;
 use crate::store::remote::{find_remote_status_poll_by_id, find_remote_status_poll_by_status_id};
 use worker::{Error, Request, Response, Result, RouteContext};
 

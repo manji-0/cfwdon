@@ -5,12 +5,12 @@ use crate::activitypub::{
 };
 use crate::auth::{ensure_account_keys, find_account_by_id, find_account_by_username};
 use crate::collections_alpha::local_collection_id_from_uri;
-use crate::local_polls::find_status_poll_vote_by_activity_uri;
 use crate::relationship::{
     find_follow_by_activity_id, first_local_follower_for_remote_actor,
     list_local_follower_accounts_for_remote_actor,
 };
 use crate::statuses::find_local_status_by_object_uri;
+use crate::store::local_polls::find_status_poll_vote_by_activity_uri;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;

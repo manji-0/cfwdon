@@ -1,16 +1,18 @@
-mod store;
 mod votes;
 
 use crate::custom_emojis::sanitize_emoji_shortcodes;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::statuses::CreateStatusPollRequest;
+use crate::store::local_polls::{
+    StatusPollOptionRow, StatusPollRow, count_poll_voters, find_status_poll_by_status_id,
+    list_poll_vote_positions_for_account, list_status_poll_options,
+};
 use crate::time_html::{is_iso_timestamp_in_past, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-pub(crate) use store::*;
 pub(crate) use votes::*;
 use worker::{Result, d1::D1Type};
 
@@ -413,6 +415,7 @@ pub(crate) fn apply_activitypub_poll_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::local_polls::StatusPollRow;
 
     fn poll_row(multiple: i32, hide_totals: i32, expires_at: &str) -> StatusPollRow {
         StatusPollRow {
