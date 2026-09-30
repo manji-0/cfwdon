@@ -1,3 +1,4 @@
+import { mount } from "svelte";
 import App from "./App.svelte";
 import "./app.css";
 
@@ -6,5 +7,6 @@ if (!target) {
   throw new Error("missing #app mount point");
 }
 
-const app = new App({ target });
+// Svelte 5 components are functions; `new App(...)` throws at startup.
+const app = mount(App, { target });
 export default app;
