@@ -139,7 +139,7 @@ async fn read_share_form(req: &mut Request) -> std::result::Result<ShareForm, St
         .map_err(|error| format!("invalid share payload: {error}"))
 }
 
-fn share_login_redirect(config: &super::AppConfig, req: &Request) -> Result<Response> {
+fn share_login_redirect(config: &cfwdon_core::AppConfig, req: &Request) -> Result<Response> {
     let return_url = req.url()?;
     auth0_login_redirect_response(config, &return_url, &return_url)
 }

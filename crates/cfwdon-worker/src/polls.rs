@@ -17,11 +17,11 @@ pub(crate) use expiration_store::*;
 pub(crate) use request_parsing::*;
 pub(crate) use vote_route::vote_in_poll;
 
-use super::auth::{
+use crate::auth::{
     extract_authenticated_user, find_account_by_id, find_authenticated_local_account,
 };
-use super::runtime_config::load_config;
-use super::time_html::is_iso_timestamp_in_past;
+use crate::runtime_config::load_config;
+use crate::time_html::is_iso_timestamp_in_past;
 use cfwdon_core::AppConfig;
 use serde::{Deserialize, Serialize};
 use worker::{Env, Error, Request, Response, Result, RouteContext};

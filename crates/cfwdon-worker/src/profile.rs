@@ -35,8 +35,9 @@ pub(crate) use self::request_parsing::{
     AttributionDomainsUpdate, FieldsAttributesUpdate, UpdateCredentialsField,
     UpdateCredentialsRequest,
 };
-use super::{AppConfig, ProfileField};
+use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
+use cfwdon_domain::ProfileField;
 use serde::Deserialize;
 use std::collections::HashMap;
 use worker::Bucket;
@@ -944,7 +945,7 @@ pub(crate) async fn require_authenticated_local_account(
     req: &Request,
     db: &D1Database,
     config: &AppConfig,
-) -> Result<Option<super::LocalAccount>> {
+) -> Result<Option<cfwdon_domain::LocalAccount>> {
     find_authenticated_local_account(req, db, config).await
 }
 

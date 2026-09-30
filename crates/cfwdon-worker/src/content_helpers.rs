@@ -1,8 +1,8 @@
-use super::AppConfig;
 use crate::instance::{instance_base_url, instance_host};
 use crate::responses::MastodonTagHistoryEntry;
 use crate::statuses::StatusRow;
 use crate::time_html::render_status_html;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::AccountHandle;
 use std::collections::HashSet;
 

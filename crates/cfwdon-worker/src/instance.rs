@@ -60,7 +60,7 @@ pub(crate) async fn instance_summary_response_from_env(env: &Env) -> Result<Resp
 
 async fn instance_summary_response_for_config(
     db: &D1Database,
-    config: super::AppConfig,
+    config: cfwdon_core::AppConfig,
 ) -> Result<Response> {
     let summary = load_instance_summary(db, config.clone()).await?;
     let active_month = load_active_month_users(db).await?;
@@ -101,7 +101,7 @@ pub(crate) async fn instance_v2_response_from_env(env: &Env) -> Result<Response>
 
 async fn instance_v2_response_for_config(
     db: &D1Database,
-    config: super::AppConfig,
+    config: cfwdon_core::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
     let (summary, active_month) = futures_util::try_join!(
@@ -298,7 +298,7 @@ pub(crate) fn instance_languages_response_from_env(env: &Env) -> Result<Response
     instance_languages_response_for_config(&config)
 }
 
-fn instance_languages_response_for_config(config: &super::AppConfig) -> Result<Response> {
+fn instance_languages_response_for_config(config: &cfwdon_core::AppConfig) -> Result<Response> {
     cache_public_response(
         Response::from_json(&configured_instance_languages(config))?,
         300,

@@ -17,8 +17,6 @@ use crate::scheduled_statuses::process_due_scheduled_statuses_for_config;
 use crate::tags::refresh_trending_tags_cache;
 use crate::timelines::refresh_public_timeline_cache;
 use crate::tracked_d1::D1Database;
-use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::{
     Context, Env, Error, MessageBatch, Request, Response, Result, ScheduleContext, ScheduledEvent,
     console_error, event,

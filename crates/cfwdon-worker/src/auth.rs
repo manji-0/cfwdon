@@ -8,7 +8,7 @@ pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;
 pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
-use super::oauth_apps::{
+use crate::oauth_apps::{
     OAuthAccessTokenRow, access_token_cookie_max_age, app_bearer_token_from_request,
     exchange_auth0_refresh_token, find_oauth_access_token_with_account_by_bearer_token,
     find_oauth_app_by_bearer_token, oauth_access_token_has_any_scope,

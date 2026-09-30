@@ -193,7 +193,11 @@ pub(crate) fn authorize_interaction_url_from_base(
     authorize_url
 }
 
-fn access_login_redirect(config: &super::AppConfig, req: &Request, uri: &str) -> Result<Response> {
+fn access_login_redirect(
+    config: &cfwdon_core::AppConfig,
+    req: &Request,
+    uri: &str,
+) -> Result<Response> {
     let authorize_url = authorize_interaction_url_for_uri(req, uri)?;
     auth0_login_redirect_response(config, &authorize_url, &authorize_url)
 }

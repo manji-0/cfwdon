@@ -1,4 +1,3 @@
-use super::{AppConfig, LocalAccount};
 use crate::accounts::FollowAccountRequest;
 use crate::activitypub::{build_follow_activity, build_undo_follow_activity};
 use crate::delivery::{queue_remote_actor_activity, queue_remote_actor_activity_required};
@@ -7,6 +6,8 @@ use crate::relationship::{delete_follow_by_target, load_follow_activity_id, upse
 use crate::remote::RemoteActorRow;
 use crate::responses::timestamp_to_mastodon_iso8601_opt;
 use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use js_sys::Date;
 use serde::{Deserialize, Serialize};
 use worker::d1::D1Type;
