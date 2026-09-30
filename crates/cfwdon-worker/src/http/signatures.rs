@@ -5,6 +5,7 @@ use super::{
     validate_activitypub_signature_headers, validate_request_date, validate_request_digest,
     validate_signed_host_header, verify_http_signature_bytes,
 };
+use crate::activitypub::activitypub_primary_type;
 use crate::auth::load_account_private_key_jwk;
 use crate::federation::{
     RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts,
@@ -13,11 +14,10 @@ use crate::federation::{
 };
 use crate::instance::public_key_id;
 use crate::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, activitypub_key_id_matches_actor};
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
-
-use crate::D1Database;
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
 pub(super) const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
 pub(super) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
@@ -273,7 +273,7 @@ pub(crate) async fn inbox_activity_dedupe_id(
     if let Some(id) = inbox_activity_id(activity) {
         return Ok(id);
     }
-    let activity_type = crate::activitypub_primary_type(activity).unwrap_or("Unknown");
+    let activity_type = activitypub_primary_type(activity).unwrap_or("Unknown");
     let digest = sha256_http_digest(body).await?;
     Ok(format!(
         "derived:{remote_actor_uri}:{activity_type}:{digest}"

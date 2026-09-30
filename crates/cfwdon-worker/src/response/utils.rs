@@ -1,5 +1,5 @@
-use crate::{Error, Response, Result, Serialize};
-use worker::ResponseBody;
+use serde::Serialize;
+use worker::{Error, Response, ResponseBody, Result};
 
 pub(crate) const CACHE_TTL_HEALTH: u32 = 30;
 pub(crate) const CACHE_TTL_INSTANCE_SUMMARY: u32 = 60;

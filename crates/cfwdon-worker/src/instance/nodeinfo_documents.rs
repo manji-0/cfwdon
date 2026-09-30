@@ -1,7 +1,6 @@
-use super::{
-    AppConfig, InstanceSummary, instance_base_url, instance_open_registrations, nodeinfo_21_url,
-    nodeinfo_url,
-};
+use super::{instance_base_url, instance_open_registrations, nodeinfo_21_url, nodeinfo_url};
+use cfwdon_core::AppConfig;
+use cfwdon_domain::InstanceSummary;
 
 pub(crate) fn build_nodeinfo_links_document(config: &AppConfig) -> serde_json::Value {
     serde_json::json!({
@@ -113,10 +112,9 @@ mod tests {
         build_nodeinfo_21_document, build_nodeinfo_document_with_halfyear,
         build_nodeinfo_links_document,
     };
-    use crate::{
-        AppConfig, InstanceCapabilities, InstanceSummary, SoftwareInfo,
-        instance_open_registrations, nodeinfo_21_url, nodeinfo_url,
-    };
+    use crate::instance::{instance_open_registrations, nodeinfo_21_url, nodeinfo_url};
+    use cfwdon_core::AppConfig;
+    use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 
     fn sample_summary() -> InstanceSummary {
         InstanceSummary {

@@ -1,4 +1,5 @@
 use super::{D1Database, ExpiredPollQueueRow, Result};
+use crate::db_utils::d1_results;
 use worker::d1::D1Type;
 
 pub(crate) async fn list_expired_polls_requiring_federation_close(
@@ -24,7 +25,7 @@ pub(crate) async fn list_expired_polls_requiring_federation_close(
         .all()
         .await?;
 
-    crate::d1_results::<ExpiredPollQueueRow>(&result)
+    d1_results::<ExpiredPollQueueRow>(&result)
 }
 
 pub(crate) async fn mark_status_poll_federated_closed(

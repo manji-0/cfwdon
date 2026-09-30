@@ -1,13 +1,23 @@
-use crate::{
-    AccountStats, AppConfig, D1Database, FetchedRemoteActorProfile, LocalAccount,
-    MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource, ProfileField,
-    RemoteActorProfile, RemoteActorRow, actor_url, custom_emojis_used_in_texts, escape_html,
-    fetch_remote_activitypub_document, fetch_signed_activitypub_document,
-    load_remote_actor_status_summary, log_json_event, media_object_url,
-    parse_remote_actor_profile_document, remote_account_rest_id,
-    resolve_account_emojis_from_document, update_remote_actor_social_counts,
-    validate_remote_actor_profile_urls,
+use crate::accounts::AccountStats;
+use crate::content_helpers::sanitize_remote_status_html;
+use crate::custom_emojis::{custom_emojis_used_in_texts, resolve_account_emojis_from_document};
+use crate::federation::{
+    FetchedRemoteActorProfile, RemoteActorProfile, fetch_remote_activitypub_document,
+    parse_remote_actor_profile_document, validate_remote_actor_profile_urls,
 };
+use crate::http::fetch_signed_activitypub_document;
+use crate::instance::{actor_url, remote_account_rest_id};
+use crate::observability::log_json_event;
+use crate::remote::{
+    RemoteActorRow, load_remote_actor_status_summary, update_remote_actor_social_counts,
+};
+use crate::responses::{
+    MastodonAccountResponse, MastodonAccountRole, MastodonAccountSource, media_object_url,
+};
+use crate::time_html::{activitypub_datetime_string, escape_html};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, ProfileField};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use url::Url;
@@ -668,7 +678,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at,
-            note: crate::sanitize_remote_status_html(&actor.summary_html),
+            note: sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -714,7 +724,7 @@ impl MastodonAccountResponse {
             show_featured: None,
             last_status_at: None,
             created_at: "1970-01-01T00:00:00.000Z".to_owned(),
-            note: crate::sanitize_remote_status_html(&actor.summary_html),
+            note: sanitize_remote_status_html(&actor.summary_html),
             url: profile_url,
             avatar: avatar_url.clone(),
             avatar_static: avatar_url,
@@ -748,7 +758,7 @@ pub(crate) fn timestamp_to_mastodon_iso8601(value: &str) -> String {
     if value.contains('T') {
         return value.to_owned();
     }
-    let normalized = crate::activitypub_datetime_string(value);
+    let normalized = activitypub_datetime_string(value);
     if normalized.ends_with('Z') && !normalized.contains('.') {
         format!("{}.000Z", &normalized[..normalized.len() - 1])
     } else {
@@ -776,6 +786,7 @@ pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::RemoteActorRow;
 
     #[test]
     fn timestamp_to_mastodon_iso8601_normalizes_sqlite_timestamp() {

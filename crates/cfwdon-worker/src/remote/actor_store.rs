@@ -1,11 +1,10 @@
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
+use crate::responses::RemoteActorSocialCounts;
+use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::{
-    D1Database, RemoteActorSocialCounts, json_string_array, sql_in_json_each, unique_ordered_refs,
-};
 
 pub(crate) const REMOTE_ACTOR_ROW_COLUMNS: &str = "actor_uri, username, domain, created_at, locked, bot, discoverable, indexable, display_name, summary_html, profile_url, avatar_url, header_url, followers_count, following_count, statuses_count, social_counts_updated_at";
 
@@ -215,7 +214,7 @@ pub(crate) async fn find_remote_actors_by_actor_uris(
     let binding = D1Type::Text(uris_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(crate::d1_results::<RemoteActorRow>(&result)?
+    Ok(d1_results::<RemoteActorRow>(&result)?
         .into_iter()
         .map(|row| (row.actor_uri.clone(), row))
         .collect())
@@ -295,20 +294,18 @@ pub(crate) async fn load_remote_actor_status_summaries(
     let binding = D1Type::Text(uris_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    Ok(
-        crate::d1_results::<RemoteActorStatusSummaryMapRow>(&result)?
-            .into_iter()
-            .map(|row| {
-                (
-                    row.actor_uri,
-                    RemoteActorStatusSummary {
-                        statuses_count: row.statuses_count,
-                        last_status_at: row.last_status_at,
-                    },
-                )
-            })
-            .collect(),
-    )
+    Ok(d1_results::<RemoteActorStatusSummaryMapRow>(&result)?
+        .into_iter()
+        .map(|row| {
+            (
+                row.actor_uri,
+                RemoteActorStatusSummary {
+                    statuses_count: row.statuses_count,
+                    last_status_at: row.last_status_at,
+                },
+            )
+        })
+        .collect())
 }
 
 pub(crate) async fn find_remote_actor_by_username_domain(

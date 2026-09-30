@@ -1,8 +1,18 @@
-use crate::{
-    AccountStatusListOptions, AccountStatusVisibilityScope, AccountStatusesQuery,
-    MediaAttachmentRow, RemoteAccountStatusListOptions, RemoteStatusRow, StatusRow,
-    status_contains_tag,
-};
+use crate::content_helpers::status_contains_tag;
+
+use crate::statuses::AccountStatusVisibilityScope;
+
+use crate::remote::RemoteStatusRow;
+
+use crate::statuses::RemoteAccountStatusListOptions;
+
+use crate::statuses::AccountStatusesQuery;
+
+use crate::statuses::StatusRow;
+
+use crate::media::MediaAttachmentRow;
+
+use crate::statuses::AccountStatusListOptions;
 
 pub(crate) fn remote_account_status_list_options<'a>(
     query: &'a AccountStatusesQuery,
@@ -90,6 +100,7 @@ pub(crate) fn remote_status_matches_account_filters(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statuses::AccountStatusVisibilityScope;
 
     use cfwdon_domain::{QuoteState, Visibility};
 

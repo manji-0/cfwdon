@@ -3,12 +3,12 @@
 //! Hourly cron writes D1 as the source of truth and mirrors the payload into
 //! `APP_CACHE` KV so user-facing reads skip D1 when the KV binding is present.
 
+use crate::app_cache::app_cache_kv;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
-use crate::app_cache::app_cache_kv;
 
 pub(crate) const PUBLIC_CACHE_INSTANCE_ACTIVITY: &str = "instance_activity";
 pub(crate) const PUBLIC_CACHE_PUBLIC_TIMELINE: &str = "public_timeline";
@@ -94,7 +94,7 @@ pub(crate) async fn store_public_endpoint_cache(
     let payload_json = serde_json::to_string(payload).map_err(|error| {
         worker::Error::RustError(format!("encode public cache ({id}): {error}"))
     })?;
-    let now = crate::now_iso_string()?;
+    let now = now_iso_string()?;
     let bindings = [
         D1Type::Text(id),
         D1Type::Text(&payload_json),

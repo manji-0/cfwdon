@@ -6,11 +6,14 @@ use super::{
     http::PLAIN_TEXT_CONTENT_TYPE,
     selection::fast_router_kind,
 };
-use crate::root_document;
-use crate::{
-    CACHE_TTL_HEALTH, accept_prefers_web_ui_html, cache_public_response, dispatch_admin_route,
-    is_admin_ui_path, is_web_api_path, is_web_ui_path, load_config_from_env, web_app_url,
-    web_session_response, web_ui_redirect_response, web_ui_response,
+use crate::admin_api::dispatch_admin_route;
+use crate::admin_ui::is_admin_ui_path;
+use crate::responses::{CACHE_TTL_HEALTH, cache_public_response};
+use crate::runtime_config::{load_config_from_env, root_document};
+use crate::web_api::{is_web_api_path, web_session_response};
+use crate::web_ui::{
+    accept_prefers_web_ui_html, is_web_ui_path, web_app_url, web_ui_redirect_response,
+    web_ui_response,
 };
 use worker::{Env, Request, Response, Result, Router};
 

@@ -1,9 +1,14 @@
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
+use crate::db_session::bind_request_d1;
+use crate::oauth_apps::app_bearer_token_from_request;
+use crate::runtime_config::load_config;
 use crate::statuses::{
-    Request, Response, Result, RouteContext, app_bearer_token_from_request,
-    build_loaded_local_status_response, find_account_by_id, find_authenticated_local_account,
-    find_status_by_id, load_config, now_iso_string, update_local_status_quote_approval_policy,
+    build_loaded_local_status_response, effective_local_quote_approval_policy, find_status_by_id,
+    update_local_status_quote_approval_policy,
 };
+use crate::time_html::now_iso_string;
 use serde::Deserialize;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct InteractionPolicyUpdateRequest {
@@ -61,7 +66,7 @@ pub(crate) async fn status_interaction_policy_response(
         }))?
         .with_status(401));
     }
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(viewer) = find_authenticated_local_account(&req, &db, &config).await? else {
         return Ok(Response::from_json(&serde_json::json!({
             "error": "The access token is invalid",
@@ -86,7 +91,7 @@ pub(crate) async fn status_interaction_policy_response(
     let effective_policy = match requested_policy.as_deref() {
         Some(_) if matches!(status.visibility.as_str(), "private" | "direct") => "nobody",
         Some(policy) => policy,
-        None => crate::effective_local_quote_approval_policy(&status),
+        None => effective_local_quote_approval_policy(&status),
     };
     let updated_at = now_iso_string()?;
     let updated =

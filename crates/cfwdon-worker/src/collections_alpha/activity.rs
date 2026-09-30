@@ -3,14 +3,17 @@ use super::{
     collection_item_uri, collection_uri, list_collection_items,
     update_collection_item_feature_request_uri,
 };
-use crate::{
-    AccountReference, Result, actor_url, enqueue_targeted_outbox_activity, instance_base_url,
-    list_follower_delivery_targets, queue_remote_actor_activity, resolve_account_reference,
-    timestamp_to_mastodon_iso8601,
+use crate::delivery::{
+    enqueue_targeted_outbox_activity, list_follower_delivery_targets, queue_remote_actor_activity,
 };
+use crate::instance::{actor_url, instance_base_url};
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::tracked_d1::D1Database;
+use worker::Result;
 
 async fn account_actor_uri_for_reference(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<String>> {
@@ -22,7 +25,7 @@ async fn account_actor_uri_for_reference(
 }
 
 async fn collection_item_activitypub_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -49,7 +52,7 @@ async fn collection_item_activitypub_object(
 }
 
 async fn collection_activitypub_object(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -94,7 +97,7 @@ async fn collection_activitypub_object(
 }
 
 async fn enqueue_collection_followers_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     _config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     _collection_id: &str,
@@ -111,7 +114,7 @@ async fn enqueue_collection_followers_activity(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_add_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -131,7 +134,7 @@ pub(in crate::collections_alpha) async fn enqueue_collection_add_activity(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_update_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -149,7 +152,7 @@ pub(in crate::collections_alpha) async fn enqueue_collection_update_activity(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_remove_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -169,7 +172,7 @@ pub(in crate::collections_alpha) async fn enqueue_collection_remove_activity(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_item_add_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -221,7 +224,7 @@ fn collection_feature_request_uri(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_feature_request_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -247,7 +250,7 @@ pub(in crate::collections_alpha) async fn enqueue_collection_feature_request_act
 }
 
 pub(in crate::collections_alpha) async fn enqueue_collection_item_remove_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -292,7 +295,7 @@ pub(in crate::collections_alpha) fn build_delete_feature_authorization_activity(
 }
 
 pub(in crate::collections_alpha) async fn enqueue_delete_feature_authorization_activity(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     collection: &RemoteCollectionRow,

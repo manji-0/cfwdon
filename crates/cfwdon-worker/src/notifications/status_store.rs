@@ -1,9 +1,9 @@
-use super::{StatusRecord, StatusRow, statuses_from_records};
+use crate::db_utils::d1_results;
+use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct RemoteStatusNotificationRow {
     pub(crate) id: String,
@@ -20,7 +20,7 @@ pub(crate) struct RemoteStatusNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
-    #[serde(default = "crate::default_remote_quote_state")]
+    #[serde(default = "crate::remote::default_remote_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) published_at: String,
     #[serde(default)]
@@ -57,7 +57,7 @@ pub(crate) async fn list_local_status_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_status_notifications_for_account(
@@ -83,5 +83,5 @@ pub(crate) async fn list_remote_status_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusNotificationRow>(&result)
+    d1_results::<RemoteStatusNotificationRow>(&result)
 }

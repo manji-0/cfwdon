@@ -1,17 +1,24 @@
 use crate::accounts::load_account_stats;
 use crate::activitypub::{build_reject_follow_activity, build_stored_accept_follow_activity};
 use crate::auth::find_account_by_id;
-use crate::db_utils::count_rows;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::{count_rows, d1_results};
+use crate::delivery::queue_remote_actor_activity_required;
 use crate::federation::RemoteActorProfile;
 use crate::inbox::upsert_follower_by_inbox;
-use crate::instance::{parse_lookup_handle, remote_account_rest_id, remote_actor_uri_from_rest_id};
+use crate::instance::{
+    actor_url, parse_lookup_handle, remote_account_rest_id, remote_actor_uri_from_rest_id,
+};
 use crate::profile::require_authenticated_local_account;
 use crate::relationships::build_relationship_for_target;
-use crate::remote::{find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain};
+use crate::remote::{
+    find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    load_remote_actor_status_summary,
+};
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
-use crate::responses::MastodonAccountResponse;
+use crate::responses::{MastodonAccountResponse, timestamp_to_mastodon_iso8601};
 use crate::runtime_config::load_config;
-use crate::timestamp_to_mastodon_iso8601;
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     LocalFollowState, RemoteInboundFollowRequestState, authorize_local_follow_request,
@@ -22,8 +29,6 @@ use serde::Deserialize;
 use url::Url;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
-
-use crate::D1Database;
 #[derive(Debug, Default, Deserialize)]
 struct FollowRequestsQuery {
     limit: Option<u32>,
@@ -38,7 +43,7 @@ async fn authenticated_follow_request_viewer(
     ctx: &RouteContext<()>,
     config: &AppConfig,
 ) -> Result<Option<(D1Database, cfwdon_domain::LocalAccount)>> {
-    let db = crate::bind_request_d1(ctx, config)?;
+    let db = bind_request_d1(ctx, config)?;
     let Some(viewer) = require_authenticated_local_account(req, &db, config).await? else {
         return Ok(None);
     };
@@ -259,7 +264,7 @@ async fn list_pending_follow_requests(
         .bind_refs(&account_id)?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<PendingLocalFollowRequestRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<PendingLocalFollowRequestRow>(&__d1))?;
     let remote_rows = db
         .prepare(
             "SELECT CAST(strftime('%s', created_at) AS INTEGER) * 1000000 + rowid AS cursor_id,
@@ -274,7 +279,7 @@ async fn list_pending_follow_requests(
         .bind_refs(&account_id)?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<PendingRemoteFollowRequestRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<PendingRemoteFollowRequestRow>(&__d1))?;
 
     let mut requests = Vec::with_capacity(local_rows.len() + remote_rows.len());
     for row in local_rows {
@@ -309,7 +314,7 @@ async fn build_follow_request_remote_account_response(
     db: &D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
-    let status_summary = crate::load_remote_actor_status_summary(db, actor_uri).await?;
+    let status_summary = load_remote_actor_status_summary(db, actor_uri).await?;
 
     if let Some(actor) = find_remote_actor_by_actor_uri(db, actor_uri).await? {
         let mut response = MastodonAccountResponse::from_remote_actor(&actor);
@@ -505,7 +510,7 @@ async fn resolve_pending_follow_request(
 async fn authorize_pending_follow_request(
     db: &D1Database,
     config: &AppConfig,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
     request: &PendingFollowRequest,
 ) -> Result<serde_json::Value> {
     match request {
@@ -543,7 +548,7 @@ async fn authorize_pending_follow_request(
                     config,
                     viewer,
                     requester.id(),
-                    &crate::actor_url(config, requester.username()),
+                    &actor_url(config, requester.username()),
                 )
                 .await?,
             )?)
@@ -587,7 +592,7 @@ async fn authorize_pending_follow_request(
                         follow_activity_id,
                         &pending.requester_actor_uri,
                     )?;
-                    crate::queue_remote_actor_activity_required(
+                    queue_remote_actor_activity_required(
                         db,
                         viewer.id(),
                         &pending.requester_actor_uri,
@@ -619,7 +624,7 @@ async fn authorize_pending_follow_request(
 async fn reject_pending_follow_request(
     db: &D1Database,
     config: &AppConfig,
-    viewer: &crate::LocalAccount,
+    viewer: &cfwdon_domain::LocalAccount,
     request: &PendingFollowRequest,
 ) -> Result<serde_json::Value> {
     match request {
@@ -653,7 +658,7 @@ async fn reject_pending_follow_request(
                     config,
                     viewer,
                     requester.id(),
-                    &crate::actor_url(config, requester.username()),
+                    &actor_url(config, requester.username()),
                 )
                 .await?,
             )?)
@@ -688,7 +693,7 @@ async fn reject_pending_follow_request(
                         follow_activity_id,
                         &pending.requester_actor_uri,
                     )?;
-                    crate::queue_remote_actor_activity_required(
+                    queue_remote_actor_activity_required(
                         db,
                         viewer.id(),
                         &pending.requester_actor_uri,

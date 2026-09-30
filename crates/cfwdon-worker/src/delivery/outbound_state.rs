@@ -1,11 +1,13 @@
+use crate::db_utils::d1_results;
 use serde::Deserialize;
+use worker::Result;
 use worker::d1::D1Type;
 
 use cfwdon_domain::{
     RemoteFollowState, delivery_retry_delay_modifier, outbound_terminal_failure_follow_state,
 };
 
-use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER, Result};
+use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER};
 
 fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {
     Ok(result
@@ -57,7 +59,7 @@ pub(crate) async fn claim_pending_outbound_activities(
         .all()
         .await?;
 
-    crate::d1_results::<OutboundActivityRow>(&result)
+    d1_results::<OutboundActivityRow>(&result)
 }
 
 pub(crate) async fn mark_outbound_activity_delivered(
@@ -208,7 +210,7 @@ pub(crate) async fn requeue_stale_in_flight_outbound_activities(db: &D1Database)
         .all()
         .await?;
 
-    for delivery in crate::d1_results::<OutboundActivityRow>(&result)? {
+    for delivery in d1_results::<OutboundActivityRow>(&result)? {
         if delivery.state.as_deref() == Some("failed") {
             reconcile_follow_state_for_terminal_outbound(db, &delivery).await?;
         }

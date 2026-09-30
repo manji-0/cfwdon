@@ -1,11 +1,13 @@
-use super::RemoteActorProfile;
+use crate::delivery::cancel_pending_outbox_deliveries_for_inbox;
+use crate::federation::RemoteActorProfile;
+use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;
 
 pub(crate) const INBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
 
 pub(crate) async fn begin_inbox_activity_processing(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
     activity_id: &str,
     activity_type: &str,
@@ -56,7 +58,7 @@ pub(crate) async fn begin_inbox_activity_processing(
 }
 
 pub(crate) async fn mark_inbox_activity_processed(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
     activity_id: &str,
 ) -> Result<()> {
@@ -82,7 +84,7 @@ pub(crate) struct InboxReclaimReport {
 
 /// Reconcile inbox dedup rows left in-flight after worker timeouts.
 pub(crate) async fn reclaim_stale_inbox_activities(
-    db: &crate::D1Database,
+    db: &D1Database,
     limit: u32,
 ) -> Result<InboxReclaimReport> {
     let limit = i32::try_from(limit).unwrap_or(100);
@@ -167,7 +169,7 @@ pub(crate) async fn reclaim_stale_inbox_activities(
 }
 
 pub(crate) async fn release_inbox_activity_processing(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
     activity_id: &str,
 ) -> Result<()> {
@@ -186,7 +188,7 @@ pub(crate) async fn release_inbox_activity_processing(
 }
 
 pub(crate) async fn upsert_follower_by_inbox(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     actor_uri: &str,
     inbox_uri: &str,
@@ -240,7 +242,7 @@ pub(crate) async fn upsert_follower_by_inbox(
 }
 
 pub(crate) async fn upsert_follower(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     remote_actor: &RemoteActorProfile,
     follow_activity_id: Option<&str>,
@@ -257,7 +259,7 @@ pub(crate) async fn upsert_follower(
 }
 
 pub(crate) async fn find_follower_follow_activity_id(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     actor_uri: &str,
     canonical_actor_uri: &str,
@@ -287,7 +289,7 @@ pub(crate) async fn find_follower_follow_activity_id(
 }
 
 pub(crate) async fn delete_follower_by_actor(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     actor_uri: &str,
     canonical_actor_uri: &str,
@@ -330,7 +332,7 @@ pub(crate) async fn delete_follower_by_actor(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        crate::cancel_pending_outbox_deliveries_for_inbox(db, account_id, target_inbox).await?;
+        cancel_pending_outbox_deliveries_for_inbox(db, account_id, target_inbox).await?;
     }
 
     Ok(())

@@ -1,33 +1,57 @@
 use super::{
-    Request, Response, Result, RouteContext, build_accept_quote_request_activity,
-    build_create_quote_authorization_activity, build_delete_quote_authorization_activity,
     build_local_status_response, build_local_status_response_with_quote_count_preloads,
-    build_quote_request_object, build_reject_quote_request_activity, build_remote_status_response,
-    build_remote_status_response_with_timeline_preloads, build_timeline_link_header,
-    can_view_local_status, clear_local_status_quote, clear_remote_status_quote,
-    enqueue_status_update_activity, enqueue_targeted_outbox_activity, find_account_by_id,
-    find_accounts_by_ids, find_authenticated_local_account, find_media_attachments_by_status_id,
-    find_media_attachments_by_status_ids, find_remote_actor_by_actor_uri,
-    find_remote_actors_by_actor_uris, find_remote_status_attachments_by_status_ids,
-    find_status_by_id, insert_status_edit_snapshot, is_public_activitypub_visibility,
-    list_follower_delivery_targets, load_config, load_in_reply_to_account_id,
-    load_in_reply_to_account_ids, local_quote_revoke_allowed, local_status_target_uri,
-    normalize_status_history_entry, now_iso_string, preload_local_status_viewer_state,
-    preload_mastodon_poll_responses, preload_remote_mastodon_poll_responses,
-    preload_remote_status_edit_updated_at, preload_remote_status_viewer_state,
+    build_remote_status_response, build_remote_status_response_with_timeline_preloads,
+    can_view_local_status, clear_local_status_quote, find_status_by_id,
+    insert_status_edit_snapshot, load_in_reply_to_account_id, load_in_reply_to_account_ids,
+    local_quote_revoke_allowed, local_status_target_uri, normalize_status_history_entry,
+    preload_local_status_viewer_state, preload_remote_status_viewer_state,
     preload_status_applications, preload_status_counts_for_remote_rows,
-    preload_status_quote_counts, queue_remote_actor_activity, quote_authorization_uri,
-    quote_request_uri, resolve_status_reference, resolve_timeline_cursor, timeline_fetch_limit,
-    timeline_limit, update_local_status_quote_state, update_remote_status_quote_state,
+    preload_status_quote_counts, resolve_status_reference, update_local_status_quote_state,
 };
-use crate::timelines::TimelinePaginationQuery;
-use crate::{
-    append_resolved_timeline_cursor_bindings, seekable_resolved_timeline_cursor_predicates,
+use crate::accounts::find_accounts_by_ids;
+use crate::activitypub::{
+    build_accept_quote_request_activity, build_create_quote_authorization_activity,
+    build_delete_quote_authorization_activity, build_quote_request_object,
+    build_reject_quote_request_activity, is_public_activitypub_visibility, quote_authorization_uri,
+    quote_request_uri,
 };
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::delivery::{
+    enqueue_status_update_activity, enqueue_targeted_outbox_activity,
+    list_follower_delivery_targets, queue_remote_actor_activity,
+};
+use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
+use crate::media::{
+    MediaAttachmentRow, RemoteStatusAttachmentRow, find_media_attachments_by_status_id,
+    find_media_attachments_by_status_ids, find_remote_status_attachments_by_status_ids,
+};
+use crate::remote::{
+    RemoteActorRow, RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
+    RemoteStatusRow, clear_remote_status_quote, find_remote_actor_by_actor_uri,
+    find_remote_actors_by_actor_uris, preload_remote_mastodon_poll_responses,
+    preload_remote_status_edit_updated_at, remote_statuses_from_records,
+    update_remote_status_quote_state,
+};
+use crate::runtime_config::load_config;
+use crate::statuses::{
+    LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, ResolvedStatus,
+    StatusApplicationPreload, StatusCountsPreload, StatusQuoteCountsPreload, StatusRecord,
+    StatusRow, statuses_from_records,
+};
+use crate::time_html::now_iso_string;
+use crate::timelines::{
+    ResolvedTimelineCursor, TimelinePaginationQuery, append_resolved_timeline_cursor_bindings,
+    build_timeline_link_header, resolve_timeline_cursor,
+    seekable_resolved_timeline_cursor_predicates, timeline_fetch_limit, timeline_limit,
+};
+use crate::tracked_d1::D1Database;
 use cfwdon_domain::{OwnerQuoteAction, QuoteState};
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::d1::D1Type;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 struct QuotesQuery {
@@ -52,20 +76,20 @@ impl QuotesQuery {
 }
 
 struct StatusQuotesPreloads {
-    local_accounts_by_id: std::collections::HashMap<String, crate::LocalAccount>,
-    local_media_by_status_id: std::collections::HashMap<String, Vec<crate::MediaAttachmentRow>>,
+    local_accounts_by_id: std::collections::HashMap<String, cfwdon_domain::LocalAccount>,
+    local_media_by_status_id: std::collections::HashMap<String, Vec<MediaAttachmentRow>>,
     local_in_reply_to_account_ids: std::collections::HashMap<String, String>,
-    counts_preload: crate::StatusCountsPreload,
-    quote_counts_preload: crate::StatusQuoteCountsPreload,
-    local_poll_preload: crate::MastodonPollResponsePreload,
-    local_viewer_state_preload: crate::LocalStatusViewerStatePreload,
-    application_preload: crate::StatusApplicationPreload,
-    remote_actors_by_uri: std::collections::HashMap<String, crate::RemoteActorRow>,
+    counts_preload: StatusCountsPreload,
+    quote_counts_preload: StatusQuoteCountsPreload,
+    local_poll_preload: MastodonPollResponsePreload,
+    local_viewer_state_preload: LocalStatusViewerStatePreload,
+    application_preload: StatusApplicationPreload,
+    remote_actors_by_uri: std::collections::HashMap<String, RemoteActorRow>,
     remote_attachments_by_status_id:
-        std::collections::HashMap<String, Vec<crate::RemoteStatusAttachmentRow>>,
-    remote_poll_preload: crate::RemoteMastodonPollResponsePreload,
-    remote_edit_updated_at_preload: crate::RemoteStatusEditUpdatedAtPreload,
-    remote_viewer_state_preload: crate::RemoteStatusViewerStatePreload,
+        std::collections::HashMap<String, Vec<RemoteStatusAttachmentRow>>,
+    remote_poll_preload: RemoteMastodonPollResponsePreload,
+    remote_edit_updated_at_preload: RemoteStatusEditUpdatedAtPreload,
+    remote_viewer_state_preload: RemoteStatusViewerStatePreload,
 }
 
 pub(crate) async fn status_quotes_response(
@@ -77,7 +101,7 @@ pub(crate) async fn status_quotes_response(
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
 
@@ -112,7 +136,7 @@ pub(crate) async fn status_quotes_response(
 }
 
 async fn resolve_visible_status_quotes_target(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     status_id: &str,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -122,7 +146,7 @@ async fn resolve_visible_status_quotes_target(
     };
 
     match status {
-        crate::ResolvedStatus::Local(status) => {
+        ResolvedStatus::Local(status) => {
             let Some(account) = find_account_by_id(db, &status.account_id).await? else {
                 return Ok(None);
             };
@@ -131,7 +155,7 @@ async fn resolve_visible_status_quotes_target(
             }
             Ok(Some(local_status_target_uri(&status)))
         }
-        crate::ResolvedStatus::Remote(status) => {
+        ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(status.visibility.as_str()) {
                 return Ok(None);
             }
@@ -141,11 +165,11 @@ async fn resolve_visible_status_quotes_target(
 }
 
 async fn load_accepted_status_quotes(
-    db: &crate::D1Database,
+    db: &D1Database,
     target_uri: &str,
-    cursor: &crate::ResolvedTimelineCursor,
+    cursor: &ResolvedTimelineCursor,
     query_limit: u32,
-) -> Result<(Vec<crate::StatusRow>, Vec<crate::RemoteStatusRow>)> {
+) -> Result<(Vec<StatusRow>, Vec<RemoteStatusRow>)> {
     let local_quotes = list_local_status_quotes_by_uri(db, target_uri, cursor, query_limit).await?;
     let remote_quotes =
         list_remote_status_quotes_by_uri(db, target_uri, cursor, query_limit).await?;
@@ -153,11 +177,11 @@ async fn load_accepted_status_quotes(
 }
 
 async fn preload_status_quotes(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
-    local_quotes: &[crate::StatusRow],
-    remote_quotes: &[crate::RemoteStatusRow],
+    local_quotes: &[StatusRow],
+    remote_quotes: &[RemoteStatusRow],
 ) -> Result<StatusQuotesPreloads> {
     let local_status_ids = local_quotes
         .iter()
@@ -252,11 +276,11 @@ async fn preload_status_quotes(
 }
 
 async fn build_status_quote_values(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
-    local_quotes: Vec<crate::StatusRow>,
-    remote_quotes: Vec<crate::RemoteStatusRow>,
+    local_quotes: Vec<StatusRow>,
+    remote_quotes: Vec<RemoteStatusRow>,
     preloads: &mut StatusQuotesPreloads,
 ) -> Result<Vec<(String, String, serde_json::Value)>> {
     let mut quotes: Vec<(String, String, serde_json::Value)> = Vec::new();
@@ -368,11 +392,11 @@ fn paginated_status_quotes_response(
 }
 
 async fn list_local_status_quotes_by_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     status_uri: &str,
-    cursor: &crate::ResolvedTimelineCursor,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<crate::StatusRow>> {
+) -> Result<Vec<StatusRow>> {
     let (sql, bindings) = status_quotes_list_sql(
         "SELECT id, account_id, ap_id, in_reply_to_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
              FROM statuses
@@ -385,15 +409,15 @@ async fn list_local_status_quotes_by_uri(
         limit,
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    crate::d1_results::<crate::StatusRecord>(&result).and_then(crate::statuses_from_records)
+    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 async fn list_remote_status_quotes_by_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     status_uri: &str,
-    cursor: &crate::ResolvedTimelineCursor,
+    cursor: &ResolvedTimelineCursor,
     limit: u32,
-) -> Result<Vec<crate::RemoteStatusRow>> {
+) -> Result<Vec<RemoteStatusRow>> {
     let (sql, bindings) = status_quotes_list_sql(
         "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
              FROM remote_statuses
@@ -406,8 +430,7 @@ async fn list_remote_status_quotes_by_uri(
         limit,
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-    crate::d1_results::<crate::RemoteStatusRecord>(&result)
-        .and_then(crate::remote_statuses_from_records)
+    d1_results::<cfwdon_domain::RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
 }
 
 fn status_quotes_list_sql<'a>(
@@ -415,7 +438,7 @@ fn status_quotes_list_sql<'a>(
     timestamp_column: &str,
     id_column: &str,
     status_uri: &'a str,
-    cursor: &'a crate::ResolvedTimelineCursor,
+    cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
     let mut bindings = vec![D1Type::Text(status_uri)];
@@ -435,7 +458,7 @@ fn status_quotes_list_sql<'a>(
 #[cfg(test)]
 mod tests {
     use super::{sort_status_quote_entries, status_quotes_list_sql};
-    use crate::ResolvedTimelineCursor;
+    use crate::statuses::quotes_routes::ResolvedTimelineCursor;
     use worker::d1::D1Type;
 
     #[test]
@@ -493,7 +516,7 @@ fn sort_status_quote_entries<T>(quotes: &mut [(String, String, T)]) {
 }
 
 async fn enqueue_quote_revocation_federation(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -537,7 +560,7 @@ async fn enqueue_quote_revocation_federation(
 }
 
 async fn enqueue_quote_approval_federation(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -597,7 +620,7 @@ async fn enqueue_quote_approval_federation(
 }
 
 async fn enqueue_quote_rejection_federation(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_uri: &str,
@@ -629,7 +652,7 @@ async fn enqueue_quote_rejection_federation(
 }
 
 async fn enqueue_quote_owner_decision_federation(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
@@ -699,7 +722,7 @@ pub(crate) async fn reject_quote_response(req: Request, ctx: RouteContext<()>) -
 }
 
 async fn resolve_owned_local_quote_target(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     target_status_id: &str,
@@ -708,7 +731,7 @@ async fn resolve_owned_local_quote_target(
         return Ok(None);
     };
     match target_status {
-        crate::ResolvedStatus::Local(status) => {
+        ResolvedStatus::Local(status) => {
             let Some(account) = find_account_by_id(db, &status.account_id).await? else {
                 return Ok(None);
             };
@@ -719,18 +742,18 @@ async fn resolve_owned_local_quote_target(
             }
             Ok(Some((local_status_target_uri(&status), status.id)))
         }
-        crate::ResolvedStatus::Remote(_) => Ok(None),
+        ResolvedStatus::Remote(_) => Ok(None),
     }
 }
 
 async fn apply_owner_action_to_local_quote(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
     target_status_id: &str,
     target_uri: &str,
-    quote_status: crate::StatusRow,
+    quote_status: StatusRow,
 ) -> Result<Response> {
     if quote_status.quote_of_uri.as_deref() != Some(target_uri)
         || quote_status.effective_quote_state() != QuoteState::Pending
@@ -786,13 +809,13 @@ async fn apply_owner_action_to_local_quote(
 }
 
 async fn apply_owner_action_to_remote_quote(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     requester: &cfwdon_domain::LocalAccount,
     action: OwnerQuoteAction,
     target_status_id: &str,
     target_uri: &str,
-    quote_status: crate::RemoteStatusRow,
+    quote_status: RemoteStatusRow,
 ) -> Result<Response> {
     if quote_status.quote_of_uri.as_deref() != Some(target_uri)
         || quote_status.effective_quote_state() != QuoteState::Pending
@@ -841,7 +864,7 @@ async fn quote_owner_action_response(
     action: OwnerQuoteAction,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -869,7 +892,7 @@ async fn quote_owner_action_response(
     };
 
     match resolve_status_reference(&db, &config, &quote_status_id).await? {
-        Some(crate::ResolvedStatus::Local(quote_status)) => {
+        Some(ResolvedStatus::Local(quote_status)) => {
             apply_owner_action_to_local_quote(
                 &db,
                 &config,
@@ -881,7 +904,7 @@ async fn quote_owner_action_response(
             )
             .await
         }
-        Some(crate::ResolvedStatus::Remote(quote_status)) => {
+        Some(ResolvedStatus::Remote(quote_status)) => {
             apply_owner_action_to_remote_quote(
                 &db,
                 &config,
@@ -899,7 +922,7 @@ async fn quote_owner_action_response(
 
 pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let requester = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -925,14 +948,12 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
         return Response::error("status not found", 404);
     };
     let (target_status_id, target_uri) = match &target_status {
-        crate::ResolvedStatus::Local(status) => {
-            (status.id.clone(), local_status_target_uri(status))
-        }
-        crate::ResolvedStatus::Remote(status) => (status.id.clone(), status.object_uri.clone()),
+        ResolvedStatus::Local(status) => (status.id.clone(), local_status_target_uri(status)),
+        ResolvedStatus::Remote(status) => (status.id.clone(), status.object_uri.clone()),
     };
 
     match resolve_status_reference(&db, &config, &quote_status_id).await? {
-        Some(crate::ResolvedStatus::Local(quote_status)) => {
+        Some(ResolvedStatus::Local(quote_status)) => {
             if !local_quote_revoke_allowed(requester.id(), &quote_status, target_uri.as_str()) {
                 return Response::error("status not found", 404);
             }
@@ -1004,7 +1025,7 @@ pub(crate) async fn revoke_quote_response(req: Request, ctx: RouteContext<()>) -
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedStatus::Remote(_)) => Response::error("status not found", 404),
+        Some(ResolvedStatus::Remote(_)) => Response::error("status not found", 404),
         None => Response::error("status not found", 404),
     }
 }

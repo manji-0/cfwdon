@@ -1,15 +1,22 @@
 use super::{
-    CollectionItemRow, CollectionRow, RemoteActorRow, RemoteCollectionItemRow, RemoteCollectionRow,
+    CollectionItemRow, CollectionRow, RemoteCollectionItemRow, RemoteCollectionRow,
     list_collection_items, list_remote_collection_items,
     revalidate_remote_collection_item_approvals,
 };
-use crate::{
-    AccountReference, MastodonAccountResponse, Result, actor_url, find_remote_actor_by_actor_uri,
-    instance_base_url, is_blocking_actor, load_account_stats, local_username_from_actor_uri,
-    remote_account_rest_id, resolve_account_reference, timestamp_to_mastodon_iso8601,
-    timestamp_to_mastodon_iso8601_opt,
+use crate::accounts::load_account_stats;
+use crate::activitypub::local_username_from_actor_uri;
+use crate::auth::find_account_by_username;
+use crate::instance::{actor_url, instance_base_url, remote_account_rest_id};
+use crate::relationship::is_blocking_actor;
+use crate::remote::{
+    AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri, resolve_account_reference,
 };
+use crate::responses::{
+    MastodonAccountResponse, timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
+};
+use crate::tracked_d1::D1Database;
 use std::collections::HashSet;
+use worker::Result;
 
 fn tag_document(config: &cfwdon_core::AppConfig, tag_name: Option<&str>) -> serde_json::Value {
     let Some(tag_name) = tag_name else {
@@ -146,12 +153,12 @@ pub(in crate::collections_alpha) fn collection_item_document(
 }
 
 async fn account_id_for_actor_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     actor_uri: &str,
 ) -> Result<String> {
     if let Some(username) = local_username_from_actor_uri(config, actor_uri)
-        && let Some(account) = crate::find_account_by_username(db, &username).await?
+        && let Some(account) = find_account_by_username(db, &username).await?
     {
         return Ok(account.id().to_owned());
     }
@@ -159,7 +166,7 @@ async fn account_id_for_actor_uri(
 }
 
 pub(in crate::collections_alpha) async fn remote_collection_item_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     row: &RemoteCollectionItemRow,
 ) -> Result<serde_json::Value> {
@@ -189,7 +196,7 @@ pub(in crate::collections_alpha) fn collection_item_response_document(
 }
 
 pub(in crate::collections_alpha) async fn account_response_for_reference(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_ref: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
@@ -208,7 +215,7 @@ pub(in crate::collections_alpha) async fn account_response_for_reference(
 }
 
 pub(in crate::collections_alpha) async fn remote_account_response_for_actor_uri(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
     Ok(find_remote_actor_by_actor_uri(db, actor_uri)
@@ -217,7 +224,7 @@ pub(in crate::collections_alpha) async fn remote_account_response_for_actor_uri(
 }
 
 async fn collection_item_visible_to_viewer(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     item: &CollectionItemRow,
     viewer: Option<&cfwdon_domain::LocalAccount>,
@@ -234,7 +241,7 @@ async fn collection_item_visible_to_viewer(
 }
 
 pub(in crate::collections_alpha) async fn collection_with_accounts_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     row: &CollectionRow,
@@ -280,7 +287,7 @@ pub(in crate::collections_alpha) async fn collection_with_accounts_document(
 }
 
 async fn remote_collection_item_visible_to_viewer(
-    db: &crate::D1Database,
+    db: &D1Database,
     item: &RemoteCollectionItemRow,
     viewer: Option<&cfwdon_domain::LocalAccount>,
 ) -> Result<bool> {
@@ -291,7 +298,7 @@ async fn remote_collection_item_visible_to_viewer(
 }
 
 pub(in crate::collections_alpha) async fn remote_collection_with_accounts_document(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &RemoteActorRow,
     row: &RemoteCollectionRow,
@@ -322,7 +329,7 @@ pub(in crate::collections_alpha) async fn remote_collection_with_accounts_docume
             continue;
         }
         if let Some(username) = local_username_from_actor_uri(config, &item.target_actor_uri)
-            && let Some(account) = crate::find_account_by_username(db, &username).await?
+            && let Some(account) = find_account_by_username(db, &username).await?
         {
             let stats = load_account_stats(db, account.id()).await?;
             accounts.push(MastodonAccountResponse::from_account_with_stats(

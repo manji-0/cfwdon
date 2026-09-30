@@ -1,4 +1,8 @@
-use super::{AppConfig, MastodonTagHistoryEntry, StatusRow, instance_base_url, instance_host};
+use super::AppConfig;
+use crate::instance::{instance_base_url, instance_host};
+use crate::responses::MastodonTagHistoryEntry;
+use crate::statuses::StatusRow;
+use crate::time_html::render_status_html;
 use cfwdon_domain::AccountHandle;
 use std::collections::HashSet;
 
@@ -158,7 +162,7 @@ pub(crate) fn strip_html_tags(html: &str) -> String {
 /// remote tags removes stored XSS while preserving readable text.
 pub(crate) fn sanitize_remote_status_html(html: &str) -> String {
     let plain = decode_basic_html_entities(&strip_html_tags(html));
-    crate::render_status_html(&plain)
+    render_status_html(&plain)
 }
 
 pub(crate) fn sanitize_remote_plain_text(value: &str) -> String {

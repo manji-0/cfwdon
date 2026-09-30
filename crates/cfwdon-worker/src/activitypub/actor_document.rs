@@ -1,7 +1,9 @@
-use super::{
-    AppConfig, LocalAccount, account_webfinger_acct, activitypub_datetime_string,
-    activitypub_profile_attachments, actor_url, media_object_url, public_key_id, shared_inbox_url,
-};
+use super::AppConfig;
+use crate::instance::{account_webfinger_acct, actor_url, public_key_id, shared_inbox_url};
+use crate::profile::activitypub_profile_attachments;
+use crate::responses::media_object_url;
+use crate::time_html::activitypub_datetime_string;
+use cfwdon_domain::LocalAccount;
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct ActivityPubActorResponse {

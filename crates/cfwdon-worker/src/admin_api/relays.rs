@@ -1,10 +1,13 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{
-    Response, Result, RouteContext, create_and_enable_federation_relay, delete_federation_relay,
-    disable_federation_relay, list_federation_relays,
+use crate::db_session::bind_request_d1;
+use crate::delivery::enqueue_outbox_process_queue_if_pending;
+use crate::relays::{
+    create_and_enable_federation_relay, delete_federation_relay, disable_federation_relay,
+    list_federation_relays,
 };
+use crate::runtime_config::load_config;
 use serde::Deserialize;
-use worker::Request;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Deserialize)]
 struct AdminRelayRequest {
@@ -20,8 +23,8 @@ pub(crate) async fn admin_relays_list_response(
         AdminAuthorization::Denied(response) => return Ok(response),
     }
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let relays = list_federation_relays(&db).await?;
     Response::from_json(&relays)
 }
@@ -44,10 +47,10 @@ pub(crate) async fn admin_relays_create_response(
         return Response::error("inbox_url is required", 422);
     };
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let relay = create_and_enable_federation_relay(&db, &config, &admin, inbox_url).await?;
-    let _ = crate::enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_follow").await;
+    let _ = enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_follow").await;
     Response::from_json(&relay)
 }
 
@@ -65,11 +68,10 @@ pub(crate) async fn admin_relays_disable_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing relay id route parameter".to_owned()))?;
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     if disable_federation_relay(&db, &config, relay_id).await? {
-        let _ =
-            crate::enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_unfollow").await;
+        let _ = enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_unfollow").await;
         Response::from_json(&serde_json::json!({ "disabled": true, "id": relay_id }))
     } else {
         Response::error("relay not found", 404)
@@ -90,10 +92,10 @@ pub(crate) async fn admin_relays_delete_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing relay id route parameter".to_owned()))?;
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     if delete_federation_relay(&db, &config, relay_id).await? {
-        let _ = crate::enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_delete").await;
+        let _ = enqueue_outbox_process_queue_if_pending(&ctx.env, &db, "relay_delete").await;
         Response::from_json(&serde_json::json!({ "deleted": true, "id": relay_id }))
     } else {
         Response::error("relay not found", 404)

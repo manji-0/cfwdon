@@ -1,8 +1,10 @@
-use crate::{
-    AppConfig, CACHE_TTL_STATIC_METADATA, Response, Result, RouteContext,
-    cache_public_json_response, cache_public_response, load_config, webfinger_lrdd_template,
+use crate::instance::webfinger_lrdd_template;
+use crate::responses::{
+    CACHE_TTL_STATIC_METADATA, cache_public_json_response, cache_public_response,
 };
-use worker::ResponseBody;
+use crate::runtime_config::{load_config, load_config_from_env};
+use cfwdon_core::AppConfig;
+use worker::{Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn host_meta_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -10,7 +12,7 @@ pub(crate) async fn host_meta_response(ctx: RouteContext<()>) -> Result<Response
 }
 
 pub(crate) fn host_meta_response_from_env(env: &worker::Env) -> Result<Response> {
-    let config = crate::load_config_from_env(env);
+    let config = load_config_from_env(env);
     host_meta_response_for_config(&config)
 }
 
@@ -20,7 +22,7 @@ pub(crate) async fn host_meta_json_response(ctx: RouteContext<()>) -> Result<Res
 }
 
 pub(crate) fn host_meta_json_response_from_env(env: &worker::Env) -> Result<Response> {
-    let config = crate::load_config_from_env(env);
+    let config = load_config_from_env(env);
     host_meta_json_response_for_config(&config)
 }
 
@@ -73,6 +75,7 @@ fn escape_xml_attr(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instance::webfinger_lrdd_template;
 
     #[test]
     fn host_meta_body_includes_webfinger_lrdd_template() {
@@ -82,7 +85,7 @@ mod tests {
              <XRD xmlns=\"http://docs.oasis-open.org/ns/xri/xrd-1.0\">\n\
                <Link rel=\"lrdd\" template=\"{}\"/>\n\
              </XRD>\n",
-            escape_xml_attr(&crate::webfinger_lrdd_template(&config))
+            escape_xml_attr(&webfinger_lrdd_template(&config))
         );
         assert!(
             body.contains("template=\"https://example.com/.well-known/webfinger?resource={uri}\"")
@@ -105,7 +108,7 @@ mod tests {
         );
         assert_eq!(
             document["links"][0]["template"],
-            crate::webfinger_lrdd_template(&config)
+            webfinger_lrdd_template(&config)
         );
     }
 

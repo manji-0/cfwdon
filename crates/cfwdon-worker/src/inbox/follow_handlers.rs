@@ -1,14 +1,19 @@
-use super::{
-    AppConfig, LocalAccount, RemoteActorProfile, Result, actor_url, build_accept_activity,
-    delete_remote_follow_request_by_actor, follow_targets_local_actor,
-    handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject, now_iso_string,
-    publish_remote_actor_notification_soft, queue_remote_actor_activity_required,
-    update_follow_state_from_response, upsert_follower, upsert_remote_follow_request,
+use super::upsert_follower;
+use crate::activitypub::{build_accept_activity, follow_targets_local_actor};
+use crate::collections_alpha::{
+    handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject,
 };
-use cfwdon_domain::FollowInboxResponse;
-use worker::Env;
-
-use crate::D1Database;
+use crate::delivery::queue_remote_actor_activity_required;
+use crate::federation::RemoteActorProfile;
+use crate::follow_requests::{delete_remote_follow_request_by_actor, upsert_remote_follow_request};
+use crate::instance::actor_url;
+use crate::notifications::publish_remote_actor_notification_soft;
+use crate::relationship::update_follow_state_from_response;
+use crate::time_html::now_iso_string;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{FollowInboxResponse, LocalAccount};
+use worker::{Env, Result};
 pub(crate) async fn handle_inbox_follow(
     db: &D1Database,
     config: &AppConfig,

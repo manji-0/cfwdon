@@ -1,7 +1,6 @@
-use super::{Error, Result};
 use js_sys::Reflect;
-use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
+use worker::{Error, Result};
 
 pub(crate) fn generate_entity_id(byte_len: usize) -> Result<String> {
     let crypto = Reflect::get(&js_sys::global(), &JsValue::from_str("crypto"))?

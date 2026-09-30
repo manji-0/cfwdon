@@ -1,11 +1,13 @@
-use crate::{
-    CreatePublishedStatusInput, Request, Response, Result, RouteContext,
-    auth0_login_redirect_response, config_with_resolved_custom_emojis,
-    create_published_status_and_response, escape_html, find_authenticated_local_account,
-    invalidate_account_dynamic_public_cache, load_config, sanitize_status_draft,
-};
+use crate::auth::find_authenticated_local_account;
+use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_status_draft};
+use crate::db_session::bind_request_d1;
+use crate::oauth_apps::auth0_login_redirect_response;
+use crate::responses::invalidate_account_dynamic_public_cache;
+use crate::runtime_config::load_config;
+use crate::statuses::{CreatePublishedStatusInput, create_published_status_and_response};
+use crate::time_html::escape_html;
 use cfwdon_domain::{ComposingStatus, Visibility};
-use worker::ResponseBody;
+use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct ShareQuery {
@@ -22,7 +24,7 @@ struct ShareForm {
 pub(crate) async fn share_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: ShareQuery = req.query().unwrap_or_default();
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(_account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return share_login_redirect(&config, &req);
     };
@@ -39,7 +41,7 @@ pub(crate) async fn share_submit_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
     let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
         return share_login_redirect(&config, &req);

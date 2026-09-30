@@ -6,13 +6,17 @@ use super::{
     issue_oauth_authorization_code, load_account_password_hash, oauth_authorize_url_from_form,
     redirect_response, request_cookie_value, verify_account_password_hash,
 };
-use crate::auth::{find_account_by_email, find_account_by_username};
+use crate::auth::{
+    extract_authenticated_user, find_account_by_email, find_account_by_username,
+    find_authenticated_local_account,
+};
+use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
+use crate::instance::instance_base_url;
 use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use url::Url;
 use worker::{Request, Response, Result, RouteContext};
-
-use crate::D1Database;
 
 #[derive(Debug, Default)]
 struct OAuthAuthorizeLoginRequest {
@@ -217,7 +221,7 @@ pub(in crate::oauth_apps) fn access_authenticated_without_account_response(
         .unwrap_or_default();
     Ok(Response::from_json(&serde_json::json!({
         "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
-        "registration_url": format!("{}/auth/sign_up", crate::instance_base_url(config)),
+        "registration_url": format!("{}/auth/sign_up", instance_base_url(config)),
         "logout_url": logout_url,
     }))?
     .with_status(403))
@@ -585,7 +589,7 @@ pub(crate) async fn oauth_authorize_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     if req.method().as_ref() == "POST" {
         let login = match parse_oauth_authorize_login_request(&mut req).await {
             Ok(login) => login,
@@ -599,7 +603,7 @@ pub(crate) async fn oauth_authorize_response(
         if auth0_login_configured(&config) {
             let base_url = req.url()?;
             let authenticated_account =
-                crate::find_authenticated_local_account(&req, &db, &config).await?;
+                find_authenticated_local_account(&req, &db, &config).await?;
             let password_account =
                 authorize_account_by_password(&db, login.username, login.password).await?;
             let csrf_valid = oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())?;
@@ -629,8 +633,7 @@ pub(crate) async fn oauth_authorize_response(
         if !oauth_authorize_csrf_matches(&req, login.csrf_token.as_deref())? {
             return Response::error("Invalid OAuth authorization CSRF token.", 403);
         }
-        let authenticated_account =
-            crate::find_authenticated_local_account(&req, &db, &config).await?;
+        let authenticated_account = find_authenticated_local_account(&req, &db, &config).await?;
         let account = if login.approve {
             authenticated_account
         } else {
@@ -652,13 +655,11 @@ pub(crate) async fn oauth_authorize_response(
         Ok(value) => value,
         Err(failure) => return oauth_authorize_failure_response(failure),
     };
-    let authenticated_account = crate::find_authenticated_local_account(&req, &db, &config).await?;
+    let authenticated_account = find_authenticated_local_account(&req, &db, &config).await?;
     if auth0_login_configured(&config) {
         let action = access_authorize_get_action(
             authenticated_account.is_some(),
-            crate::extract_authenticated_user(&req, &config)
-                .await?
-                .is_some(),
+            extract_authenticated_user(&req, &config).await?.is_some(),
         );
         return match action {
             Auth0AuthorizeGetAction::RedirectToLogin => {

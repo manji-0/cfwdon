@@ -6,13 +6,12 @@
 //! `D1Database` prepare/batch surface used throughout the worker. Do not call `dump`, `exec`,
 //! or `with_session` on handles returned by [`D1RequestSession::db_handle`].
 
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use worker::{
     D1Database as InnerD1Database, D1DatabaseSession, Method, Request, Response, Result,
     RouteContext,
 };
-
-use crate::D1Database;
 
 /// Bookmark header used by Cloudflare's D1 Sessions examples and client continuations. used by Cloudflare's D1 Sessions examples and client continuations.
 pub(crate) const D1_BOOKMARK_HEADER: &str = "x-d1-bookmark";

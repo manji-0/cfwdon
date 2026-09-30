@@ -3,7 +3,7 @@ use super::{
     oauth_app_redirect_uris, oauth_app_scopes, redirect_uri_matches_registered,
     requested_oauth_token_scopes,
 };
-use crate::D1Database;
+use crate::tracked_d1::D1Database;
 
 pub(super) fn code_challenge_method_is_supported(method: Option<&str>) -> bool {
     matches!(method, Some("S256"))

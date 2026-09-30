@@ -1,9 +1,8 @@
-use crate::db_utils::count_rows;
+use crate::db_utils::{count_rows, d1_results};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct StatusPollRow {
     pub(crate) id: String,
@@ -80,7 +79,7 @@ pub(crate) async fn list_status_poll_options(
         .all()
         .await?;
 
-    crate::d1_results::<StatusPollOptionRow>(&result)
+    d1_results::<StatusPollOptionRow>(&result)
 }
 
 pub(crate) async fn list_poll_vote_positions_for_account(
@@ -101,7 +100,7 @@ pub(crate) async fn list_poll_vote_positions_for_account(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value

@@ -1,7 +1,9 @@
-use crate::{
-    add_log_message, bind_d1_request_route, d1_request_route, log_json_event,
-    observability_duration_ms, observability_started_at_ms, publish_d1_request_pressure,
+use crate::d1_metrics::{
+    bind_d1_request_route, d1_request_route, publish_d1_request_pressure,
     snapshot_d1_request_metrics,
+};
+use crate::observability::{
+    add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
 };
 use worker::{Env, Request, Response, Result};
 

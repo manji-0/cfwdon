@@ -1,6 +1,20 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::accounts::find_accounts_by_ids;
+use crate::app_cache::install_app_cache;
+use crate::auth::{ensure_account_keys, extract_authenticated_user};
+use crate::d1_metrics::{bind_d1_request_route, reset_d1_request_metrics};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::unique_ordered_refs;
+use crate::domain_blocks::{
+    filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
+};
+use crate::federation::install_remote_dns_cache;
+use crate::observability::log_federation_event;
+use crate::relays::{list_enabled_relay_inbox_urls, outbox_payload_is_public_relay_candidate};
+use crate::runtime_config::{load_config, load_config_from_env};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
+use worker::{Env, Request, Response, Result, RouteContext};
 
 mod outbound;
 mod outbound_state;
@@ -59,7 +73,7 @@ pub(crate) async fn process_outbox_deliveries(
         None => return Response::error("Auth0 authentication required", 401),
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     if !pending_outbox_work_exists(&db).await? {
         return Response::from_json(&OutboxProcessKickResponse {
             status: "idle",
@@ -115,7 +129,7 @@ pub(crate) async fn kick_outbox_process_queue_after_request(
         return;
     }
     let db = match env.d1(&config.database_binding) {
-        Ok(db) => crate::D1Database::new(db),
+        Ok(db) => D1Database::new(db),
         Err(error) => {
             log_federation_event(
                 "outbox_queue_kick_skipped",

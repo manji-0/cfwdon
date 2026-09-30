@@ -3,8 +3,7 @@ use super::languages::{
     translation_provider_request_target_language,
 };
 use super::provider::TranslationProviderConfig;
-use crate::statuses::{Request, Result};
-use worker::{Fetch, Headers, Method, RequestInit};
+use worker::{Fetch, Headers, Method, Request, RequestInit, Result};
 
 pub(crate) fn build_libretranslate_request_payload(
     text: &str,
@@ -145,4 +144,81 @@ pub(super) async fn translate_text_with_deepl(
     parse_deepl_translated_text(&value).ok_or_else(|| {
         worker::Error::RustError("translation provider response missing translations".to_owned())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn libretranslate_request_payload_matches_provider_shape() {
+        let payload = build_libretranslate_request_payload(
+            "<p>Hello</p>",
+            "en-US",
+            "ja-JP",
+            "html",
+            Some("secret"),
+        );
+
+        assert_eq!(
+            payload.pointer("/q"),
+            Some(&serde_json::json!("<p>Hello</p>"))
+        );
+        assert_eq!(payload.pointer("/source"), Some(&serde_json::json!("en")));
+        assert_eq!(payload.pointer("/target"), Some(&serde_json::json!("ja")));
+        assert_eq!(payload.pointer("/format"), Some(&serde_json::json!("html")));
+        assert_eq!(
+            payload.pointer("/api_key"),
+            Some(&serde_json::json!("secret"))
+        );
+    }
+
+    #[test]
+    fn libretranslate_response_extracts_translated_text() {
+        assert_eq!(
+            parse_libretranslate_translated_text(&serde_json::json!({
+                "translatedText": "<p>Hola</p>"
+            })),
+            Some("<p>Hola</p>".to_owned())
+        );
+        assert_eq!(
+            parse_libretranslate_translated_text(&serde_json::json!({ "error": "missing" })),
+            None
+        );
+    }
+
+    #[test]
+    fn deepl_request_body_uses_uppercase_language_codes() {
+        let body = build_deepl_request_body("<p>Hello</p>", "en-US", "ja-JP");
+
+        assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
+        assert!(body.contains("source_lang=EN-US"));
+        assert!(body.contains("target_lang=ja-JP"));
+        assert!(body.contains("tag_handling=html"));
+    }
+
+    #[test]
+    fn deepl_request_body_omits_unknown_source_language() {
+        let body = build_deepl_request_body("<p>Hello</p>", "und", "ja");
+
+        assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
+        assert!(!body.contains("source_lang="));
+        assert!(body.contains("target_lang=ja"));
+    }
+
+    #[test]
+    fn deepl_response_extracts_translated_text() {
+        assert_eq!(
+            parse_deepl_translated_text(&serde_json::json!({
+                "translations": [
+                    { "text": "<p>Hola</p>" }
+                ]
+            })),
+            Some("<p>Hola</p>".to_owned())
+        );
+        assert_eq!(
+            parse_deepl_translated_text(&serde_json::json!({ "translations": [] })),
+            None
+        );
+    }
 }

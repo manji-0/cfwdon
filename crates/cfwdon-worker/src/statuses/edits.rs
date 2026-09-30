@@ -1,4 +1,8 @@
-use super::{D1Database, Result, generate_entity_id};
+use super::D1Database;
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::statuses::normalize_status_history_entry;
+use worker::Result;
 use worker::d1::D1Type;
 
 pub(crate) async fn insert_status_edit_snapshot(
@@ -49,7 +53,7 @@ pub(crate) async fn list_status_edit_snapshots(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value
@@ -58,7 +62,7 @@ pub(crate) async fn list_status_edit_snapshots(
                 .map(str::to_owned)
         })
         .filter_map(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
-        .map(crate::normalize_status_history_entry)
+        .map(normalize_status_history_entry)
         .collect())
 }
 

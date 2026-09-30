@@ -1,9 +1,14 @@
-use crate::{
-    app_verify_credentials_response, auth0_callback_response, authorize_interaction_response,
-    authorize_interaction_submit_response, create_app_response,
-    oauth_authorization_server_response, oauth_authorize_response, oauth_revoke_response,
-    oauth_token_response, oauth_userinfo_response, share_response, share_submit_response,
+use crate::authorize_interaction::{
+    authorize_interaction_response, authorize_interaction_submit_response,
 };
+use crate::meta_placeholder_routes::{
+    app_verify_credentials_response, oauth_authorization_server_response, oauth_userinfo_response,
+};
+use crate::oauth_apps::{
+    auth0_callback_response, create_app_response, oauth_authorize_response, oauth_revoke_response,
+    oauth_token_response,
+};
+use crate::share::{share_response, share_submit_response};
 use worker::Router;
 
 pub(crate) fn add_oauth_routes(router: Router<'static, ()>) -> Router<'static, ()> {

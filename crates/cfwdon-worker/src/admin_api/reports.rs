@@ -1,10 +1,15 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{
-    ReportRow, Response, Result, RouteContext, list_report_status_ids, list_reports_filtered,
-    resolve_account_reference, resolve_report, timestamp_to_mastodon_iso8601,
+use crate::db_session::bind_request_d1;
+use crate::instance::remote_account_rest_id;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::reports::{
+    ReportRow, find_report_by_id, list_report_status_ids, list_reports_filtered, resolve_report,
 };
+use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
-use worker::Request;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 struct AdminReportsQuery {
@@ -43,8 +48,8 @@ pub(crate) async fn admin_reports_response(
 
     let query: AdminReportsQuery = req.query().unwrap_or_default();
     let pending_only = matches!(query.status.as_deref().map(str::trim), Some("pending"));
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let reports = list_reports_filtered(&db, 100, pending_only).await?;
     let mut responses = Vec::with_capacity(reports.len());
     for report in reports {
@@ -67,23 +72,21 @@ pub(crate) async fn admin_resolve_report_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing report id route parameter".to_owned()))?
         .to_owned();
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
 
     if !resolve_report(&db, &report_id, admin.id()).await? {
         return Response::error("report not found or already resolved", 404);
     }
 
-    let report = crate::find_report_by_id(&db, &report_id)
-        .await?
-        .ok_or_else(|| {
-            worker::Error::RustError("resolved report could not be loaded".to_owned())
-        })?;
+    let report = find_report_by_id(&db, &report_id).await?.ok_or_else(|| {
+        worker::Error::RustError("resolved report could not be loaded".to_owned())
+    })?;
     Response::from_json(&build_admin_report_response(&db, &report).await?)
 }
 
 pub(crate) async fn build_admin_report_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     report: &ReportRow,
 ) -> Result<AdminReportResponse> {
     let target = match resolve_account_reference(db, &report.target_account_id).await? {
@@ -96,14 +99,14 @@ pub(crate) async fn build_admin_report_response(
     };
 
     let (id, username, display_name, acct) = match target {
-        crate::AccountReference::Local(account) => (
+        AccountReference::Local(account) => (
             account.id().to_owned(),
             account.username().to_owned(),
             account.display_name().to_owned(),
             account.acct().to_owned(),
         ),
-        crate::AccountReference::Remote(actor) => (
-            crate::remote_account_rest_id(&actor.actor_uri),
+        AccountReference::Remote(actor) => (
+            remote_account_rest_id(&actor.actor_uri),
             actor.username.clone(),
             actor.display_name.clone(),
             format!("{}@{}", actor.username, actor.domain),

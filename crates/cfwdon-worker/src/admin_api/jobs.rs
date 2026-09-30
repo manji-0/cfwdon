@@ -1,7 +1,10 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{Response, Result, RouteContext, reclaim_stale_background_jobs};
+use crate::background_jobs::{process_due_background_jobs, reclaim_stale_background_jobs};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::runtime_config::load_config;
 use serde::{Deserialize, Serialize};
-use worker::{Request, d1::D1Type};
+use worker::{Request, Response, Result, RouteContext, d1::D1Type};
 
 #[derive(Debug, Serialize)]
 struct AdminBackgroundJobResponse {
@@ -44,8 +47,8 @@ pub(crate) async fn admin_background_jobs_response(
     }
 
     let query: AdminJobsQuery = req.query().unwrap_or_default();
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let status_filter = query
         .status
         .as_deref()
@@ -78,7 +81,7 @@ pub(crate) async fn admin_background_jobs_response(
         db.prepare(sql).bind_refs(bindings.iter())?.all().await?
     };
 
-    let jobs = crate::d1_results::<AdminJobRow>(&result)?
+    let jobs = d1_results::<AdminJobRow>(&result)?
         .into_iter()
         .map(|row| AdminBackgroundJobResponse {
             id: row.id,
@@ -110,8 +113,8 @@ pub(crate) async fn admin_retry_background_job_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing job id route parameter".to_owned()))?;
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let bindings = [D1Type::Text(job_id)];
     let result = db
         .prepare(
@@ -150,10 +153,10 @@ pub(crate) async fn admin_reclaim_background_jobs_response(
         AdminAuthorization::Denied(response) => return Ok(response),
     }
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let report = reclaim_stale_background_jobs(&db, 100).await?;
-    let processed = crate::process_due_background_jobs(&db, &config, Some(&ctx.env), 32).await?;
+    let processed = process_due_background_jobs(&db, &config, Some(&ctx.env), 32).await?;
     Response::from_json(&AdminBackgroundJobReclaimResponse {
         requeued: report.requeued,
         failed: report.failed,

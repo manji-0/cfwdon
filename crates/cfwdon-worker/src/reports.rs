@@ -1,17 +1,17 @@
-#[allow(unused_imports)]
-pub(crate) use crate::*;
-
+use crate::tracked_d1::D1Database;
+use worker::{Request, Response, Result, RouteContext};
 mod request_parsing;
 mod store;
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::push::send_push_notification;
+use crate::remote::resolve_account_reference;
+use crate::responses::build_report_response;
+use crate::runtime_config::load_config;
 pub(crate) use request_parsing::*;
 pub(crate) use store::*;
 
 use self::store::{insert_report, list_reports};
-use super::{
-    D1Database, Request, Response, Result, RouteContext, build_report_response,
-    find_authenticated_local_account, load_config, resolve_account_reference,
-    send_push_notification,
-};
 use crate::auth::find_account_by_email;
 use serde::Deserialize;
 
@@ -34,7 +34,7 @@ pub(crate) struct ReportRow {
 
 pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let reporter = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

@@ -1,8 +1,8 @@
+use crate::db_utils::d1_results;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct EndorsedAccountEntryRow {
     pub(crate) cursor_id: i64,
@@ -132,7 +132,7 @@ pub(crate) async fn list_endorsed_accounts_for_owner(
         .all()
         .await?;
 
-    crate::d1_results::<EndorsedAccountEntryRow>(&result)
+    d1_results::<EndorsedAccountEntryRow>(&result)
 }
 
 async fn prune_account_social_metadata(

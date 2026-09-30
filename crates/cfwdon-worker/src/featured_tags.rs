@@ -1,3 +1,11 @@
+use crate::db_session::bind_request_d1;
+use crate::db_utils::{d1_results, sql_placeholders};
+use crate::responses::{
+    CACHE_TTL_FEDERATION, cache_public_response, timestamp_to_mastodon_iso8601_opt,
+};
+use crate::statuses::list_pinned_statuses_for_account;
+use crate::tags::normalize_hashtag;
+use crate::tracked_d1::D1Database;
 use std::collections::{HashMap, HashSet};
 
 use crate::auth::find_account_by_username;
@@ -5,7 +13,6 @@ use crate::instance::{actor_url, instance_base_url};
 use crate::profile::require_authenticated_local_account;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::runtime_config::load_config;
-use crate::{CACHE_TTL_FEDERATION, cache_public_response, normalize_hashtag, sql_placeholders};
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -38,7 +45,7 @@ fn featured_tag_profile_url(config: &cfwdon_core::AppConfig, username: &str, tag
     )
 }
 
-async fn count_featured_tags(db: &crate::D1Database, account_id: &str) -> Result<u64> {
+async fn count_featured_tags(db: &D1Database, account_id: &str) -> Result<u64> {
     let account_id = D1Type::Text(account_id);
     let row = db
         .prepare(
@@ -56,11 +63,7 @@ async fn count_featured_tags(db: &crate::D1Database, account_id: &str) -> Result
         .unwrap_or(0))
 }
 
-async fn is_featured_tag_present(
-    db: &crate::D1Database,
-    account_id: &str,
-    tag: &str,
-) -> Result<bool> {
+async fn is_featured_tag_present(db: &D1Database, account_id: &str, tag: &str) -> Result<bool> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
     Ok(db
         .prepare(
@@ -77,7 +80,7 @@ async fn is_featured_tag_present(
 }
 
 async fn list_featured_tags_for_account(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
 ) -> Result<Vec<FeaturedTagRow>> {
     let account_id = D1Type::Text(account_id);
@@ -91,11 +94,11 @@ async fn list_featured_tags_for_account(
         .bind_refs(&account_id)?
         .all()
         .await?;
-    crate::d1_results::<FeaturedTagRow>(&result)
+    d1_results::<FeaturedTagRow>(&result)
 }
 
 async fn featured_tag_metrics(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     tag: &str,
 ) -> Result<FeaturedTagStatusMetricsRow> {
@@ -114,7 +117,7 @@ async fn featured_tag_metrics(
 }
 
 async fn featured_tag_metrics_by_tag(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     tags: &[String],
 ) -> Result<HashMap<String, FeaturedTagStatusMetricsRow>> {
@@ -132,7 +135,7 @@ async fn featured_tag_metrics_by_tag(
     bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<FeaturedTagStatusMetricsRow>(&result)?
+    Ok(d1_results::<FeaturedTagStatusMetricsRow>(&result)?
         .into_iter()
         .map(|row| (row.tag_name.clone(), row))
         .collect())
@@ -172,7 +175,7 @@ fn featured_tag_api_document(
         "name": normalized,
         "url": featured_tag_profile_url(config, username, tag),
         "statuses_count": statuses_count,
-        "last_status_at": crate::timestamp_to_mastodon_iso8601_opt(last_status_at.as_deref()),
+        "last_status_at": timestamp_to_mastodon_iso8601_opt(last_status_at.as_deref()),
     })
 }
 
@@ -225,7 +228,7 @@ pub(crate) fn build_featured_collection_document(
     })
 }
 
-async fn insert_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str) -> Result<()> {
+async fn insert_featured_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<()> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(tag)];
     db.prepare(
         "INSERT INTO featured_tags (account_id, tag_name)
@@ -238,7 +241,7 @@ async fn insert_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str
     Ok(())
 }
 
-async fn delete_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str) -> Result<bool> {
+async fn delete_featured_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<bool> {
     if !is_featured_tag_present(db, account_id, tag).await? {
         return Ok(false);
     }
@@ -254,10 +257,7 @@ async fn delete_featured_tag(db: &crate::D1Database, account_id: &str, tag: &str
     Ok(true)
 }
 
-async fn suggested_featured_tag_names(
-    db: &crate::D1Database,
-    account_id: &str,
-) -> Result<Vec<String>> {
+async fn suggested_featured_tag_names(db: &D1Database, account_id: &str) -> Result<Vec<String>> {
     let featured = list_featured_tags_for_account(db, account_id)
         .await?
         .into_iter()
@@ -271,7 +271,7 @@ async fn suggested_featured_tag_names(
     bindings.push(D1Type::Integer(MAX_FEATURED_TAGS as i32));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<SuggestedFeaturedTagRow>(&result)?
+    Ok(d1_results::<SuggestedFeaturedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag_name)
         .collect())
@@ -335,7 +335,7 @@ pub(crate) async fn featured_tags_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -378,7 +378,7 @@ pub(crate) async fn account_featured_tags_response(ctx: RouteContext<()>) -> Res
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
 
     match resolve_account_reference(&db, &account_id).await? {
         Some(AccountReference::Local(account)) => {
@@ -418,7 +418,7 @@ pub(crate) async fn featured_tag_suggestions_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -440,7 +440,7 @@ pub(crate) async fn feature_tag_response(
     let tag = parse_feature_tag_request(req)
         .await
         .map_err(worker::Error::RustError)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -473,7 +473,7 @@ pub(crate) async fn unfeature_tag_response(
         .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing featured tag id".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -493,7 +493,7 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
@@ -520,11 +520,11 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing username route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
-    let pinned_status_uris = crate::list_pinned_statuses_for_account(&db, account.id())
+    let pinned_status_uris = list_pinned_statuses_for_account(&db, account.id())
         .await?
         .into_iter()
         .filter_map(|status| status.ap_id)

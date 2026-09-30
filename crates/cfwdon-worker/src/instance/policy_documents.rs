@@ -1,4 +1,4 @@
-use crate::render_status_html;
+use crate::time_html::render_status_html;
 
 pub(crate) fn configured_html_document(
     content: Option<&str>,

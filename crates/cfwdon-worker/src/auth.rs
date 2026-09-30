@@ -1,12 +1,9 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::observability::log_federation_event;
+use crate::tracked_d1::D1Database;
 
 mod account_store;
 mod jwt;
-#[allow(unused_imports)]
 pub(crate) use account_store::*;
-#[allow(unused_imports)]
 pub(crate) use jwt::*;
 
 pub(crate) use self::account_store::find_account_by_email;

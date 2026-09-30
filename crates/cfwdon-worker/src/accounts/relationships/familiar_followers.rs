@@ -1,12 +1,18 @@
 use super::query::parse_relationship_query_ids;
-use crate::AccountReference;
-use crate::{
-    LocalAccount, MastodonAccountResponse, RemoteActorRow, Request, Response, Result, RouteContext,
-    build_local_account_response, find_authenticated_local_account,
+use crate::accounts::build_local_account_response;
+use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::relationship::{
     list_familiar_local_accounts_for_local_target, list_familiar_local_accounts_for_remote_target,
-    list_familiar_remote_actors_for_local_target, load_config, resolve_account_reference,
+    list_familiar_remote_actors_for_local_target,
 };
+use crate::remote::{AccountReference, RemoteActorRow, resolve_account_reference};
+use crate::responses::MastodonAccountResponse;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalAccount;
 use std::collections::HashSet;
+use worker::{Request, Response, Result, RouteContext};
 
 const FAMILIAR_FOLLOWERS_LIMIT: usize = 3;
 
@@ -31,7 +37,7 @@ fn push_unique_familiar_account(
 }
 
 async fn append_familiar_local_accounts(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     accounts: &mut Vec<MastodonAccountResponse>,
     seen_ids: &mut HashSet<String>,
@@ -72,7 +78,7 @@ pub(crate) async fn familiar_followers_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

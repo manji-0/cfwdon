@@ -1,7 +1,7 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{Response, Result, RouteContext, load_config};
+use crate::runtime_config::load_config;
 use serde::Serialize;
-use worker::Request;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminSessionResponse {

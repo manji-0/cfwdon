@@ -2,7 +2,11 @@ use super::{
     block_local_account, block_remote_account, mute_local_account, mute_remote_account,
     unblock_local_account, unblock_remote_account, unmute_local_account, unmute_remote_account,
 };
-use crate::{AccountReference, AppConfig, D1Database, LocalAccount, resolve_account_reference};
+use crate::relationships::RelationshipResponse;
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use worker::Error;
 
 pub(crate) enum FilterActionError {
@@ -22,7 +26,7 @@ pub(crate) async fn block_account_usecase(
     config: &AppConfig,
     blocker: &LocalAccount,
     target_account_id: &str,
-) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
+) -> std::result::Result<RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             if blocker.id() == target.id() {
@@ -44,7 +48,7 @@ pub(crate) async fn unblock_account_usecase(
     config: &AppConfig,
     blocker: &LocalAccount,
     target_account_id: &str,
-) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
+) -> std::result::Result<RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             unblock_local_account(db, config, blocker, &target)
@@ -67,7 +71,7 @@ pub(crate) async fn mute_account_usecase(
     target_account_id: &str,
     notifications: bool,
     expires_at: Option<&str>,
-) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
+) -> std::result::Result<RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => {
             if muter.id() == target.id() {
@@ -91,7 +95,7 @@ pub(crate) async fn unmute_account_usecase(
     config: &AppConfig,
     muter: &LocalAccount,
     target_account_id: &str,
-) -> std::result::Result<crate::RelationshipResponse, FilterActionError> {
+) -> std::result::Result<RelationshipResponse, FilterActionError> {
     match resolve_account_reference(db, target_account_id).await? {
         Some(AccountReference::Local(target)) => unmute_local_account(db, config, muter, &target)
             .await

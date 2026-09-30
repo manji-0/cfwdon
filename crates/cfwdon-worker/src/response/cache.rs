@@ -3,11 +3,12 @@
 //! Call sites already gate caching to viewer-independent documents. These
 //! helpers store/load/delete by absolute URL keys in `caches.default`.
 //! Invalidation uses `cache.delete` (Cache-Tag purge is Enterprise-only).
-
-use crate::{
-    CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API, instance_base_url,
-    load_config,
+use crate::instance::instance_base_url;
+use crate::responses::{
+    CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API, MastodonAccountResponse,
+    MastodonStatusResponse,
 };
+use crate::runtime_config::load_config;
 use worker::{Cache, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn cached_account_api_response(
@@ -21,7 +22,7 @@ pub(crate) async fn cached_account_api_response(
 pub(crate) async fn cache_account_api_response(
     ctx: &RouteContext<()>,
     account_id: &str,
-    value: &crate::MastodonAccountResponse,
+    value: &MastodonAccountResponse,
 ) -> Result<()> {
     let config = load_config(ctx);
     let username = value.username.as_str();
@@ -93,7 +94,7 @@ pub(crate) async fn cached_status_api_response(
 pub(crate) async fn cache_status_api_response(
     ctx: &RouteContext<()>,
     status_id: &str,
-    value: &crate::MastodonStatusResponse,
+    value: &MastodonStatusResponse,
 ) -> Result<()> {
     let config = load_config(ctx);
     cache_put_json(

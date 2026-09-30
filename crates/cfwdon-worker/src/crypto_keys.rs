@@ -1,8 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::CryptoKey;
 use worker::{Error, Result};

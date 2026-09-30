@@ -1,8 +1,7 @@
-use crate::RemoteActorProfile;
+use crate::federation::RemoteActorProfile;
+use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 fn json_boolish(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(|field| {

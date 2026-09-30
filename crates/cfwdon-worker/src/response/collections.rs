@@ -1,4 +1,4 @@
-use crate::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
 use serde::Serialize;
 
 pub(crate) const UNAUTH_CONTEXT_ANCESTOR_LIMIT: usize = 40;

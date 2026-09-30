@@ -8,6 +8,7 @@ use super::collections::{
 use super::query::parse_relationship_query_ids;
 use super::resolution::resolve_requested_account_reference;
 use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
 use crate::instance::{actor_url, remote_account_rest_id};
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{AccountReference, resolve_account_reference};
@@ -22,7 +23,7 @@ enum AccountFollowCollectionKind {
 
 pub(crate) async fn account_relationships(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -86,7 +87,7 @@ async fn account_follow_collection_response(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| worker::Error::RustError("missing account id route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let entries = match resolve_requested_account_reference(&db, &config, &account_id).await? {
@@ -149,7 +150,7 @@ pub(crate) async fn identity_proofs_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())

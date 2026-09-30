@@ -1,13 +1,14 @@
 use super::activitypub::{ACTIVITYPUB_CONTENT_TYPE, static_head_response};
-use crate::{
+use crate::meta_placeholder_routes::statuses_index_placeholder_response;
+use crate::statuses::{
     approve_quote_response, bookmark_status, create_status, delete_status, favourite_status,
     mute_status_response, pin_status_response, reblog_status, reject_quote_response,
     revoke_quote_response, status_api_response, status_card_response, status_context_response,
     status_favourited_by_response, status_history_response, status_interaction_policy_response,
     status_object_response, status_quote_authorization_object_response, status_quotes_response,
-    status_reblogged_by_response, status_source_response, statuses_index_placeholder_response,
-    translate_status_response, unbookmark_status, unfavourite_status, unmute_status_response,
-    unpin_status_response, unreblog_status, update_status,
+    status_reblogged_by_response, status_source_response, translate_status_response,
+    unbookmark_status, unfavourite_status, unmute_status_response, unpin_status_response,
+    unreblog_status, update_status,
 };
 use worker::Router;
 

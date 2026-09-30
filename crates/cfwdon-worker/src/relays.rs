@@ -1,12 +1,20 @@
-use crate::{
-    AppConfig, D1Database, Error, LocalAccount, RemoteActorProfile, Result, actor_url,
-    build_relay_follow_activity, build_relay_undo_follow_activity,
-    delivery_inbox_blocked_by_domains, enqueue_targeted_outbox_activity, ensure_account_keys,
-    generate_entity_id, list_instance_domain_block_domains, parse_remote_http_url,
+use crate::activitypub::{
+    build_relay_follow_activity, build_relay_undo_follow_activity, note_targets_public,
 };
+use crate::auth::{ensure_account_keys, find_account_by_id};
+use crate::db_utils::d1_results;
+use crate::delivery::enqueue_targeted_outbox_activity;
+use crate::domain_blocks::{delivery_inbox_blocked_by_domains, list_instance_domain_block_domains};
+use crate::federation::{RemoteActorProfile, parse_remote_http_url};
+use crate::id_utils::generate_entity_id;
+use crate::instance::actor_url;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use worker::d1::D1Type;
+use worker::{Error, Result};
 
 pub(crate) const RELAY_STATE_IDLE: &str = "idle";
 pub(crate) const RELAY_STATE_PENDING: &str = "pending";
@@ -72,7 +80,7 @@ pub(crate) async fn list_federation_relays(db: &D1Database) -> Result<Vec<Federa
         )
         .all()
         .await?;
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(relay_row_from_value)
         .collect())
@@ -106,7 +114,7 @@ pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec
         .bind_refs(&[D1Type::Text(RELAY_STATE_ACCEPTED)])?
         .all()
         .await?;
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|row| {
             row.get("inbox_url")
@@ -134,7 +142,7 @@ pub(crate) async fn relay_delivery_is_enabled(
         .bind_refs(&[D1Type::Text(RELAY_STATE_ACCEPTED)])?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?;
+        .and_then(|__d1| d1_results::<serde_json::Value>(&__d1))?;
     for row in rows {
         if row
             .get("actor_uri")
@@ -211,7 +219,7 @@ pub(crate) async fn disable_federation_relay(
     if relay.state == RELAY_STATE_IDLE {
         return Ok(true);
     }
-    let Some(account) = crate::find_account_by_id(db, &relay.signing_account_id).await? else {
+    let Some(account) = find_account_by_id(db, &relay.signing_account_id).await? else {
         return Err(Error::RustError(
             "relay signing account is missing".to_owned(),
         ));
@@ -421,9 +429,7 @@ pub(crate) fn outbox_payload_is_public_relay_candidate(payload_json: &str) -> bo
     if activity_type == "Delete" {
         return true;
     }
-    payload
-        .get("object")
-        .is_some_and(crate::note_targets_public)
+    payload.get("object").is_some_and(note_targets_public)
 }
 
 #[cfg(test)]

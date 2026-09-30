@@ -1,11 +1,16 @@
-use super::{
-    CACHE_TTL_TRENDS, Request, Response, Result, RouteContext, TrendsQuery,
-    build_status_card_value, cache_public_response, canonicalize_link_timeline_url, load_config,
-    now_unix_timestamp,
-};
+use super::TrendsQuery;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::responses::{CACHE_TTL_TRENDS, cache_public_response};
+use crate::runtime_config::load_config;
+use crate::statuses::build_status_card_value;
+use crate::time_html::now_unix_timestamp;
+use crate::timelines::canonicalize_link_timeline_url;
+use crate::tracked_d1::D1Database;
 use std::collections::{HashMap, HashSet};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::d1::D1Type;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, serde::Deserialize)]
 struct TrendingLocalLinkRow {
@@ -44,7 +49,7 @@ pub(crate) async fn trending_links_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     cache_public_response(
         Response::from_json(
             &list_trending_link_documents(
@@ -58,7 +63,7 @@ pub(crate) async fn trending_links_response(
     )
 }
 pub(crate) async fn trending_link_target_is_known(
-    db: &crate::D1Database,
+    db: &D1Database,
     target_urls: &[String],
 ) -> Result<bool> {
     let known = list_trending_link_entries(db).await?;
@@ -70,7 +75,7 @@ pub(crate) async fn trending_link_target_is_known(
 }
 
 async fn list_trending_link_documents(
-    db: &crate::D1Database,
+    db: &D1Database,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<serde_json::Value>> {
@@ -83,7 +88,7 @@ async fn list_trending_link_documents(
         .collect())
 }
 
-async fn list_trending_link_entries(db: &crate::D1Database) -> Result<Vec<TrendingLinkEntry>> {
+async fn list_trending_link_entries(db: &D1Database) -> Result<Vec<TrendingLinkEntry>> {
     // Prefer js_sys::Date via now_unix_timestamp — std SystemTime panics on wasm32.
     let now_ts = now_unix_timestamp();
     let now = OffsetDateTime::from_unix_timestamp(now_ts).map_err(|error| {
@@ -117,7 +122,7 @@ async fn list_trending_link_entries(db: &crate::D1Database) -> Result<Vec<Trendi
 }
 
 async fn list_trending_local_link_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     cutoff: &str,
 ) -> Result<Vec<TrendingLocalLinkRow>> {
     let bindings = [D1Type::Text(cutoff)];
@@ -132,11 +137,11 @@ async fn list_trending_local_link_rows(
     .bind_refs(&bindings)?
     .all()
     .await
-    .and_then(|__d1| crate::d1_results::<TrendingLocalLinkRow>(&__d1))
+    .and_then(|__d1| d1_results::<TrendingLocalLinkRow>(&__d1))
 }
 
 async fn list_trending_remote_link_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     cutoff: &str,
 ) -> Result<Vec<TrendingRemoteLinkRow>> {
     let bindings = [D1Type::Text(cutoff)];
@@ -151,7 +156,7 @@ async fn list_trending_remote_link_rows(
     .bind_refs(&bindings)?
     .all()
     .await
-    .and_then(|__d1| crate::d1_results::<TrendingRemoteLinkRow>(&__d1))
+    .and_then(|__d1| d1_results::<TrendingRemoteLinkRow>(&__d1))
 }
 
 fn build_trending_link_candidate(

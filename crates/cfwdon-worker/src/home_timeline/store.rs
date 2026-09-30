@@ -1,9 +1,10 @@
-use super::{
-    D1Database, HomeTimelineCandidateSource, ResolvedTimelineCursor, Result,
-    home_timeline_candidate_query,
-};
+use super::{HomeTimelineCandidateSource, home_timeline_candidate_query};
+use crate::db_utils::d1_results;
+use crate::timelines::ResolvedTimelineCursor;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::HashSet;
+use worker::Result;
 
 pub(crate) const HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL: &str = "local";
 pub(crate) const HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE: &str = "remote";
@@ -70,7 +71,7 @@ async fn list_home_timeline_candidate_ids_for_source(
         .bind_refs(query.bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<HomeTimelineCandidateRow>(&result)
+    d1_results::<HomeTimelineCandidateRow>(&result)
 }
 
 pub(super) fn merge_home_timeline_candidate_rows(

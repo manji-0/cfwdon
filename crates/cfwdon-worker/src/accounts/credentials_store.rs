@@ -3,14 +3,15 @@ use crate::delivery::enqueue_profile_update_activities;
 use crate::id_utils::generate_entity_id;
 use crate::media::{delete_r2_object, log_r2_operation};
 use crate::observability::observability_started_at_ms;
-use crate::profile::{ProfileMediaUpload, UpdateCredentialsRequest, profile_field_from_update};
+use crate::profile::{
+    FieldsAttributesUpdate, ProfileMediaUpload, UpdateCredentialsRequest, profile_field_from_update,
+};
 use crate::time_html::render_status_html;
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, ProfileField};
 use worker::d1::D1Type;
 use worker::{Bucket, Error, HttpMetadata, Result};
-
-use crate::D1Database;
 struct AccountSourceDefaults {
     post_visibility: String,
     quote_policy: String,
@@ -60,11 +61,11 @@ fn account_profile_fields(
     update: &UpdateCredentialsRequest,
 ) -> Vec<ProfileField> {
     match &update.fields_attributes {
-        crate::FieldsAttributesUpdate::Set(fields) => fields
+        FieldsAttributesUpdate::Set(fields) => fields
             .iter()
             .filter_map(profile_field_from_update)
             .collect(),
-        crate::FieldsAttributesUpdate::Omitted => account.fields().to_vec(),
+        FieldsAttributesUpdate::Omitted => account.fields().to_vec(),
     }
 }
 

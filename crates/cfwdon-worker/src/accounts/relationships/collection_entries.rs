@@ -1,15 +1,20 @@
 use super::collections::CollectionAccountEntry;
 use super::remote_collections::remote_follow_collection_entries;
-use crate::{
-    LocalAccount, MastodonAccountResponse, Result, fetch_remote_actor_profile,
-    find_local_account_response, find_remote_actor_by_actor_uri, list_local_followers_for_account,
-    list_local_followers_for_remote_actor, list_local_following_for_account,
-    list_local_following_for_remote_actor, list_remote_followers_for_account,
-    list_remote_following_for_account, upserted_remote_actor_response,
+use crate::accounts::{find_local_account_response, upserted_remote_actor_response};
+use crate::federation::fetch_remote_actor_profile;
+use crate::relationship::{
+    list_local_followers_for_account, list_local_followers_for_remote_actor,
+    list_local_following_for_account, list_local_following_for_remote_actor,
+    list_remote_followers_for_account, list_remote_following_for_account,
 };
+use crate::remote::find_remote_actor_by_actor_uri;
+use crate::responses::MastodonAccountResponse;
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalAccount;
+use worker::Result;
 
 async fn remote_follow_account_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     actor_uri: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
     match fetch_remote_actor_profile(actor_uri).await {
@@ -21,7 +26,7 @@ async fn remote_follow_account_response(
 }
 
 async fn local_follow_account_entry(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     cursor_id: i64,
     created_at: &str,
@@ -38,7 +43,7 @@ async fn local_follow_account_entry(
 }
 
 async fn build_local_follow_entries<T, I, FCursorId, FCreatedAt, FAccountId>(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     entries: I,
     cursor_id: FCursorId,
@@ -70,7 +75,7 @@ where
 
 async fn append_remote_follow_entries<T, I, FCursorId, FCreatedAt, FActorUri>(
     entries: &mut Vec<CollectionAccountEntry>,
-    db: &crate::D1Database,
+    db: &D1Database,
     records: I,
     cursor_id: FCursorId,
     created_at: FCreatedAt,
@@ -95,7 +100,7 @@ where
 }
 
 pub(crate) async fn local_account_follower_entries(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Vec<CollectionAccountEntry>> {
@@ -121,7 +126,7 @@ pub(crate) async fn local_account_follower_entries(
 }
 
 pub(crate) async fn remote_actor_follower_entries(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     actor_uri: &str,
@@ -156,7 +161,7 @@ pub(crate) async fn remote_actor_follower_entries(
 }
 
 pub(crate) async fn local_account_following_entries(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     account_id: &str,
 ) -> Result<Vec<CollectionAccountEntry>> {
@@ -182,7 +187,7 @@ pub(crate) async fn local_account_following_entries(
 }
 
 pub(crate) async fn remote_actor_following_entries(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     actor_uri: &str,

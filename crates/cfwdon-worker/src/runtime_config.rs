@@ -1,8 +1,10 @@
-use super::{
-    AppConfig, Env, RouteContext, normalize_configured_instance_domain, parse_csv_list,
-    policy_html_from_sources,
+use super::AppConfig;
+use crate::custom_emojis::parse_custom_emojis_json;
+use crate::instance::{
+    normalize_configured_instance_domain, parse_csv_list, policy_html_from_sources,
 };
 use cfwdon_core::{BuildMetadata, TimelineAccessLevel};
+use worker::{Env, RouteContext};
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct RootDocument {
@@ -288,7 +290,7 @@ fn set_content_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppCo
 
 fn set_custom_emojis_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
     if let Some(raw) = trimmed_non_empty(vars("CUSTOM_EMOJIS_JSON").as_deref()) {
-        config.custom_emojis = crate::parse_custom_emojis_json(&raw).unwrap_or_default();
+        config.custom_emojis = parse_custom_emojis_json(&raw).unwrap_or_default();
     }
 }
 

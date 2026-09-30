@@ -1,3 +1,9 @@
+use crate::db_utils::d1_results;
+use crate::search::normalize_search_match_text;
+use crate::time_html::now_unix_timestamp;
+use crate::timelines::ResolvedTimelineCursor;
+use crate::tracked_d1::D1Database;
+use crate::trends_cache::{TRENDING_TAGS_CACHE_SIZE, store_trending_tags_cache};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
@@ -6,18 +12,13 @@ use crate::content_helpers::{
 };
 use crate::responses::{MastodonTagHistoryEntry, MastodonTagResponse};
 use crate::search::search_text_match_rank;
-use crate::statuses::{
-    ResolvedTimelineCursor, list_local_public_timeline_statuses,
-    list_remote_public_timeline_statuses,
-};
+use crate::statuses::{list_local_public_timeline_statuses, list_remote_public_timeline_statuses};
 use cfwdon_core::AppConfig;
 use serde::Deserialize;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 pub(crate) fn tag_search_rank(query: &str, tag: &str) -> (u8, String) {
     (search_text_match_rank(query, tag), normalize_hashtag(tag))
 }
@@ -79,7 +80,7 @@ pub(crate) fn paginate_tag_search_matches(
 }
 
 pub(crate) fn normalize_hashtag(value: &str) -> String {
-    crate::normalize_search_match_text(value.trim().trim_start_matches('#'))
+    normalize_search_match_text(value.trim().trim_start_matches('#'))
 }
 
 pub(crate) fn tag_matches_search_query(query: &str, tag: &str) -> bool {
@@ -226,7 +227,7 @@ async fn search_indexed_tags_for_v2(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<TagSearchRow>(&result)?
+    Ok(d1_results::<TagSearchRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -335,7 +336,7 @@ async fn load_local_status_hashtag_names(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<IndexedTagRow>(&result)?
+    Ok(d1_results::<IndexedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag)
         .collect())
@@ -391,7 +392,7 @@ pub(crate) async fn load_remote_status_hashtag_names(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<IndexedTagRow>(&result)?
+    Ok(d1_results::<IndexedTagRow>(&result)?
         .into_iter()
         .map(|row| row.tag)
         .collect())
@@ -501,10 +502,9 @@ const TRENDING_TAGS_WINDOW_DAYS: i64 = 3;
 const TRENDING_TAGS_MIN_USES: u64 = 10;
 
 fn trending_tags_cutoff_iso() -> Result<String> {
-    let now =
-        OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp()).map_err(|error| {
-            worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
-        })?;
+    let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp()).map_err(|error| {
+        worker::Error::RustError(format!("invalid current unix timestamp: {error}"))
+    })?;
     (now - Duration::days(TRENDING_TAGS_WINDOW_DAYS))
         .format(&Rfc3339)
         .map_err(|error| {
@@ -563,7 +563,7 @@ pub(crate) async fn list_trending_tag_metrics(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<TagSearchRow>(&result)?
+    Ok(d1_results::<TagSearchRow>(&result)?
         .into_iter()
         .map(|row| {
             (
@@ -586,7 +586,7 @@ pub(crate) async fn trending_tags_documents(
 ) -> Result<Vec<MastodonTagResponse>> {
     let fetch_limit = offset
         .saturating_add(limit)
-        .clamp(limit, crate::TRENDING_TAGS_CACHE_SIZE);
+        .clamp(limit, TRENDING_TAGS_CACHE_SIZE);
     let metrics = list_trending_tag_metrics(db, fetch_limit).await?;
     Ok(metrics
         .into_iter()
@@ -597,12 +597,12 @@ pub(crate) async fn trending_tags_documents(
 }
 
 pub(crate) async fn refresh_trending_tags_cache(db: &D1Database, config: &AppConfig) -> Result<()> {
-    let documents = trending_tags_documents(db, config, 0, crate::TRENDING_TAGS_CACHE_SIZE).await?;
+    let documents = trending_tags_documents(db, config, 0, TRENDING_TAGS_CACHE_SIZE).await?;
     let values = documents
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()?;
-    crate::store_trending_tags_cache(&values).await
+    store_trending_tags_cache(&values).await
 }
 
 async fn load_scanned_local_tag_search_metrics(

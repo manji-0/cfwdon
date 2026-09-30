@@ -1,9 +1,15 @@
-use crate::{
-    AppConfig, LocalAccount, MediaAttachmentRow, MediaKind, RemoteActorRow,
-    RemoteStatusAttachmentRow, RemoteStatusRow, Response, Result, StatusRow, classify_media_kind,
-    escape_html, local_status_ap_id, media_attachment_url, strip_html_tags,
+use crate::activitypub::local_status_ap_id;
+use crate::content_helpers::{
+    sanitize_remote_http_url, sanitize_remote_status_html, strip_html_tags,
 };
-use worker::ResponseBody;
+use crate::media::{MediaAttachmentRow, MediaKind, RemoteStatusAttachmentRow, classify_media_kind};
+use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::responses::media_attachment_url;
+use crate::statuses::StatusRow;
+use crate::time_html::escape_html;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
+use worker::{Response, ResponseBody, Result};
 
 pub(crate) fn account_statuses_html_response(
     config: &AppConfig,
@@ -152,12 +158,12 @@ pub(crate) fn remote_status_html_item(
     let _actor = actor;
     let raw_url = status.url.as_deref().unwrap_or(status.object_uri.as_str());
     let status_url = escape_html(
-        crate::sanitize_remote_http_url(Some(raw_url))
+        sanitize_remote_http_url(Some(raw_url))
             .as_deref()
             .unwrap_or("#"),
     );
     let media_html = remote_media_html(media);
-    let safe_content = crate::sanitize_remote_status_html(&status.content_html);
+    let safe_content = sanitize_remote_status_html(&status.content_html);
     status_html_item(
         &status_url,
         &safe_content,

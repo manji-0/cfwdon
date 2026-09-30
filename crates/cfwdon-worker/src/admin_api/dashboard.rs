@@ -1,8 +1,10 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
 use super::inbox::admin_stuck_inbox_count;
-use crate::{Response, Result, RouteContext};
+use crate::db_session::bind_request_d1;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::Serialize;
-use worker::Request;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminDashboardResponse {
@@ -23,8 +25,8 @@ pub(crate) async fn admin_dashboard_response(
         AdminAuthorization::Denied(response) => return Ok(response),
     }
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
 
     let pending_reports = scalar_count(
         &db,
@@ -79,7 +81,7 @@ pub(crate) async fn admin_dashboard_response(
     })
 }
 
-async fn scalar_count(db: &crate::D1Database, sql: &str) -> Result<i64> {
+async fn scalar_count(db: &D1Database, sql: &str) -> Result<i64> {
     let result = db.prepare(sql).first::<serde_json::Value>(None).await?;
     Ok(result
         .and_then(|row| row.get("count").and_then(serde_json::Value::as_i64))

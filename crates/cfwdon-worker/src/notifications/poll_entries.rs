@@ -1,16 +1,18 @@
-use super::notifications::{
-    NotificationEntry, notification_account_matches_filter, notification_type_allowed,
-};
 use super::{
-    AppConfig, MastodonAccountResponse, NotificationsQuery, StatusRow, actor_url,
-    build_status_notification_entry, find_statuses_by_ids, list_poll_notifications_for_account,
+    NotificationsQuery, build_status_notification_entry, list_poll_notifications_for_account,
     preload_notification_statuses,
 };
+use crate::instance::actor_url;
+use crate::notifications::{
+    NotificationEntry, notification_account_matches_filter, notification_type_allowed,
+};
+use crate::responses::MastodonAccountResponse;
+use crate::statuses::{StatusRow, can_view_local_status, find_statuses_by_ids};
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use std::collections::HashMap;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn collect_poll_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,
@@ -60,7 +62,7 @@ pub(crate) async fn collect_poll_notification_entries(
         };
         if preloads.is_notification_muted(&actor_url(config, actor.username()))
             || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
-            || !crate::can_view_local_status(db, &status, Some(viewer), actor).await?
+            || !can_view_local_status(db, &status, Some(viewer), actor).await?
         {
             continue;
         }

@@ -1,3 +1,4 @@
+use crate::content_helpers::sanitize_remote_status_html;
 use cfwdon_domain::{
     AccountHandle, RemoteActorAuthorityIssue, remote_actor_id_authority_allowed,
     remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
@@ -284,7 +285,7 @@ fn sanitize_remote_actor_summary_html(summary: &str) -> String {
     if summary.trim().is_empty() {
         return String::new();
     }
-    crate::sanitize_remote_status_html(summary)
+    sanitize_remote_status_html(summary)
 }
 
 fn required_remote_actor_string(

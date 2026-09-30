@@ -1,4 +1,6 @@
-use crate::{RemoteActorProfile, parse_remote_http_url, sha256_http_digest};
+use crate::activitypub::activity_object_id;
+use crate::federation::{RemoteActorProfile, parse_remote_http_url};
+use crate::http::sha256_http_digest;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use cfwdon_domain::{
@@ -32,7 +34,7 @@ pub(crate) fn cached_remote_actor_matches_key(
 }
 
 pub(crate) fn extract_activity_actor_uri(activity: &serde_json::Value) -> Result<String> {
-    crate::activity_object_id(activity.get("actor"))
+    activity_object_id(activity.get("actor"))
         .map(ToOwned::to_owned)
         .ok_or_else(|| Error::RustError("activity is missing actor".to_owned()))
 }

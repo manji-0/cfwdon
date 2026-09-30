@@ -1,16 +1,21 @@
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
-use crate::responses::MastodonSearchResponse;
+use crate::oauth_apps::oauth_access_token_has_any_scope;
+use crate::remote::resolve_search_account_with_viewer;
+use crate::responses::{
+    MastodonAccountResponse, MastodonSearchResponse, MastodonStatusResponse, MastodonTagResponse,
+    json_response,
+};
 use crate::runtime_config::load_config;
-use crate::tags::{resolve_search_tag, search_tags_for_v2};
-use crate::{
-    LocalAccount, MastodonAccountResponse, MastodonStatusResponse, MastodonTagResponse,
+use crate::search::{
     SearchCategoryFlags, SearchUrlQueryMode, SearchV2ExecutionPlan, SearchV2Query,
     account_search_non_exact_limit, account_search_resolve_enabled, effective_search_v2_following,
-    oauth_access_token_has_any_scope, resolve_cached_exact_search_account,
-    resolve_search_account_with_viewer, resolve_search_status, search_cached_accounts,
+    resolve_cached_exact_search_account, resolve_search_status, search_cached_accounts,
     search_statuses_for_v2, search_v2_type_allows_url_resource, search_v2_unauthenticated_error,
     search_v2_url_query_mode,
 };
+use crate::tags::{resolve_search_tag, search_tags_for_v2};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalAccount;
 use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn search_v2(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -30,7 +35,7 @@ pub(crate) async fn search_v1(req: Request, ctx: RouteContext<()>) -> Result<Res
 }
 
 fn search_json_response<T: serde::Serialize>(value: &T) -> Result<Response> {
-    crate::json_response(value, "application/json", &[]).map_err(|error| {
+    json_response(value, "application/json", &[]).map_err(|error| {
         worker::console_error!("search JSON serialization failed: {error}");
         error
     })
@@ -93,7 +98,7 @@ async fn search_impl(
 }
 
 async fn search_url_mode_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -118,7 +123,7 @@ async fn search_url_mode_response(
 }
 
 async fn search_standard_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -150,15 +155,15 @@ async fn search_standard_response(
 fn search_database_from_context(
     ctx: &RouteContext<()>,
     config: &cfwdon_core::AppConfig,
-) -> std::result::Result<crate::D1Database, Response> {
+) -> std::result::Result<D1Database, Response> {
     ctx.d1(&config.database_binding)
-        .map(crate::D1Database::new)
+        .map(D1Database::new)
         .map_err(|error| search_error_response(error.to_string(), 500))
 }
 
 async fn authenticate_search_viewer(
     req: &Request,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     plan: &SearchV2ExecutionPlan,
 ) -> std::result::Result<Option<LocalAccount>, Response> {
@@ -214,7 +219,7 @@ fn search_worker_result<T>(result: Result<T>) -> std::result::Result<T, Response
 }
 
 async fn search_accounts_for_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -262,7 +267,7 @@ async fn search_accounts_for_response(
 }
 
 async fn search_statuses_for_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query_text: &str,
@@ -295,7 +300,7 @@ async fn search_statuses_for_response(
 }
 
 async fn search_hashtags_for_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     query_text: &str,
     plan: &SearchV2ExecutionPlan,
@@ -312,7 +317,7 @@ async fn search_hashtags_for_response(
 }
 
 async fn resolve_search_url_only_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     query: &str,
@@ -350,6 +355,7 @@ async fn resolve_search_url_only_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::SearchV2ExecutionPlan;
 
     #[test]
     fn search_v1_hashtag_name_accepts_string_or_tag_object() {

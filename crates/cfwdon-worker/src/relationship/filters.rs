@@ -1,7 +1,6 @@
+use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 pub(crate) async fn upsert_block(
     db: &D1Database,
     blocker_account_id: &str,

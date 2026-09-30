@@ -1,8 +1,9 @@
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::remote::RemoteStatusRow;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
-
-use crate::{D1Database, json_string_array, sql_in_json_each};
 
 #[derive(Debug, Deserialize)]
 struct StatusCountsRow {
@@ -82,7 +83,7 @@ pub(crate) async fn load_local_status_counts_map(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    for row in crate::d1_results::<StatusCountsRow>(&result)? {
+    for row in d1_results::<StatusCountsRow>(&result)? {
         counts.insert(row.status_id, (row.favourites_count, row.reblogs_count));
     }
     Ok(counts)
@@ -135,7 +136,7 @@ pub(crate) async fn load_remote_status_counts_map(
     let binding = D1Type::Text(ids_json.as_str());
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
-    for row in crate::d1_results::<StatusCountsRow>(&result)? {
+    for row in d1_results::<StatusCountsRow>(&result)? {
         counts.insert(
             row.remote_status_id,
             (row.favourites_count, row.reblogs_count),
@@ -160,7 +161,7 @@ pub(crate) async fn preload_status_counts(
 pub(crate) async fn preload_status_counts_for_remote_rows(
     db: &D1Database,
     local_status_ids: &[String],
-    remote_statuses: &[&crate::RemoteStatusRow],
+    remote_statuses: &[&RemoteStatusRow],
 ) -> Result<StatusCountsPreload> {
     let mut seen = HashSet::new();
     let mut missing = Vec::new();

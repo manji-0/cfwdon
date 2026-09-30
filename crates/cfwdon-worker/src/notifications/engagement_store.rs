@@ -1,8 +1,8 @@
+use crate::db_utils::d1_results;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReblogNotificationRow {
     pub(crate) account_id: String,
@@ -40,7 +40,7 @@ pub(crate) async fn list_reblog_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<ReblogNotificationRow>(&result)
+    d1_results::<ReblogNotificationRow>(&result)
 }
 
 pub(crate) async fn list_poll_notifications_for_account(
@@ -71,5 +71,5 @@ pub(crate) async fn list_poll_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<PollNotificationRow>(&result)
+    d1_results::<PollNotificationRow>(&result)
 }

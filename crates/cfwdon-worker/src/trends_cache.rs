@@ -2,6 +2,7 @@
 //!
 //! Cron refreshes every 6 hours; reads avoid D1 except on cache miss.
 
+use crate::responses::CACHE_TTL_TRENDS;
 use worker::Result;
 
 use crate::app_cache::app_cache_kv;
@@ -14,7 +15,7 @@ const TRENDS_STATUSES_KEY: &str = "trends:statuses:v1";
 const TRENDS_CACHE_TTL_GRACE_SECS: u64 = 3_600;
 
 fn trends_cache_ttl_secs() -> u64 {
-    u64::from(crate::CACHE_TTL_TRENDS).saturating_add(TRENDS_CACHE_TTL_GRACE_SECS)
+    u64::from(CACHE_TTL_TRENDS).saturating_add(TRENDS_CACHE_TTL_GRACE_SECS)
 }
 
 pub(crate) async fn load_trending_tags_cache() -> Option<Vec<serde_json::Value>> {
@@ -86,9 +87,6 @@ mod tests {
 
     #[test]
     fn trends_cache_ttl_extends_http_ttl() {
-        assert_eq!(
-            trends_cache_ttl_secs(),
-            u64::from(crate::CACHE_TTL_TRENDS) + 3_600
-        );
+        assert_eq!(trends_cache_ttl_secs(), u64::from(CACHE_TTL_TRENDS) + 3_600);
     }
 }

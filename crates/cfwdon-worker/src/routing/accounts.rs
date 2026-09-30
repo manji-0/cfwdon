@@ -1,18 +1,28 @@
-use crate::{
-    account_directory, account_email_subscriptions_response, account_endorsements_response,
-    account_featured_tags_response, account_followers_response, account_following_response,
-    account_lists_response, account_lookup, account_relationships, account_response,
-    account_search, account_statuses_response, accounts_index_response,
-    authorize_follow_request_response, block_account, blocks_response, bookmarks_response,
-    create_account_placeholder_response, delete_profile_avatar_response,
-    delete_profile_header_response, endorse_account_response, endorsements_response,
-    familiar_followers_response, favourites_response, follow_account, follow_request_response,
-    follow_requests_response, followed_tags_response, identity_proofs_response, mute_account,
-    mutes_response, note_account_response, pin_account_response, preferences_response,
-    profile_response, reject_follow_request_response, remove_from_followers_response,
-    unblock_account, unendorse_account_response, unfollow_account, unmute_account,
-    unpin_account_response, update_credentials, update_profile_response, verify_credentials,
+use crate::accounts::{
+    account_email_subscriptions_response, account_endorsements_response,
+    account_followers_response, account_following_response, account_relationships,
+    account_statuses_response, block_account, blocks_response, endorse_account_response,
+    endorsements_response, familiar_followers_response, follow_account, identity_proofs_response,
+    mute_account, mutes_response, note_account_response, pin_account_response, unblock_account,
+    unendorse_account_response, unfollow_account, unmute_account, unpin_account_response,
 };
+use crate::featured_tags::account_featured_tags_response;
+use crate::follow_requests::{
+    authorize_follow_request_response, follow_request_response, follow_requests_response,
+    reject_follow_request_response,
+};
+use crate::lists::account_lists_response;
+use crate::meta_placeholder_routes::{
+    accounts_index_response, create_account_placeholder_response, remove_from_followers_response,
+};
+use crate::profile::{
+    account_lookup, account_response, delete_profile_avatar_response,
+    delete_profile_header_response, preferences_response, profile_response, update_credentials,
+    update_profile_response, verify_credentials,
+};
+use crate::search::{account_directory, account_search};
+use crate::statuses::{bookmarks_response, favourites_response};
+use crate::tag_actions::followed_tags_response;
 use worker::Router;
 
 pub(crate) fn add_account_routes(router: Router<'static, ()>) -> Router<'static, ()> {

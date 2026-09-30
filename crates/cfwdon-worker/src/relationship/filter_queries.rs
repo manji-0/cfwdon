@@ -1,9 +1,9 @@
+use crate::db_utils::d1_results;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::HashSet;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct MuteRow {
     pub(crate) notifications: i32,
@@ -141,7 +141,7 @@ pub(crate) async fn list_active_muted_actor_uris(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<MutedActorUriRow>(&result)?
+    Ok(d1_results::<MutedActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())
@@ -174,7 +174,7 @@ pub(crate) async fn list_active_muted_actor_uris_for_account(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<MutedActorUriRow>(&result)?
+    Ok(d1_results::<MutedActorUriRow>(&result)?
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())
@@ -233,7 +233,7 @@ pub(crate) async fn list_mutes_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<MuteEntryRow>(&result)
+    d1_results::<MuteEntryRow>(&result)
 }
 
 pub(crate) async fn list_blocks_for_account(
@@ -267,5 +267,5 @@ pub(crate) async fn list_blocks_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<BlockEntryRow>(&result)
+    d1_results::<BlockEntryRow>(&result)
 }

@@ -1,10 +1,10 @@
+use crate::db_utils::d1_results;
+use crate::tracked_d1::D1Database;
 use std::collections::BTreeSet;
 
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct RemoteStatusPollRow {
     pub(crate) id: String,
@@ -84,7 +84,7 @@ pub(crate) async fn list_remote_status_poll_options(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusPollOptionRow>(&result)
+    d1_results::<RemoteStatusPollOptionRow>(&result)
 }
 
 pub(crate) fn resolve_remote_poll_vote_position(
@@ -149,7 +149,7 @@ pub(crate) async fn list_remote_poll_votes_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusPollVoteRow>(&result)
+    d1_results::<RemoteStatusPollVoteRow>(&result)
 }
 
 pub(crate) async fn list_remote_poll_votes_by_poll(
@@ -167,7 +167,7 @@ pub(crate) async fn list_remote_poll_votes_by_poll(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusPollVoteWithIdRow>(&result)
+    d1_results::<RemoteStatusPollVoteWithIdRow>(&result)
 }
 
 pub(crate) async fn prune_remote_poll_vote_rows(

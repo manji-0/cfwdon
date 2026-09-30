@@ -1,6 +1,10 @@
+use crate::accounts::AccountRow;
 use crate::auth::{AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE};
+use crate::db_utils::{d1_results, sql_placeholders};
 use crate::id_utils::generate_entity_id;
+use crate::instance::instance_base_url;
 use crate::time_html::{escape_html, now_unix_timestamp};
+use crate::tracked_d1::D1Database;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use cfwdon_domain::LocalAccount;
@@ -8,10 +12,7 @@ use pbkdf2::pbkdf2_hmac_array;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use worker::{Request, Response, Result};
-use worker::{ResponseBody, d1::D1Type};
-
-use crate::D1Database;
+use worker::{Request, Response, ResponseBody, Result, d1::D1Type};
 mod auth0_callback;
 mod authorization_codes;
 mod authorize_route;
@@ -428,7 +429,7 @@ pub(crate) async fn find_oauth_apps_by_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders = crate::sql_placeholders(1, ids.len());
+    let placeholders = sql_placeholders(1, ids.len());
     let sql = format!(
         "SELECT id, name, website, scopes_json, redirect_uri_legacy, redirect_uris_json,
                 client_id, client_secret, client_secret_expires_at
@@ -444,7 +445,7 @@ pub(crate) async fn find_oauth_apps_by_ids(
         .bind_refs(bindings.iter())?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<OAuthAppRow>(&__d1))
+        .and_then(|__d1| d1_results::<OAuthAppRow>(&__d1))
 }
 
 pub(crate) async fn find_oauth_app_id_by_bearer_token(
@@ -550,7 +551,7 @@ fn oauth_access_token_auth_from_joined_row(
     })?;
     let account = match row.get("id").and_then(serde_json::Value::as_str) {
         Some(_) => Some(
-            serde_json::from_value::<crate::AccountRow>(row)
+            serde_json::from_value::<AccountRow>(row)
                 .map(LocalAccount::from_record)
                 .map_err(|error| {
                     worker::Error::RustError(format!(
@@ -732,7 +733,7 @@ pub(crate) fn auth0_logout_url(
     logout_url
         .query_pairs_mut()
         .append_pair("client_id", config.auth0_client_id.trim())
-        .append_pair("returnTo", crate::instance_base_url(config).as_str());
+        .append_pair("returnTo", instance_base_url(config).as_str());
     Ok(logout_url)
 }
 

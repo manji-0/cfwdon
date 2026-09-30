@@ -1,10 +1,14 @@
-use crate::{
-    CursorAccountCollection, D1Database, MastodonAccountResponse, RemoteActorRow,
-    find_local_account_response, find_local_account_response_by_actor_uri,
-    find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+use crate::accounts::{
+    CursorAccountCollection, find_local_account_response, find_local_account_response_by_actor_uri,
     list_endorsed_accounts_for_owner, refreshed_remote_actor_response,
     upserted_remote_actor_response,
 };
+use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
+use crate::remote::{
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_profile_url_or_actor_uri,
+};
+use crate::responses::MastodonAccountResponse;
+use crate::tracked_d1::D1Database;
 use std::collections::HashSet;
 use worker::Result;
 
@@ -59,7 +63,7 @@ pub(crate) async fn list_remote_endorsement_accounts(
     max_id: Option<i64>,
     since_id: Option<i64>,
 ) -> Result<CursorAccountCollection> {
-    let actor_document = match crate::fetch_remote_activitypub_document(actor_uri).await {
+    let actor_document = match fetch_remote_activitypub_document(actor_uri).await {
         Ok(document) => document,
         Err(_) => return Ok(empty_social_endorsement_collection()),
     };
@@ -126,7 +130,7 @@ fn extract_remote_endorsement_collection_uri(actor_document: &serde_json::Value)
 async fn fetch_remote_endorsement_collection_item_references(
     collection_uri: &str,
 ) -> Result<Vec<RemoteEndorsementReference>> {
-    let collection = crate::fetch_remote_activitypub_document(collection_uri).await?;
+    let collection = fetch_remote_activitypub_document(collection_uri).await?;
     let mut seen_items = HashSet::new();
     let mut items = Vec::new();
     append_remote_endorsement_item_references(&mut items, &mut seen_items, &collection);
@@ -152,7 +156,7 @@ async fn fetch_remote_endorsement_collection_item_references(
         {
             break;
         }
-        let page = crate::fetch_remote_activitypub_document(&page_uri).await?;
+        let page = fetch_remote_activitypub_document(&page_uri).await?;
         append_remote_endorsement_item_references(&mut items, &mut seen_items, &page);
         next_page_uri = extract_remote_endorsement_page_reference(page.get("next"));
     }
@@ -247,7 +251,7 @@ async fn resolve_remote_endorsement_account(
         return refreshed_remote_endorsement_account_response(db, config, &actor).await;
     }
 
-    let profile = match crate::fetch_remote_actor_profile(reference).await {
+    let profile = match fetch_remote_actor_profile(reference).await {
         Ok(profile) => profile,
         Err(_) => return Ok(None),
     };

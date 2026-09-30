@@ -1,11 +1,15 @@
 use super::collections::CollectionAccountEntry;
-use crate::{
-    LocalAccount, MastodonAccountResponse, RemoteCollectionFetchContext, Result,
-    fetch_activitypub_document_with_context, fetch_remote_actor_profile_with_context,
-    find_local_account_response_by_actor_uri, find_remote_actor_by_actor_uri, upsert_remote_actor,
+use crate::accounts::find_local_account_response_by_actor_uri;
+use crate::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::responses::{
+    MastodonAccountResponse, RemoteCollectionFetchContext, fetch_activitypub_document_with_context,
+    fetch_remote_actor_profile_with_context,
 };
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalAccount;
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
+use worker::Result;
 
 /// Absolute-position cursors stay stable across lazy page fetches.
 const REMOTE_FOLLOW_CURSOR_BASE: i64 = i64::MAX / 4;
@@ -58,7 +62,7 @@ fn select_remote_follow_collection_page(
 }
 
 async fn resolve_remote_follow_collection_account(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     reference: &RemoteFollowCollectionReference,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
@@ -91,7 +95,7 @@ async fn resolve_remote_follow_collection_account(
 }
 
 pub(crate) async fn remote_follow_collection_entries(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&LocalAccount>,
     actor_uri: &str,

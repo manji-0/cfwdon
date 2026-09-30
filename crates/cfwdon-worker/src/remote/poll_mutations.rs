@@ -1,7 +1,9 @@
-use crate::{
-    D1Database, RemotePollDraft, RemotePollOptionDraft, Result, list_remote_status_poll_options,
+use crate::remote::{
+    RemotePollDraft, RemotePollOptionDraft, list_remote_status_poll_options,
     prune_remote_poll_vote_rows,
 };
+use crate::tracked_d1::D1Database;
+use worker::Result;
 use worker::d1::D1Type;
 
 pub(crate) async fn upsert_remote_status_poll(
@@ -156,6 +158,7 @@ fn remote_status_poll_status_delete_bindings(status_id: &str) -> [D1Type<'_>; 1]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::RemotePollDraft;
 
     fn remote_poll_draft_for_test() -> RemotePollDraft {
         RemotePollDraft {

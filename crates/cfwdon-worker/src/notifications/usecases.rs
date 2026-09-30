@@ -1,12 +1,12 @@
 use super::{
-    AppConfig, NotificationEntry, NotificationsQuery, clear_account_notifications,
+    NotificationEntry, NotificationsQuery, clear_account_notifications,
     dismiss_account_notification, filter_notification_entries_by_query,
     load_visible_notifications_for_account, notification_group_entries, notifications_fetch_limit,
 };
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn list_notifications_usecase(
     db: &D1Database,
     config: &AppConfig,

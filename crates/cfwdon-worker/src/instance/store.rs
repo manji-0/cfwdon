@@ -1,16 +1,16 @@
+use crate::db_utils::d1_results;
+use crate::runtime_config::build_metadata;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
-use super::{
-    AppConfig, InstanceCapabilities, InstanceSummary, SoftwareInfo, build_metadata, instance_host,
-    normalize_instance_domain, peer_authority_from_uri,
-};
+use super::{instance_host, normalize_instance_domain, peer_authority_from_uri};
+use crate::app_cache::app_cache_kv;
 use serde::{Deserialize, Serialize};
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
-use crate::app_cache::app_cache_kv;
 
 const INSTANCE_SETTINGS_KV_KEY: &str = "instance_settings:v1";
 /// Settings change only via migration/ops; keep KV past a missed hourly window.
@@ -197,7 +197,7 @@ async fn count_rows_by_week_offset(
         .bind_refs(bindings.iter())?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<WeekOffsetCountRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<WeekOffsetCountRow>(&__d1))?;
 
     Ok(rows
         .into_iter()
@@ -242,7 +242,7 @@ pub(crate) async fn load_known_peer_domains(
         )
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?
+        .and_then(|__d1| d1_results::<serde_json::Value>(&__d1))?
     {
         if let Some(domain) = value.get("domain").and_then(serde_json::Value::as_str) {
             let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -272,7 +272,7 @@ pub(crate) async fn load_known_peer_domains(
             .prepare(sql)
             .all()
             .await
-            .and_then(|__d1| crate::d1_results::<serde_json::Value>(&__d1))?
+            .and_then(|__d1| d1_results::<serde_json::Value>(&__d1))?
         {
             if let Some(uri) = value.get(field).and_then(serde_json::Value::as_str)
                 && let Some(peer) = peer_authority_from_uri(config, uri)

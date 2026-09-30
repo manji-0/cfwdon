@@ -1,13 +1,18 @@
 use super::{
-    Error, Request, Response, Result, RouteContext, build_local_action_status_response,
-    build_remote_status_response, delete_reblog_by_target_uri,
-    delete_reblog_wrapper_status_by_target_uri, enqueue_announce_activity,
-    enqueue_undo_announce_activity, find_reblog_activity_by_target_uri,
-    invalidate_status_api_cache, local_status_target_uri,
-    resolve_authenticated_status_action_context, resolve_visible_action_status,
-    upsert_reblog_local_status, upsert_reblog_remote_status, upsert_reblog_wrapper_status,
+    build_local_action_status_response, build_remote_status_response, delete_reblog_by_target_uri,
+    delete_reblog_wrapper_status_by_target_uri, find_reblog_activity_by_target_uri,
+    local_status_target_uri, resolve_authenticated_status_action_context,
+    resolve_visible_action_status, upsert_reblog_local_status, upsert_reblog_remote_status,
+    upsert_reblog_wrapper_status,
+};
+use crate::delivery::{enqueue_announce_activity, enqueue_undo_announce_activity};
+use crate::responses::invalidate_status_api_cache;
+use crate::statuses::{
+    AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus,
+    find_owned_local_status_response_subject,
 };
 use serde::Deserialize;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ReblogStatusRequest {
@@ -16,11 +21,11 @@ pub(crate) struct ReblogStatusRequest {
 
 pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&*req, &ctx).await? {
-        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
-        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+        AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        AuthenticatedStatusActionContextResolution::MissingStatusId => {
             return Response::error("missing status id route parameter", 400);
         }
-        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+        AuthenticatedStatusActionContextResolution::Unauthenticated => {
             return Response::error("Auth0 authentication required", 401);
         }
     };
@@ -39,7 +44,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
     )
     .await?
     {
-        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+        Some(ResolvedVisibleActionStatus::Local(subject)) => {
             if viewer.id() == subject.account.id() {
                 return Response::error("cannot reblog your own status", 422);
             }
@@ -81,15 +86,12 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let wrapper_subject = crate::find_owned_local_status_response_subject(
-                &action.auth.db,
-                &wrapper.id,
-                viewer,
-            )
-            .await?
-            .ok_or_else(|| {
-                worker::Error::RustError("reblog wrapper status not found".to_owned())
-            })?;
+            let wrapper_subject =
+                find_owned_local_status_response_subject(&action.auth.db, &wrapper.id, viewer)
+                    .await?
+                    .ok_or_else(|| {
+                        worker::Error::RustError("reblog wrapper status not found".to_owned())
+                    })?;
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -99,7 +101,7 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
+        Some(ResolvedVisibleActionStatus::Remote(status, actor)) => {
             let existing = find_reblog_activity_by_target_uri(
                 &action.auth.db,
                 viewer.id(),
@@ -136,15 +138,12 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let wrapper_subject = crate::find_owned_local_status_response_subject(
-                &action.auth.db,
-                &wrapper.id,
-                viewer,
-            )
-            .await?
-            .ok_or_else(|| {
-                worker::Error::RustError("reblog wrapper status not found".to_owned())
-            })?;
+            let wrapper_subject =
+                find_owned_local_status_response_subject(&action.auth.db, &wrapper.id, viewer)
+                    .await?
+                    .ok_or_else(|| {
+                        worker::Error::RustError("reblog wrapper status not found".to_owned())
+                    })?;
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -160,11 +159,11 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
 
 pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
-        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
-        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+        AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        AuthenticatedStatusActionContextResolution::MissingStatusId => {
             return Response::error("missing status id route parameter", 400);
         }
-        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+        AuthenticatedStatusActionContextResolution::Unauthenticated => {
             return Response::error("Auth0 authentication required", 401);
         }
     };
@@ -179,7 +178,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
     )
     .await?
     {
-        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+        Some(ResolvedVisibleActionStatus::Local(subject)) => {
             let target_uri = local_status_target_uri(&subject.status);
             if let Some(row) =
                 find_reblog_activity_by_target_uri(&action.auth.db, viewer.id(), &target_uri)
@@ -211,7 +210,7 @@ pub(crate) async fn unreblog_status(req: Request, ctx: RouteContext<()>) -> Resu
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
+        Some(ResolvedVisibleActionStatus::Remote(status, actor)) => {
             if let Some(row) =
                 find_reblog_activity_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri)
                     .await?

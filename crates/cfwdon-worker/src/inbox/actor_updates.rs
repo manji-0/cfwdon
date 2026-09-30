@@ -1,9 +1,15 @@
-use super::{
-    D1Database, LocalAccount, RemoteActorProfile, Result, activity_object_id,
-    fetch_remote_actor_profile, has_any_local_followers_for_remote_actor,
-    is_local_account_following_remote_actor, object_has_activitypub_actor_type,
-    parse_remote_actor_profile_document, upsert_remote_actor, validate_remote_actor_profile_urls,
+use super::D1Database;
+use crate::activitypub::{activity_object_id, object_has_activitypub_actor_type};
+use crate::federation::{
+    RemoteActorProfile, fetch_remote_actor_profile, parse_remote_actor_profile_document,
+    validate_remote_actor_profile_urls,
 };
+use crate::relationship::{
+    has_any_local_followers_for_remote_actor, is_local_account_following_remote_actor,
+};
+use crate::remote::upsert_remote_actor;
+use cfwdon_domain::LocalAccount;
+use worker::Result;
 
 pub(crate) async fn handle_inbox_actor_update(
     db: &D1Database,

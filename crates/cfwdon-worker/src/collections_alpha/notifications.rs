@@ -2,13 +2,19 @@ use super::{
     CollectionNotificationPolicyAction, CollectionNotificationRow, CountRow, collection_document,
     collection_item_document, collection_row_by_id, list_collection_items,
 };
-use crate::notifications::{MastodonNotificationResponse, NotificationEntry};
-use crate::{
-    AccountReference, MastodonAccountResponse, Result, actor_url, find_account_by_id,
-    generate_entity_id, is_blocking_actor, load_notification_policy_row,
-    muted_notifications_for_actor, notification_account_matches_filter, notification_type_allowed,
-    resolve_account_reference, timestamp_to_mastodon_iso8601,
+use crate::auth::find_account_by_id;
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::instance::actor_url;
+use crate::notifications::{
+    MastodonNotificationResponse, NotificationEntry, NotificationsQuery,
+    load_notification_policy_row, notification_account_matches_filter, notification_type_allowed,
 };
+use crate::relationship::{is_blocking_actor, muted_notifications_for_actor};
+use crate::remote::{AccountReference, resolve_account_reference};
+use crate::responses::{MastodonAccountResponse, timestamp_to_mastodon_iso8601};
+use crate::tracked_d1::D1Database;
+use worker::Result;
 use worker::d1::D1Type;
 
 pub(in crate::collections_alpha) fn merge_collection_notification_policy_action(
@@ -27,7 +33,7 @@ pub(in crate::collections_alpha) fn merge_collection_notification_policy_action(
 }
 
 async fn accepted_follow_exists(
-    db: &crate::D1Database,
+    db: &D1Database,
     follower_account_id: &str,
     target_actor_uri: &str,
 ) -> Result<bool> {
@@ -51,7 +57,7 @@ async fn accepted_follow_exists(
 }
 
 async fn recent_accepted_follow_exists(
-    db: &crate::D1Database,
+    db: &D1Database,
     follower_account_id: &str,
     target_actor_uri: &str,
     threshold: &str,
@@ -78,7 +84,7 @@ async fn recent_accepted_follow_exists(
 }
 
 async fn timestamp_is_after_current_timestamp_modifier(
-    db: &crate::D1Database,
+    db: &D1Database,
     timestamp: &str,
     modifier: &str,
 ) -> Result<bool> {
@@ -95,7 +101,7 @@ async fn timestamp_is_after_current_timestamp_modifier(
 }
 
 async fn collection_notification_filtered(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     recipient: &cfwdon_domain::LocalAccount,
     sender: &cfwdon_domain::LocalAccount,
@@ -147,7 +153,7 @@ async fn collection_notification_filtered(
 }
 
 async fn insert_collection_notification(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     recipient: &cfwdon_domain::LocalAccount,
     sender: &cfwdon_domain::LocalAccount,
@@ -208,7 +214,7 @@ async fn insert_collection_notification(
 }
 
 pub(in crate::collections_alpha) async fn insert_added_to_collection_notification(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     target: &cfwdon_domain::LocalAccount,
@@ -231,7 +237,7 @@ pub(in crate::collections_alpha) async fn insert_added_to_collection_notificatio
 }
 
 pub(in crate::collections_alpha) async fn insert_collection_update_notifications(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     owner: &cfwdon_domain::LocalAccount,
     collection_id: &str,
@@ -260,7 +266,7 @@ pub(in crate::collections_alpha) async fn insert_collection_update_notifications
 }
 
 async fn list_collection_notifications_for_account(
-    db: &crate::D1Database,
+    db: &D1Database,
     account_id: &str,
     limit: u32,
 ) -> Result<Vec<CollectionNotificationRow>> {
@@ -282,15 +288,15 @@ async fn list_collection_notifications_for_account(
         .bind_refs(bindings.iter())?
         .all()
         .await?;
-    crate::d1_results::<CollectionNotificationRow>(&result)
+    d1_results::<CollectionNotificationRow>(&result)
 }
 
 pub(crate) async fn collect_collection_notification_entries(
     entries: &mut Vec<NotificationEntry>,
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: &cfwdon_domain::LocalAccount,
-    query: &crate::NotificationsQuery,
+    query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
     for notification in

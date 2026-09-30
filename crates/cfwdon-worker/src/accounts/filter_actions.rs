@@ -1,9 +1,12 @@
-use crate::{
-    FilterActionError, Request, Response, Result, RouteContext, block_account_usecase,
-    expiry_from_duration_seconds, load_config, mute_account_usecase, parse_mute_account_request,
-    require_authenticated_local_account, unblock_account_usecase, unmute_account_usecase,
+use crate::accounts::{
+    FilterActionError, block_account_usecase, mute_account_usecase, parse_mute_account_request,
+    unblock_account_usecase, unmute_account_usecase,
 };
-use worker::Error;
+use crate::db_session::bind_request_d1;
+use crate::profile::require_authenticated_local_account;
+use crate::relationships::expiry_from_duration_seconds;
+use crate::runtime_config::load_config;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -13,7 +16,7 @@ pub(crate) async fn block_account(req: Request, ctx: RouteContext<()>) -> Result
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -36,7 +39,7 @@ pub(crate) async fn unblock_account(req: Request, ctx: RouteContext<()>) -> Resu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let blocker = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -62,7 +65,7 @@ pub(crate) async fn mute_account(req: &mut Request, ctx: RouteContext<()>) -> Re
         .await
         .map_err(Error::RustError)?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let muter = match require_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -100,7 +103,7 @@ pub(crate) async fn unmute_account(req: Request, ctx: RouteContext<()>) -> Resul
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let muter = match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

@@ -1,10 +1,15 @@
-use crate::{
-    AppConfig, FederatedEmojiMap, LocalAccount, MastodonMediaAttachmentResponse,
-    MastodonStatusResponse, MastodonStatusTagResponse, MediaAttachmentRow, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url, custom_emojis_used_in_texts, extract_hashtags_from_html,
-    extract_hashtags_from_text, resolve_status_emojis, tag_url, timestamp_to_mastodon_iso8601,
-    timestamp_to_mastodon_iso8601_opt,
+use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text, tag_url};
+use crate::custom_emojis::{FederatedEmojiMap, custom_emojis_used_in_texts, resolve_status_emojis};
+use crate::instance::actor_url;
+use crate::media::MediaAttachmentRow;
+use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::responses::{
+    MastodonAccountResponse, MastodonMediaAttachmentResponse, MastodonStatusResponse,
+    MastodonStatusTagResponse, timestamp_to_mastodon_iso8601, timestamp_to_mastodon_iso8601_opt,
 };
+use crate::statuses::StatusRow;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 
 pub(crate) struct LocalStatusResponseDetails {
     pub(crate) application: Option<serde_json::Value>,
@@ -99,7 +104,7 @@ impl MastodonStatusResponse {
             text: None,
             reblog: None,
             application: None,
-            account: crate::MastodonAccountResponse::from_account(account, config),
+            account: MastodonAccountResponse::from_account(account, config),
             media_attachments: media_attachments
                 .iter()
                 .map(|media| {
@@ -174,7 +179,7 @@ impl MastodonStatusResponse {
             text: None,
             reblog: None,
             application: None,
-            account: crate::MastodonAccountResponse::from_remote_actor(actor),
+            account: MastodonAccountResponse::from_remote_actor(actor),
             media_attachments: Vec::new(),
             mentions: Vec::new(),
             tags: status_tag_values(config, extract_hashtags_from_html(&row.content_html)),

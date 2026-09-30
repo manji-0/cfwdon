@@ -1,4 +1,4 @@
-use crate::{Request, Result};
+use worker::{Request, Result};
 
 pub(crate) fn parse_relationship_query_ids(req: &Request) -> Result<Vec<String>> {
     let url = req.url()?;

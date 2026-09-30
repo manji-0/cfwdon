@@ -1,7 +1,8 @@
+use crate::db_utils::sql_placeholders;
 use cfwdon_domain::delivery_retry_delay_modifier;
+use worker::Result;
 
-use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER, Result};
-use crate::sql_placeholders;
+use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER};
 use worker::d1::D1Type;
 
 fn d1_result_did_change(result: &worker::d1::D1Result) -> Result<bool> {

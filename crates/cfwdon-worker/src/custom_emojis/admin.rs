@@ -3,12 +3,13 @@ use super::store::{
     normalize_custom_emoji_shortcode, normalize_custom_emoji_upload, shortcode_taken,
     update_custom_emoji,
 };
-use crate::{
-    AdminAuthorization, Response, Result, RouteContext, authorize_admin_request, load_config,
-    parse_optional_bool, resolve_custom_emojis,
-};
+use crate::admin_api::{AdminAuthorization, authorize_admin_request};
+use crate::custom_emojis::resolve_custom_emojis;
+use crate::db_session::bind_request_d1;
+use crate::request_utils::parse_optional_bool;
+use crate::runtime_config::load_config;
 use serde::Deserialize;
-use worker::{FormEntry, Request};
+use worker::{FormEntry, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 struct UpdateCustomEmojiRequest {
@@ -21,7 +22,7 @@ pub(crate) async fn admin_custom_emojis_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     match authorize_admin_request(&req, &ctx).await? {
         AdminAuthorization::Authorized(_) => {}
         AdminAuthorization::Denied(response) => return Ok(response),
@@ -35,7 +36,7 @@ pub(crate) async fn admin_create_custom_emoji_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     match authorize_admin_request(&req, &ctx).await? {
         AdminAuthorization::Authorized(_) => {}
@@ -96,7 +97,7 @@ pub(crate) async fn admin_update_custom_emoji_response(
             worker::Error::RustError("missing custom emoji id route parameter".to_owned())
         })?
         .to_owned();
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding).ok();
     match authorize_admin_request(&req, &ctx).await? {
         AdminAuthorization::Authorized(_) => {}
@@ -170,7 +171,7 @@ pub(crate) async fn admin_delete_custom_emoji_response(
             worker::Error::RustError("missing custom emoji id route parameter".to_owned())
         })?
         .to_owned();
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     match authorize_admin_request(&req, &ctx).await? {
         AdminAuthorization::Authorized(_) => {}

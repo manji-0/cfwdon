@@ -12,17 +12,13 @@ mod quote_embed;
 mod reblog;
 mod remote;
 
-#[allow(unused_imports)]
 pub(crate) use local::{
     build_loaded_local_status_response, build_local_status_response,
-    build_local_status_response_with_filter_matcher, build_local_status_response_with_preloads,
     build_local_status_response_with_quote_count_preloads,
     build_local_status_response_with_timeline_preloads,
 };
-#[allow(unused_imports)]
 pub(crate) use remote::{
     build_remote_status_response, build_remote_status_response_with_filter_matcher,
-    build_remote_status_response_with_preloads,
     build_remote_status_response_with_timeline_preloads,
 };
 
@@ -31,10 +27,11 @@ mod tests {
     use super::super::reblog_response::{
         local_reblog_wrapper_response_from_embedded, remote_reblog_wrapper_response_from_embedded,
     };
-    use super::super::{
-        AppConfig, LocalAccount, MastodonStatusResponse, RemoteActorRow, RemoteStatusRow, StatusRow,
-    };
+    use super::super::{LocalAccount, StatusRow};
     use super::remote::remote_media_attachment_values;
+    use crate::remote::{RemoteActorRow, RemoteStatusRow};
+    use crate::responses::MastodonStatusResponse;
+    use cfwdon_core::AppConfig;
     use cfwdon_domain::LocalAccountRecord;
 
     #[test]

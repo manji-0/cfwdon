@@ -1,8 +1,7 @@
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct FollowerTargetRow {
     pub(crate) target_inbox: String,

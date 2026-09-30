@@ -1,88 +1,135 @@
-use base64::Engine;
-
-use super::is_cors_enabled_path;
-use super::{
-    AUTH_CONTEXT_LIMIT, AccountStatusesQuery, CreateStatusPollRequest, HomeTimelineQuery,
-    LinkTimelineQuery, MastodonAccountResponse, MastodonMediaAttachmentResponse,
-    MastodonReportResponse, NotificationEntry, NotificationsQuery, OAuthAuthorizeRequest,
-    OutboxProcessResponse, PublicTimelineQuery, RemoteActorProfile, RemoteActorRow,
-    RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow, RemoteStatusPollRow,
-    RemoteStatusPollVoteRow, RemoteStatusRow, SearchCategoryFlags, SearchUrlQueryMode,
-    SearchV2Query, StatusPollOptionRow, StatusPollRow, StatusRow, StreamingChannelValidationError,
-    TagSearchMetrics, TagTimelineQuery, TimelinePaginationQuery, TranslationProviderLanguageRow,
+use crate::accounts::{DirectoryOrder, directory_order};
+use crate::activitypub::{
+    activitypub_audiences_for_visibility, activitypub_media_attachment_type,
+    build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
+    build_add_featured_activity_with_id, build_delete_quote_authorization_activity,
+    build_quote_authorization_object, build_quote_request_object,
+    build_reject_quote_request_activity_with_id, build_remove_featured_activity_with_id,
+    build_status_update_activity_with_id, build_update_person_activity_with_id,
+    extract_inbox_target_username, extract_remote_note_object, follow_targets_local_actor,
+    is_activitypub_actor_type, is_follow_undo, local_status_ap_id, local_username_from_actor_uri,
+    local_username_from_status_uri, note_targets_account_or_followers, note_targets_followers,
+    note_targets_public, object_attributed_to_remote_actor, quote_authorization_uri,
+    quote_target_uri_from_object, visibility_from_activitypub_object,
+};
+use crate::async_refreshes::{context_async_refresh_id, format_async_refresh_header_value};
+use crate::authorize_interaction::{
+    authorize_interaction_document, authorize_interaction_url_from_base,
+};
+use crate::content_helpers::{
+    extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
+    extract_mentions_from_text,
+};
+use crate::delivery::{
+    OutboxProcessResponse, describe_outbound_activity, outbox_batch_made_progress,
+    request_may_enqueue_outbox_work,
+};
+use crate::discovery::remote_follow_base_url;
+use crate::federation::{
+    RemoteActorProfile, extract_remote_profile_media_url, parse_http_url_parts,
+    parse_remote_actor_profile_document,
+};
+use crate::http::{
+    parse_activitypub_request_date_ms, parse_signature_header, signed_get_signing_string,
+    validate_activitypub_signature_headers,
+};
+use crate::instance::{
+    build_announcements_document, build_instance_v1_document, build_instance_v2_document,
+    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document, configured_html_document,
+    instance_base_url, instance_open_registrations, nodeinfo_url, parse_csv_list,
+    parse_lookup_handle, parse_webfinger_resource, peer_authority_from_uri, remote_account_rest_id,
+    remote_actor_uri_from_rest_id, set_instance_translation_enabled,
+};
+use crate::local_polls::{
+    StatusPollOptionRow, StatusPollRow, apply_activitypub_poll_fields, normalize_status_poll,
+};
+use crate::media::{
+    MediaAttachmentRow, RemoteStatusAttachmentRow, classify_media_kind, image_dimensions,
+    media_kind_label, parse_media_focus,
+};
+use crate::meta_placeholder_routes::streaming::{
+    StreamingChannelValidationError, streaming_channel_requires_auth,
+    validate_streaming_channel_request,
+};
+use crate::meta_placeholder_routes::{
+    build_app_verify_credentials_document, build_donation_campaign_document,
+    build_email_confirmation_html, build_email_confirmation_subject, build_email_confirmation_text,
+    build_email_confirmation_url, build_oauth_authorization_server_document,
+    build_oauth_userinfo_document,
+};
+use crate::notifications::{
+    NotificationEntry, NotificationsQuery, build_notifications_v2_document,
+    filter_notification_entries_by_query, is_admin_account, is_admin_authorized,
+    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
+};
+use crate::oauth_apps::{
+    OAuthAuthorizeRequest, auth0_login_url, auth0_logout_url,
+    build_app_verify_credentials_document_from_parts, build_oauth_token_document,
+    hash_account_password, oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
+    parse_basic_authorization_header, parse_bearer_authorization_header,
+    redirect_uri_matches_registered, verify_account_password_hash,
+};
+use crate::polls::validate_poll_vote_submission;
+use crate::profile::activitypub_profile_attachments;
+use crate::remote::{
+    RemoteActorRow, RemotePollDraft, RemotePollOptionDraft, RemoteStatusPollOptionRow,
+    RemoteStatusPollRow, RemoteStatusPollVoteRow, RemoteStatusRow,
+    build_poll_vote_activity_with_ids, effective_remote_status_quote_state,
+    extract_remote_poll_draft, optimistic_remote_poll_vote_deltas,
+    remap_remote_poll_vote_positions, remote_poll_draft_acknowledges_local_snapshot,
+    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
+    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
+    remote_status_targets_local_viewer_followers,
+};
+use crate::request_utils::{
+    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
+    parse_internal_pagination_id, parse_media_id_fields,
+};
+use crate::responses::{
+    AUTH_CONTEXT_LIMIT, MastodonAccountResponse, MastodonMediaAttachmentResponse,
+    MastodonReportResponse, mastodon_account_fields, media_fallback_url, media_object_url,
+    trim_context_ancestors, trim_context_descendants,
+};
+use crate::routing::is_cors_enabled_path;
+use crate::scheduled_statuses::{scheduled_status_document, scheduled_status_document_with_params};
+use crate::search::{
+    ParsedStatusSearchQuery, SearchCategoryFlags, SearchUrlQueryMode, SearchV2Query,
     account_matches_search_terms, account_relationship_rank, account_search_is_complete_handle,
     account_search_non_exact_limit, account_search_rank, account_search_resolve_enabled,
     account_search_sort_key, account_search_term, account_search_terms,
-    activitypub_audiences_for_visibility, activitypub_media_attachment_type,
-    activitypub_profile_attachments, apply_activitypub_poll_fields, apply_html_preview_metadata,
-    auth0_login_url, auth0_logout_url, authorize_interaction_document,
-    authorize_interaction_url_from_base, build_accept_quote_request_activity_with_id,
-    build_activitypub_actor_document, build_add_featured_activity_with_id,
-    build_announcements_document, build_app_verify_credentials_document,
-    build_app_verify_credentials_document_from_parts, build_deepl_request_body,
-    build_deepl_translation_languages_document, build_delete_quote_authorization_activity,
-    build_donation_campaign_document, build_email_confirmation_html,
-    build_email_confirmation_subject, build_email_confirmation_text, build_email_confirmation_url,
-    build_instance_v1_document, build_instance_v2_document, build_internal_cursor_link_for_url,
-    build_internal_cursor_link_for_url_with_min_id, build_libretranslate_request_payload,
-    build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
-    build_notifications_v2_document, build_oauth_authorization_server_document,
-    build_oauth_token_document, build_oauth_userinfo_document, build_poll_vote_activity_with_ids,
-    build_quote_authorization_object, build_quote_request_object,
-    build_reject_quote_request_activity_with_id, build_remote_status_card_value,
-    build_remove_featured_activity_with_id, build_status_card_value,
-    build_status_update_activity_with_id, build_timeline_link_header_for_url,
-    build_translation_document, build_translation_document_for_language,
-    build_translation_languages_document, build_update_person_activity_with_id,
-    classify_media_kind, configured_html_document, context_async_refresh_id,
-    derive_link_timeline_match_urls, describe_outbound_activity, directory_order,
-    effective_local_quote_approval_policy, effective_remote_status_quote_state,
-    effective_search_v2_following, effective_search_v2_offset, effective_status_quote_state,
-    extract_account_handles_from_text, extract_hashtags_from_html, extract_hashtags_from_text,
-    extract_html_preview_metadata, extract_inbox_target_username, extract_mentions_from_text,
-    extract_remote_note_object, extract_remote_poll_draft, extract_remote_profile_media_url,
-    filter_notification_entries_by_query, first_url_from_text, follow_targets_local_actor,
-    format_async_refresh_header_value, hash_account_password, image_dimensions,
-    include_local_source, include_remote_source, instance_base_url, instance_open_registrations,
-    is_activitypub_actor_type, is_admin_account, is_admin_authorized, is_follow_undo,
-    local_quote_policy_allows, local_quote_revoke_allowed, local_status_allows_viewer,
-    local_status_ap_id, local_username_from_actor_uri, local_username_from_status_uri,
-    mastodon_account_fields, matches_tag_timeline_filters, media_fallback_url, media_kind_label,
-    media_object_url, nodeinfo_url, normalize_quote_approval_policy, normalize_scheduled_at,
-    normalize_search_match_text, normalize_search_query_input, normalize_status_history_entry,
-    normalize_status_poll, normalized_account_search_query, normalized_action_uri,
-    note_targets_account_or_followers, note_targets_followers, note_targets_public,
-    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
-    oauth_access_token_has_any_scope_json, oauth_authorize_url_from_form,
-    object_attributed_to_remote_actor, optimistic_remote_poll_vote_deltas,
-    outbox_batch_made_progress, paginate_tag_search_matches, parse_activitypub_request_date_ms,
-    parse_basic_authorization_header, parse_bearer_authorization_header, parse_csv_list,
-    parse_deepl_translated_text, parse_http_url_parts, parse_internal_pagination_id,
-    parse_libretranslate_translated_text, parse_lookup_handle, parse_media_focus,
-    parse_media_id_fields, parse_remote_actor_profile_document, parse_signature_header,
-    parse_status_search_query, parse_webfinger_resource, peer_authority_from_uri,
-    pending_quote_document, quote_authorization_uri, quote_document_with_state,
-    quote_placeholder_document, quote_target_uri_from_object, redirect_uri_matches_registered,
-    remap_remote_poll_vote_positions, remote_account_rest_id, remote_actor_uri_from_rest_id,
-    remote_follow_base_url, remote_poll_draft_acknowledges_local_snapshot,
-    remote_poll_draft_acknowledges_vote, remote_poll_should_refresh,
-    remote_status_targets_local_viewer, remote_status_targets_local_viewer_account,
-    remote_status_targets_local_viewer_followers, request_may_enqueue_outbox_work,
-    resolve_search_tag_name, scheduled_status_document, scheduled_status_document_with_params,
+    effective_search_v2_following, effective_search_v2_offset, normalize_search_match_text,
+    normalize_search_query_input, normalized_account_search_query, parse_status_search_query,
     search_category_flags, search_text_match_rank, search_v2_limit, search_v2_requires_auth,
     search_v2_type_allows_url_resource, search_v2_unauthenticated_error, search_v2_url_query_mode,
-    set_instance_translation_enabled, signed_get_signing_string, status_has_active_quote,
     status_is_searchable_by_scope, status_matches_search_metadata, status_matches_search_scope,
     status_matches_search_syntax, status_matches_search_timestamp, status_search_query_terms,
-    status_search_rank, streaming_channel_requires_auth, tag_matches_search_query, tag_search_rank,
-    tag_search_sort_key, text_mentions_search_library_viewer, timeline_fetch_limit, timeline_limit,
-    translation_cache_source_fingerprint, translation_provider_language_code,
-    translation_provider_language_matches, translation_provider_supported_target_language,
-    translation_target_language, trim_context_ancestors, trim_context_descendants,
-    validate_activitypub_signature_headers, validate_poll_vote_submission,
-    validate_scheduled_at_minimum_offset, validate_streaming_channel_request,
-    verify_account_password_hash, visibility_from_activitypub_object,
+    status_search_rank, text_mentions_search_library_viewer,
 };
+use crate::statuses::{
+    AccountStatusesQuery, CreateStatusPollRequest, StatusRow, TranslationProviderLanguageRow,
+    apply_html_preview_metadata, build_deepl_translation_languages_document,
+    build_remote_status_card_value, build_status_card_value, build_translation_document,
+    build_translation_document_for_language, build_translation_languages_document,
+    effective_local_quote_approval_policy, effective_status_quote_state,
+    extract_html_preview_metadata, first_url_from_text, local_quote_policy_allows,
+    local_quote_revoke_allowed, local_status_allows_viewer, normalize_quote_approval_policy,
+    normalize_scheduled_at, normalize_status_history_entry, normalized_action_uri,
+    pending_quote_document, quote_document_with_state, quote_placeholder_document,
+    status_has_active_quote, translation_provider_language_code,
+    translation_provider_language_matches, translation_provider_supported_target_language,
+    translation_target_language, validate_scheduled_at_minimum_offset,
+};
+use crate::tags::{
+    TagSearchMetrics, paginate_tag_search_matches, resolve_search_tag_name,
+    tag_matches_search_query, tag_search_rank, tag_search_sort_key,
+};
+use crate::timelines::request_parsing::build_timeline_link_header_for_url;
+use crate::timelines::{
+    HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
+    TimelinePaginationQuery, derive_link_timeline_match_urls, include_local_source,
+    include_remote_source, matches_tag_timeline_filters, timeline_fetch_limit, timeline_limit,
+};
+use base64::Engine;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     InstanceCapabilities, InstanceSummary, LocalAccount, LocalAccountRecord, ProfileField,
@@ -913,62 +960,6 @@ fn translation_provider_language_code_normalizes_target_codes() {
 }
 
 #[test]
-fn libretranslate_request_payload_matches_provider_shape() {
-    let payload = build_libretranslate_request_payload(
-        "<p>Hello</p>",
-        "en-US",
-        "ja-JP",
-        "html",
-        Some("secret"),
-    );
-
-    assert_eq!(
-        payload.pointer("/q"),
-        Some(&serde_json::json!("<p>Hello</p>"))
-    );
-    assert_eq!(payload.pointer("/source"), Some(&serde_json::json!("en")));
-    assert_eq!(payload.pointer("/target"), Some(&serde_json::json!("ja")));
-    assert_eq!(payload.pointer("/format"), Some(&serde_json::json!("html")));
-    assert_eq!(
-        payload.pointer("/api_key"),
-        Some(&serde_json::json!("secret"))
-    );
-}
-
-#[test]
-fn libretranslate_response_extracts_translated_text() {
-    assert_eq!(
-        parse_libretranslate_translated_text(&serde_json::json!({
-            "translatedText": "<p>Hola</p>"
-        })),
-        Some("<p>Hola</p>".to_owned())
-    );
-    assert_eq!(
-        parse_libretranslate_translated_text(&serde_json::json!({ "error": "missing" })),
-        None
-    );
-}
-
-#[test]
-fn deepl_request_body_uses_uppercase_language_codes() {
-    let body = build_deepl_request_body("<p>Hello</p>", "en-US", "ja-JP");
-
-    assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
-    assert!(body.contains("source_lang=EN-US"));
-    assert!(body.contains("target_lang=ja-JP"));
-    assert!(body.contains("tag_handling=html"));
-}
-
-#[test]
-fn deepl_request_body_omits_unknown_source_language() {
-    let body = build_deepl_request_body("<p>Hello</p>", "und", "ja");
-
-    assert!(body.contains("text=%3Cp%3EHello%3C%2Fp%3E"));
-    assert!(!body.contains("source_lang="));
-    assert!(body.contains("target_lang=ja"));
-}
-
-#[test]
 fn translation_provider_supported_target_language_prefers_primary_subtag() {
     let document = serde_json::json!({
         "en": ["pt", "de"],
@@ -989,22 +980,6 @@ fn translation_provider_supported_target_language_prefers_primary_subtag() {
     );
     assert_eq!(
         translation_provider_supported_target_language(&document, "en", "it"),
-        None
-    );
-}
-
-#[test]
-fn deepl_response_extracts_translated_text() {
-    assert_eq!(
-        parse_deepl_translated_text(&serde_json::json!({
-            "translations": [
-                { "text": "<p>Hola</p>" }
-            ]
-        })),
-        Some("<p>Hola</p>".to_owned())
-    );
-    assert_eq!(
-        parse_deepl_translated_text(&serde_json::json!({ "translations": [] })),
         None
     );
 }
@@ -1072,62 +1047,6 @@ fn translation_language_pair_support_uses_source_or_auto_detection() {
     assert!(!translation_provider_language_matches(
         &document, "fr", "es"
     ));
-}
-
-#[test]
-fn translation_cache_source_fingerprint_tracks_translatable_fields() {
-    let base = serde_json::json!({
-        "content": "<p>Hello</p>",
-        "spoiler_text": "cw",
-        "language": "en",
-        "account": { "display_name": "Alice" },
-        "media_attachments": [
-            { "id": "media-1", "description": "alt text", "url": "https://media.example/1" }
-        ],
-        "poll": {
-            "id": "poll-1",
-            "options": [
-                { "title": "One", "votes_count": 1 }
-            ]
-        }
-    });
-    let same_translatable_fields = serde_json::json!({
-        "content": "<p>Hello</p>",
-        "spoiler_text": "cw",
-        "language": "en",
-        "account": { "display_name": "Changed" },
-        "media_attachments": [
-            { "id": "media-1", "description": "alt text", "url": "https://media.example/changed" }
-        ],
-        "poll": {
-            "id": "poll-1",
-            "options": [
-                { "title": "One", "votes_count": 99 }
-            ]
-        }
-    });
-    let edited_content = serde_json::json!({
-        "content": "<p>Hello edited</p>",
-        "spoiler_text": "cw",
-        "language": "en",
-        "media_attachments": [
-            { "id": "media-1", "description": "alt text" }
-        ],
-        "poll": {
-            "options": [
-                { "title": "One" }
-            ]
-        }
-    });
-
-    assert_eq!(
-        translation_cache_source_fingerprint(&base).unwrap(),
-        translation_cache_source_fingerprint(&same_translatable_fields).unwrap()
-    );
-    assert_ne!(
-        translation_cache_source_fingerprint(&base).unwrap(),
-        translation_cache_source_fingerprint(&edited_content).unwrap()
-    );
 }
 
 #[test]
@@ -3061,7 +2980,7 @@ fn status_search_rank_prefers_content_matches_before_spoilers() {
 fn parse_status_search_query_extracts_basic_status_syntax_filters() {
     assert_eq!(
         parse_status_search_query("rust release from:me before:\"2025-03-01\" after:2025-02-01"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust release".to_owned(),
             included_text_terms: vec!["rust".to_owned(), "release".to_owned()],
             excluded_text_terms: Vec::new(),
@@ -3092,7 +3011,7 @@ fn parse_status_search_query_extracts_basic_status_syntax_filters() {
 fn parse_status_search_query_expands_during_into_day_bounds() {
     assert_eq!(
         parse_status_search_query("\"rust release\" during:2025-03-01"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust release".to_owned(),
             included_text_terms: vec!["rust release".to_owned()],
             excluded_text_terms: Vec::new(),
@@ -3123,7 +3042,7 @@ fn parse_status_search_query_expands_during_into_day_bounds() {
 fn parse_status_search_query_accepts_epoch_timestamps() {
     assert_eq!(
         parse_status_search_query("before:1740873600 after:1740787200 during:1740787200"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: String::new(),
             included_text_terms: Vec::new(),
             excluded_text_terms: Vec::new(),
@@ -3154,7 +3073,7 @@ fn parse_status_search_query_accepts_epoch_timestamps() {
 fn parse_status_search_query_extracts_negated_date_filters() {
     assert_eq!(
         parse_status_search_query("-before:\"2025-03-01\" -after:2025-02-01 -during:2025-02-10"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: String::new(),
             included_text_terms: Vec::new(),
             excluded_text_terms: Vec::new(),
@@ -3188,7 +3107,7 @@ fn parse_status_search_query_extracts_negated_date_filters() {
 fn parse_status_search_query_normalizes_quote_equivalent_characters() {
     assert_eq!(
         parse_status_search_query("rust 「release notes」 -“outage”"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust release notes".to_owned(),
             included_text_terms: vec!["rust".to_owned(), "release notes".to_owned()],
             excluded_text_terms: vec!["outage".to_owned()],
@@ -3219,7 +3138,7 @@ fn parse_status_search_query_normalizes_quote_equivalent_characters() {
 fn parse_status_search_query_preserves_escaped_quote_and_space_terms() {
     assert_eq!(
         parse_status_search_query(r#"rust "release \"notes\"" escaped\ space"#),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust release \"notes\" escaped space".to_owned(),
             included_text_terms: vec![
                 "rust".to_owned(),
@@ -3264,7 +3183,7 @@ fn parse_status_search_query_extracts_language_is_and_has_filters() {
         parse_status_search_query(
             "rust -\"remote outage\" language:ja -language:en from:me -from:bob is:reply -is:sensitive is:boost -is:quote has:media -has:poll has:embed in:public -in:library"
         ),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust".to_owned(),
             included_text_terms: vec!["rust".to_owned()],
             excluded_text_terms: vec!["remote outage".to_owned()],
@@ -3306,7 +3225,7 @@ fn parse_status_search_query_accepts_explicit_positive_operator() {
         parse_status_search_query(
             "+rust +\"release notes\" +from:me +language:ja +has:media +in:public"
         ),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "rust release notes".to_owned(),
             included_text_terms: vec!["rust".to_owned(), "release notes".to_owned()],
             excluded_text_terms: Vec::new(),
@@ -3339,7 +3258,7 @@ fn parse_status_search_query_treats_prefixes_case_insensitively() {
         parse_status_search_query(
             "Rust FROM:Me Language:EN-us IS:Reply HAS:Media IN:Library Site:Example.com"
         ),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "Rust site Example.com".to_owned(),
             included_text_terms: vec!["Rust".to_owned(), "site Example.com".to_owned()],
             excluded_text_terms: Vec::new(),
@@ -3370,7 +3289,7 @@ fn parse_status_search_query_treats_prefixes_case_insensitively() {
 fn parse_status_search_query_falls_back_unknown_prefixes_to_text_terms() {
     assert_eq!(
         parse_status_search_query("cryptid site:example.com -mood:spooky"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: "cryptid site example.com".to_owned(),
             included_text_terms: vec!["cryptid".to_owned(), "site example.com".to_owned()],
             excluded_text_terms: vec!["mood spooky".to_owned()],
@@ -3401,7 +3320,7 @@ fn parse_status_search_query_falls_back_unknown_prefixes_to_text_terms() {
 fn parse_status_search_query_marks_conflicting_filters_unsatisfiable() {
     assert_eq!(
         parse_status_search_query("from:alice from:bob is:reply -is:reply"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: String::new(),
             included_text_terms: Vec::new(),
             excluded_text_terms: Vec::new(),
@@ -3432,7 +3351,7 @@ fn parse_status_search_query_marks_conflicting_filters_unsatisfiable() {
 fn parse_status_search_query_normalizes_language_subtags() {
     assert_eq!(
         parse_status_search_query("language:EN-us -language:pt_BR"),
-        super::ParsedStatusSearchQuery {
+        ParsedStatusSearchQuery {
             text_query: String::new(),
             included_text_terms: Vec::new(),
             excluded_text_terms: Vec::new(),
@@ -4897,7 +4816,7 @@ fn media_urls_prefer_custom_domain_and_keep_worker_fallback() {
 fn local_media_response_uses_worker_route_without_public_media_base() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     let response = MastodonMediaAttachmentResponse::from_row(
-        &super::MediaAttachmentRow {
+        &MediaAttachmentRow {
             id: "media-1".to_owned(),
             account_id: "acct-1".to_owned(),
             status_id: Some("status-1".to_owned()),
@@ -4942,7 +4861,7 @@ fn local_media_response_uses_public_media_base_when_configured() {
     let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     config.media_public_base_url = Some("https://media.example.com".to_owned());
     let response = MastodonMediaAttachmentResponse::from_row(
-        &super::MediaAttachmentRow {
+        &MediaAttachmentRow {
             id: "media-1".to_owned(),
             account_id: "acct-1".to_owned(),
             status_id: Some("status-1".to_owned()),
@@ -4978,7 +4897,7 @@ fn local_media_response_uses_public_media_base_when_configured() {
 fn local_media_response_keeps_meta_objects_when_dimensions_unknown() {
     let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
     let response = MastodonMediaAttachmentResponse::from_row(
-        &super::MediaAttachmentRow {
+        &MediaAttachmentRow {
             id: "media-1".to_owned(),
             account_id: "acct-1".to_owned(),
             status_id: Some("status-1".to_owned()),
@@ -5576,7 +5495,7 @@ fn build_status_card_value_truncates_long_descriptions() {
 
 #[test]
 fn build_remote_status_card_value_prefers_link_attachment_metadata() {
-    let attachments = vec![crate::RemoteStatusAttachmentRow {
+    let attachments = vec![RemoteStatusAttachmentRow {
         id: "att-1".to_owned(),
         status_id: "status-1".to_owned(),
         remote_url: "https://news.example/articles/hello-world".to_owned(),
@@ -5606,7 +5525,7 @@ fn build_remote_status_card_value_prefers_link_attachment_metadata() {
 
 #[test]
 fn build_remote_status_card_value_falls_back_without_link_attachment() {
-    let attachments = vec![crate::RemoteStatusAttachmentRow {
+    let attachments = vec![RemoteStatusAttachmentRow {
         id: "att-1".to_owned(),
         status_id: "status-1".to_owned(),
         remote_url: "https://cdn.example/image.png".to_owned(),
@@ -5723,17 +5642,11 @@ fn is_admin_authorized_accepts_auth0_roles_or_admin_emails() {
 
 #[test]
 fn directory_order_defaults_to_active_and_accepts_new() {
-    assert_eq!(directory_order(None), super::DirectoryOrder::Active);
-    assert_eq!(
-        directory_order(Some("active")),
-        super::DirectoryOrder::Active
-    );
-    assert_eq!(directory_order(Some("new")), super::DirectoryOrder::New);
-    assert_eq!(directory_order(Some("NEW")), super::DirectoryOrder::New);
-    assert_eq!(
-        directory_order(Some("unexpected")),
-        super::DirectoryOrder::Active
-    );
+    assert_eq!(directory_order(None), DirectoryOrder::Active);
+    assert_eq!(directory_order(Some("active")), DirectoryOrder::Active);
+    assert_eq!(directory_order(Some("new")), DirectoryOrder::New);
+    assert_eq!(directory_order(Some("NEW")), DirectoryOrder::New);
+    assert_eq!(directory_order(Some("unexpected")), DirectoryOrder::Active);
 }
 
 #[test]

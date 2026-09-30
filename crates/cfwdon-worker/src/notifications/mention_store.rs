@@ -1,12 +1,12 @@
-use super::content_helpers::{extract_mentions_from_text, strip_html_tags};
-use super::instance_host;
+use crate::content_helpers::{extract_mentions_from_text, strip_html_tags};
+use crate::db_utils::d1_results;
+use crate::instance::instance_host;
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct MentionNotificationRow {
     pub(crate) id: String,
@@ -23,7 +23,7 @@ pub(crate) struct MentionNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
-    #[serde(default = "crate::default_quote_state")]
+    #[serde(default = "crate::statuses::default_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) created_at: String,
 }
@@ -44,7 +44,7 @@ pub(crate) struct RemoteMentionNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
-    #[serde(default = "crate::default_remote_quote_state")]
+    #[serde(default = "crate::remote::default_remote_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) published_at: String,
     #[serde(default)]
@@ -104,7 +104,7 @@ pub(crate) async fn list_local_mention_notifications_for_account(
     };
 
     let mut rows = Vec::new();
-    for row in crate::d1_results::<MentionNotificationRow>(&result)? {
+    for row in d1_results::<MentionNotificationRow>(&result)? {
         if local_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }
@@ -173,7 +173,7 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
 
     // The SQL LIKE is only a cheap prefilter; HTML parsing keeps mention matching exact.
     let mut rows = Vec::new();
-    for row in crate::d1_results::<RemoteMentionNotificationRow>(&result)? {
+    for row in d1_results::<RemoteMentionNotificationRow>(&result)? {
         if remote_mention_row_targets_viewer(&row, viewer, config) {
             rows.push(row);
         }

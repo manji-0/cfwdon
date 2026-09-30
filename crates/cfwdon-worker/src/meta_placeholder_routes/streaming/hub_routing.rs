@@ -1,4 +1,6 @@
-use crate::{stream_hub_channel_id_name, stream_hub_session_id_name};
+use crate::stream_hub::stream_hub_session_id_name;
+
+use crate::stream_hub::stream_hub_channel_id_name;
 
 pub(super) fn stream_hub_proxy_target(
     stream: &str,

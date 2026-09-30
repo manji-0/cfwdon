@@ -1,8 +1,9 @@
-use crate::{
-    LocalAccount, Response, Result, RouteContext, find_authenticated_local_account_with_roles,
-    is_admin_authorized, load_config,
-};
-use worker::Request;
+use crate::auth::find_authenticated_local_account_with_roles;
+use crate::db_session::bind_request_d1;
+use crate::notifications::is_admin_authorized;
+use crate::runtime_config::load_config;
+use cfwdon_domain::LocalAccount;
+use worker::{Request, Response, Result, RouteContext};
 
 pub(crate) enum AdminAuthorization {
     Authorized(LocalAccount),
@@ -14,7 +15,7 @@ pub(crate) async fn authorize_admin_request(
     ctx: &RouteContext<()>,
 ) -> Result<AdminAuthorization> {
     let config = load_config(ctx);
-    let db = crate::bind_request_d1(ctx, &config)?;
+    let db = bind_request_d1(ctx, &config)?;
     Ok(
         match find_authenticated_local_account_with_roles(req, &db, &config).await? {
             Some((account, roles)) if is_admin_authorized(&config, &account, &roles) => {

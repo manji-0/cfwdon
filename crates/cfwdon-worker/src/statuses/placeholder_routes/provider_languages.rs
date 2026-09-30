@@ -5,9 +5,8 @@ use super::languages::{
 use super::provider::{
     TranslationProviderConfig, TranslationProviderKind, translation_provider_kind,
 };
-use crate::statuses::{Request, Result};
 use serde::Deserialize;
-use worker::{Fetch, Headers, Method, RequestInit};
+use worker::{Fetch, Headers, Method, Request, RequestInit, Result};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct DeepLLanguageRow {

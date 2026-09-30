@@ -1,7 +1,11 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
-use crate::{Response, Result, RouteContext, reclaim_stale_inbox_activities};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::inbox::reclaim_stale_inbox_activities;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
-use worker::Request;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Serialize)]
 struct AdminInboxActivityResponse {
@@ -69,8 +73,8 @@ pub(crate) async fn admin_inbox_activities_response(
     }
 
     let query: AdminInboxQuery = req.query().unwrap_or_default();
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
 
     let sql = if query.pending.unwrap_or(false) {
         format!(
@@ -88,7 +92,7 @@ pub(crate) async fn admin_inbox_activities_response(
     };
 
     let result = db.prepare(&sql).all().await?;
-    let activities = crate::d1_results::<AdminInboxRow>(&result)?
+    let activities = d1_results::<AdminInboxRow>(&result)?
         .into_iter()
         .map(|row| AdminInboxActivityResponse {
             actor_uri: row.actor_uri,
@@ -117,8 +121,8 @@ pub(crate) async fn admin_reclaim_inbox_activities_response(
         AdminAuthorization::Denied(response) => return Ok(response),
     }
 
-    let config = crate::load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
     let report = reclaim_stale_inbox_activities(&db, 100).await?;
     Response::from_json(&AdminInboxReclaimResponse {
         marked_processed: report.marked_processed,
@@ -126,7 +130,7 @@ pub(crate) async fn admin_reclaim_inbox_activities_response(
     })
 }
 
-pub(crate) async fn admin_stuck_inbox_count(db: &crate::D1Database) -> Result<i64> {
+pub(crate) async fn admin_stuck_inbox_count(db: &D1Database) -> Result<i64> {
     let result = db
         .prepare(
             "SELECT COUNT(*) AS count
@@ -163,7 +167,8 @@ pub(crate) async fn admin_stuck_inbox_count(db: &crate::D1Database) -> Result<i6
 
 #[cfg(test)]
 mod tests {
-    use crate::InboxReclaimReport;
+
+    use crate::inbox::InboxReclaimReport;
 
     #[test]
     fn inbox_reclaim_report_defaults_to_zero() {

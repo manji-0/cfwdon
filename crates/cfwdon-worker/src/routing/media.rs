@@ -1,4 +1,4 @@
-use crate::{
+use crate::media::{
     create_media_attachment, delete_media_attachment, media_content_response,
     media_metadata_response, prune_orphan_media, update_media_attachment,
 };

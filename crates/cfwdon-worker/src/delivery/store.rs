@@ -1,7 +1,8 @@
+use crate::db_utils::{d1_results, sql_placeholders, unique_ordered_refs};
+use crate::relationship::FollowerTargetRow;
 use std::collections::{HashMap, HashSet};
 
-use super::{D1Database, FollowerTargetRow};
-use crate::{sql_placeholders, unique_ordered_refs};
+use super::D1Database;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
@@ -96,7 +97,7 @@ pub(crate) async fn claim_pending_generic_outbox_deliveries(
         .all()
         .await?;
 
-    crate::d1_results::<OutboxDeliveryRow>(&result)
+    d1_results::<OutboxDeliveryRow>(&result)
 }
 
 pub(crate) async fn claim_pending_target_outbox_deliveries(
@@ -125,7 +126,7 @@ pub(crate) async fn claim_pending_target_outbox_deliveries(
         .all()
         .await?;
 
-    crate::d1_results::<OutboxDeliveryRow>(&result)
+    d1_results::<OutboxDeliveryRow>(&result)
 }
 
 pub(crate) async fn list_follower_delivery_targets(
@@ -144,7 +145,7 @@ pub(crate) async fn list_follower_delivery_targets(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
+    Ok(d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())
@@ -176,7 +177,7 @@ pub(crate) async fn list_follower_delivery_targets_by_account_ids(
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     let mut by_account = HashMap::<String, Vec<String>>::new();
-    for row in crate::d1_results::<FollowerAccountTargetRow>(&result)? {
+    for row in d1_results::<FollowerAccountTargetRow>(&result)? {
         if !row.target_inbox.trim().is_empty() {
             by_account
                 .entry(row.account_id)
@@ -203,7 +204,7 @@ pub(crate) async fn list_follower_actor_uris(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<FollowerTargetRow>(&result)?
+    Ok(d1_results::<FollowerTargetRow>(&result)?
         .into_iter()
         .map(|row| row.target_inbox)
         .filter(|value| !value.trim().is_empty())

@@ -1,11 +1,14 @@
-use crate::{
-    D1Database, LocalAccount, MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow,
-    Result, delete_media_attachment_row, generate_entity_id, log_observed_operation,
-    observability_started_at_ms, require_media_attachment_by_id,
+use crate::db_utils::d1_results;
+use crate::id_utils::generate_entity_id;
+use crate::media::{
+    MediaAttachmentRow, MediaKind, MediaUploadDraft, OrphanMediaRow, delete_media_attachment_row,
+    require_media_attachment_by_id,
 };
-use cfwdon_domain::StoredMediaAttachmentIntent;
+use crate::observability::{log_observed_operation, observability_started_at_ms};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::{LocalAccount, StoredMediaAttachmentIntent};
 use serde::Deserialize;
-use worker::{Bucket, HttpMetadata, d1::D1Type};
+use worker::{Bucket, HttpMetadata, Result, d1::D1Type};
 
 #[derive(Debug, Deserialize)]
 struct QueuedMediaDeletionRow {
@@ -203,7 +206,7 @@ async fn list_queued_media_deletions(
         .all()
         .await?;
 
-    crate::d1_results::<QueuedMediaDeletionRow>(&result)
+    d1_results::<QueuedMediaDeletionRow>(&result)
 }
 
 async fn queue_media_deletion(db: &D1Database, object_key: &str, error: &str) -> Result<()> {

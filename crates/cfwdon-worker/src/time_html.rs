@@ -1,5 +1,5 @@
-use super::{Error, Result};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use worker::{Error, Result};
 
 pub(crate) fn now_iso_string() -> Result<String> {
     #[cfg(target_arch = "wasm32")]

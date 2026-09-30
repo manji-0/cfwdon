@@ -8,12 +8,13 @@ use super::{
     timeline_request_requires_authorization, timeline_response_from_entries,
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
+use crate::db_session::{open_bound_request_session, with_d1_bookmark};
+use crate::filters::load_account_filter_matcher;
 use crate::runtime_config::load_config;
-use crate::{
-    account_has_thread_mutes, list_local_public_statuses_by_tag,
-    list_remote_public_statuses_by_tag, load_account_filter_matcher, normalize_hashtag,
-    open_bound_request_session, with_d1_bookmark,
+use crate::statuses::{
+    account_has_thread_mutes, list_local_public_statuses_by_tag, list_remote_public_statuses_by_tag,
 };
+use crate::tags::normalize_hashtag;
 use std::collections::HashSet;
 use worker::{Error, Request, Response, Result, RouteContext};
 

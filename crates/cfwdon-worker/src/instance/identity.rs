@@ -1,8 +1,9 @@
-use super::{AppConfig, Error, Result};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::AccountHandle;
 use url::Url;
+use worker::{Error, Result};
 
 pub(crate) fn parse_csv_list(value: &str) -> Vec<String> {
     let mut values = value

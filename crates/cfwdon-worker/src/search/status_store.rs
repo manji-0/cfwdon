@@ -1,12 +1,14 @@
-use crate::{
-    RemoteActorRow, RemoteStatusRecord, RemoteStatusRow, Result, StatusRecord, StatusRow,
-    append_timeline_cursor_bindings, remote_status_from_record,
-    seekable_resolved_timeline_cursor_predicates, statuses_from_records,
+use crate::db_utils::d1_results;
+use crate::remote::{RemoteActorRow, RemoteStatusRow, remote_status_from_record};
+use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::timelines::{
+    append_timeline_cursor_bindings, seekable_resolved_timeline_cursor_predicates,
 };
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::RemoteStatusRecord;
 use std::collections::HashSet;
+use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 const LOCAL_STATUS_SEARCH_SELECT: &str = "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, application_id, card_json, created_at, updated_at
              FROM statuses";
 
@@ -257,7 +259,7 @@ pub(crate) async fn search_local_status_rows(
         .await?
     };
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn search_remote_status_rows(
@@ -332,7 +334,7 @@ pub(crate) async fn search_remote_status_rows(
         .await?
     };
 
-    Ok(remote_search_rows_from_values(crate::d1_results::<
+    Ok(remote_search_rows_from_values(d1_results::<
         serde_json::Value,
     >(&result)?))
 }

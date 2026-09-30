@@ -5,10 +5,11 @@ use super::{
     oauth_app_redirect_uris, oauth_app_scopes, oauth_bearer_token_hash,
     parse_basic_authorization_header, pkce_verifier_matches, redirect_uri_matches_registered,
 };
-use crate::D1Database;
 use crate::auth::find_account_by_id;
+use crate::meta_placeholder_routes::link_oauth_app_to_account;
 use crate::runtime_config::load_config;
 use crate::time_html::now_unix_timestamp;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext, d1::D1Type};
 
@@ -217,7 +218,7 @@ async fn oauth_authorization_code_token_response(
 
     let scopes = serde_json::from_str::<Vec<String>>(&code_row.scopes_json).unwrap_or_default();
     let access_token = issue_oauth_access_token(db, app.id, &code_row.account_id, &scopes).await?;
-    crate::link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
+    link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
     delete_oauth_authorization_code(db, &code_row.code).await?;
     if find_account_by_id(db, &code_row.account_id)
         .await?
@@ -326,7 +327,7 @@ pub(crate) async fn oauth_token_response(
         .get("Authorization")?
         .as_deref()
         .and_then(parse_basic_authorization_header);
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
+    let db = D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     if grant_type == "authorization_code" {
         return oauth_authorization_code_token_response(&db, request, header_credentials).await;
     }
@@ -432,7 +433,7 @@ pub(crate) async fn oauth_revoke_response(
     let (Some(client_id), Some(client_secret)) = (client_id, client_secret) else {
         return oauth_invalid_client_response();
     };
-    let db = crate::D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
+    let db = D1Database::new(ctx.d1(&load_config(&ctx).database_binding)?);
     let Some(app) = find_oauth_app_by_client_id(&db, &client_id).await? else {
         return oauth_invalid_client_response();
     };

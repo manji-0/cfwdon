@@ -2,14 +2,18 @@ use super::STREAMING_POLL_INTERVAL_SECS;
 use super::channels::streaming_channel_supports_live_events;
 use super::hub_routing::stream_hub_proxy_target;
 use super::poll::{StreamingPollYield, poll_streaming_events, yield_streaming_poll_round};
-use crate::{
-    D1Database, Response, Result, StreamingEvent, StreamingLoopState, connect_stream_hub_websocket,
-    log_stream_hub_connect_event, stream_hub_sse_should_reconnect,
+use crate::stream_hub::{
+    connect_stream_hub_websocket, log_stream_hub_connect_event, stream_hub_sse_should_reconnect,
 };
+use crate::streaming_types::{StreamingEvent, StreamingLoopState};
+use crate::tracked_d1::D1Database;
 use async_stream::try_stream;
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
 use std::time::Duration;
-use worker::{Env, ResponseBody, WebSocket, console_error, console_log, ws_events::WebsocketEvent};
+use worker::{
+    Env, Response, ResponseBody, Result, WebSocket, console_error, console_log,
+    ws_events::WebsocketEvent,
+};
 
 pub(super) const STREAMING_HUB_BACKUP_POLL_INTERVAL_SECS: u64 = 30;
 
@@ -136,7 +140,7 @@ pub(super) fn build_streaming_event_stream(
     stream_name: String,
     tag: Option<String>,
     list: Option<String>,
-    viewer: Option<crate::LocalAccount>,
+    viewer: Option<cfwdon_domain::LocalAccount>,
     hub_target: Option<(String, Option<String>)>,
 ) -> impl futures_util::TryStream<
     Ok = Vec<u8>,
@@ -365,7 +369,7 @@ pub(super) fn build_streaming_event_stream(
 
 pub(super) fn streaming_sse_response(
     env: &Env,
-    db: crate::D1Database,
+    db: D1Database,
     config: cfwdon_core::AppConfig,
     stream: String,
     tag: Option<String>,
@@ -425,6 +429,7 @@ pub(super) fn streaming_sse_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::streaming_types::StreamingEvent;
 
     #[test]
     fn sse_event_bytes_match_event_stream_format() {

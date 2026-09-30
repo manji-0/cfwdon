@@ -1,12 +1,17 @@
 use super::{
-    apply_poll_vote, apply_remote_poll_vote, build_mastodon_poll_response,
-    build_remote_mastodon_poll_response, can_view_local_status, enqueue_status_update_activity,
-    find_authenticated_local_account, find_remote_actor_by_actor_uri, find_remote_status_by_id,
-    find_remote_status_poll_by_id, find_remote_status_poll_by_status_id, find_status_by_id,
-    find_status_poll_by_id, is_iso_timestamp_in_past, load_config, parse_poll_vote_request,
-    refresh_remote_poll_if_needed, remote_poll_is_visible_to_viewer,
+    find_authenticated_local_account, is_iso_timestamp_in_past, load_config,
+    parse_poll_vote_request,
 };
 use crate::auth::find_account_by_id;
+use crate::db_session::bind_request_d1;
+use crate::delivery::enqueue_status_update_activity;
+use crate::local_polls::{apply_poll_vote, build_mastodon_poll_response, find_status_poll_by_id};
+use crate::remote::{
+    apply_remote_poll_vote, build_remote_mastodon_poll_response, find_remote_actor_by_actor_uri,
+    find_remote_status_by_id, find_remote_status_poll_by_id, find_remote_status_poll_by_status_id,
+    refresh_remote_poll_if_needed, remote_poll_is_visible_to_viewer,
+};
+use crate::statuses::{can_view_local_status, find_status_by_id};
 use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -16,7 +21,7 @@ pub(crate) async fn vote_in_poll(req: &mut Request, ctx: RouteContext<()>) -> Re
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing poll id route parameter".to_owned()))?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),

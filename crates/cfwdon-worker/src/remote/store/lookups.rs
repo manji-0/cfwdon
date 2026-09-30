@@ -3,7 +3,8 @@ use super::bindings::{
     remote_status_object_uri_bindings,
 };
 use super::records::{RemoteStatusRecord, RemoteStatusRow, remote_status_from_record};
-use crate::D1Database;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Error, Result};
@@ -13,7 +14,7 @@ pub(super) const REMOTE_STATUS_ROW_SELECT: &str = "SELECT id, actor_uri, object_
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id";
 
 pub(super) fn remote_statuses_by_url_or_object_uris_sql() -> String {
-    let in_list = crate::sql_in_json_each(1);
+    let in_list = sql_in_json_each(1);
     format!(
         "{REMOTE_STATUS_ROW_SELECT}
          WHERE object_uri {in_list}
@@ -112,17 +113,17 @@ pub(crate) async fn find_remote_statuses_by_url_or_object_uris(
     db: &D1Database,
     values: &[String],
 ) -> Result<Vec<RemoteStatusRow>> {
-    let values = crate::unique_ordered_refs(values);
+    let values = unique_ordered_refs(values);
     if values.is_empty() {
         return Ok(Vec::new());
     }
 
-    let values_json = crate::json_string_array(&values);
+    let values_json = json_string_array(&values);
     let sql = remote_statuses_by_url_or_object_uris_sql();
     let binding = D1Type::Text(values_json.as_str());
     let result = db.prepare(sql).bind_refs(&binding)?.all().await?;
 
-    crate::d1_results::<RemoteStatusRecord>(&result)?
+    d1_results::<RemoteStatusRecord>(&result)?
         .into_iter()
         .map(remote_status_from_record)
         .collect()

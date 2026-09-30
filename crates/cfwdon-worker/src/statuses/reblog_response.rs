@@ -1,7 +1,8 @@
-use super::{
-    AppConfig, LocalAccount, MastodonAccountResponse, MastodonStatusResponse, RemoteActorRow,
-    RemoteStatusRow, StatusRow, actor_url,
-};
+use super::{LocalAccount, StatusRow};
+use crate::instance::actor_url;
+use crate::remote::{RemoteActorRow, RemoteStatusRow};
+use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use cfwdon_core::AppConfig;
 
 pub(super) fn remote_reblog_wrapper_response_from_embedded(
     embedded: Option<MastodonStatusResponse>,

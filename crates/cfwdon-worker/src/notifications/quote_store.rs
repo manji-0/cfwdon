@@ -1,12 +1,11 @@
-use super::{
-    RemoteStatusRecord, RemoteStatusRow, StatusRecord, StatusRow, remote_statuses_from_records,
-    statuses_from_records,
-};
+use crate::db_utils::d1_results;
+use crate::remote::{RemoteStatusRow, remote_statuses_from_records};
+use crate::statuses::{StatusRecord, StatusRow, statuses_from_records};
+use crate::tracked_d1::D1Database;
+use cfwdon_domain::RemoteStatusRecord;
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
-
-use crate::D1Database;
 #[derive(Debug, Deserialize)]
 pub(crate) struct QuotedUpdateNotificationRow {
     pub(crate) id: String,
@@ -24,7 +23,7 @@ pub(crate) struct QuotedUpdateNotificationRow {
     pub(crate) visibility: String,
     pub(crate) sensitive: i32,
     pub(crate) language: Option<String>,
-    #[serde(default = "crate::default_quote_state")]
+    #[serde(default = "crate::statuses::default_quote_state")]
     pub(crate) quote_state: String,
     pub(crate) created_at: String,
     pub(crate) remote_actor_uri: String,
@@ -53,7 +52,7 @@ pub(crate) async fn list_local_quote_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
+    d1_results::<StatusRecord>(&result).and_then(statuses_from_records)
 }
 
 pub(crate) async fn list_remote_quote_notifications_for_account(
@@ -77,7 +76,7 @@ pub(crate) async fn list_remote_quote_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
+    d1_results::<RemoteStatusRecord>(&result).and_then(remote_statuses_from_records)
 }
 
 pub(crate) async fn list_quoted_update_notifications_for_account(
@@ -103,5 +102,5 @@ pub(crate) async fn list_quoted_update_notifications_for_account(
         .all()
         .await?;
 
-    crate::d1_results::<QuotedUpdateNotificationRow>(&result)
+    d1_results::<QuotedUpdateNotificationRow>(&result)
 }

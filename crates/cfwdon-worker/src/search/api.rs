@@ -6,12 +6,15 @@ use crate::accounts::{
     DirectoryOrder, directory_order, list_discoverable_accounts_with_sort_key, load_account_stats,
 };
 use crate::auth::find_authenticated_local_account;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
 use crate::remote::{
     find_remote_actor_by_actor_uri, load_remote_actor_status_summary,
     resolve_search_account_with_viewer,
 };
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -40,7 +43,7 @@ struct DirectoryRemoteActorRow {
 }
 
 async fn list_discoverable_remote_actor_rows(
-    db: &crate::D1Database,
+    db: &D1Database,
     limit: u32,
     offset: u32,
     order: DirectoryOrder,
@@ -78,7 +81,7 @@ async fn list_discoverable_remote_actor_rows(
         .bind_refs(bindings.iter())?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<DirectoryRemoteActorRow>(&__d1))
+        .and_then(|__d1| d1_results::<DirectoryRemoteActorRow>(&__d1))
 }
 
 pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -89,7 +92,7 @@ pub(crate) async fn account_search(req: Request, ctx: RouteContext<()>) -> Resul
         return Response::from_json(&Vec::<MastodonAccountResponse>::new());
     }
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(viewer) => viewer,
         None => return Response::error("Auth0 authentication required", 401),
@@ -142,7 +145,7 @@ pub(crate) async fn account_directory(req: Request, ctx: RouteContext<()>) -> Re
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
     let offset = query.offset.unwrap_or(0);
     let order = directory_order(query.order.as_deref());
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let include_local = query.local.unwrap_or(true);
     let include_remote = !query.local.unwrap_or(false);
     let fetch_limit = limit.saturating_add(offset).clamp(limit, 1000);

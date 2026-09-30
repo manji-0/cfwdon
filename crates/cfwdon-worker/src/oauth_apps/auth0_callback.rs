@@ -3,9 +3,9 @@ use super::{
     auth0_authorize_state_cookie, auth0_domain_url, clear_auth0_authorize_state_cookie,
     constant_time_eq, oauth_authorize_error_response, redirect_response, set_auth0_session_cookies,
 };
-use crate::auth::find_account_by_email;
+use crate::auth::{find_account_by_email, verify_auth0_jwt};
+use crate::db_session::bind_request_d1;
 use crate::runtime_config::load_config;
-use crate::verify_auth0_jwt;
 use serde::Deserialize;
 use worker::{Fetch, Headers, Method, Request, RequestInit, Response, Result, RouteContext};
 
@@ -49,7 +49,7 @@ fn auth0_callback_failure_message(error: &worker::Error) -> String {
 
 async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let callback = match req.query::<Auth0CallbackRequest>() {
         Ok(query) => query,
         Err(_) => return oauth_authorize_error_response("Invalid Auth0 callback request", 400),

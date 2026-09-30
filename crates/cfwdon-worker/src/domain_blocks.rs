@@ -1,14 +1,16 @@
+use crate::app_cache::{invalidate_account_capabilities, load_account_capabilities};
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
 use crate::instance::load_known_peer_domains;
 use crate::profile::require_authenticated_local_account;
 use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
 use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use url::Url;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
-
-use crate::D1Database;
 const DEFAULT_LIMIT: u32 = 100;
 const MAX_LIMIT: u32 = 200;
 const DEFAULT_PREVIEW_LIMIT: u32 = 20;
@@ -138,7 +140,7 @@ async fn list_account_domain_blocks(
         .all()
         .await?;
 
-    crate::d1_results::<DomainBlockEntryRow>(&result)
+    d1_results::<DomainBlockEntryRow>(&result)
 }
 
 async fn insert_account_domain_block(
@@ -155,7 +157,7 @@ async fn insert_account_domain_block(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -163,7 +165,7 @@ pub(crate) async fn list_all_account_domain_blocks(
     db: &D1Database,
     account_id: &str,
 ) -> Result<Vec<String>> {
-    if !crate::load_account_capabilities(db, account_id)
+    if !load_account_capabilities(db, account_id)
         .await?
         .has_domain_blocks
     {
@@ -181,7 +183,7 @@ pub(crate) async fn list_all_account_domain_blocks(
         .all()
         .await?;
 
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|value| {
             value
@@ -206,7 +208,7 @@ async fn delete_account_domain_block(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -242,7 +244,7 @@ pub(crate) async fn domain_blocks_preview_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let query: DomainBlocksPreviewQuery = req.query().unwrap_or_default();
@@ -268,7 +270,7 @@ pub(crate) async fn domain_blocks_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let query: DomainBlocksQuery = req.query().unwrap_or_default();
@@ -307,7 +309,7 @@ pub(crate) async fn create_domain_block_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let domain = match parse_domain_block_request(&mut req).await {
@@ -326,7 +328,7 @@ pub(crate) async fn delete_domain_block_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     match require_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => {
             let domain = match parse_domain_block_request(&mut req).await {
@@ -370,7 +372,7 @@ pub(crate) async fn list_instance_domain_blocks(
         .bind_refs(&[D1Type::Integer(limit)])?
         .all()
         .await?;
-    crate::d1_results::<InstanceDomainBlockRow>(&result)
+    d1_results::<InstanceDomainBlockRow>(&result)
 }
 
 pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Result<Vec<String>> {
@@ -378,7 +380,7 @@ pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Resul
         .prepare("SELECT domain FROM instance_domain_blocks ORDER BY domain ASC")
         .all()
         .await?;
-    Ok(crate::d1_results::<serde_json::Value>(&result)?
+    Ok(d1_results::<serde_json::Value>(&result)?
         .into_iter()
         .filter_map(|row| {
             row.get("domain")

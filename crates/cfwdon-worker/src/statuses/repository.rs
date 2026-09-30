@@ -1,9 +1,11 @@
 use super::{
-    D1Database, LocalAccount, MediaAttachmentRow, Result, StatusRow, can_view_local_status,
-    find_account_by_id, find_media_attachments_by_status_id,
+    D1Database, LocalAccount, StatusRow, can_view_local_status,
     find_remote_statuses_with_actors_by_ids, find_status_by_id, load_in_reply_to_account_id,
-    remote_account_rest_id,
 };
+use crate::auth::find_account_by_id;
+use crate::instance::remote_account_rest_id;
+use crate::media::{MediaAttachmentRow, find_media_attachments_by_status_id};
+use worker::Result;
 
 /// Resolves the author of a single replied-to status. A reply can point at a
 /// remote status, so fall back to the remote table like the batch variant

@@ -1,9 +1,23 @@
-use crate::statuses::{
-    CACHE_TTL_FEDERATION, Error, Request, Response, Result, RouteContext, build_activitypub_note,
-    cache_public_json_response, cache_public_response_with_options, find_account_by_username,
-    find_remote_status_by_id, find_status_by_id, is_public_activitypub_visibility, load_config,
-    load_local_status_response_preload, strip_html_tags,
+use crate::activitypub::{
+    build_activitypub_note, build_quote_authorization_object, is_public_activitypub_visibility,
+    local_status_ap_id,
 };
+use crate::auth::find_account_by_username;
+use crate::content_helpers::strip_html_tags;
+use crate::db_session::bind_request_d1;
+use crate::instance::instance_base_url;
+use crate::media::{MediaAttachmentRow, MediaKind, classify_media_kind};
+use crate::remote::find_remote_status_by_id;
+use crate::responses::{
+    CACHE_TTL_FEDERATION, cache_public_json_response, cache_public_response_with_options,
+    media_attachment_url,
+};
+use crate::runtime_config::load_config;
+use crate::statuses::{
+    StatusRow, find_status_by_id, load_local_status_response_preload, local_status_target_uri,
+};
+use crate::time_html::escape_html;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 pub(crate) async fn status_object_response(
     req: Request,
@@ -21,7 +35,7 @@ pub(crate) async fn status_object_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing status id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -80,7 +94,7 @@ pub(crate) async fn status_quote_authorization_object_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing authorization key route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let Some(target_account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
@@ -94,7 +108,7 @@ pub(crate) async fn status_quote_authorization_object_response(
         return Response::error("status not found", 404);
     }
 
-    let target_uri = crate::local_status_target_uri(&target_status);
+    let target_uri = local_status_target_uri(&target_status);
     let (interacting_object_uri, quote_state) = if let Some(quote_status) =
         find_status_by_id(&db, &authorization_key).await?
     {
@@ -102,7 +116,7 @@ pub(crate) async fn status_quote_authorization_object_response(
             return Response::error("quote authorization not found", 404);
         }
         (
-            crate::local_status_target_uri(&quote_status),
+            local_status_target_uri(&quote_status),
             quote_status.effective_quote_state(),
         )
     } else if let Some(quote_status) = find_remote_status_by_id(&db, &authorization_key).await? {
@@ -121,7 +135,7 @@ pub(crate) async fn status_quote_authorization_object_response(
         return Response::error("quote authorization not found", 404);
     }
 
-    let document = crate::build_quote_authorization_object(
+    let document = build_quote_authorization_object(
         &config,
         &target_account,
         &interacting_object_uri,
@@ -145,10 +159,10 @@ pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {
 }
 
 pub(super) fn status_object_html_response(
-    config: &crate::AppConfig,
-    account: &crate::LocalAccount,
-    status: &crate::StatusRow,
-    attachments: &[crate::MediaAttachmentRow],
+    config: &cfwdon_core::AppConfig,
+    account: &cfwdon_domain::LocalAccount,
+    status: &StatusRow,
+    attachments: &[MediaAttachmentRow],
 ) -> Result<Response> {
     let title_text = strip_html_tags(&status.content_html);
     let fallback_title;
@@ -158,23 +172,23 @@ pub(super) fn status_object_html_response(
     } else {
         &title_text
     };
-    let title = crate::escape_html(title_source);
-    let account_name = crate::escape_html(account.acct());
-    let published = crate::escape_html(&status.created_at);
-    let status_url = crate::local_status_ap_id(config, account, status);
+    let title = escape_html(title_source);
+    let account_name = escape_html(account.acct());
+    let published = escape_html(&status.created_at);
+    let status_url = local_status_ap_id(config, account, status);
     let oembed_link = status_oembed_discovery_link(config, &status_url);
     let media_html = attachments
         .iter()
         .filter(|attachment| {
-            crate::classify_media_kind(&attachment.content_type) == Some(crate::MediaKind::Image)
+            classify_media_kind(&attachment.content_type) == Some(MediaKind::Image)
         })
         .map(|attachment| {
-            let src = crate::escape_html(&crate::media_attachment_url(
+            let src = escape_html(&media_attachment_url(
                 config,
                 &attachment.id,
                 &attachment.object_key,
             ));
-            let alt = crate::escape_html(&attachment.description);
+            let alt = escape_html(&attachment.description);
             format!("<img src=\"{src}\" alt=\"{alt}\" loading=\"lazy\">")
         })
         .collect::<Vec<_>>()
@@ -190,22 +204,25 @@ pub(super) fn status_object_html_response(
     Ok(response)
 }
 
-pub(super) fn status_oembed_discovery_link(config: &crate::AppConfig, status_url: &str) -> String {
+pub(super) fn status_oembed_discovery_link(
+    config: &cfwdon_core::AppConfig,
+    status_url: &str,
+) -> String {
     let href = format!(
         "{}/api/oembed?url={}",
-        crate::instance_base_url(config),
+        instance_base_url(config),
         urlencoding::encode(status_url)
     );
     format!(
         "<link rel=\"alternate\" type=\"application/json+oembed\" href=\"{}\">",
-        crate::escape_html(&href)
+        escape_html(&href)
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::status_oembed_discovery_link;
-    use crate::AppConfig;
+    use cfwdon_core::AppConfig;
 
     #[test]
     fn status_oembed_discovery_link_is_present_and_url_encoded() {

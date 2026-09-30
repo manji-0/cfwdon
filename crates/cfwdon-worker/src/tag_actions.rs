@@ -1,11 +1,14 @@
-use crate::{
-    D1Database, Request, Response, Result, RouteContext, build_internal_cursor_link_header,
-    build_tag_response, load_config, normalize_hashtag, parse_internal_pagination_id,
-    require_authenticated_local_account,
-};
+use crate::app_cache::invalidate_account_capabilities;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
+use crate::profile::require_authenticated_local_account;
+use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::runtime_config::load_config;
+use crate::tags::{build_tag_response, normalize_hashtag};
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
-use worker::Error;
 use worker::d1::D1Type;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 const DEFAULT_LIMIT: u32 = 100;
 const MAX_LIMIT: u32 = 200;
@@ -70,7 +73,7 @@ pub(crate) async fn list_followed_tag_names(
         .bind_refs(&account_id)?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<FollowedTagRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<FollowedTagRow>(&__d1))?;
     Ok(rows.into_iter().map(|row| row.tag_name).collect())
 }
 
@@ -88,7 +91,7 @@ async fn follow_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<()> 
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -102,7 +105,7 @@ async fn unfollow_tag(db: &D1Database, account_id: &str, tag: &str) -> Result<()
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    crate::invalidate_account_capabilities(account_id).await;
+    invalidate_account_capabilities(account_id).await;
     Ok(())
 }
 
@@ -195,7 +198,7 @@ async fn resolve_authenticated_account(
     )>,
 > {
     let config = load_config(ctx);
-    let db = crate::bind_request_d1(ctx, &config)?;
+    let db = bind_request_d1(ctx, &config)?;
     let Some(account) = require_authenticated_local_account(req, &db, &config).await? else {
         return Ok(None);
     };
@@ -275,7 +278,7 @@ pub(crate) async fn followed_tags_response(
         .bind_refs(&account_id)?
         .all()
         .await
-        .and_then(|__d1| crate::d1_results::<FollowedTagRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<FollowedTagRow>(&__d1))?;
 
     let mut rows = rows
         .into_iter()

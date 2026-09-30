@@ -1,15 +1,18 @@
 use super::helpers::{
     normalize_search_match_text, normalize_search_query_input, search_text_match_rank,
 };
-use crate::content_helpers::extract_mentions_from_text;
-use crate::extract_hashtags_from_text;
-use crate::find_media_attachments_by_status_id;
-use crate::parse_remote_http_url;
-use crate::{
-    D1Database, MastodonStatusResponse, build_local_status_response, build_remote_status_response,
-    can_view_local_status, find_local_status_by_object_uri, is_public_activitypub_visibility,
-    load_in_reply_to_account_id, resolve_remote_status_by_url,
+use crate::activitypub::is_public_activitypub_visibility;
+use crate::auth::find_account_by_id;
+use crate::content_helpers::{extract_hashtags_from_text, extract_mentions_from_text};
+use crate::federation::parse_remote_http_url;
+use crate::media::find_media_attachments_by_status_id;
+use crate::remote::resolve_remote_status_by_url;
+use crate::responses::MastodonStatusResponse;
+use crate::statuses::{
+    build_local_status_response, build_remote_status_response, can_view_local_status,
+    find_local_status_by_object_uri, load_in_reply_to_account_id,
 };
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use time::format_description::parse as parse_format_description;
@@ -501,7 +504,7 @@ pub(crate) async fn resolve_search_status(
     }
 
     if let Some(status) = find_local_status_by_object_uri(db, config, query).await? {
-        let Some(account) = crate::find_account_by_id(db, &status.account_id).await? else {
+        let Some(account) = find_account_by_id(db, &status.account_id).await? else {
             return Ok(None);
         };
         if !can_view_local_status(db, &status, Some(viewer), &account).await? {

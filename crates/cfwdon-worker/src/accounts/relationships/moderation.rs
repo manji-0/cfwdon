@@ -2,11 +2,14 @@ use super::collections::{
     AccountCollectionPage, AccountCollectionQuery, CursorAccountCollection,
     finalize_cursor_account_collection,
 };
-use crate::{
-    MastodonAccountResponse, Request, Response, Result, RouteContext, find_account_by_id,
-    find_authenticated_local_account, find_remote_actor_by_actor_uri, list_blocks_for_account,
-    list_mutes_for_account, load_config,
-};
+use crate::auth::{find_account_by_id, find_authenticated_local_account};
+use crate::db_session::bind_request_d1;
+use crate::relationship::{list_blocks_for_account, list_mutes_for_account};
+use crate::remote::find_remote_actor_by_actor_uri;
+use crate::responses::MastodonAccountResponse;
+use crate::runtime_config::load_config;
+use crate::tracked_d1::D1Database;
+use worker::{Request, Response, Result, RouteContext};
 
 pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -16,7 +19,7 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
         max_id,
         since_id,
     } = AccountCollectionPage::from_query(&query, 20, 40)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -45,7 +48,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
         max_id,
         since_id,
     } = AccountCollectionPage::from_query(&query, 20, 40)?;
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -67,7 +70,7 @@ pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Resul
 }
 
 async fn build_moderation_account_collection<T, FAccount, FActor, FCursor>(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     limit: u32,
     entries: &[T],
@@ -103,7 +106,7 @@ where
 }
 
 async fn resolve_moderation_target_account_response(
-    db: &crate::D1Database,
+    db: &D1Database,
     config: &cfwdon_core::AppConfig,
     target_account_id: Option<&str>,
     target_actor_uri: &str,

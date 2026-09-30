@@ -1,4 +1,6 @@
-use crate::{AccountStatusesQuery, Request, Result};
+use crate::statuses::AccountStatusesQuery;
+use crate::timelines::timeline_fetch_limit;
+use worker::{Request, Result};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct AccountStatusesRequestOptions<'a> {
@@ -15,7 +17,7 @@ pub(crate) fn account_statuses_request_options<'a>(
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
     AccountStatusesRequestOptions {
         limit,
-        query_limit: crate::timeline_fetch_limit(limit),
+        query_limit: timeline_fetch_limit(limit),
         wants_html: accept_prefers_statuses_html(accept),
         min_id: query.min_id.as_deref().or(query.since_id.as_deref()),
     }
@@ -54,13 +56,14 @@ pub(crate) fn account_statuses_older_page_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timelines::timeline_fetch_limit;
 
     #[test]
     fn account_statuses_request_options_default_and_clamped_limits() {
         let query = AccountStatusesQuery::default();
         let options = account_statuses_request_options(&query, "");
         assert_eq!(options.limit, 20);
-        assert_eq!(options.query_limit, crate::timeline_fetch_limit(20));
+        assert_eq!(options.query_limit, timeline_fetch_limit(20));
         assert!(!options.wants_html);
         assert_eq!(options.min_id, None);
 

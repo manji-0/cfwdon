@@ -1,11 +1,13 @@
 use super::{
-    Request, Response, Result, RouteContext, build_local_action_status_response,
-    build_remote_status_response, build_saved_status_collection_response,
-    delete_bookmark_by_target_uri, list_bookmarks_for_account, local_status_target_uri,
+    build_local_action_status_response, build_remote_status_response,
+    build_saved_status_collection_response, delete_bookmark_by_target_uri,
+    list_bookmarks_for_account, local_status_target_uri,
     resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
     resolve_visible_action_status, upsert_bookmark_local_status, upsert_bookmark_remote_status,
 };
+use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
 use serde::Deserialize;
+use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct BookmarksQuery {
@@ -20,11 +22,11 @@ pub(crate) struct BookmarksQuery {
 
 pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
-        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
-        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+        AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        AuthenticatedStatusActionContextResolution::MissingStatusId => {
             return Response::error("missing status id route parameter", 400);
         }
-        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+        AuthenticatedStatusActionContextResolution::Unauthenticated => {
             return Response::error("Auth0 authentication required", 401);
         }
     };
@@ -39,7 +41,7 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
     )
     .await?
     {
-        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+        Some(ResolvedVisibleActionStatus::Local(subject)) => {
             upsert_bookmark_local_status(&action.auth.db, viewer.id(), &subject.status).await?;
             let response = build_local_action_status_response(
                 &action.auth.db,
@@ -50,7 +52,7 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
+        Some(ResolvedVisibleActionStatus::Remote(status, actor)) => {
             upsert_bookmark_remote_status(&action.auth.db, viewer.id(), &status).await?;
             let response = build_remote_status_response(
                 &action.auth.db,
@@ -68,11 +70,11 @@ pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Resu
 
 pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
-        crate::AuthenticatedStatusActionContextResolution::Ready(action) => action,
-        crate::AuthenticatedStatusActionContextResolution::MissingStatusId => {
+        AuthenticatedStatusActionContextResolution::Ready(action) => action,
+        AuthenticatedStatusActionContextResolution::MissingStatusId => {
             return Response::error("missing status id route parameter", 400);
         }
-        crate::AuthenticatedStatusActionContextResolution::Unauthenticated => {
+        AuthenticatedStatusActionContextResolution::Unauthenticated => {
             return Response::error("Auth0 authentication required", 401);
         }
     };
@@ -87,7 +89,7 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
     )
     .await?
     {
-        Some(crate::ResolvedVisibleActionStatus::Local(subject)) => {
+        Some(ResolvedVisibleActionStatus::Local(subject)) => {
             delete_bookmark_by_target_uri(
                 &action.auth.db,
                 viewer.id(),
@@ -103,7 +105,7 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
             .await?;
             Response::from_json(&response)
         }
-        Some(crate::ResolvedVisibleActionStatus::Remote(status, actor)) => {
+        Some(ResolvedVisibleActionStatus::Remote(status, actor)) => {
             delete_bookmark_by_target_uri(&action.auth.db, viewer.id(), &status.object_uri).await?;
             let response = build_remote_status_response(
                 &action.auth.db,

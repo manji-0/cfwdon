@@ -1,17 +1,18 @@
 mod store;
 mod votes;
 
-pub(crate) use store::*;
-pub(crate) use votes::*;
-
-use super::CreateStatusPollRequest;
 use super::time_html::is_iso_timestamp_in_past;
-use super::timestamp_to_mastodon_iso8601;
-use crate::{D1Database, json_string_array, sql_in_json_each};
+use crate::custom_emojis::sanitize_emoji_shortcodes;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::responses::timestamp_to_mastodon_iso8601;
+use crate::statuses::CreateStatusPollRequest;
+use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, PollDraft};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+pub(crate) use store::*;
+pub(crate) use votes::*;
 use worker::{Result, d1::D1Type};
 
 #[derive(Debug, Serialize)]
@@ -80,11 +81,7 @@ pub(crate) fn normalize_status_poll(
         .options
         .unwrap_or_default()
         .into_iter()
-        .map(|value| {
-            crate::sanitize_emoji_shortcodes(&value, config)
-                .trim()
-                .to_owned()
-        })
+        .map(|value| sanitize_emoji_shortcodes(&value, config).trim().to_owned())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
     if options.is_empty()
@@ -188,7 +185,7 @@ async fn load_status_polls_for_status_ids(
     );
     let binding = D1Type::Text(ids_json.as_str());
     let poll_result = db.prepare(&poll_sql).bind_refs(&binding)?.all().await?;
-    crate::d1_results::<StatusPollRow>(&poll_result)
+    d1_results::<StatusPollRow>(&poll_result)
 }
 
 fn poll_id_bindings(poll_ids: &[String]) -> Vec<D1Type<'_>> {
@@ -214,7 +211,7 @@ async fn preload_poll_options_by_poll_id(
     let binding = D1Type::Text(poll_ids_json.as_str());
     let options_result = db.prepare(&options_sql).bind_refs(&binding)?.all().await?;
     let mut options_by_poll_id: HashMap<String, Vec<StatusPollOptionRow>> = HashMap::new();
-    for row in crate::d1_results::<PreloadedStatusPollOptionRow>(&options_result)? {
+    for row in d1_results::<PreloadedStatusPollOptionRow>(&options_result)? {
         options_by_poll_id
             .entry(row.poll_id)
             .or_default()
@@ -251,7 +248,7 @@ async fn preload_own_votes_by_poll_id(
             .bind_refs(vote_bindings.iter())?
             .all()
             .await?;
-        for row in crate::d1_results::<PreloadedPollVotePositionRow>(&vote_result)? {
+        for row in d1_results::<PreloadedPollVotePositionRow>(&vote_result)? {
             if let Ok(position) = u32::try_from(row.option_position) {
                 own_votes_by_poll_id
                     .entry(row.poll_id)
@@ -278,12 +275,10 @@ async fn preload_voters_count_by_poll_id(
     );
     let binding = D1Type::Text(poll_ids_json.as_str());
     let voters_result = db.prepare(&voters_sql).bind_refs(&binding)?.all().await?;
-    Ok(
-        crate::d1_results::<PreloadedPollVotersCountRow>(&voters_result)?
-            .into_iter()
-            .map(|row| (row.poll_id, row.count))
-            .collect::<HashMap<_, _>>(),
-    )
+    Ok(d1_results::<PreloadedPollVotersCountRow>(&voters_result)?
+        .into_iter()
+        .map(|row| (row.poll_id, row.count))
+        .collect::<HashMap<_, _>>())
 }
 
 fn mastodon_poll_response_from_rows(

@@ -1,8 +1,10 @@
-use crate::{
-    AccountStats, AppConfig, LocalAccount, Response, Result, activitypub_datetime_string,
-    actor_url, escape_html, instance_host, media_object_url, render_profile_field_value_html,
-};
-use worker::ResponseBody;
+use crate::accounts::AccountStats;
+use crate::instance::{actor_url, instance_host};
+use crate::responses::{media_object_url, render_profile_field_value_html};
+use crate::time_html::{activitypub_datetime_string, escape_html};
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
+use worker::{Response, ResponseBody, Result};
 
 pub(in crate::discovery) fn profile_html_document(
     config: &AppConfig,

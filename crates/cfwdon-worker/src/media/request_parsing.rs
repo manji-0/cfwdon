@@ -1,6 +1,7 @@
 use super::{MediaKind, classify_media_kind, media_kind_label};
-use crate::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES, Request, UpdateMediaRequest};
-use worker::FormEntry;
+use crate::media::UpdateMediaRequest;
+use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
+use worker::{FormEntry, Request};
 
 #[derive(Debug)]
 pub(crate) struct MediaUploadDraft {

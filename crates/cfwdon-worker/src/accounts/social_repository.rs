@@ -1,6 +1,6 @@
-use crate::{
-    D1Database, Result, set_account_email_subscription, set_account_endorsement, set_account_note,
-};
+use crate::accounts::{set_account_email_subscription, set_account_endorsement, set_account_note};
+use crate::tracked_d1::D1Database;
+use worker::Result;
 
 pub(crate) async fn set_relationship_endorsement(
     db: &D1Database,

@@ -1,11 +1,11 @@
 use super::{
-    AppConfig, NotificationEntry, NotificationsQuery, clear_notifications_for_account,
+    NotificationEntry, NotificationsQuery, clear_notifications_for_account,
     collect_visible_notifications, dismiss_notification_for_account,
 };
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
-
-use crate::D1Database;
 pub(crate) async fn load_visible_notifications_for_account(
     db: &D1Database,
     config: &AppConfig,

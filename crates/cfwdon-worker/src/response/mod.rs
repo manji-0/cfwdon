@@ -11,6 +11,5 @@ pub(crate) use cache::*;
 pub(crate) use collections::*;
 pub(crate) use media::*;
 pub(crate) use reports::*;
-#[allow(unused_imports)]
 pub(crate) use statuses::*;
 pub(crate) use utils::*;

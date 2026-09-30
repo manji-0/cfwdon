@@ -1,7 +1,7 @@
-use super::{
-    StatusDraft, normalize_quote_approval_policy, normalize_status_poll, parse_media_ids_from_form,
-    parse_optional_bool,
-};
+use super::{StatusDraft, normalize_quote_approval_policy};
+use crate::local_polls::normalize_status_poll;
+use crate::request_utils::{parse_media_ids_from_form, parse_optional_bool};
+use crate::time_html::now_unix_timestamp;
 use cfwdon_domain::ComposingStatus;
 use serde::Deserialize;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
@@ -78,7 +78,7 @@ pub(crate) struct AccountStatusesQuery {
 
 pub(crate) async fn parse_status_draft(
     req: &mut Request,
-    config: &crate::AppConfig,
+    config: &cfwdon_core::AppConfig,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let idempotency_key = read_idempotency_key(req)?;
     let request = read_create_status_request(req).await?;
@@ -143,7 +143,7 @@ fn create_status_request_from_form(
 fn parsed_status_draft_from_request(
     request: CreateStatusRequest,
     idempotency_key: Option<String>,
-    config: &crate::AppConfig,
+    config: &cfwdon_core::AppConfig,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let scheduled_at = normalize_scheduled_at(request.scheduled_at.as_deref())?;
     let poll = normalize_status_poll(request.poll, config)?;
@@ -219,7 +219,7 @@ pub(crate) fn normalize_scheduled_at(
 pub(crate) fn validate_scheduled_at_minimum_offset(value: &str) -> std::result::Result<(), String> {
     let scheduled_at = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|_| "scheduled_at must be a valid RFC 3339 datetime".to_owned())?;
-    let now = OffsetDateTime::from_unix_timestamp(crate::now_unix_timestamp())
+    let now = OffsetDateTime::from_unix_timestamp(now_unix_timestamp())
         .map_err(|error| format!("invalid current unix timestamp: {error}"))?;
     if scheduled_at <= now + Duration::minutes(5) {
         return Err(

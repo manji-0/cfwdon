@@ -1,6 +1,32 @@
-use crate::D1Database;
-#[allow(unused_imports)]
-pub(crate) use crate::*;
+use crate::accounts::{
+    AccountRow, AccountStats, apply_account_credentials_update, load_account_stats,
+};
+use crate::auth::{extract_authenticated_user, find_authenticated_local_account};
+use crate::custom_emojis::config_with_resolved_custom_emojis;
+use crate::db_session::bind_request_d1;
+use crate::db_utils::{d1_results, sql_placeholders};
+use crate::delivery::enqueue_profile_update_activities;
+use crate::follow_requests::count_pending_follow_requests;
+use crate::instance::actor_url;
+use crate::oauth_apps::{
+    app_bearer_token_from_request, oauth_access_token_has_any_scope_json, oauth_bearer_token_hash,
+};
+use crate::observability::log_json_event;
+use crate::remote::{
+    AccountReference, RemoteActorRow, find_remote_actor_by_actor_uri,
+    resolve_account_reference_with_fetch, resolve_lookup_account_with_viewer, upsert_remote_actor,
+};
+use crate::responses::{
+    CACHE_TTL_ACCOUNT_API, MastodonAccountResponse, RemoteCollectionFetchContext,
+    cache_account_api_response, cache_public_json_response, cached_account_api_response,
+    enrich_remote_account_response, fetch_remote_actor_profile_with_context,
+    invalidate_account_public_cache, media_object_url, reconcile_remote_account_status_summary,
+    render_profile_field_value_html,
+};
+use crate::runtime_config::load_config;
+use crate::tags::normalize_hashtag;
+use crate::tracked_d1::D1Database;
+use worker::{Error, Request, Response, Result, RouteContext};
 
 mod request_parsing;
 pub(crate) use request_parsing::*;
@@ -9,18 +35,7 @@ pub(crate) use self::request_parsing::{
     AttributionDomainsUpdate, FieldsAttributesUpdate, UpdateCredentialsField,
     UpdateCredentialsRequest,
 };
-use super::{
-    AccountReference, AppConfig, CACHE_TTL_ACCOUNT_API, Error, MastodonAccountResponse,
-    ProfileField, RemoteCollectionFetchContext, Request, Response, Result, RouteContext,
-    app_bearer_token_from_request, apply_account_credentials_update, cache_account_api_response,
-    cache_public_json_response, cached_account_api_response, count_pending_follow_requests,
-    enqueue_profile_update_activities, enrich_remote_account_response, extract_authenticated_user,
-    fetch_remote_actor_profile_with_context, find_authenticated_local_account,
-    find_remote_actor_by_actor_uri, invalidate_account_public_cache, load_account_stats,
-    load_config, media_object_url, normalize_hashtag, oauth_access_token_has_any_scope_json,
-    oauth_bearer_token_hash, render_profile_field_value_html, resolve_account_reference_with_fetch,
-    resolve_lookup_account_with_viewer, sql_placeholders, upsert_remote_actor,
-};
+use super::{AppConfig, ProfileField};
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -93,7 +108,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cacheable_account_id = account_api_cache_candidate(&account_id);
     if cacheable_account_id
@@ -140,7 +155,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
 async fn remote_account_response(
     db: &D1Database,
     config: &AppConfig,
-    actor: &crate::RemoteActorRow,
+    actor: &RemoteActorRow,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
     let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
@@ -150,14 +165,11 @@ async fn remote_account_response(
             Ok(fetched) => fetched,
             Err(_) => {
                 let mut response = MastodonAccountResponse::from_remote_actor(actor);
-                if let Err(error) = crate::reconcile_remote_account_status_summary(
-                    db,
-                    &actor.actor_uri,
-                    &mut response,
-                )
-                .await
+                if let Err(error) =
+                    reconcile_remote_account_status_summary(db, &actor.actor_uri, &mut response)
+                        .await
                 {
-                    crate::log_json_event(serde_json::json!({
+                    log_json_event(serde_json::json!({
                         "event": "remote_account_enrichment_failed",
                         "actor_uri": actor.actor_uri,
                         "stage": "status_summary",
@@ -195,7 +207,7 @@ fn account_api_cache_candidate(account_id: &str) -> bool {
 
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     // Mastodon allows unauthenticated lookup; auth is optional and only used for
     // signed remote fetches / richer relationship context when present.
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
@@ -216,7 +228,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
 
 pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -241,7 +253,7 @@ pub(crate) async fn verify_credentials(req: Request, ctx: RouteContext<()>) -> R
 
 pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -259,7 +271,7 @@ pub(crate) async fn profile_response(req: Request, ctx: RouteContext<()>) -> Res
 
 pub(crate) async fn preferences_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let subject = match find_authenticated_preferences_subject(&req, &db, &config).await? {
         Some(subject) => subject,
         None => return Response::error("Auth0 authentication required", 401),
@@ -372,7 +384,7 @@ async fn load_access_preferences_subject(
 fn account_preferences_subject_from_value(
     row: &serde_json::Value,
 ) -> Result<AccountPreferencesSubject> {
-    let account = serde_json::from_value::<crate::AccountRow>(row.clone())
+    let account = serde_json::from_value::<AccountRow>(row.clone())
         .map(LocalAccount::from_record)
         .map_err(|error| {
             Error::RustError(format!("failed to decode account preferences row: {error}"))
@@ -388,7 +400,7 @@ pub(crate) async fn update_credentials(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -412,7 +424,7 @@ pub(crate) async fn update_profile_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
@@ -451,14 +463,14 @@ async fn update_profile_internal(
 ) -> Result<(
     cfwdon_domain::LocalAccount,
     AccountProfileSettings,
-    crate::AccountStats,
+    AccountStats,
     Vec<serde_json::Value>,
     AppConfig,
 )> {
     let mut update = parse_update_credentials_request(req)
         .await
         .map_err(Error::RustError)?;
-    let db = crate::bind_request_d1(ctx, config)?;
+    let db = bind_request_d1(ctx, config)?;
     let config = config_with_resolved_custom_emojis(&db, config).await?;
     sanitize_update_credentials_request(&mut update, &config);
     let bucket = ctx.bucket(&config.media_binding)?;
@@ -477,7 +489,7 @@ async fn delete_profile_media_response(
     field: ProfileMediaField,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let db = crate::bind_request_d1(&ctx, &config)?;
+    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
@@ -735,7 +747,7 @@ async fn featured_tags_payload(
         .all()
         .await?;
 
-    let rows = crate::d1_results::<FeaturedTagRow>(&result)?;
+    let rows = d1_results::<FeaturedTagRow>(&result)?;
     let tag_names = rows
         .iter()
         .map(|row| row.tag_name.clone())
@@ -755,7 +767,7 @@ async fn featured_tags_payload(
         documents.push(serde_json::json!({
             "id": normalized,
             "name": normalized,
-            "url": format!("{}/tagged/{}", super::actor_url(config, account.username()), normalized),
+            "url": format!("{}/tagged/{}", actor_url(config, account.username()), normalized),
             "statuses_count": metrics.statuses_count.to_string(),
             "last_status_at": metrics.last_status_at,
         }));
@@ -791,7 +803,7 @@ async fn featured_tag_metrics_by_tag(
     bindings.extend(normalized_tags.iter().map(|tag| D1Type::Text(tag.as_str())));
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    Ok(crate::d1_results::<FeaturedTagMetricsRow>(&result)?
+    Ok(d1_results::<FeaturedTagMetricsRow>(&result)?
         .into_iter()
         .map(|row| (row.tag_name.clone(), row))
         .collect())
@@ -800,7 +812,7 @@ async fn featured_tag_metrics_by_tag(
 fn build_credentials_document(
     account: &cfwdon_domain::LocalAccount,
     config: &AppConfig,
-    stats: &crate::AccountStats,
+    stats: &AccountStats,
     settings: &AccountProfileSettings,
     featured_tags: Vec<serde_json::Value>,
     follow_requests_count: u64,
