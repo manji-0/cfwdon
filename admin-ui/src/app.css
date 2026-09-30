@@ -396,6 +396,9 @@ td.mono {
 @media (max-width: 800px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
+    /* Short pages would otherwise stretch the top bar to fill 100vh. */
+    grid-template-rows: auto 1fr;
+    align-items: start;
   }
 
   /* Collapse the sidebar into a top bar with a horizontally scrolling nav. */
@@ -417,6 +420,7 @@ td.mono {
   }
 
   nav {
+    order: 1;
     display: flex;
     gap: 0.25rem;
     width: calc(100% + 2rem);
@@ -431,7 +435,12 @@ td.mono {
     white-space: nowrap;
   }
 
+  /* Keep logout reachable; the account details don't fit the top bar. */
   .account {
+    margin: 0 0 0 auto;
+  }
+
+  .account-details {
     display: none;
   }
 

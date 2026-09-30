@@ -69,8 +69,10 @@
         {/each}
       </nav>
       <div class="account">
-        <div>{session.username}</div>
-        <div>{session.email}</div>
+        <div class="account-details">
+          <div>{session.username}</div>
+          <div>{session.email}</div>
+        </div>
         <a href="/admin/logout">ログアウト</a>
       </div>
     </aside>

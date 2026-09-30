@@ -17,7 +17,7 @@
   ];
   const sourceLabels: Record<AdminDelivery["source"], string> = {
     outbound: "個別配信",
-    outbox: "outbox",
+    outbox: "投稿配信",
   };
 
   let deliveries: AdminDelivery[] = [];

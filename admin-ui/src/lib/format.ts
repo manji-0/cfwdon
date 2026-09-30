@@ -6,11 +6,14 @@ const dateTimeFormat = new Intl.DateTimeFormat("ja-JP", {
   minute: "2-digit",
 });
 
-/** D1 returns `YYYY-MM-DD HH:MM:SS` in UTC without a zone; treat it as UTC. */
+/**
+ * Server timestamps are UTC but often lack a zone (D1 `CURRENT_TIMESTAMP` is
+ * `YYYY-MM-DD HH:MM:SS`). `new Date()` would read zone-less values as local
+ * time, so append `Z` to any timestamp without an explicit offset.
+ */
 function parseTimestamp(value: string): Date | null {
-  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(value)
-    ? `${value.replace(" ", "T")}Z`
-    : value;
+  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value);
+  const normalized = zoneless ? `${value.replace(" ", "T")}Z` : value;
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
