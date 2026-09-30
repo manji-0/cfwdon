@@ -64,7 +64,7 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 | Push to `main` | yes | yes | yes |
 | `workflow_dispatch` | yes | yes | yes |
 
-`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python migration/query-plan checks. `web-ui` is pnpm check/test/build plus `node --test scripts/lib/*.test.mjs`. `wrangler deploy --dry-run` stays off pull requests.
+`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python migration/query-plan/module-layer checks. `web-ui` is pnpm check/test/build plus `node --test scripts/lib/*.test.mjs`. `wrangler deploy --dry-run` stays off pull requests.
 
 Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
 
@@ -82,6 +82,24 @@ Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, s
 
 Use `devbox run ci` as the minimum local gate before sending a change. GitHub PR CI does not run the wrangler dry-run; run `devbox run ci:wrangler-dry-run` locally if the Worker build command or `wrangler.toml` changed.
 
+## Worker Module Layers
+
+`crates/cfwdon-worker` has no crate-root glob re-exports: every module imports what it uses from the module that owns it, so `use crate::…` lines are the dependency graph. Keep it that way; `scripts/check_module_layers.py` (part of `ci:server`) fails on `use crate::*` or a glob re-export in `lib.rs`.
+
+Top-level modules fall into three layers:
+
+- **Foundation**: infrastructure helpers (`tracked_d1`, `db_utils`, `db_session`, `observability`, `time_html`, `identity`, `runtime_config`, `response_utils`, `response_cache`, …), DTOs in `responses`, authentication (`auth`, `oauth_store`), and the `store` module, which holds repositories shared across features (`store::remote`, `store::media`, `store::relationship`, `store::local_polls`, `store::statuses`, `store::instance`).
+- **Features**: `statuses`, `timelines`, `notifications`, `accounts`, `remote`, `inbox`, `delivery`, and the other route-owning modules.
+- **Entry points**: `routing`, `router`, and the `#[event]` handlers in `lib.rs`.
+
+Foundation modules must import only other foundation modules. When a feature needs a row type, a D1 query, or a pure helper that lives in another feature, move it down into `store::<feature>` or the matching foundation module instead of importing across features. The check also records the size of the largest remaining cycle among feature modules (`MAX_CYCLE_MODULES`); lower that constant when a refactor shrinks the cycle, and never raise it.
+
+Run the check directly with:
+
+```sh
+python3 scripts/check_module_layers.py
+```
+
 ## Wrangler rustc PATH
 <!-- constrained-by ./clone-and-run.md#deploy -->
 
@@ -94,6 +112,8 @@ Deploy from `devbox shell`, or after `eval "$(devbox shellenv)"`:
 ```sh
 wrangler deploy
 ```
+
+Build and test through `devbox run -- cargo …` rather than a host or Nix `cargo`. Two different toolchains writing the same `target/` never share fingerprints, so each switch rebuilds the workspace and leaves another copy of incremental state behind (tens of GB on this crate).
 
 If `PATH` rustc is still the host compiler, wrap the command:
 

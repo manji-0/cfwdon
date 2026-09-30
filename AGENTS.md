@@ -3,12 +3,15 @@
 This file tells AI coding agents how to work in this repository without losing project context.
 
 ## Project Shape
+<!-- constrained-by ./docs/getting-started/development.md#worker-module-layers -->
 
 `cfwdon` is a Mastodon-compatible server for Cloudflare Workers. The Rust workspace is split into:
 
 - `crates/cfwdon-core` for shared configuration and core types.
 - `crates/cfwdon-domain` for domain model pieces.
 - `crates/cfwdon-worker` for the Worker runtime, routing, D1/R2 integration, Mastodon API behavior, and ActivityPub behavior.
+
+The worker crate is layered (foundation and `store` below features, `routing` on top); see `docs/getting-started/development.md#worker-module-layers` and keep `scripts/check_module_layers.py` passing.
 
 Operational docs live under `docs/`. Generated Mastodon compatibility reports live under `docs/mastodon-api-compat/`.
 

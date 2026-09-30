@@ -58,7 +58,8 @@
         "devbox run clippy",
         "devbox run test",
         "python3 scripts/check_migrations.py",
-        "python3 scripts/check_query_plans.py"
+        "python3 scripts/check_query_plans.py",
+        "python3 scripts/check_module_layers.py"
       ],
       "ci:wrangler-dry-run": [
         "WRANGLER_LOG=error wrangler deploy --dry-run"

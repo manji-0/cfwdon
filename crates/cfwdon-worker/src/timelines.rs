@@ -395,7 +395,7 @@ async fn preload_timeline_candidate_reply_account_ids(
 /// Batch-resolves remote candidates' `in_reply_to_uri` to status IDs.
 ///
 /// Without this, each remote status paid 1–2 round trips in
-/// [`crate::resolve_remote_in_reply_to_status_id`]. Keys are remote status IDs;
+/// `resolve_remote_in_reply_to_status_id` (statuses remote response builder). Keys are remote status IDs;
 /// `None` means the URI was looked up and matched nothing.
 async fn preload_remote_in_reply_to_status_ids(
     db: &D1Database,

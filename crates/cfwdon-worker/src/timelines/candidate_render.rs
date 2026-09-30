@@ -34,7 +34,7 @@ use cfwdon_domain::LocalAccount;
 use std::collections::{HashMap, HashSet};
 use worker::{Error, Result};
 
-/// Boost and quote target URIs referenced by a page, for [`crate::preload_boost_targets`].
+/// Boost and quote target URIs referenced by a page, for [`crate::statuses::preload_boost_targets`].
 fn embedded_status_uris(candidates: &[PublicTimelineCandidateEntry]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut uris = Vec::new();
