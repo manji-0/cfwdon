@@ -98,11 +98,13 @@ The Vite SPA under `/app` now uses TanStack Router in SPA library mode with a co
 ## Durable Objects Follow-Up
 <!-- derived-from durable-objects-candidates.md -->
 
-Streaming already validates channels and serves SSE/WebSocket clients by polling D1 every few seconds, then recycling before Worker subrequest limits. Durable Objects are the main candidate to replace that poll loop with hibernatable WebSocket hubs and write-time fan-out. See [Durable Objects Candidates](durable-objects-candidates.md) for ranking, sharding atoms, and a phased spike plan.
+Streaming is served by the hibernating `StreamHub` Durable Object for every channel (per-account session hubs for authenticated channels, shared hubs for public/hashtag); the D1 poll loop remains only as a fallback and 30s catch-up. See [Durable Objects Candidates](durable-objects-candidates.md) for ranking, sharding atoms, and phase status.
 
-- Spike a `StreamHub` DO for one authenticated channel (`user` or `user:notification`) with hibernation.
-- Publish prebuilt Mastodon streaming payloads after D1 commits; keep D1 as source of truth.
-- Evaluate keyed DO rate limiters for shared inbox / remote fetch abuse separately from streaming.
-- Prefer per-remote-host **admission** DOs behind the existing shared/personal inbox URLs; do not invent per-host public inbox paths.
+- **Done:** `StreamHub` DO with hibernation, covering `user`, `user:notification`, `list`, `direct`, public and hashtag channels.
+- **Done:** Publish prebuilt Mastodon streaming payloads after D1 commits; D1 stays the source of truth.
+- Deferred until measured: public-channel hash sharding (a single public hub is far below the ~500–1000 msgs/sec ceiling).
+- Deferred until measured: evaluate keyed DO rate limiters for shared inbox / remote fetch abuse separately from streaming.
+- Deferred until single-host inbox pressure is observed: per-remote-host **admission** DOs behind the existing shared/personal inbox URLs (the `InboxHost` spike was reverted); do not invent per-host public inbox paths.
+- Open: raise or queue the follower fan-out cap (`STREAM_HUB_FOLLOWER_FANOUT_LIMIT`, 200) before running instances with larger follower counts.
 - Keep outbound ActivityPub delivery on Queues; do not move fan-out HTTP delivery into DOs.
 - Reserve the Agents SDK for optional ops/AI/MCP/email session products, not for Mastodon streaming or inbox wire paths.

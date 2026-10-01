@@ -25,22 +25,23 @@ Cloudflare Workers are short-lived and isolate-scoped. DOs add:
 
 Do **not** use a single global DO. Shard by a natural atom (`user:{id}`, `hashtag:{name}`, `inbox-host:{domain}`, etc.). A global singleton becomes a throughput bottleneck (~hundreds of ops/sec per object).
 
-## Current Streaming Baseline
+## Streaming Baseline
 <!-- derived-from ../../crates/cfwdon-worker/src/meta_placeholder_routes.rs -->
+<!-- derived-from #phase-a--streaming-hub-spike-highest-value--implemented -->
 
-`GET /api/v1/streaming` already accepts SSE and WebSocket upgrades. Channel validation and auth exist for:
+`GET /api/v1/streaming` accepts SSE and WebSocket upgrades. Channel validation and auth exist for:
 
 - Public: `public`, `public:media`, `public:local`, `public:local:media`, `public:remote`, `public:remote:media`
 - Hashtag: `hashtag`, `hashtag:local` (require `tag`)
 - Authenticated: `user`, `user:notification`, `list` (require `list`), `direct`
 
-Live delivery today is **D1 poll every 3 seconds** inside the Worker invocation (`STREAMING_POLL_INTERVAL_SECS`). Each connection:
+**Status:** every channel above is now served by the `StreamHub` Durable Object (see [Phase A](#phase-a--streaming-hub-spike-highest-value--implemented) and [Phase B](#phase-b--channel-coverage--implemented)). The **D1 poll every 3 seconds** described below (`STREAMING_POLL_INTERVAL_SECS`) is the *pre-DO* design and now only runs as the fallback when the hub is unavailable, plus the 30s catch-up backup inside hub-backed SSE. The rest of this section records why the poll loop was replaced. Each poll connection:
 
 1. Holds `StreamingLoopState` (cursors, tracked status IDs, emitted event IDs).
 2. Re-queries timeline/notification/list/direct batches from D1.
 3. Recycles when poll budget is exhausted (`90` rounds / `200` subscription polls) or when the Workers subrequest limit is hit (`Too many API requests by single Worker invocation`).
 
-That design is workable for small instances, but it scales poorly:
+That design is workable for small instances, but it scaled poorly:
 
 - Every open client repeatedly hits D1 even when idle.
 - Latency is bounded by the poll interval (~3s), not by write time.
@@ -280,6 +281,15 @@ Stay on Worker poll streaming when:
 - Instance size stays tiny and 3s latency is acceptable.
 - Engineering cost of publish hooks across create/delete/notify paths outweighs benefit.
 - SSE-only clients dominate and WebSocket hibernation would not reduce cost enough.
+
+## Platform Notes (2026-06 – 2026-10)
+
+Cloudflare changelog items relevant to `StreamHub`; none require code changes today.
+
+- **Pending I/O keeps a DO alive** (2026-10-01): service binding requests, RPC calls, `waitUntil()` promises and timers prevent eviction for up to 15 minutes each. Hub-to-hub forwarding (`/forward/register`, relay) is covered; do not rely on it for hibernated idle sockets, which still hibernate.
+- **Outbound connections prevent eviction** (2026-06-19): active `connect()` / WebSocket connections keep a DO alive for up to 15 minutes.
+- **JS RPC spans in traces** (2026-09-17): traces follow RPC across Worker and DO boundaries. cfwdon talks to hubs over `fetch`, so only RPC-based calls would show up this way.
+- **Alarm retry control** (2026-08-25): `retryAlarm: false` with `ctx.abort()`. Relevant only if the deferred alarm-based scheduled statuses are built.
 
 ## Open Questions
 
