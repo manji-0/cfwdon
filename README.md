@@ -1,6 +1,6 @@
 # cfwdon
 
-`cfwdon` is a Mastodon-compatible server for Cloudflare Workers. It is written in Rust and uses Cloudflare D1 for relational state, R2 for media storage, and Auth0 as the authentication boundary for protected API routes.
+`cfwdon` is a Mastodon-compatible server for Cloudflare Workers. It is written in Rust and uses Cloudflare D1 for relational state, R2 for media storage, KV for short-lived caches, Queues for outbound delivery, a Durable Object for streaming fan-out, and Auth0 as the authentication boundary for protected API routes.
 
 The project is still early software. The current focus is making the Mastodon API surface, ActivityPub federation behavior, and Cloudflare deployment story explicit enough that contributors can work on compatibility without first reverse-engineering the whole Worker.
 
@@ -8,7 +8,8 @@ The project is still early software. The current focus is making the Mastodon AP
 
 - Rust workspace with `cfwdon-core`, `cfwdon-domain`, `cfwdon-models`, and `cfwdon-worker`
 - Cloudflare Worker deployment through `wrangler`
-- D1 migrations and R2 media bindings
+- D1 migrations plus R2, KV, Queue, and Durable Object (`StreamHub`) bindings
+- Web UI (`web-ui/`, React) at `/app` and admin UI (`admin-ui/`, Svelte) at `/admin`, served as Workers static assets
 - Mastodon API compatibility inventory generated from upstream routes
 - ActivityPub actor, inbox, outbox, delivery, follow, status, poll, and interaction slices
 - Optional misc Workers under [`workers/`](workers/) (Auth0 email helper, ActivityPub→X mirror)
@@ -38,10 +39,10 @@ For the full catalog and worked examples, see [Model Refinement Mapping](docs/re
 ## Requirements
 
 - `devbox`
-- Cloudflare account access for Workers, D1, and R2 operations
+- Cloudflare account access for Workers, D1, R2, KV, and Queues operations
 - `wrangler` authentication for deploys and remote resource changes
 
-The development shell installs the Rust toolchain, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `binaryen`, and supporting tools declared in [devbox.json](devbox.json).
+The development shell installs the Rust toolchain, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `binaryen`, Node.js, `pnpm`, and supporting tools declared in [devbox.json](devbox.json).
 
 ## Quick Start
 <!-- derived-from ./docs/getting-started/clone-and-run.md -->
@@ -67,6 +68,8 @@ Local routes that depend on D1, R2, or Auth0 need matching local or remote bindi
 - [Development Workflow](docs/getting-started/development.md)
 - [Configuration Reference](docs/reference/configuration.md)
 - [Cloudflare Deploy Checklist](docs/operations/cloudflare-deploy.md)
+- [Auth0 Configuration Guide](docs/operations/auth0-configuration.md)
+- [Cloudflare Access Configuration Guide](docs/operations/cloudflare-access-configuration.md)
 - [Architecture](docs/architecture/cfwdon-architecture.md)
 - [Model Refinement Mapping](docs/reference/model-refinement.md)
 - [Project TODO](docs/planning/full-todo.md)

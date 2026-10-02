@@ -48,6 +48,7 @@ Pick the smallest hostname or path set that matches the deployment goal.
 For normal public federation, avoid protecting these surfaces with Access:
 
 - `/.well-known/webfinger`
+- `/.well-known/host-meta`
 - `/.well-known/nodeinfo`
 - `/nodeinfo/*`
 - `/users/*`
@@ -55,6 +56,7 @@ For normal public federation, avoid protecting these surfaces with Access:
 - `/api/v1/instance`
 - `/api/v2/instance`
 - `/oauth/*` when Mastodon client login must be public
+- `/app/*` (including `/app/login` and `/app/logout`) when the Web UI must be public
 - `/media/*` when using Worker media fallback routes
 
 Prefer a separate staging hostname for full Access protection. It avoids trying to maintain a long list of path exceptions for federation and client compatibility.

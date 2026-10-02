@@ -20,6 +20,7 @@ For a fresh clone and first deploy path, see [Clone And Run](clone-and-run.md).
 - `wasm-bindgen-cli`
 - `binaryen`
 - `jq`
+- Node.js 24 and `pnpm` (for `web-ui`, `admin-ui`, and the `scripts/*.mjs` helpers)
 
 ## Common Commands
 <!-- constrained-by ../../.github/workflows/ci.yml -->
@@ -37,6 +38,10 @@ devbox run fmt:check
 ```
 
 ```sh
+devbox run clippy
+```
+
+```sh
 devbox run check
 ```
 
@@ -48,7 +53,7 @@ devbox run test
 devbox run ci
 ```
 
-`devbox run ci` runs the full local gate (web UI + server). Split targets are also available:
+`devbox run ci` runs the full local gate (web UI, server, and the wrangler dry-run). Split targets are also available:
 
 ```sh
 devbox run ci:web-ui
@@ -64,7 +69,7 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 | Push to `main` | yes | yes | yes |
 | `workflow_dispatch` | yes | yes | yes |
 
-`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python migration/query-plan/module-layer checks. `web-ui` is pnpm check/test/build plus `node --test scripts/lib/*.test.mjs`. `wrangler deploy --dry-run` stays off pull requests.
+`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the devbox `ci:web-ui` task omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
 
 Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
 
@@ -72,11 +77,11 @@ Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, s
 
 `devbox run ci` currently runs:
 
-- `web-ui`: `pnpm run check`, `pnpm test`, and `pnpm run build`
-- `cargo fmt --all --check`
-- `cargo clippy` native `--all-targets` and wasm32
-- `cargo test --workspace`
-- `WRANGLER_LOG=error wrangler deploy --dry-run`
+- `ci:web-ui`: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, and `pnpm run build` in `web-ui`
+- `ci:server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py`
+- `ci:wrangler-dry-run`: `WRANGLER_LOG=error wrangler deploy --dry-run`
+
+`admin-ui` has no CI job or tests; `npm run check` there runs `svelte-check` if you change it.
 
 `devbox run check` remains a local wasm `cargo check`. CI does not run it before wasm clippy.
 
@@ -92,7 +97,7 @@ Top-level modules fall into three layers:
 - **Features**: `statuses`, `timelines`, `notifications`, `accounts`, `remote`, `inbox`, `delivery`, and the other route-owning modules.
 - **Entry points**: `routing`, `router`, and the `#[event]` handlers in `lib.rs`.
 
-Foundation modules must import only other foundation modules. When a feature needs a row type, a D1 query, or a pure helper that lives in another feature, move it down into `store::<feature>` or the matching foundation module instead of importing across features. The check also records the size of the largest remaining cycle among feature modules (`MAX_CYCLE_MODULES`); lower that constant when a refactor shrinks the cycle, and never raise it.
+Foundation modules must import only other foundation modules. When a feature needs a row type, a D1 query, or a pure helper that lives in another feature, move it down into `store::<feature>` or the matching foundation module instead of importing across features. The check also records the size of the largest remaining dependency cycle among top-level modules (`MAX_CYCLE_MODULES`); lower that constant when a refactor shrinks the cycle, and never raise it.
 
 Run the check directly with:
 
@@ -177,7 +182,7 @@ cargo test -p cfwdon-models
 devbox run worker:dev
 ```
 
-This starts `wrangler dev`, rebuilds `web-ui/dist`, stages UI files into `assets/`, and applies pending local D1 migrations before boot. The Worker build copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
+This rebuilds `web-ui/dist` (skip with `-- --skip-web-ui-build`), applies pending local D1 migrations, and starts `wrangler dev`. The migration step is skipped when you pass `--instance` or `--remote`. `admin-ui` is not rebuilt; build it with `(cd admin-ui && npm install && npm run build)` when you need it. The Worker build (`scripts/build_worker.mjs`) copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
 
 Local `wrangler dev` uses `worker-build --dev` (no wasm-opt) via `WRANGLER_DEV=1` / `WORKER_BUILD_PROFILE=dev`. `wrangler deploy` and CI `wrangler deploy --dry-run` stay on `worker-build --release`. Force a release wasm under `wrangler dev` with `WORKER_BUILD_PROFILE=release`. Bare `wrangler dev` (not `devbox run worker:dev`) needs the same env:
 
@@ -208,7 +213,7 @@ devbox run web-ui:dev
 devbox run web-ui:dev -- --instance https://fedi.manji.app
 ```
 
-`web-ui:dev` runs Vite on port `5173` with `/app/` hot reload. API routes under `/api`, `/oauth`, and `/app/login` are proxied to the configured origin.
+`web-ui:dev` runs Vite on port `5173` with `/app/` hot reload. API routes under `/api`, `/oauth`, `/app/login`, and `/app/logout` are proxied to the configured origin.
 
 ### Auth0 on localhost
 
@@ -223,7 +228,7 @@ Add the following to the Auth0 application (same app as production, or a separat
 
 When using `web-ui:dev` against the local worker, also allow port `5173` with the same paths.
 
-`devbox run worker:dev` prints this checklist on startup. See also [Auth0 Configuration Guide](../operations/auth0-configuration.md#local-development).
+`devbox run worker:dev` (without `--instance` or `--remote`) and `devbox run web-ui:dev` against a local origin print this checklist on startup. See also [Auth0 Configuration Guide](../operations/auth0-configuration.md#local-development).
 
 Routes that require D1, R2, or secrets need local or remote bindings configured according to the [Configuration Reference](../reference/configuration.md) and [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md).
 

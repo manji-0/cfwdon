@@ -10,6 +10,9 @@ This file tells AI coding agents how to work in this repository without losing p
 - `crates/cfwdon-core` for shared configuration and core types.
 - `crates/cfwdon-domain` for domain model pieces.
 - `crates/cfwdon-worker` for the Worker runtime, routing, D1/R2 integration, Mastodon API behavior, and ActivityPub behavior.
+- `crates/cfwdon-models` for Stateright model checks of domain protocols (run by `cargo test --workspace`).
+
+The Web UI lives in `web-ui/` (React, pnpm) and the admin UI in `admin-ui/` (Svelte, npm); both are staged into Workers static assets. `workers/` holds optional separate Workers. Database migrations are in `migrations/`.
 
 The worker crate is layered (foundation and `store` below features, `routing` on top); see `docs/getting-started/development.md#worker-module-layers` and keep `scripts/check_module_layers.py` passing.
 

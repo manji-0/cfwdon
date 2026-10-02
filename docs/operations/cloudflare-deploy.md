@@ -1,6 +1,6 @@
 # Cloudflare Deploy Checklist
 
-This repository is configured to run as a single Cloudflare Worker backed by D1 and R2, with Web and admin UI files attached as Workers static assets.
+This repository is configured to run as a single Cloudflare Worker backed by D1, R2, two KV namespaces, a Queue, and a Durable Object, with Web and admin UI files attached as Workers static assets.
 
 For local commands and CI gates, see [Development Workflow](../getting-started/development.md).
 For Worker bindings, environment variables, secrets, and D1/Worker placement, see [Configuration Reference](../reference/configuration.md).
@@ -12,7 +12,10 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
 - An R2 bucket bound as `MEDIA`
 - A KV namespace bound as `REMOTE_DNS_CACHE` (remote hostname DoH validation cache)
 - A KV namespace bound as `APP_CACHE` (account capability bits, public endpoint payloads, and trend lists)
+- A Queue named `cfwdon-outbox-process`, bound as the producer `OUTBOX_PROCESS_QUEUE` (the same Worker is its consumer)
 - A public custom domain for media objects, referenced by `MEDIA_PUBLIC_BASE_URL`
+
+The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets binding, and the two cron triggers need no separate provisioning. They come from `wrangler.toml.example` (`[[durable_objects.bindings]]` plus the `[[migrations]]` entry tagged `v1`, `[assets]`, and `[triggers] crons`), and the Durable Object class is created on the first `wrangler deploy`.
 
 ## Provisioning Steps
 <!-- constrained-by ../reference/configuration.md#public-instance-vars -->
@@ -39,7 +42,7 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
    wrangler kv namespace create REMOTE_DNS_CACHE --preview
    ```
 
-   Copy the returned ids into `[[kv_namespaces]]` for binding `REMOTE_DNS_CACHE`.
+   Copy the returned ids into `[[kv_namespaces]]` for binding `REMOTE_DNS_CACHE` (`id` and `preview_id`).
 
 4. Create the app cache KV namespace.
 
@@ -48,9 +51,17 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
    wrangler kv namespace create APP_CACHE --preview
    ```
 
-   Copy the returned ids into `[[kv_namespaces]]` for binding `APP_CACHE`.
+   Copy the returned ids into `[[kv_namespaces]]` for binding `APP_CACHE` (`id` and `preview_id`).
 
-5. Configure R2 CORS for the public instance origin.
+5. Create the outbound delivery queue.
+
+   ```sh
+   wrangler queues create cfwdon-outbox-process
+   ```
+
+   The `[[queues.producers]]` and `[[queues.consumers]]` entries in `wrangler.toml` already reference this queue name.
+
+6. Configure R2 CORS for the public instance origin.
 
    ```json
    {
@@ -74,29 +85,30 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
 
    If the bucket custom domain is already serving cached objects, purge the media hostname after changing the CORS policy so cached assets pick up the new headers.
 
-6. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
+7. Copy the generated D1 `database_id` into [`wrangler.toml`](../../wrangler.toml).
 
-7. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
+8. Replace placeholder vars in [`wrangler.toml`](../../wrangler.toml).
 
    At minimum, set production values for `INSTANCE_DOMAIN`, `SOURCE_URL`, `MEDIA_PUBLIC_BASE_URL`, `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, and `AUTH0_AUDIENCE`.
 
-8. Configure secrets that should not be committed.
+9. Configure secrets that should not be committed.
 
    ```sh
+   wrangler secret put ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY
    wrangler secret put RESEND_API_KEY
    wrangler secret put WEB_PUSH_VAPID_PRIVATE_KEY
    wrangler secret put TRANSLATION_API_KEY
    ```
 
-   Only set optional secrets for features you enable.
+   `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` protects account ActivityPub private keys (see [Secret Handling](../reference/configuration.md#secret-handling)). Only set the other secrets for features you enable.
 
-9. Apply migrations to the remote D1 database.
+10. Apply migrations to the remote D1 database.
 
    ```sh
    wrangler d1 migrations apply DB --remote
    ```
 
-10. Backfill deployed secret storage after migrations.
+11. Backfill deployed secret storage after migrations.
 <!-- constrained-by ../reference/configuration.md#secret-handling -->
 
    Set `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` in the shell running the backfill to the same secret value configured in Cloudflare, then hash existing OAuth tokens and move account private keys into encrypted storage.
@@ -107,13 +119,13 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
 
    Use `--dry-run` first if you want to inspect the generated SQL.
 
-11. Run the full local gate.
+12. Run the full local gate.
 
     ```sh
     devbox run ci
     ```
 
-12. Build the UI bundles so deploy does not upload the fallback HTML shells.
+13. Build the UI bundles so deploy does not upload the fallback HTML shells.
 
     ```sh
     (cd web-ui && pnpm install && pnpm run build)
@@ -122,7 +134,7 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
 
     `wrangler deploy` stages `web-ui/dist` into `assets/app` and `admin-ui/dist` into `assets/admin`. Missing dist directories fall back to placeholder HTML.
 
-13. Deploy the Worker.
+14. Deploy the Worker.
 <!-- derived-from ../getting-started/development.md#wrangler-rustc-path -->
 
     From `devbox shell`, or after `eval "$(devbox shellenv)"`:
@@ -131,7 +143,7 @@ For Worker bindings, environment variables, secrets, and D1/Worker placement, se
     wrangler deploy
     ```
 
-    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc and uses `worker-build --release` (wasm-opt). `devbox run worker:dev` is the only path that switches to `--dev`. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
+    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc and uses `worker-build --release` (wasm-opt). Local `wrangler dev` (`devbox run worker:dev`, or `WRANGLER_DEV=1`) is the only path that switches to `--dev`. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
 
     A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
     Clients reconnect; this is expected and is logged as
@@ -149,9 +161,9 @@ If the actor IoContext is already aborted when the event is delivered, the runti
 ## Verification Gates
 
 - `devbox run ci`
-- `wrangler.toml` contains active `[[d1_databases]]`, `[[r2_buckets]]`, and `[assets]` bindings
+- `wrangler.toml` contains active `[[d1_databases]]`, `[[r2_buckets]]`, `[[kv_namespaces]]` (`REMOTE_DNS_CACHE`, `APP_CACHE`), `[[queues.producers]]` / `[[queues.consumers]]`, `[[durable_objects.bindings]]` with its `[[migrations]]` entry, `[triggers] crons`, and `[assets]`
 - production vars do not contain placeholder values from the sample `wrangler.toml`
-- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, and `APP_CACHE`
+- `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, `APP_CACHE`, and `STREAM_HUB`
 - `wrangler.toml` `[assets] binding` is `ASSETS`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
 - `wrangler.toml` `[placement] region` matches the D1 primary colo from `served_by_colo` (this instance: `SIN` → `aws:ap-southeast-1`)
@@ -159,4 +171,4 @@ If the actor IoContext is already aborted when the event is delivered, the runti
 
 ## Current Caveat
 
-The repository is wired for Cloudflare Workers + D1 + R2, but the actual D1 database ID and R2 bucket are external Cloudflare resources and must exist before a real deployment can succeed.
+The repository is wired for Cloudflare Workers + D1 + R2 + KV + Queues + Durable Objects, but the actual D1 database ID, R2 bucket, KV namespaces, and queue are external Cloudflare resources and must exist before a real deployment can succeed.
