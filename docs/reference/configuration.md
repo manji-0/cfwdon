@@ -1,6 +1,6 @@
 # Configuration Reference
 
-`cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, Web and admin UI files through a Workers static assets binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
+`cfwdon` runs as a single Cloudflare Worker. It receives relational state through a D1 binding, media storage through an R2 binding, KV namespaces for short-lived caches, a Durable Object binding for streaming, a Queue binding for outbound delivery, Web and admin UI files through a Workers static assets binding, and most runtime settings through `wrangler.toml` `[vars]` plus Cloudflare secrets.
 
 For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.example) to `wrangler.toml` and replace the placeholder values before deploying.
 
@@ -16,9 +16,10 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
 | `APP_CACHE` | KV namespace | Yes | Caches short-lived app data: account capability bits (skip empty D1 probes), public endpoint payloads (`public_timeline`, `instance_activity`), and trend lists. |
 | `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
+| `OUTBOX_PROCESS_QUEUE` | Queue producer and consumer | Yes | Queue `cfwdon-outbox-process` drains pending outbound ActivityPub deliveries. The Worker enqueues a kick after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending. The binding name is a constant in `crates/cfwdon-worker/src/delivery.rs`, not an `AppConfig` field. |
 | `ASSETS` | Workers static assets | Yes | Staged `web-ui` and `admin-ui` files under `/app` and `/admin`. Configured by `[assets]` in `wrangler.toml`, not by `AppConfig`. |
 
-If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync. The static assets binding name is `ASSETS` in `wrangler.toml` and `crates/cfwdon-worker/src/ui_assets.rs`.
+If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync. The `StreamHub` class needs the `[[migrations]]` entry shown in `wrangler.toml.example`. The static assets binding name is `ASSETS` in `wrangler.toml` and `crates/cfwdon-worker/src/ui_assets.rs`.
 
 Do not set `[assets] not_found_handling` to `single-page-application`. Unmatched `/app` routes fall through to the Worker so ActivityPub and Mastodon API paths are not captured as HTML.
 
@@ -97,7 +98,7 @@ For the complete Auth0 Dashboard setup, API audience selection, PKCE application
 Cloudflare Access can protect private or operational Worker hostnames as an edge access gate, but it should not sit in front of the normal public Auth0 callback path. The current Worker does not treat Access JWTs as local user authentication. For the supported deployment boundary and policy setup, see [Cloudflare Access Configuration Guide](../operations/cloudflare-access-configuration.md).
 
 ## Policy And Instance Content Vars
-<!-- constrained-by #Public Instance Vars -->
+<!-- constrained-by #public-instance-vars -->
 
 Short instance blurb goes in `INSTANCE_DESCRIPTION`. Longer about / privacy / terms bodies can be set as HTML or plain text. Plain text is wrapped in paragraphs automatically; when both plain and HTML vars are set, the HTML var wins.
 
@@ -134,6 +135,12 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | --- | --- | --- | --- |
 | `STREAM_HUB_BINDING` | Optional | `STREAM_HUB` | Binding name the `StreamHub` Durable Object uses for hub-to-hub forwarding. Set it only when the binding in `wrangler.toml` is renamed. |
 
+## Logging Vars
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `CFWDON_API_REQUEST_LOG` | Optional | enabled | Set to `0`, `false`, `off`, or `no` to stop per-request API log lines. |
+
 ## Push Notification Vars
 
 | Var | Required | Notes |
@@ -167,6 +174,7 @@ If provider config is incomplete, translation integration is disabled.
 | --- | --- | --- |
 | `ANNOUNCEMENTS_JSON` | Optional | JSON source for announcement documents. |
 | `DONATION_CAMPAIGN_JSON` | Optional | JSON source for donation campaign documents. |
+| `CUSTOM_EMOJIS_JSON` | Optional | Mastodon `CustomEmoji` JSON array served as the custom emoji registry. Invalid JSON falls back to an empty registry. |
 
 Keep JSON values compact enough for Worker vars. Prefer a future storage-backed content path for large or frequently edited content.
 
@@ -183,6 +191,8 @@ wrangler secret put TRANSLATION_API_KEY
 ```
 
 `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` protects local account ActivityPub private keys at rest. Set it before running security backfills or creating production accounts. Use a long random value and keep the same value across deployments; rotating it requires decrypting and re-encrypting `account_private_keys`.
+
+For `wrangler dev`, copy `.dev.vars.example` to `.dev.vars` to override secrets locally. It currently only documents an optional dev-only `AUTH0_CLIENT_ID` that takes precedence over the `wrangler.toml` value.
 
 Keep machine-specific deployment copies in an ignored local file such as `wrangler.local.toml`, or in a private deployment environment. Do not commit API keys, private key material, or other secret values into templates or docs.
 

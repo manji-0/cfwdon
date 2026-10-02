@@ -21,11 +21,11 @@ The worker is therefore a **restricted** implementation of the abstract model: i
 
 ## Catalog
 
-The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all fifteen models with domain modules and worker call sites. Models marked `(pending worker wiring)` have domain helpers extracted but no worker delegation yet.
+The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all sixteen models with domain modules and worker call sites. Every cataloged model currently has an executable refinement check.
 
 | Model | Domain module | Worker sites | Executable refinement |
 | --- | --- | --- | --- |
-| `quote` | `cfwdon_domain::quote` | `statuses/mutations`, publish intent | yes |
+| `quote` | `cfwdon_domain::quote` | `statuses/status_insert.rs`, publish intent | yes |
 | `quote_approval` | `cfwdon_domain::quote` | `quote_owner_action_response`, remote upsert | yes |
 | `registration_transition_events` | `account::registration` | `account_registration_api_details` | yes |
 | `status_draft_transition_events` | `status::draft` | `request_parsing`, `insert_status` | yes |
@@ -36,10 +36,10 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `outbox_pipeline` | `delivery` | `delivery.rs` | yes |
 | `local_follow_request` | `follow` | `follow_requests.rs` | yes |
 | `activitypub_visibility` | `remote::activitypub` | `activitypub/objects.rs`, `parse.rs` | yes |
-| `status_draft_publish` | `status::draft` | `request_parsing`, `mutations` | yes |
+| `status_draft_publish` | `status::draft` | `request_parsing`, `statuses/status_insert.rs` | yes |
 | `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | yes |
 | `access_provision` | `account::registration` | `auth/account_store` | yes |
-| `federation_request_policy` | `federation` | `http/request_validation`, `url_guard` | yes |
+| `federation_request_policy` | `federation` | `http/request_validation.rs`, `federation/url_guard.rs` | yes |
 | `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |
 
 ## Worked example: quote approval

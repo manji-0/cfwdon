@@ -2,9 +2,9 @@
 
 ## Summary
 
-`cfwdon` is a Rust implementation of a Mastodon-compatible server designed for Cloudflare Workers. It uses D1 for relational state, R2 for media storage, Auth0 for protected API authentication, and Worker-compatible request lifetimes for federation and API work.
+`cfwdon` is a Rust implementation of a Mastodon-compatible server designed for Cloudflare Workers. It uses D1 for relational state, R2 for media storage, KV for short-lived caches, a Durable Object (`StreamHub`) for streaming fan-out, a Queue for outbound delivery, Auth0 for protected API authentication, and Worker-compatible request lifetimes for federation and API work.
 
-The project borrows responsibility boundaries from GoToSocial, but it does not port GoToSocial directly. The architecture is shaped around Workers, D1, R2, cron/internal routes, and retryable delivery queues.
+The project borrows responsibility boundaries from GoToSocial, but it does not port GoToSocial directly. The architecture is shaped around Workers, D1, R2, KV, Durable Objects, Queues, cron/internal routes, and retryable delivery.
 
 ## Goals
 
@@ -13,6 +13,7 @@ The project borrows responsibility boundaries from GoToSocial, but it does not p
 - Support ActivityPub discovery, actor documents, inbox handling, outbox documents, signed delivery, and cached remote objects.
 - Keep Mastodon API response builders, route surfaces, storage helpers, and federation transport separated enough to evolve independently.
 - Preserve a path from the current Worker-heavy crate toward future application, federation, and storage crates.
+- Keep Cloudflare-specific bindings in the Worker crate; shared rules live in `cfwdon-domain` and are checked by Stateright models.
 
 ## Non-Goals
 
@@ -35,6 +36,8 @@ The local `../rustresort` repository remains a reference for Mastodon API shape,
   Shared configuration, build metadata, and platform-neutral base types.
 - `crates/cfwdon-domain`
   Domain types for accounts, statuses, media, and instance-oriented data.
+- `crates/cfwdon-models`
+  Stateright models and refinement checks for domain state machines; see [Model Refinement Mapping](../reference/model-refinement.md).
 - `crates/cfwdon-worker`
   Cloudflare Worker runtime, routing, D1/R2 bindings, Mastodon API surfaces, ActivityPub federation, internal jobs, and response/store modules.
 
@@ -43,30 +46,36 @@ Future extraction candidates remain `cfwdon-application`, `cfwdon-federation`, `
 ## Runtime Boundaries
 
 - `router.rs` owns top-level route registration and connects HTTP surfaces to capability modules.
-- `runtime_config.rs` reads Worker vars, build metadata, root document configuration, and upload limits.
-- `auth.rs` handles Auth0 JWT verification, local account provisioning, and authenticated account lookup.
+- `runtime_config.rs` reads Worker vars and secrets, build metadata, root document configuration, and upload limits. Binding names and vars are listed in [Configuration Reference](../reference/configuration.md).
+- `auth` handles Auth0 JWT verification, local account provisioning, and authenticated account lookup.
 - `request_utils.rs`, `response_utils.rs`, `time_html.rs`, `db_utils.rs`, `id_utils.rs`, and `content_helpers.rs` provide shared request, response, time, query, ID, and content helpers.
-- `instance_identity.rs` centralizes instance domain, actor URL, WebFinger, shared inbox, remote ID, and authority normalization.
+- `identity.rs` centralizes instance domain, actor URL, WebFinger, shared inbox, remote ID, and authority normalization.
+- `db_session.rs` opens a request-scoped D1 Sessions API session: `GET`/`HEAD` start `first-unconstrained` so reads can use read replicas, mutating methods start `first-primary`, and an `x-d1-bookmark` request header continues an earlier session. It is wired into selected read-heavy routes (timelines, notifications, status detail); see [D1 Sessions API Spike](../planning/d1-sessions-api-spike.md).
+- `stream_hub/` is the `StreamHub` Durable Object (bound as `STREAM_HUB`) behind WebSocket and SSE streaming; `stream_hub_publish.rs` publishes events inline after D1 commits.
+- Queue `OUTBOX_PROCESS_QUEUE` drains outbound ActivityPub delivery; the `#[event(queue)]` consumer is in `lib.rs` and the producer in `delivery.rs`.
+- KV `REMOTE_DNS_CACHE` caches DoH SSRF validation results; KV `APP_CACHE` (`app_cache.rs`) caches account capability bits and public endpoint/trend payloads. `response_cache.rs` uses the Workers Cache API for anonymous public responses (`[cache]` in `wrangler.toml.example`).
+- `[placement]` pins the Worker next to the D1 primary, and `[observability]` enables logs and traces; `observability.rs` and `d1_metrics.rs` emit structured events and per-request D1 metrics. See [Configuration Reference](../reference/configuration.md#worker-and-d1-placement).
+- `web_ui/`, `admin_ui/`, and `ui_assets.rs` serve the staged UI builds from the `ASSETS` binding.
 
 ## Mastodon API Modules
 
 - `responses.rs` and related response modules own Mastodon DTO construction for accounts, statuses, media, reports, tags, search, context, and notifications.
-- `profile.rs`, `account_store.rs`, `account_actions.rs`, `relationships.rs`, and account-related modules handle account reads, profile updates, relationship state, directory/search behavior, and follow/block/mute actions.
-- `statuses.rs`, `status_store.rs`, `status_mutations.rs`, `status_interactions.rs`, and status-related modules handle status creation, reads, deletion, context, favourites, reblogs, bookmarks, pins, edits, quotes, translations, and visibility.
-- `timeline_search.rs` owns public/home/tag/direct timelines, account/status/tag search, URL resolution, ranking, and tag response building.
-- `notifications.rs` and `notification_routes.rs` own notification collection, visibility, filtering, dismiss/clear state, unread count, and grouped notification surfaces.
-- `polls.rs` and poll modules own local and remote poll storage, votes, ActivityPub `Question` mapping, expired poll processing, and Mastodon poll responses.
-- `media.rs` owns media upload, metadata update, profile media, fallback delivery, and orphan cleanup.
-- `reports.rs`, `filters.rs`, `featured_tags.rs`, list/filter/push/meta modules, and placeholder routes cover broader Mastodon API surfaces.
+- `profile/`, `accounts/`, `relationships.rs`, `relationship/`, and account-related modules handle account reads, profile updates, relationship state, directory/search behavior, and follow/block/mute actions.
+- `statuses/` and status-related modules handle status creation, reads, deletion, context, favourites, reblogs, bookmarks, pins, edits, quotes, translations, and visibility.
+- `timelines/` and `search/` own public/home/tag/link/direct timelines, account/status/tag search, URL resolution, ranking, and tag response building.
+- `notifications/` owns notification collection, visibility, filtering, dismiss/clear state, unread count, and grouped notification surfaces.
+- `polls/`, `local_polls/`, and poll modules own local and remote poll storage, votes, ActivityPub `Question` mapping, expired poll processing, and Mastodon poll responses.
+- `media/` owns media upload, metadata update, profile media, fallback delivery, and orphan cleanup.
+- `reports/`, `filters/`, `featured_tags.rs`, list/filter/push/meta modules, and placeholder routes cover broader Mastodon API surfaces.
 
 ## ActivityPub And Federation Modules
 
-- `activitypub.rs` builds actor, note, question, update, delete, and audience/object helper shapes.
-- `discovery.rs` serves WebFinger, actor/tag public reads, followers/following collections, and outbox documents.
-- `inbox.rs` handles personal and shared inbox ingress, idempotency, target account resolution, and incoming activity dispatch.
-- `delivery.rs` and delivery modules handle outbound activity rows, target fan-out, signed delivery, retry/backoff, terminal failure reconciliation, and follower delivery.
-- `remote_objects.rs`, `remote_store.rs`, and federation cache helpers resolve and store remote actors, statuses, polls, and account references.
-- `federation_http.rs` and HTTP signature modules handle signed ActivityPub delivery, inbox signature verification, remote document fetch, and SSRF-resistant URL validation.
+- `activitypub/` builds actor, note, question, update, delete, and audience/object helper shapes.
+- `discovery/` serves WebFinger, actor/tag public reads, followers/following collections, and outbox documents.
+- `inbox/` handles personal and shared inbox ingress, idempotency, target account resolution, and incoming activity dispatch.
+- `delivery/` handles outbound activity rows, target fan-out, signed delivery, retry/backoff, terminal failure reconciliation, and follower delivery.
+- `remote/` and `federation/` cache helpers resolve and store remote actors, statuses, polls, and account references.
+- `federation/` and `http/` (signatures, request validation, signed delivery) handle signed ActivityPub delivery, inbox signature verification, remote document fetch, and SSRF-resistant URL validation.
 - `crypto_keys.rs` owns RSA key generation, WebCrypto import/export, signature parameters, and public key PEM handling.
 
 ## Data Model
@@ -92,24 +101,24 @@ The Worker exposes Mastodon API v1/v2 routes, discovery/OAuth metadata routes, A
 
 Route-level Mastodon coverage is tracked in `docs/mastodon-api-compat/`. That inventory proves path/method coverage, not full behavioral parity. Behavioral compatibility must be verified with response-shape tests, e2e API tests, and federation interop tests.
 
-ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound work. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
+ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound rows in D1. A Cloudflare Queue (`OUTBOX_PROCESS_QUEUE`) is kicked after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending; the queue consumer then fans out and delivers. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
 
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 <!-- constrained-by ./web-ui-foreground-resume.md -->
 
 - Deploy as a single Cloudflare Worker.
-- Attach Vite `web-ui` and `admin-ui` builds as Workers static assets under `/app` and `/admin`.
+- Attach Vite `web-ui` (React) and `admin-ui` (Svelte) builds as Workers static assets under `/app` and `/admin`.
 - The `/app` SPA reconnects streaming and REST-catches up after a long-backgrounded tab returns; see [Web UI Foreground Resume](web-ui-foreground-resume.md).
-- Configure D1 and R2 bindings in `wrangler.toml`.
+- Configure the D1, R2, KV, Queue, and Durable Object bindings in `wrangler.toml`.
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.
 - Protect user and internal routes with Auth0 settings where required.
-- Use cron/internal routes for scheduled maintenance such as delivery processing, media pruning, and expired poll handling.
+- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
 
 ## Observability
 
-The project should prefer structured JSON logs with request IDs, actor IDs, delivery targets, retry counts, and route context. Important event classes include D1 failures, R2 failures, remote fetch failures, signature verification failures, delivery retries, terminal delivery failures, and inbox replay decisions.
+`[observability]` logs and traces are enabled in `wrangler.toml.example`. The project prefers structured JSON logs with request IDs, actor IDs, delivery targets, retry counts, and route context. Important event classes include D1 failures, R2 failures, remote fetch failures, signature verification failures, delivery retries, terminal delivery failures, and inbox replay decisions.
 
 ## Reliability And Failure Modes
 
@@ -151,8 +160,8 @@ The project is now past the bootstrap phases. The planning focus is behavioral c
 ## Open Questions
 
 - Which placeholder/meta routes should become real implementations first, and which should remain conservative empty responses?
-- Which delivery work should move from `waitUntil` or internal routes to Cloudflare Queues?
-- Which live-update surfaces should move from Worker D1 polling to Durable Object streaming hubs? See [Durable Objects Candidates](../planning/durable-objects-candidates.md).
+- Outbound delivery already runs on Cloudflare Queues, and no code path uses `waitUntil`. Card unfurls, remote context fetches, and similar jobs use the D1 `background_jobs` table drained by the hourly cron; should any of them move to Queues?
+- Streaming channels are already served by the `StreamHub` Durable Object, with D1 polling kept only as a fallback. Which other surfaces should use Durable Objects? See [Durable Objects Candidates](../planning/durable-objects-candidates.md).
 - How should remote media caching and attachment persistence work long term?
 - How much Mastodon OAuth compatibility should be provided without weakening the Auth0 model?
 - What operator-facing tooling is needed for retry dead-letter state, migrations, and moderation workflows?
