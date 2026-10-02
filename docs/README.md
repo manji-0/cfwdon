@@ -4,28 +4,42 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 
 ## Start Here
 <!-- derived-from ../README.md -->
-<!-- constrained-by ../workers/ap-x-mirror/README.md -->
+
+### Getting Started
 
 - [Development Workflow](getting-started/development.md)
-  Local environment setup, common validation commands, local Worker execution, and compatibility document refresh steps.
+  Local environment setup, common validation commands, local Worker execution, worker module layers, model checking, and compatibility document refresh steps.
 - [Clone And Run](getting-started/clone-and-run.md)
   Fresh clone bootstrap, `wrangler.toml.example` setup, Cloudflare resource creation, migrations, and first deploy steps.
+
+### Reference
+
 - [Configuration Reference](reference/configuration.md)
   Cloudflare bindings, Worker/D1 placement, `wrangler.toml` vars, secrets, and runtime configuration behavior.
+- [Model Refinement Mapping](reference/model-refinement.md)
+  How the Stateright models in `crates/cfwdon-models` map onto `cfwdon-domain` steps and worker guards.
+- [Mastodon API Compatibility](mastodon-api-compat/README.md)
+  Generated compatibility inventory comparing upstream Mastodon routes with `cfwdon` route handlers.
+
+### Operations
+
 - [Cloudflare Deploy Checklist](operations/cloudflare-deploy.md)
   D1, R2, Worker deploy, and pre-deploy verification steps.
 - [Auth0 Configuration Guide](operations/auth0-configuration.md)
   Auth0 API, public PKCE application, e-mail claim, Worker vars, and login validation steps.
 - [Cloudflare Access Configuration Guide](operations/cloudflare-access-configuration.md)
   Cloudflare Access edge gating, policy scope, service tokens, and Auth0 coexistence notes.
+- [nixbuild.net Setup](operations/nixbuild-net.md)
+  Offloading devbox/Nix package builds in CI and locally.
+- [ActivityPub → X Mirror](../workers/ap-x-mirror/README.md)
+  Optional misc Worker that mirrors allowlisted ActivityPub notes to a fixed X account.
+
+### Architecture
+
 - [Architecture](architecture/cfwdon-architecture.md)
   Worker, D1, R2, Mastodon API, and ActivityPub design boundaries.
 - [Web UI Foreground Resume](architecture/web-ui-foreground-resume.md)
   What the `/app` SPA does when a tab returns from the background.
-- [ActivityPub → X Mirror](../workers/ap-x-mirror/README.md)
-  Optional misc Worker that mirrors allowlisted ActivityPub notes to a fixed X account.
-- [Mastodon API Compatibility](mastodon-api-compat/README.md)
-  Generated compatibility inventory comparing upstream Mastodon routes with `cfwdon` route handlers.
 
 ## Directory Layout
 <!-- derived-from #start-here -->
@@ -33,23 +47,32 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 | Directory | Purpose |
 | --- | --- |
 | `getting-started/` | Fresh clone setup, contributor setup, and day-to-day development workflow. |
-| `reference/` | Stable reference material for configuration and runtime behavior. |
-| `operations/` | Deployment, Auth0, Cloudflare Access, and production-operation checklists. |
+| `reference/` | Stable reference material for configuration, runtime behavior, and the model-refinement mapping. |
+| `operations/` | Deployment, Auth0, Cloudflare Access, CI build offloading, and production-operation checklists. |
 | `architecture/` | Design documents and architecture decisions. |
-| `planning/` | Roadmaps, TODOs, and evolving implementation trackers. |
+| `planning/` | Roadmaps, TODOs, interop trackers, and design/spike notes. Each states its status (current, implemented, deferred, or historical) near the top. |
 | `mastodon-api-compat/` | Generated Mastodon API compatibility reports. |
 
 ## Planning Documents
 <!-- derived-from planning/full-todo.md -->
 
+Current trackers and notes:
+
 - [Full TODO](planning/full-todo.md)
   Long-running tracker of completed work, next work, and remaining compatibility gaps.
-- [Initial Roadmap](planning/initial-roadmap.md)
-  Bootstrap-era implementation plan and compatibility slice notes.
+- [Misskey ActivityPub Interop](planning/misskey-activitypub-interop.md)
+  Checklist for federation between `cfwdon` and Misskey, including residual live tests.
 - [Durable Objects Candidates](planning/durable-objects-candidates.md)
-  Where Durable Objects help (timeline streaming hubs, keyed rate limits, per-entity alarms) versus Queues/D1, and when the Agents SDK is a better adjacent fit.
+  Where Durable Objects help versus Queues/D1. Streaming hubs (`StreamHub`) are implemented; sharding and per-host inbox admission are deferred until measured.
+- [D1 Sessions API Spike](planning/d1-sessions-api-spike.md)
+  How the typed D1 Sessions API (read replication) is wired into read-heavy routes, and what remains.
 - [Web UI Routing Modernization](planning/web-ui-routing.md)
-  How `web-ui` uses React Router Declarative Mode today, why TanStack Router in SPA mode is the preferred replacement, and a phased spike that keeps the Rust Worker as the HTTP server.
+  How `web-ui` routes pages, the preferred replacement router, and a phased spike that keeps the Rust Worker as the HTTP server.
+
+Historical:
+
+- [Initial Roadmap](planning/initial-roadmap.md)
+  Bootstrap-era implementation plan and compatibility slice notes; superseded by the Full TODO.
 
 ## Generated Documents
 <!-- derived-from mastodon-api-compat/README.md -->
