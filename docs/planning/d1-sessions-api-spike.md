@@ -1,7 +1,7 @@
 # D1 Sessions API Feasibility Spike
 
 **Track:** S
-**Status:** Typed Sessions API is available on workers-rs `0.8.5` and wired into selected read-heavy Mastodon API routes.
+**Status:** implemented for the initial read-heavy route set (workers-rs `0.8.5`, `1e65bae`); expansion to further read paths and production observation remain open (see Remaining Work).
 
 ## Scope And Repository Context
 
@@ -27,12 +27,13 @@ Wired routes (initial set):
 - Timelines: home, public, tag, link, direct
 - Notifications: list/v2/group/entry/unread + dismiss/clear (mutations use `first-primary` when no bookmark)
 - Status detail: show, card, reblogged/favourited-by, source, context, history
+- Instance: `instance.rs` (two handlers) also opens a bound session
 
 ## Remaining Work
 
-1. Expand Sessions to more read paths (search, instance directories, account timelines) once this set is stable in production metrics.
+1. Expand Sessions to more read paths (search, instance directories, account timelines) once this set is stable in production metrics. Open: `search/api.rs`, `accounts/statuses/routes.rs`, and `instance/trending_links.rs` still use `bind_request_d1` (direct primary binding).
 2. Observe `served_by_region` / `served_by_primary` in D1 query insights after deploy.
-3. Decide whether clients should persist `x-d1-bookmark` across requests (optional continuity).
+3. Decide whether clients should persist `x-d1-bookmark` across requests (optional continuity). The Worker already accepts and emits the header; `web-ui` does not send it today.
 4. Keep write-heavy federation/inbox paths on primary-anchored sessions or direct bindings until measured.
 
 ## Recommendation

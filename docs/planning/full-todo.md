@@ -2,6 +2,8 @@
 
 This document is the current planning source for `cfwdon`. It replaces the older bootstrap-era running log with a status-oriented view: what is in place, what is intentionally limited, and what should happen next.
 
+**Status:** current tracker. Items marked **Done** have landed (evidence in `git log`); unmarked items are open unless labelled deferred.
+
 ## Principles
 
 - Keep the GoToSocial-inspired responsibility split, but adapt the implementation to Workers, D1, R2, and short request lifetimes.
@@ -28,14 +30,21 @@ The generated compatibility inventory currently maps all tracked upstream routes
 - Local and remote poll support, including ActivityPub `Question` federation, votes, vote undo, own-vote remapping, and expired poll closure updates.
 - DNS-based SSRF defense for remote fetch targets and cached remote actor key use during signature verification.
 - Generated Mastodon API route inventory and response-shape compatibility tests for important DTOs.
+- `StreamHub` Durable Object streaming for every channel (see [Durable Objects Follow-Up](#durable-objects-follow-up)).
+- D1 Sessions API on read-heavy routes (timelines, notifications, status detail, instance) with `x-d1-bookmark` continuity; see [D1 Sessions API Feasibility Spike](d1-sessions-api-spike.md).
+- Cron-driven sweeps: expired polls, due scheduled statuses, and the outbox (`crons` in `wrangler.toml.example`).
+- Embedded admin API and UI (`/admin`, `/api/cfwdon/admin/*`) with Auth0 role authorization: dashboard, report resolution, delivery inspection and retry, relays, domain blocks, and custom emoji.
+- Registered custom emoji registry (D1/R2) with federated `Emoji` tag read support.
+- Vite SPA web UI on TanStack Router (see [Web UI Follow-Up](#web-ui-follow-up)).
+- CI guards for D1 migrations (`scripts/check_migrations.py`), query plans (`scripts/check_query_plans.py`), and worker module layers (`scripts/check_module_layers.py`).
 
 ## Highest Priority Next Work
 
 1. Expand behavioral compatibility tests beyond route presence, especially for placeholders that intentionally return empty or conservative responses.
-2. Add federation interop tests for signed delivery, inbox replay behavior, remote polls, follow state transitions, and private visibility.
+2. Add federation interop tests for signed delivery, inbox replay behavior, remote polls, follow state transitions, and private visibility. Fixture-level Misskey coverage exists (`activitypub/misskey_compat_tests.rs`); live round-trips against real implementations are still open.
 3. Improve remote media attachment handling, including cache policy, attachment normalization, and failure recovery.
-4. Add migration tests and seed tooling so D1 schema changes are safer to review and deploy.
-5. Harden operational controls around shared inbox abuse, signature clock skew, retry dead-letter inspection, and protected internal routes.
+4. Add seed tooling so local Worker development starts with data. **Migration validation is done:** `scripts/check_migrations.py` runs in `devbox run ci`, and `scripts/run_worker_dev.mjs` applies pending local migrations.
+5. Harden operational controls around shared inbox abuse, signature clock skew, and protected internal routes. **Retry dead-letter inspection is done** via the admin deliveries API (`admin_api/deliveries.rs`).
 
 ## Mastodon API Follow-Up
 
@@ -51,21 +60,21 @@ The generated compatibility inventory currently maps all tracked upstream routes
 - Track Misskey ActivityPub interop gaps and residual live tests in [Misskey ActivityPub Interop](misskey-activitypub-interop.md).
 - Improve remote `Question` update handling, option rename detection, and vote refresh semantics.
 - Add stronger replay and dedupe coverage for shared inbox traffic.
-- Decide where Queues should replace `waitUntil` or internal cron routes for high-volume delivery.
+- Outbound delivery already runs on Queues (`OUTBOX_PROCESS_QUEUE` producer and consumer in `wrangler.toml.example`). **Deferred:** an `INBOX_PROCESS_QUEUE` handoff until a D1 staging table exists (`33110ff`; see [Durable Objects Candidates](durable-objects-candidates.md)). Remaining `waitUntil` and internal cron routes (`/internal/*`) stay until measured under load.
 - Track tombstones and soft deletes for remote objects more explicitly.
 
 ## Storage And Data Follow-Up
 
 - Define a durable remote media attachment policy.
-- Add migration tests and a repeatable D1 migration runner workflow.
+- **Done:** migration validation (`scripts/check_migrations.py` in CI) and a repeatable local migration workflow (`run_worker_dev.mjs` applies pending migrations; remote uses `wrangler d1 migrations apply`).
 - Add seed data for local Worker development.
-- Decide how to expose retry dead-letter state to operators.
+- **Done:** expose retry dead-letter state to operators: `GET /api/cfwdon/admin/deliveries` (state filter) and `POST /api/cfwdon/admin/deliveries/:id/retry` for failed rows.
 - Review indexes for timeline, notification, search, poll, and relationship queries as data grows.
 
 ## Security Follow-Up
 
 - Add rate limiting and abuse controls for shared inbox and expensive remote resolution paths.
-- Make signature clock skew policy configurable.
+- Make signature clock skew policy configurable (it is currently the fixed `ACTIVITYPUB_MAX_DATE_SKEW_MS` constant, 12 hours, in `cfwdon-domain`).
 - Harden digest and signed-header canonicalization tests.
 - Audit all internal routes and document which must require Auth0 authentication.
 - Keep public media domains outside protected API authentication while preserving cache behavior.
@@ -80,7 +89,7 @@ The generated compatibility inventory currently maps all tracked upstream routes
 ## Ops / DX Follow-Up
 
 - `wrangler dev` seed script.
-- D1 migration runner script.
+- ~~D1 migration runner script.~~ **Done:** `devbox run worker:dev` applies pending local migrations.
 - Structured logging with request, actor, delivery target, and retry metadata.
 - Compatibility fixtures and e2e API tests.
 - Federation interop tests.

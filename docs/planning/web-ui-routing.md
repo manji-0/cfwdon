@@ -3,7 +3,9 @@
 <!-- constrained-by ../architecture/cfwdon-architecture.md#operational-plan -->
 <!-- constrained-by ../getting-started/development.md -->
 
-Investigation of how `web-ui` uses React Router today, and whether a more modern routing model should replace it. This is a planning note, not an implementation commitment.
+**Status:** implemented (Phases 0-2, `aa7eb84`). `web-ui` runs on TanStack Router; `react-router` is no longer a dependency (`web-ui/package.json`). Only the optional Phase 3 polish is open. Sections that describe React Router or the untyped path surface record the pre-migration investigation.
+
+Investigation of how `web-ui` used React Router, and whether a more modern routing model should replace it. Written as a planning note; the preferred option was then adopted.
 
 ## Summary
 
@@ -43,11 +45,13 @@ React Router usage before Phase 1 (historical):
 
 Session loading wraps the route tree. Anonymous users see `LoginPanel` instead of routes. Authenticated pages then fetch Mastodon JSON in `useEffect`, hydrate `ViewCache`, and subscribe to user streaming. The router does not load data.
 
-## What Is Already Typed, And What Is Not
+## What Was Typed, And What Was Not (Pre-Phase 0, Historical)
 
-`AppRoute` is a closed ADT with `fromPathname` / `toPath` / `label` / hub helpers. Navigation hubs use it. Most of the product does not.
+This section and the tables below describe the state before Phase 0; `AppRoute` now covers every path listed.
 
-`App.tsx` registers these routes, but `AppRoute` has no corresponding kind:
+`AppRoute` was a closed ADT with `fromPathname` / `toPath` / `label` / hub helpers. Navigation hubs used it. Most of the product did not.
+
+`App.tsx` registered these routes, but `AppRoute` had no corresponding kind:
 
 | Path | Page |
 | --- | --- |
@@ -60,11 +64,11 @@ Session loading wraps the route tree. Anonymous users see `LoginPanel` instead o
 | `/profile/:accountId/followers` | followers |
 | `/profile/:accountId/following` | following |
 
-Search also lives as `kind: "Search"` with no `q` / `type` fields, while `SearchPage` stores those values in the URL.
+Search lived as `kind: "Search"` with no `q` / `type` fields, while `SearchPage` stored those values in the URL.
 
-Call sites that bypass `AppRoute` include `StatusCard`, `NotificationCard`, `AccountRow`, `useStatusActions`, `useAppKeyboard`, `GoChord`, `MeHubNav`, `InboxTabs`, and `linkify-mentions.ts` (the last one emits a full `/app/search?q=` href because it writes HTML, not a React `Link`).
+Call sites that bypassed `AppRoute` included `StatusCard`, `NotificationCard`, `AccountRow`, `useStatusActions`, `useAppKeyboard`, `GoChord`, `MeHubNav`, `InboxTabs`, and `linkify-mentions.ts` (the last one emits a full `/app/search?q=` href because it writes HTML, not a React `Link`).
 
-That split is the bug class a modern router is supposed to prevent: a new page can land in JSX and still be invisible to `fromPathname`, keyboard chords, and tests.
+That split was the bug class a modern router is supposed to prevent: a new page can land in JSX and still be invisible to `fromPathname`, keyboard chords, and tests.
 
 ## What “Modern” Must Mean Here
 
@@ -172,6 +176,8 @@ Proved:
 **Status:** done. Route-tree path literals are preserved (`createRoute` is generic over `TPath`), so `Link` and `navigate` type-check without adapter casts. Functional `className` maps to `activeProps` / `inactiveProps`. Search reads `q` / `type` from the `/search` route. `AppRoute` remains the domain ADT.
 
 ### Phase 3 — optional later
+
+**Status:** open, not started (`router.tsx` has no pending UI or scroll restoration config).
 
 Typed search for more query flags, route-level pending UI, scroll restoration. Still no SSR. Still no moving Mastodon fetches into server loaders.
 

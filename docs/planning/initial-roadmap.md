@@ -1,5 +1,7 @@
 # Initial Roadmap
 
+**Status:** historical (bootstrap-era). Not maintained as a tracker; use [Project Plan](full-todo.md) for current status and open work.
+
 This document records the original bootstrap plan and the way it evolved. For the current plan, use [Project Plan](full-todo.md).
 
 ## Bootstrap Goals

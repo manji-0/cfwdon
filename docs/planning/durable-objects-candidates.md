@@ -3,7 +3,9 @@
 <!-- constrained-by ../architecture/cfwdon-architecture.md#runtime-boundaries -->
 <!-- constrained-by full-todo.md#activitypub-follow-up -->
 
-Investigation of where Cloudflare Durable Objects (DOs) would help `cfwdon`, especially around Mastodon timeline streaming. This is a planning note, not an implementation commitment.
+**Status:** streaming hubs (§1) are implemented — see [Phase A](#phase-a--streaming-hub-spike-highest-value--implemented) and [Phase B](#phase-b--channel-coverage--implemented). Public-channel sharding and per-host inbox admission (§2) were spiked and pulled back out; they are deferred until measured ([Phase C](#phase-c--inbox-host-admission--schedule-optional)). Rate limiting, alarms and presence (§3–§5) remain candidates only.
+
+Investigation of where Cloudflare Durable Objects (DOs) would help `cfwdon`, especially around Mastodon timeline streaming. Sections below keep the original reasoning; the phase sections record what landed.
 
 ## Summary
 
@@ -94,7 +96,7 @@ Read path (client connect)
 - After hibernation, restore per-socket subscription state with `serializeAttachment` / tags (`stream=user`, `tag=rust`, `list=123`). A socket keeps a set of `(stream, tag, list)` keys so one hub can serve several channels and honour later `subscribe` messages.
 - Clients that miss events while disconnected still catch up via REST timelines + `since_id`; optional short ring buffers in DO storage can reduce reconnect gaps but are not required for v1.
 
-**Implementation note.** `workers-rs` already exposes `#[durable_object]`, `accept_web_socket`, and hibernation handlers. No Durable Object bindings exist in `wrangler.toml` yet.
+**Implementation note.** `workers-rs` exposes `#[durable_object]`, `accept_web_socket`, and hibernation handlers. `StreamHub` lives in `crates/cfwdon-worker/src/stream_hub/` and is bound as `STREAM_HUB` (see `wrangler.toml.example`).
 
 ### 2. Per-remote-host inbox admission — strong federation fit
 <!-- derived-from ../../crates/cfwdon-worker/src/inbox.rs -->
@@ -295,16 +297,16 @@ Cloudflare changelog items relevant to `StreamHub`; none require code changes to
 
 - Should public streams shard by channel only, or also by geographic colo affinity later?
 - How much event history should a hub buffer for reconnect gap-fill versus forcing REST catch-up?
-- Publish hooks: inline after D1 commit, or enqueue a “stream-publish” Queue message that wakes hubs?
-- Keep streaming logic in `meta_placeholder_routes.rs`, or extract a `streaming/` module before DO work?
-- Separate DO Worker script vs same Worker export — same Worker is simpler for Rust/`workers-rs` initially.
+- Publish hooks: **resolved** — inline soft publish after the D1 commit (`stream_hub_publish.rs`); a failed publish never fails the API write. A “stream-publish” Queue would only matter if the follower fan-out cap is lifted.
+- **Resolved:** streaming logic was extracted to `meta_placeholder_routes/streaming/` and `stream_hub/`.
+- **Resolved:** same Worker export (`STREAM_HUB` binding on the main Worker), not a separate DO Worker script.
 - For inbox host keys: prefer signing `keyId` host, actor URI host, or both with mismatch rejection?
 - At what backlog depth should `InboxHost` return 503 versus accept-and-queue? (the pulled-back spike denied at `in_flight >= 32` with `Retry-After: 5`)
 - Should hot remote hosts shard by hash of `activity_id` or by actor URI?
 
 ## References
 
-- Current streaming implementation: `crates/cfwdon-worker/src/meta_placeholder_routes.rs`, `crates/cfwdon-worker/src/streaming_types.rs`
+- Streaming implementation: `crates/cfwdon-worker/src/stream_hub/` (Durable Object), `crates/cfwdon-worker/src/stream_hub_publish.rs` (publishers), `crates/cfwdon-worker/src/meta_placeholder_routes/streaming/` (SSE/WebSocket routes and D1 fallback), `crates/cfwdon-worker/src/streaming_types.rs`
 - Outbox queue bindings: `wrangler.toml.example` (`OUTBOX_PROCESS_QUEUE`)
 - Architecture open question on Queues: [cfwdon Architecture](../architecture/cfwdon-architecture.md)
 - Cloudflare: [What are Durable Objects](https://developers.cloudflare.com/durable-objects/concepts/what-are-durable-objects/), [WebSockets + hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), [Rules of Durable Objects](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/)

@@ -3,6 +3,8 @@
 Tracked checklist for ActivityPub federation between `cfwdon` and Misskey.
 This is not Misskey native client API coverage.
 
+**Status:** current tracker, fixture-backed. Live Misskey round-trips have not been run; those rows stay `unverified`.
+
 ## Purpose
 <!-- constrained-by ./full-todo.md#activitypub-follow-up -->
 <!-- constrained-by ../architecture/cfwdon-architecture.md#activitypub-and-federation-modules -->
@@ -66,7 +68,7 @@ behavior; live rows stay `unverified` until a Misskey environment is available.
 | `summary` CW + `sensitive` | supported | `activity_pub_status_input_from_object` | CW and sensitive flags | Medium | Mapped |
 | Attachments as AS `attachment` | partial | status object builders / remote upsert | Standard attachments; cache policy unfinished | Medium | Code present; remote media policy open |
 | `Question` polls | supported | poll modules + Create path | `oneOf`/`anyOf`, votes | High | Implemented; live residual |
-| Custom emoji `tag` objects | unverified | emoji tags not federated as first-class | `Emoji` tags with icon URLs | Medium | Needs live sample |
+| Custom emoji `tag` objects | partial | `extract_federated_emojis_from_activitypub_object` | `Emoji` tags with icon URLs | Medium | Inbound `Emoji` tags are read for display (`f43ad71`, `custom_emojis/federated.rs`); outbound emoji tags and live Misskey samples unverified |
 
 ## Reactions
 
