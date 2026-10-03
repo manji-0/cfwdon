@@ -3,6 +3,7 @@
 //! Call sites already gate caching to viewer-independent documents. These
 //! helpers store/load/delete by absolute URL keys in `caches.default`.
 //! Invalidation uses `cache.delete` (Cache-Tag purge is Enterprise-only).
+use crate::deferred::defer;
 use crate::identity::instance_base_url;
 use crate::response_utils::{CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API};
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
@@ -124,9 +125,13 @@ pub(crate) async fn invalidate_account_public_cache(
     username: &str,
 ) {
     let config = load_config(ctx);
-    cache_delete(&account_api_cache_key(&config, account_id)).await;
-    cache_delete(&actor_json_cache_key(&config, username)).await;
-    cache_delete(&actor_html_cache_key(&config, username)).await;
+    // Stays awaited: clients re-read right after a profile write.
+    let keys = [
+        account_api_cache_key(&config, account_id),
+        actor_json_cache_key(&config, username),
+        actor_html_cache_key(&config, username),
+    ];
+    futures_util::future::join_all(keys.iter().map(|key| cache_delete(key))).await;
 }
 
 fn account_cache_tag(username: &str) -> String {
@@ -204,6 +209,15 @@ async fn cache_delete(key: &str) {
     let _ = Cache::default().delete(key, true).await;
 }
 
+/// The response does not wait for the cache write; a miss until it lands only
+/// costs a recompute.
+fn defer_cache_put(key: &str, response: Response) {
+    let key = key.to_owned();
+    defer(async move {
+        let _ = Cache::default().put(key, response).await;
+    });
+}
+
 async fn cache_put_json(
     key: &str,
     value: &impl serde::Serialize,
@@ -220,7 +234,7 @@ async fn cache_put_json(
         .headers_mut()
         .set("Cache-Control", &cache_control_max_age(max_age_seconds))?;
     response.headers_mut().set("Cache-Tag", cache_tag)?;
-    let _ = Cache::default().put(key, response).await;
+    defer_cache_put(key, response);
     Ok(())
 }
 
@@ -239,7 +253,7 @@ async fn cache_put_html(
         .set("Cache-Control", &cache_control_max_age(max_age_seconds))?;
     response.headers_mut().set("Cache-Tag", cache_tag)?;
     response.headers_mut().set("Vary", "Accept")?;
-    let _ = Cache::default().put(key, response).await;
+    defer_cache_put(key, response);
     Ok(())
 }
 

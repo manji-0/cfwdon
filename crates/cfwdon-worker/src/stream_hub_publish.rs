@@ -4,6 +4,7 @@ use crate::content_helpers::{
 };
 use crate::conversation_store::{find_conversation_for_account, find_conversation_id_by_status_id};
 use crate::conversations::conversation_document;
+use crate::deferred::defer;
 use crate::federation::RemoteActorProfile;
 use crate::identity::actor_url;
 use crate::lists::{
@@ -1041,7 +1042,31 @@ pub(crate) async fn publish_announcement_user_stream_soft(
     .await;
 }
 
+/// Queue the delete fan-out to run after the response.
 pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &LocalStatus,
+    has_media: bool,
+) {
+    let (env, db, config, author, status) = (
+        env.clone(),
+        db.detached(),
+        config.clone(),
+        author.clone(),
+        status.clone(),
+    );
+    defer(async move {
+        publish_local_status_delete_stream_fanout_now(
+            &env, &db, &config, &author, &status, has_media,
+        )
+        .await;
+    });
+}
+
+async fn publish_local_status_delete_stream_fanout_now(
     env: &Env,
     db: &D1Database,
     config: &AppConfig,
@@ -1124,7 +1149,33 @@ pub(crate) async fn publish_local_status_delete_stream_fanout_soft(
 
 /// Fan-out for an edited local status. Mirrors the create fan-out with
 /// `status.update`, so timeline subscribers see edits and not just the author.
+/// Queue the edit fan-out to run after the response.
 pub(crate) async fn publish_local_status_update_stream_fanout_soft(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    author: &LocalAccount,
+    status: &LocalStatus,
+    payload: &str,
+    has_media: bool,
+) {
+    let (env, db, config, author, status, payload) = (
+        env.clone(),
+        db.detached(),
+        config.clone(),
+        author.clone(),
+        status.clone(),
+        payload.to_owned(),
+    );
+    defer(async move {
+        publish_local_status_update_stream_fanout_now(
+            &env, &db, &config, &author, &status, &payload, has_media,
+        )
+        .await;
+    });
+}
+
+async fn publish_local_status_update_stream_fanout_now(
     env: &Env,
     db: &D1Database,
     config: &AppConfig,

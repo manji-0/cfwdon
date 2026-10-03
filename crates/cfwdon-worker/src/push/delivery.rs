@@ -1,5 +1,6 @@
 use crate::auth::find_account_by_id;
 use crate::db_utils::d1_results;
+use crate::deferred::defer;
 use crate::notifications::{
     build_local_status_response_for_recipient_soft, notification_timestamp_sort_token,
     publish_local_actor_notification_soft,
@@ -20,7 +21,7 @@ use wasm_bindgen::JsValue;
 use web_push_native::{
     Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey,
 };
-use worker::{Env, Error, Fetch, Headers, Method, Request, RequestInit, Result};
+use worker::{Env, Error, Fetch, Headers, Method, Request, RequestInit, Result, console_error};
 
 #[derive(Debug, Deserialize)]
 struct AccountIdRow {
@@ -289,7 +290,30 @@ async fn send_push_request(endpoint: String, headers: Headers, body: Vec<u8>) ->
     }
 }
 
+/// Queue a Web Push send to run after the response; the subscription lookup
+/// and the push service request stay off the caller's critical path.
 pub(crate) async fn send_push_notification(
+    db: &D1Database,
+    config: &AppConfig,
+    account_id: &str,
+    notification_type: &str,
+    details: serde_json::Value,
+) -> Result<()> {
+    let db = db.detached();
+    let config = config.clone();
+    let account_id = account_id.to_owned();
+    let notification_type = notification_type.to_owned();
+    defer(async move {
+        if let Err(error) =
+            send_push_notification_now(&db, &config, &account_id, &notification_type, details).await
+        {
+            console_error!("web push send failed: {error}");
+        }
+    });
+    Ok(())
+}
+
+async fn send_push_notification_now(
     db: &D1Database,
     config: &AppConfig,
     account_id: &str,

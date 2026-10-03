@@ -4,6 +4,7 @@
 //! `APP_CACHE` KV so user-facing reads skip D1 when the KV binding is present.
 
 use crate::app_cache::app_cache_kv;
+use crate::deferred::defer;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
@@ -43,17 +44,19 @@ async fn kv_get_public_endpoint_cache(id: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&text).ok()
 }
 
-async fn kv_put_public_endpoint_cache_json(id: &str, payload_json: &str) {
+fn kv_put_public_endpoint_cache_json(id: &str, payload_json: &str) {
     let Some(kv) = app_cache_kv() else {
         return;
     };
     let Ok(putter) = kv.put(&public_endpoint_cache_kv_key(id), payload_json.to_owned()) else {
         return;
     };
-    let _ = putter
-        .expiration_ttl(public_endpoint_cache_ttl_secs())
-        .execute()
-        .await;
+    defer(async move {
+        let _ = putter
+            .expiration_ttl(public_endpoint_cache_ttl_secs())
+            .execute()
+            .await;
+    });
 }
 
 pub(crate) async fn load_public_endpoint_cache(
@@ -82,7 +85,7 @@ pub(crate) async fn load_public_endpoint_cache(
     let payload = serde_json::from_str(&row.payload_json).map_err(|error| {
         worker::Error::RustError(format!("invalid public endpoint cache ({id}): {error}"))
     })?;
-    kv_put_public_endpoint_cache_json(id, &row.payload_json).await;
+    kv_put_public_endpoint_cache_json(id, &row.payload_json);
     Ok(Some(payload))
 }
 
@@ -110,7 +113,7 @@ pub(crate) async fn store_public_endpoint_cache(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    kv_put_public_endpoint_cache_json(id, &payload_json).await;
+    kv_put_public_endpoint_cache_json(id, &payload_json);
     Ok(())
 }
 

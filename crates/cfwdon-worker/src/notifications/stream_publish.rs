@@ -4,6 +4,7 @@ use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_mentions_from_text;
 use crate::db_utils::d1_results;
+use crate::deferred::defer;
 use crate::federation::RemoteActorProfile;
 use crate::identity::remote_account_rest_id;
 use crate::media::find_media_attachments_by_status_id;
@@ -450,6 +451,7 @@ pub(crate) async fn publish_remote_status_update_stream_notifications_soft(
     }
 }
 
+/// Queue the StreamHub publish to run after the response.
 pub(crate) async fn publish_notification_response_soft(
     env: Option<&Env>,
     config: &AppConfig,
@@ -459,7 +461,20 @@ pub(crate) async fn publish_notification_response_soft(
     let Some(env) = env else {
         return;
     };
+    let env = env.clone();
+    let config = config.clone();
+    let recipient_account_id = recipient_account_id.to_owned();
+    defer(async move {
+        publish_notification_response_now(&env, &config, &recipient_account_id, notification).await;
+    });
+}
 
+async fn publish_notification_response_now(
+    env: &Env,
+    config: &AppConfig,
+    recipient_account_id: &str,
+    notification: MastodonNotificationResponse,
+) {
     let mut notification = notification;
     notification.created_at = timestamp_to_mastodon_iso8601(&notification.created_at);
     let notification_id = notification.id.clone();
@@ -505,6 +520,31 @@ pub(crate) async fn publish_local_actor_notification_soft(
     publish_notification_response_soft(env, config, recipient_account_id, notification).await;
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn publish_local_actor_notification_now(
+    env: &Env,
+    config: &AppConfig,
+    recipient_account_id: &str,
+    actor: &LocalAccount,
+    notification_type: &str,
+    id: String,
+    group_key: String,
+    created_at: String,
+    status: Option<MastodonStatusResponse>,
+) {
+    let notification = local_notification_response(
+        id,
+        notification_type,
+        group_key,
+        created_at,
+        MastodonAccountResponse::from_account(actor, config),
+        status,
+    );
+    publish_notification_response_now(env, config, recipient_account_id, notification).await;
+}
+
+/// Queue the recipient-specific status render and publish to run after the
+/// response.
 pub(crate) async fn publish_local_status_interaction_notification_soft(
     env: Option<&Env>,
     db: &D1Database,
@@ -514,10 +554,46 @@ pub(crate) async fn publish_local_status_interaction_notification_soft(
     notification_type: &str,
     status: &LocalStatus,
 ) -> Result<()> {
+    let Some(env) = env else {
+        return Ok(());
+    };
     if recipient_account_id == actor.id() {
         return Ok(());
     }
+    let env = env.clone();
+    let db = db.detached();
+    let config = config.clone();
+    let recipient_account_id = recipient_account_id.to_owned();
+    let actor = actor.clone();
+    let notification_type = notification_type.to_owned();
+    let status = status.clone();
+    defer(async move {
+        if let Err(error) = publish_local_status_interaction_notification_now(
+            &env,
+            &db,
+            &config,
+            &recipient_account_id,
+            &actor,
+            &notification_type,
+            &status,
+        )
+        .await
+        {
+            console_error!("failed to publish {notification_type} notification: {error}");
+        }
+    });
+    Ok(())
+}
 
+async fn publish_local_status_interaction_notification_now(
+    env: &Env,
+    db: &D1Database,
+    config: &AppConfig,
+    recipient_account_id: &str,
+    actor: &LocalAccount,
+    notification_type: &str,
+    status: &LocalStatus,
+) -> Result<()> {
     let id = local_status_interaction_notification_id(notification_type, actor.id(), &status.id);
     let group_key = id.clone();
 
@@ -539,9 +615,8 @@ pub(crate) async fn publish_local_status_interaction_notification_soft(
 
     let created_at = now_iso_string()?;
 
-    publish_local_actor_notification_soft(
+    publish_local_actor_notification_now(
         env,
-        db,
         config,
         recipient_account_id,
         actor,

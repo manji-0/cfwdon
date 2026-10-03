@@ -1,6 +1,7 @@
 use crate::app_cache::{install_app_cache, reset_app_cache_request_state};
 use crate::auth::{apply_auth0_web_session_cookies, reset_auth0_web_session_state};
 use crate::d1_metrics::reset_d1_request_metrics;
+use crate::deferred::defer;
 use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::install_remote_dns_cache;
 use crate::response_utils::into_mutable_response;
@@ -48,14 +49,11 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             )?);
         }
     };
-    kick_outbox_process_queue_after_request(
-        &kick_env,
-        &config,
-        &method,
-        &path,
-        response.status_code(),
-    )
-    .await;
+    let status_code = response.status_code();
+    defer(async move {
+        kick_outbox_process_queue_after_request(&kick_env, &config, &method, &path, status_code)
+            .await;
+    });
 
     request_context.finish_response(ensure_missing_content_type(response)?)
 }

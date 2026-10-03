@@ -75,6 +75,12 @@ impl D1Database {
         Self(InnerD1Database::unchecked_from_js(value.into()))
     }
 
+    /// Another handle to the same binding or session, for work that outlives
+    /// the borrowing handler (see `deferred`).
+    pub(crate) fn detached(&self) -> Self {
+        Self::from_unchecked_js(AsRef::<wasm_bindgen::JsValue>::as_ref(&self.0).clone())
+    }
+
     #[allow(dead_code)]
     pub(crate) fn inner(&self) -> &InnerD1Database {
         &self.0

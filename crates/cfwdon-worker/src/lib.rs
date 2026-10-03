@@ -40,6 +40,7 @@ mod custom_emojis;
 mod d1_metrics;
 mod db_session;
 mod db_utils;
+mod deferred;
 mod delivery;
 mod discovery;
 mod domain_blocks;
@@ -102,8 +103,11 @@ mod web_api;
 mod web_ui;
 
 #[event(fetch, respond_with_errors)]
-async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    router::handle_fetch(req, env).await
+async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    let response = router::handle_fetch(req, env).await;
+    // Loops until empty, so work deferred by a deferred task also runs.
+    ctx.wait_until(deferred::run_deferred_tasks_inline());
+    response
 }
 
 const SCHEDULED_CRON_HOURLY: &str = "17 * * * *";
@@ -230,6 +234,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     if let Err(error) = result {
         console_error!("scheduled maintenance failed: {error}");
     }
+    deferred::run_deferred_tasks_inline().await;
 }
 
 #[cfg(test)]
@@ -254,7 +259,9 @@ async fn queue(
     env: Env,
     _ctx: Context,
 ) -> Result<()> {
-    consume_outbox_process_queue_batch(batch, env).await
+    let result = consume_outbox_process_queue_batch(batch, env).await;
+    deferred::run_deferred_tasks_inline().await;
+    result
 }
 
 #[cfg(test)]

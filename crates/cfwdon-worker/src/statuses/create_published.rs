@@ -8,6 +8,7 @@ use crate::activitypub::local_status_ap_id;
 use crate::auth::find_account_by_username;
 use crate::content_helpers::extract_mentions_from_text;
 use crate::conversation_store::ensure_direct_conversation_for_status;
+use crate::deferred::defer;
 use crate::filters::load_account_filter_matcher;
 use crate::local_polls::preload_mastodon_poll_responses;
 use crate::media::attach_media_and_enqueue_outbox;
@@ -188,9 +189,10 @@ async fn publish_created_status_stream_events(
     env: &Env,
     db: &D1Database,
     config: &AppConfig,
-    input: &CreatePublishedStatusInput<'_>,
+    author: &LocalAccount,
+    in_reply_to_account_id: Option<&str>,
     artifacts: &PublishedStatusArtifacts,
-) -> MastodonStatusResponse {
+) {
     let status = &artifacts.status;
     let payload = match serde_json::to_string(&artifacts.response) {
         Ok(payload) => payload,
@@ -199,13 +201,13 @@ async fn publish_created_status_stream_events(
                 "failed to serialize status create stream payload for status {}: {error}",
                 status.id
             );
-            return artifacts.response.clone();
+            return;
         }
     };
     publish_user_stream_hub_event_soft(
         env,
         &config.stream_hub_binding,
-        input.account.id(),
+        author.id(),
         "update",
         &payload,
         Some(&status.id),
@@ -216,7 +218,7 @@ async fn publish_created_status_stream_events(
         db,
         config,
         status,
-        input.account,
+        author,
         &artifacts.response_preload,
         &artifacts.counts_preload,
         &artifacts.quote_counts_preload,
@@ -224,30 +226,30 @@ async fn publish_created_status_stream_events(
     .await
     {
         Some(payload) => payload,
-        None => return artifacts.response.clone(),
+        None => return,
     };
 
     publish_local_status_create_stream_fanout_soft(
         env,
         db,
         config,
-        input.account,
+        author,
         status,
         &fanout_payload,
         artifacts.has_media,
     )
     .await;
 
-    if let Some(recipient_account_id) = input.in_reply_to_account_id.as_deref()
-        && recipient_account_id != input.account.id()
+    if let Some(recipient_account_id) = in_reply_to_account_id
+        && recipient_account_id != author.id()
     {
-        let id = local_status_interaction_notification_id("status", input.account.id(), &status.id);
+        let id = local_status_interaction_notification_id("status", author.id(), &status.id);
         let status_response = build_local_status_response_for_recipient_soft(
             db,
             config,
             recipient_account_id,
             status,
-            input.account,
+            author,
         )
         .await;
         publish_local_actor_notification_soft(
@@ -255,7 +257,7 @@ async fn publish_created_status_stream_events(
             db,
             config,
             recipient_account_id,
-            input.account,
+            author,
             "status",
             id.clone(),
             id,
@@ -267,16 +269,15 @@ async fn publish_created_status_stream_events(
 
     for handle in extract_mentions_from_text(&status.text, config) {
         if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await
-            && account.id() != input.account.id()
+            && account.id() != author.id()
         {
-            let id =
-                local_status_interaction_notification_id("mention", input.account.id(), &status.id);
+            let id = local_status_interaction_notification_id("mention", author.id(), &status.id);
             let status_response = build_local_status_response_for_recipient_soft(
                 db,
                 config,
                 account.id(),
                 status,
-                input.account,
+                author,
             )
             .await;
             publish_local_actor_notification_soft(
@@ -284,7 +285,7 @@ async fn publish_created_status_stream_events(
                 db,
                 config,
                 account.id(),
-                input.account,
+                author,
                 "mention",
                 id.clone(),
                 id,
@@ -298,15 +299,15 @@ async fn publish_created_status_stream_events(
     if let Some(quote_of_uri) = status.quote_of_uri.as_deref()
         && status.quote_state == QuoteState::Accepted
         && let Ok(Some(target)) = find_local_status_by_object_uri(db, config, quote_of_uri).await
-        && target.account_id != input.account.id()
+        && target.account_id != author.id()
     {
-        let id = local_status_interaction_notification_id("quote", input.account.id(), &status.id);
+        let id = local_status_interaction_notification_id("quote", author.id(), &status.id);
         let status_response = build_local_status_response_for_recipient_soft(
             db,
             config,
             &target.account_id,
             status,
-            input.account,
+            author,
         )
         .await;
         publish_local_actor_notification_soft(
@@ -314,7 +315,7 @@ async fn publish_created_status_stream_events(
             db,
             config,
             &target.account_id,
-            input.account,
+            author,
             "quote",
             id.clone(),
             id,
@@ -323,8 +324,6 @@ async fn publish_created_status_stream_events(
         )
         .await;
     }
-
-    artifacts.response.clone()
 }
 
 pub(crate) async fn create_published_status_and_response(
@@ -350,19 +349,36 @@ pub(crate) async fn create_published_status_and_response(
         attach_media_and_enqueue_outbox(db, config, input.account, &status, input.pending_media)
             .await?;
     }
-    send_create_status_push_notifications(
-        db,
-        config,
-        input.account,
-        &status,
-        input.in_reply_to_account_id.as_deref(),
-    )
-    .await;
     let artifacts = build_published_status_artifacts(db, config, input.account, &status).await?;
+    let response = artifacts.response.clone();
 
-    if let Some(env) = env {
-        return Ok(publish_created_status_stream_events(env, db, config, &input, &artifacts).await);
-    }
+    // Push and stream fan-out run after the response; D1 already holds the status.
+    let db = db.detached();
+    let config = config.clone();
+    let author = input.account.clone();
+    let in_reply_to_account_id = input.in_reply_to_account_id.clone();
+    let env = env.cloned();
+    defer(async move {
+        send_create_status_push_notifications(
+            &db,
+            &config,
+            &author,
+            &artifacts.status,
+            in_reply_to_account_id.as_deref(),
+        )
+        .await;
+        if let Some(env) = env {
+            publish_created_status_stream_events(
+                &env,
+                &db,
+                &config,
+                &author,
+                in_reply_to_account_id.as_deref(),
+                &artifacts,
+            )
+            .await;
+        }
+    });
 
-    Ok(artifacts.response)
+    Ok(response)
 }

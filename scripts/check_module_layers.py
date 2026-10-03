@@ -35,6 +35,7 @@ FOUNDATION = {
     "d1_metrics",
     "db_session",
     "db_utils",
+    "deferred",
     "federation",
     "id_utils",
     "identity",
