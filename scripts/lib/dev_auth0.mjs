@@ -3,7 +3,7 @@ export const LOCAL_DEV_ORIGINS = [
   "http://localhost:8787",
   "http://127.0.0.1:5173",
   "http://localhost:5173",
-] as const;
+];
 
 export function localAuth0CallbackUrls() {
   return LOCAL_DEV_ORIGINS.map((origin) => `${origin}/oauth/auth0/callback`);
