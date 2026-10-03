@@ -11,6 +11,7 @@ use crate::policy_documents::{build_default_terms_of_service_document, configure
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
 };
+use crate::response_cache::{cache_instance_document, cached_instance_document};
 use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::store::instance::{
@@ -63,24 +64,37 @@ async fn instance_summary_response_for_config(
     db: &D1Database,
     config: cfwdon_core::AppConfig,
 ) -> Result<Response> {
-    let summary = load_instance_summary(db, config.clone()).await?;
-    let active_month = load_active_month_users(db).await?;
-    let user_count = load_total_local_accounts(db).await?;
-    let status_count = load_total_local_statuses(db).await?;
-    let domain_count = load_known_peer_domains(db, &config).await?.len() as u64;
-
-    cache_public_response(
-        Response::from_json(&build_instance_v1_document(
-            &summary,
-            &config,
-            active_month,
-            user_count,
-            status_count,
-            domain_count,
-        ))?,
-        60,
+    if let Some(response) = cached_instance_document(&config, INSTANCE_V1_PATH).await? {
+        return cache_public_response(response, CACHE_TTL_INSTANCE_SUMMARY);
+    }
+    // Independent aggregates; the peer list alone is three DISTINCT scans.
+    let (summary, active_month, user_count, status_count, peers) = futures_util::try_join!(
+        load_instance_summary(db, config.clone()),
+        load_active_month_users(db),
+        load_total_local_accounts(db),
+        load_total_local_statuses(db),
+        load_known_peer_domains(db, &config),
+    )?;
+    let document = build_instance_v1_document(
+        &summary,
+        &config,
+        active_month,
+        user_count,
+        status_count,
+        peers.len() as u64,
+    );
+    cache_instance_document(
+        &config,
+        INSTANCE_V1_PATH,
+        &document,
+        CACHE_TTL_INSTANCE_SUMMARY,
     )
+    .await?;
+    cache_public_response(Response::from_json(&document)?, CACHE_TTL_INSTANCE_SUMMARY)
 }
+
+const INSTANCE_V1_PATH: &str = "/api/v1/instance";
+const INSTANCE_PEERS_PATH: &str = "/api/v1/instance/peers";
 
 pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -117,12 +131,13 @@ async fn instance_v2_response_for_config(
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
+    if let Some(response) = cached_instance_document(&config, INSTANCE_PEERS_PATH).await? {
+        return cache_public_response(response, 300);
+    }
     let db = bind_request_d1(&ctx, &config)?;
-
-    cache_public_response(
-        Response::from_json(&load_known_peer_domains(&db, &config).await?)?,
-        300,
-    )
+    let peers = load_known_peer_domains(&db, &config).await?;
+    cache_instance_document(&config, INSTANCE_PEERS_PATH, &peers, 300).await?;
+    cache_public_response(Response::from_json(&peers)?, 300)
 }
 
 #[derive(Debug, Default, serde::Deserialize)]

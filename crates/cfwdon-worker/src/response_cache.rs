@@ -6,7 +6,8 @@
 use crate::deferred::defer;
 use crate::identity::instance_base_url;
 use crate::response_utils::{
-    CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_REMOTE_ACCOUNT_API, CACHE_TTL_STATUS_API,
+    CACHE_TTL_ACCOUNT_API, CACHE_TTL_ANONYMOUS_TIMELINE_PAGE, CACHE_TTL_FEDERATION,
+    CACHE_TTL_REMOTE_ACCOUNT_API, CACHE_TTL_STATUS_API,
 };
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
@@ -105,6 +106,59 @@ pub(crate) async fn cache_remote_account_api_response(
         "application/json; charset=utf-8",
         CACHE_TTL_REMOTE_ACCOUNT_API,
         &format!("remote-account-{}", value.username),
+    )
+    .await
+}
+
+/// Anonymous timeline pages (with their `Link` header) keyed by request URL.
+/// The short TTL bounds staleness for views without a cron-refreshed cache.
+pub(crate) async fn cached_anonymous_timeline_page(req_url: &str) -> Result<Option<Response>> {
+    cache_get(req_url).await
+}
+
+pub(crate) fn cache_anonymous_timeline_page(
+    req_url: &str,
+    page: &[serde_json::Value],
+    link: Option<&str>,
+) -> Result<()> {
+    let body = serde_json::to_vec(page).map_err(|error| {
+        worker::Error::RustError(format!("failed to encode cache body: {error}"))
+    })?;
+    let mut response = Response::from_body(ResponseBody::Body(body))?;
+    response
+        .headers_mut()
+        .set("Content-Type", "application/json; charset=utf-8")?;
+    response.headers_mut().set(
+        "Cache-Control",
+        &cache_control_max_age(CACHE_TTL_ANONYMOUS_TIMELINE_PAGE),
+    )?;
+    if let Some(link) = link {
+        response.headers_mut().set("Link", link)?;
+    }
+    defer_cache_put(req_url, response);
+    Ok(())
+}
+
+/// Viewer-independent instance documents (v1 summary, peers) keyed by path.
+pub(crate) async fn cached_instance_document(
+    config: &cfwdon_core::AppConfig,
+    path: &str,
+) -> Result<Option<Response>> {
+    cache_get(&format!("{}{path}", instance_base_url(config))).await
+}
+
+pub(crate) async fn cache_instance_document(
+    config: &cfwdon_core::AppConfig,
+    path: &str,
+    value: &impl serde::Serialize,
+    max_age_seconds: u32,
+) -> Result<()> {
+    cache_put_json(
+        &format!("{}{path}", instance_base_url(config)),
+        value,
+        "application/json; charset=utf-8",
+        max_age_seconds,
+        "instance",
     )
     .await
 }
@@ -225,6 +279,7 @@ async fn cache_get(key: &str) -> Result<Option<Response>> {
     let cache_control = cached.headers().get("Cache-Control")?;
     let cache_tag = cached.headers().get("Cache-Tag")?;
     let vary = cached.headers().get("Vary")?;
+    let link = cached.headers().get("Link")?;
     let body = cached.bytes().await?;
     let mut response = Response::from_body(ResponseBody::Body(body))?.with_status(status);
     response.headers_mut().set("Content-Type", &content_type)?;
@@ -236,6 +291,9 @@ async fn cache_get(key: &str) -> Result<Option<Response>> {
     }
     if let Some(value) = vary {
         response.headers_mut().set("Vary", &value)?;
+    }
+    if let Some(value) = link {
+        response.headers_mut().set("Link", &value)?;
     }
     Ok(Some(response))
 }

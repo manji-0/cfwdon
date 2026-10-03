@@ -5,7 +5,8 @@ use super::{
     remote_media_status_ids_for_filter, resolve_timeline_cursor, resolve_timeline_request_access,
     select_public_timeline_candidates, timeline_cursor_is_unresolved, timeline_cursor_requested,
     timeline_fetch_limit, timeline_invalid_access_token_response, timeline_limit,
-    timeline_request_requires_authorization, timeline_response_from_entries,
+    timeline_page_response, timeline_request_requires_authorization,
+    timeline_response_from_entries,
 };
 use crate::d1_metrics::d1_pressure_load_shed_response;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
@@ -14,6 +15,7 @@ use crate::public_endpoint_cache::{
     PUBLIC_CACHE_PUBLIC_TIMELINE, PUBLIC_TIMELINE_CACHE_SIZE, load_public_endpoint_cache,
     slice_json_array_cache, store_public_endpoint_cache,
 };
+use crate::response_cache::{cache_anonymous_timeline_page, cached_anonymous_timeline_page};
 use crate::runtime_config::load_config;
 use crate::statuses::{
     account_has_thread_mutes, list_local_public_timeline_statuses,
@@ -79,7 +81,36 @@ pub(crate) async fn public_timeline_response(
         );
     }
 
-    let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    // Anonymous first pages not covered by the cron-refreshed cache (local-only,
+    // remote-only, only_media) are shared across viewers for a short TTL.
+    let page_cache_url =
+        (viewer.is_none() && !cacheable && !timeline_cursor_requested(&pagination))
+            .then(|| req.url().map(|url| url.to_string()))
+            .transpose()?;
+    if let Some(url) = page_cache_url.as_deref()
+        && let Some(response) = cached_anonymous_timeline_page(url).await?
+    {
+        return with_d1_bookmark(response, &session);
+    }
+
+    // Cursor, filters, and thread-mute capability are independent reads.
+    let (cursor, filter_matcher, viewer_has_thread_mutes) = futures_util::try_join!(
+        resolve_timeline_cursor(&db, &pagination),
+        async {
+            match viewer {
+                Some(viewer) => load_account_filter_matcher(&db, viewer.id())
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            }
+        },
+        async {
+            match viewer {
+                Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await,
+                None => Ok(false),
+            }
+        },
+    )?;
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return with_d1_bookmark(empty_timeline_response()?, &session);
     }
@@ -90,14 +121,6 @@ pub(crate) async fn public_timeline_response(
         timeline_fetch_limit(limit)
     };
     let only_media = query.only_media.unwrap_or(false);
-    let filter_matcher = match viewer {
-        Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
-        None => None,
-    };
-    let viewer_has_thread_mutes = match viewer {
-        Some(viewer) => account_has_thread_mutes(&db, viewer.id()).await?,
-        None => false,
-    };
 
     let entries = build_public_timeline_entries(
         &db,
@@ -127,6 +150,18 @@ pub(crate) async fn public_timeline_response(
                 .collect(),
         );
         let _ = store_public_endpoint_cache(&db, PUBLIC_CACHE_PUBLIC_TIMELINE, &payload).await;
+    }
+
+    if let Some(url) = page_cache_url.as_deref() {
+        let (page, first_id, last_id) = timeline_page_response(entries, limit);
+        let link =
+            build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?;
+        cache_anonymous_timeline_page(url, &page, link.as_deref())?;
+        let mut response = Response::from_json(&page)?;
+        if let Some(link) = link {
+            response.headers_mut().set("Link", &link)?;
+        }
+        return with_d1_bookmark(response, &session);
     }
 
     with_d1_bookmark(
@@ -194,24 +229,44 @@ async fn build_public_timeline_entries(
         },
     )?;
     let mut candidates = Vec::new();
-    let mut local_accounts_by_id = std::collections::HashMap::new();
+    // Local rows, thread mutes, and the remote media filter are independent.
+    let local_status_refs = local_statuses.iter().collect::<Vec<_>>();
+    let (
+        (local_accounts_by_id, mut media_by_status_id),
+        muted_local_status_ids,
+        remote_media_status_ids,
+    ) = futures_util::try_join!(
+        async {
+            if include_local {
+                preload_local_timeline_rows(db, &local_statuses).await
+            } else {
+                Ok(Default::default())
+            }
+        },
+        async {
+            match viewer {
+                Some(viewer) if include_local => {
+                    muted_local_timeline_status_ids(
+                        db,
+                        viewer.id(),
+                        viewer_has_thread_mutes,
+                        &local_status_refs,
+                    )
+                    .await
+                }
+                _ => Ok(HashSet::new()),
+            }
+        },
+        async {
+            if include_remote {
+                remote_media_status_ids_for_filter(db, only_media, &remote_statuses).await
+            } else {
+                Ok(HashSet::new())
+            }
+        },
+    )?;
 
     if include_local {
-        let (accounts_by_id, mut media_by_status_id) =
-            preload_local_timeline_rows(db, &local_statuses).await?;
-        local_accounts_by_id = accounts_by_id;
-        let muted_local_status_ids = match viewer {
-            Some(viewer) => {
-                muted_local_timeline_status_ids(
-                    db,
-                    viewer.id(),
-                    viewer_has_thread_mutes,
-                    &local_statuses.iter().collect::<Vec<_>>(),
-                )
-                .await?
-            }
-            None => HashSet::new(),
-        };
         for status in local_statuses {
             if !local_accounts_by_id.contains_key(&status.account_id) {
                 continue;
@@ -232,8 +287,6 @@ async fn build_public_timeline_entries(
     }
 
     if include_remote {
-        let remote_media_status_ids =
-            remote_media_status_ids_for_filter(db, only_media, &remote_statuses).await?;
         for (status, actor) in remote_statuses {
             if only_media && !remote_media_status_ids.contains(&status.id) {
                 continue;
