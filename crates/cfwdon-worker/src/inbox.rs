@@ -353,6 +353,15 @@ pub(crate) async fn handle_inbox_request_for_accounts(
     process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor, env).await
 }
 
+/// Activity types whose handlers do not depend on which local recipient the
+/// shared-inbox delivery was for, so they run once instead of per recipient.
+fn inbox_activity_ignores_recipient(activity_type: &str) -> bool {
+    matches!(
+        activity_type,
+        "Accept" | "Reject" | "Delete" | "Add" | "Remove"
+    )
+}
+
 async fn process_verified_inbox_activity(
     db: &D1Database,
     config: &AppConfig,
@@ -387,6 +396,12 @@ async fn process_verified_inbox_activity(
 
     let result = if accounts.is_empty() {
         dispatch_inbox_activity(db, config, None, activity, remote_actor, env).await
+    } else if activity_type == "Create" {
+        handle_inbox_create_for_accounts(db, activity, remote_actor, accounts, config, env).await
+    } else if activity_type == "Update" {
+        handle_inbox_update_for_accounts(db, activity, remote_actor, accounts, config, env).await
+    } else if inbox_activity_ignores_recipient(activity_type) {
+        dispatch_inbox_activity(db, config, accounts.first(), activity, remote_actor, env).await
     } else {
         let mut outcome = Ok(());
         for account in accounts {
@@ -463,6 +478,16 @@ mod tests {
             parse_activitypub_payload(b"{not-json}"),
             Err("invalid activitypub payload")
         );
+    }
+
+    #[test]
+    fn recipient_independent_activities_are_dispatched_once() {
+        for activity_type in ["Accept", "Reject", "Delete", "Add", "Remove"] {
+            assert!(inbox_activity_ignores_recipient(activity_type));
+        }
+        for activity_type in ["Create", "Update", "Follow", "Undo", "Like", "Announce"] {
+            assert!(!inbox_activity_ignores_recipient(activity_type));
+        }
     }
 
     #[test]

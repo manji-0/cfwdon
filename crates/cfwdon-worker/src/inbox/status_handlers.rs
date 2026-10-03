@@ -57,6 +57,95 @@ pub(crate) async fn handle_inbox_create(
     upsert_remote_status(db, config, remote_actor, object, env).await
 }
 
+/// [`handle_inbox_create`] for every recipient of a shared-inbox delivery: the
+/// poll-vote check stays per recipient, but the status is stored once if any
+/// recipient is addressed (the upsert does not depend on the recipient).
+pub(crate) async fn handle_inbox_create_for_accounts(
+    db: &D1Database,
+    activity: &serde_json::Value,
+    remote_actor: &RemoteActorProfile,
+    accounts: &[LocalAccount],
+    config: &AppConfig,
+    env: Option<&Env>,
+) -> Result<()> {
+    let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
+        return Ok(());
+    };
+    if !object_has_supported_remote_status_type(object) {
+        return Ok(());
+    }
+
+    if !object_attributed_to_remote_actor(object, activity, &remote_actor.actor_uri) {
+        return Err(worker::Error::RustError(
+            "activitypub unauthorized: object attribution mismatch".to_owned(),
+        ));
+    }
+    let mut addressed = false;
+    for account in accounts {
+        if handle_inbox_poll_vote(
+            db,
+            object,
+            remote_actor,
+            account,
+            config,
+            activity.get("id").and_then(serde_json::Value::as_str),
+        )
+        .await?
+        {
+            continue;
+        }
+        addressed |= note_targets_account_or_followers(object, account, config);
+    }
+    if !addressed {
+        return Ok(());
+    }
+
+    upsert_remote_actor(db, remote_actor).await?;
+    upsert_remote_status(db, config, remote_actor, object, env).await
+}
+
+/// [`handle_inbox_update`] for every recipient: actor updates stay per
+/// recipient; collection and status updates are applied once.
+pub(crate) async fn handle_inbox_update_for_accounts(
+    db: &D1Database,
+    activity: &serde_json::Value,
+    remote_actor: &RemoteActorProfile,
+    accounts: &[LocalAccount],
+    config: &AppConfig,
+    env: Option<&Env>,
+) -> Result<()> {
+    let Some(object) = activity.get("object").filter(|value| value.is_object()) else {
+        return Ok(());
+    };
+    if object_has_activitypub_actor_type(object) {
+        for account in accounts {
+            handle_inbox_actor_update(db, activity, remote_actor, Some(account)).await?;
+        }
+        return Ok(());
+    }
+    if handle_inbox_collection_update(db, config, activity, remote_actor).await? {
+        return Ok(());
+    }
+    if !object_has_supported_remote_status_type(object) {
+        return Ok(());
+    }
+
+    if !object_attributed_to_remote_actor(object, activity, &remote_actor.actor_uri) {
+        return Err(worker::Error::RustError(
+            "activitypub unauthorized: object attribution mismatch".to_owned(),
+        ));
+    }
+    if !accounts
+        .iter()
+        .any(|account| note_targets_account_or_followers(object, account, config))
+    {
+        return Ok(());
+    }
+
+    upsert_remote_actor(db, remote_actor).await?;
+    upsert_remote_status(db, config, remote_actor, object, env).await
+}
+
 pub(crate) async fn handle_inbox_update(
     db: &D1Database,
     activity: &serde_json::Value,
