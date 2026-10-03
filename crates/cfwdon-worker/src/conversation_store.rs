@@ -1,12 +1,12 @@
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_account_handles_from_text;
-use crate::db_utils::d1_results;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::id_utils::generate_entity_id;
 use crate::store::remote::find_remote_actor_by_username_domain;
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalStatus;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cfwdon_core::AppConfig;
 
@@ -186,6 +186,41 @@ pub(crate) async fn list_conversation_participants(
         .into_iter()
         .map(|row| row.participant_ref)
         .collect())
+}
+
+/// Participants of each conversation in `conversation_ids`, in ref order.
+pub(crate) async fn list_conversation_participants_by_ids(
+    db: &D1Database,
+    conversation_ids: &[String],
+) -> Result<HashMap<String, Vec<String>>> {
+    if conversation_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    #[derive(Debug, serde::Deserialize)]
+    struct Row {
+        conversation_id: String,
+        participant_ref: String,
+    }
+    let ids = json_string_array(conversation_ids);
+    let result = db
+        .prepare(format!(
+            "SELECT conversation_id, participant_ref
+             FROM conversation_participants
+             WHERE conversation_id {}
+             ORDER BY conversation_id ASC, participant_ref ASC",
+            sql_in_json_each(1)
+        ))
+        .bind_refs(&D1Type::Text(&ids))?
+        .all()
+        .await?;
+    let mut by_conversation = HashMap::<String, Vec<String>>::new();
+    for row in d1_results::<Row>(&result)? {
+        by_conversation
+            .entry(row.conversation_id)
+            .or_default()
+            .push(row.participant_ref);
+    }
+    Ok(by_conversation)
 }
 
 pub(crate) async fn add_conversation_participants(
