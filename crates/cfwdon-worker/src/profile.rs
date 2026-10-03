@@ -115,19 +115,22 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
         .ok_or_else(|| Error::RustError("missing account id route parameter".to_owned()))?;
 
     let db = bind_request_d1(&ctx, &config)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
+    // The cached document is viewer-independent, so a hit skips authentication.
     let cacheable_account_id = account_api_cache_candidate(&account_id);
     if cacheable_account_id
         && let Some(response) = cached_account_api_response(&ctx, &account_id).await?
     {
         return Ok(response);
     }
+    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
     match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
         Some(AccountReference::Local(account)) => {
-            let stats = load_account_stats(&db, account.id()).await?;
-            let settings = load_account_profile_settings(&db, account.id()).await?;
-            let config = config_with_resolved_custom_emojis(&db, &config).await?;
+            let (stats, settings, config) = futures_util::try_join!(
+                load_account_stats(&db, account.id()),
+                load_account_profile_settings(&db, account.id()),
+                config_with_resolved_custom_emojis(&db, &config),
+            )?;
             let response =
                 MastodonAccountResponse::from_account_with_stats(&account, &config, &stats)
                     .with_profile_settings(

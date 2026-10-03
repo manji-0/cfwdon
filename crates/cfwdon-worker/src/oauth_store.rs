@@ -323,13 +323,21 @@ pub(crate) async fn find_oauth_access_token_with_account_by_column(
     let binding = D1Type::Text(value);
     let now_binding = D1Type::Integer(i32::try_from(now_unix_timestamp()).unwrap_or(i32::MAX));
     let legacy_only = column == "t.access_token";
+    // Legacy rows have no stored hash yet; report the hash the caller will
+    // migrate them to instead of NULL, which failed to decode (HTTP 500).
+    let token_hash = if legacy_only {
+        oauth_bearer_token_hash(value)
+    } else {
+        value.to_owned()
+    };
+    let token_hash_binding = D1Type::Text(&token_hash);
     let legacy_guard = if legacy_only {
         " AND t.access_token_hash IS NULL"
     } else {
         ""
     };
     let sql = format!(
-        "SELECT t.access_token_hash AS access_token,
+        "SELECT COALESCE(t.access_token_hash, ?3) AS access_token,
                     t.oauth_app_id,
                     t.scopes_json,
                     a.id,
@@ -361,7 +369,7 @@ pub(crate) async fn find_oauth_access_token_with_account_by_column(
     );
     let Some(row) = db
         .prepare(&sql)
-        .bind_refs(&[binding, now_binding])?
+        .bind_refs(&[binding, now_binding, token_hash_binding])?
         .first::<serde_json::Value>(None)
         .await?
     else {

@@ -1,8 +1,11 @@
 use crate::oauth_store::{
     AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, OAuthAccessTokenRow, access_token_cookie_max_age,
     app_bearer_token_from_request, exchange_auth0_refresh_token,
-    find_oauth_access_token_with_account_by_bearer_token, find_oauth_app_by_bearer_token,
-    oauth_access_token_has_any_scope, parse_bearer_authorization_header, set_auth0_session_cookies,
+    find_legacy_oauth_access_token_with_account_by_plaintext,
+    find_oauth_access_token_with_account_by_bearer_token,
+    find_oauth_access_token_with_account_by_token_hash, find_oauth_app_by_bearer_token,
+    migrate_legacy_oauth_access_token_hash, oauth_access_token_has_any_scope,
+    oauth_bearer_token_hash, parse_bearer_authorization_header, set_auth0_session_cookies,
 };
 use crate::observability::log_federation_event;
 use crate::tracked_d1::D1Database;
@@ -340,8 +343,23 @@ pub(crate) async fn authenticate_local_api_request(
     config: &AppConfig,
 ) -> Result<LocalApiAuthentication> {
     if let Some(token) = app_bearer_token_from_request(req)? {
-        if let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
-        {
+        let token_hash = oauth_bearer_token_hash(&token);
+        let mut auth = find_oauth_access_token_with_account_by_token_hash(db, &token_hash).await?;
+        let mut app_token = false;
+        if auth.is_none() {
+            // Miss on the hashed user token: the legacy user-token and app-token
+            // lookups are independent, so run them together.
+            let (legacy, app) = futures_util::try_join!(
+                find_legacy_oauth_access_token_with_account_by_plaintext(db, &token),
+                find_oauth_app_by_bearer_token(db, &token),
+            )?;
+            if legacy.is_some() {
+                migrate_legacy_oauth_access_token_hash(db, &token, &token_hash).await?;
+            }
+            auth = legacy;
+            app_token = app.is_some();
+        }
+        if let Some(auth) = auth {
             let Some(account) = auth.account else {
                 return Ok(LocalApiAuthentication::InvalidBearer);
             };
@@ -352,7 +370,7 @@ pub(crate) async fn authenticate_local_api_request(
                 },
             ));
         }
-        if find_oauth_app_by_bearer_token(db, &token).await?.is_some() {
+        if app_token {
             return Ok(LocalApiAuthentication::AppToken);
         }
         return match find_auth0_local_account_with_roles(req, db, config).await {
