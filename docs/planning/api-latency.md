@@ -1,6 +1,6 @@
 # API Latency Reduction
 
-**Status:** in progress on branch `perf/api-latency`.
+**Status:** items 1–12 implemented on branch `perf/api-latency`; production observation pending.
 
 Goal: cut the serial data round trips (D1, KV, Cache API, Durable Object, outbound HTTP) on the critical path of the main Mastodon API scenarios, without changing response shapes. Every item ends with `devbox run ci` green and one conventional commit.
 
@@ -9,7 +9,7 @@ Goal: cut the serial data round trips (D1, KV, Cache API, Durable Object, outbou
 <!-- constrained-by ../architecture/cfwdon-architecture.md#runtime-boundaries -->
 <!-- derived-from ./d1-sessions-api-spike.md -->
 
-The Worker is placed next to the D1 primary (`[placement] region`), so one D1 round trip is short and latency scales with the number of *serial* round trips. Read replicas (Sessions API) add little latency benefit under this placement; they are out of scope until the round-trip counts drop. Round-trip counts below are code-reading estimates, not measurements.
+The Worker is placed next to the D1 primary (`[placement] region`), so one D1 round trip is short and latency scales with the number of *serial* round trips. Read replicas (Sessions API) add little latency benefit under this placement; they are out of scope until the round-trip counts drop.
 
 ## Ordered Work Items
 
@@ -26,12 +26,35 @@ The Worker is placed next to the D1 primary (`[placement] region`), so one D1 ro
 11. [x] **Inbox Create.** A shared-inbox delivery with K local recipients stored the remote actor and status K times (about 15 D1 round trips each). `Create` and status `Update` now check poll votes and addressing per recipient but upsert once; `Accept`, `Reject`, `Delete`, `Add`, and `Remove` (handlers that ignore the recipient) dispatch once. Actor `Update`, `Follow`, `Undo`, `Like`, and `Announce` keep the per-recipient loop. Not exercised locally (needs signed deliveries); covered by build, clippy, and unit tests.
 12. [x] **Small items.** On a hashed-token miss, the legacy user-token and app-token lookups run concurrently (four serial lookups became three rounds). The legacy plaintext path selected a NULL `access_token` and answered 500; it now reports the hash it migrates to. Markers load/save both scopes concurrently. `GET /api/v1/accounts/:id` checks the response cache before authenticating and loads stats, settings, and emojis concurrently.
 
+## Measurements
+
+<!-- derived-from #ordered-work-items -->
+
+Local `wrangler dev` (release build) with every D1 call delayed by 10 ms to stand in for network round trips. `main` (`09b9926`) and this branch ran the same scenario script from the same database snapshot (30 followers, a 15-reply thread, 6 direct conversations). Writes were followed by a 3 s pause so deferred work did not land in the next request. `q` is D1 queries counted before the response; `ms` is handler time.
+
+| Request | q main | q branch | ms main | ms branch |
+| --- | ---: | ---: | ---: | ---: |
+| `POST /api/v1/statuses` (tag + mention) | 60 | 33 | 703 | 284 |
+| `POST /api/v1/statuses/:id/favourite` | 35 | 19 | 446 | 123 |
+| `POST /api/v1/statuses/:id/reblog` | 46 | 33 | 591 | 260 |
+| `GET /api/v1/timelines/home` | 48 | 51 | 177 | 173 |
+| `GET /api/v1/timelines/list/:id` | 574 | 42 | 7212 | 150 |
+| `GET /api/v1/statuses/:id` | 17 | 17 | 215 | 94 |
+| `GET /api/v1/statuses/:id/context` (15-reply root) | 292 | 77 | 3699 | 710 |
+| `GET /api/v1/accounts/:id/statuses` | 56 | 40 | 609 | 154 |
+| `GET /api/v1/bookmarks` | 162 | 45 | 2053 | 114 |
+| `GET /api/v1/notifications` (30 follows) | 144 | 50 | 1241 | 106 |
+| `GET /api/v1/conversations` (6) | 98 | 23 | 1235 | 91 |
+| `GET /api/v1/accounts/verify_credentials` | 7 | 6 | 43 | 29 |
+
+Home gains three queries from the boost-target viewer-state fix (`030d4e9`) at unchanged time. Remote account caching (item 10) and inbox deduplication (item 11) need live remote origins and signed deliveries and are not in this table.
+
 ## Caveats
 
 - Deferred tasks run after `reset_d1_request_metrics`, so their D1 queries are counted on whichever request runs next on the isolate. That feeds the prior-request `sql_ms` load-shed heuristic in `d1_metrics.rs` (used by instance and public timeline); if it trips in production, record deferred queries under a separate bucket.
 
 ## Done Criteria
 
-- Every item above is checked or explicitly marked deferred with a reason.
-- `devbox run ci` passes on the branch head; new or changed hot SQL is covered by `scripts/check_query_plans.py`.
-- `python3 scripts/generate_mastodon_api_compat.py` is re-run if any route behavior changes.
+- [x] Every item above is checked or explicitly marked deferred with a reason.
+- [x] `devbox run ci` passes on the branch head; new or changed hot SQL is covered by `scripts/check_query_plans.py`.
+- [x] No routes were added or removed, so `docs/mastodon-api-compat/` was not regenerated. (The generator currently fails on an upstream route it cannot group, `GET /api/accounts/:account_id/collections`; that is unrelated to this branch.)

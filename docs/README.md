@@ -66,6 +66,8 @@ Current trackers and notes:
   Where Durable Objects help versus Queues/D1. Streaming hubs (`StreamHub`) are implemented; sharding and per-host inbox admission are deferred until measured.
 - [D1 Sessions API Spike](planning/d1-sessions-api-spike.md)
   How the typed D1 Sessions API (read replication) is wired into read-heavy routes, and what remains.
+- [API Latency Reduction](planning/api-latency.md)
+  Serial D1/outbound round trips removed from the main API scenarios (deferred side effects, batched rendering), with main-versus-branch measurements.
 - [Web UI Routing Modernization](planning/web-ui-routing.md)
   How `web-ui` routes pages, the preferred replacement router, and a phased spike that keeps the Rust Worker as the HTTP server.
 
