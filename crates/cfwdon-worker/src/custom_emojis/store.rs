@@ -8,9 +8,18 @@ use crate::store::media::log_r2_operation;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
 use serde::Deserialize;
+use std::cell::RefCell;
 use worker::{Bucket, HttpMetadata, Result, d1::D1Type};
 
 const CUSTOM_EMOJI_MAX_BYTES: usize = 256 * 1024;
+/// Other isolates pick up admin emoji edits within this window.
+const CUSTOM_EMOJI_ROWS_L1_TTL_MS: f64 = 60_000.0;
+
+thread_local! {
+    /// `(loaded_at_ms, rows)`; rendering resolves emojis on most responses.
+    static CUSTOM_EMOJI_ROWS_L1: RefCell<Option<(f64, Vec<CustomEmojiRow>)>> =
+        const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CustomEmojiRow {
@@ -58,6 +67,36 @@ pub(crate) async fn list_custom_emojis_from_db(
     db: &D1Database,
     config: &AppConfig,
 ) -> Result<Vec<CustomEmoji>> {
+    let rows = load_custom_emoji_rows(db).await?;
+    Ok(rows
+        .iter()
+        .map(|row| row_to_custom_emoji(config, row))
+        .collect())
+}
+
+fn custom_emoji_rows_from_l1(now_ms: f64) -> Option<Vec<CustomEmojiRow>> {
+    CUSTOM_EMOJI_ROWS_L1.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|(loaded_at_ms, _)| now_ms - loaded_at_ms < CUSTOM_EMOJI_ROWS_L1_TTL_MS)
+            .map(|(_, rows)| rows.clone())
+    })
+}
+
+fn store_custom_emoji_rows_l1(now_ms: f64, rows: Vec<CustomEmojiRow>) {
+    CUSTOM_EMOJI_ROWS_L1.with(|slot| *slot.borrow_mut() = Some((now_ms, rows)));
+}
+
+/// Drop this isolate's cached emoji rows after an admin write.
+fn invalidate_custom_emoji_rows_l1() {
+    CUSTOM_EMOJI_ROWS_L1.with(|slot| *slot.borrow_mut() = None);
+}
+
+async fn load_custom_emoji_rows(db: &D1Database) -> Result<Vec<CustomEmojiRow>> {
+    let now_ms = js_sys::Date::now();
+    if let Some(rows) = custom_emoji_rows_from_l1(now_ms) {
+        return Ok(rows);
+    }
     let result = db
         .prepare(
             "SELECT id, shortcode, object_key, static_object_key, content_type, visible_in_picker, category
@@ -67,11 +106,8 @@ pub(crate) async fn list_custom_emojis_from_db(
         .all()
         .await?;
     let rows = d1_results::<CustomEmojiRow>(&result)?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| row_to_custom_emoji(config, &row))
-        .collect())
+    store_custom_emoji_rows_l1(now_ms, rows.clone());
+    Ok(rows)
 }
 
 pub(crate) async fn list_admin_custom_emojis(
@@ -172,6 +208,7 @@ pub(crate) async fn create_custom_emoji(
         return Err(insert_result.err().unwrap());
     }
 
+    invalidate_custom_emoji_rows_l1();
     let row = find_custom_emoji_row_by_id(db, &emoji_id)
         .await?
         .ok_or_else(|| {
@@ -275,6 +312,7 @@ pub(crate) async fn update_custom_emoji(
         }
         return Err(error);
     }
+    invalidate_custom_emoji_rows_l1();
 
     if let (Some(bucket), Some((previous_object_key, previous_static_object_key))) =
         (bucket.as_ref(), previous_object_keys.as_ref())
@@ -311,6 +349,7 @@ pub(crate) async fn delete_custom_emoji(
         .bind_refs(bindings.iter())?
         .run()
         .await?;
+    invalidate_custom_emoji_rows_l1();
 
     let _ = delete_r2_object(bucket, &row.object_key).await;
     if row.static_object_key != row.object_key {
@@ -535,4 +574,35 @@ pub(super) fn merge_custom_emojis(
     let mut emojis = merged.into_values().collect::<Vec<_>>();
     emojis.sort_by(|left, right| left.shortcode.cmp(&right.shortcode));
     emojis
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(shortcode: &str) -> CustomEmojiRow {
+        CustomEmojiRow {
+            id: format!("id-{shortcode}"),
+            shortcode: shortcode.to_owned(),
+            object_key: format!("custom_emojis/{shortcode}.png"),
+            static_object_key: format!("custom_emojis/{shortcode}.png"),
+            content_type: "image/png".to_owned(),
+            visible_in_picker: 1,
+            category: None,
+        }
+    }
+
+    #[test]
+    fn custom_emoji_rows_l1_expires_and_invalidates() {
+        store_custom_emoji_rows_l1(1_000.0, vec![row("blobcat")]);
+        assert_eq!(
+            custom_emoji_rows_from_l1(1_000.0).map(|rows| rows.len()),
+            Some(1)
+        );
+        assert!(custom_emoji_rows_from_l1(1_000.0 + CUSTOM_EMOJI_ROWS_L1_TTL_MS).is_none());
+
+        store_custom_emoji_rows_l1(2_000.0, vec![row("blobcat")]);
+        invalidate_custom_emoji_rows_l1();
+        assert!(custom_emoji_rows_from_l1(2_000.0).is_none());
+    }
 }

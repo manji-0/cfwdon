@@ -14,7 +14,7 @@ The Worker is placed next to the D1 primary (`[placement] region`), so one D1 ro
 ## Ordered Work Items
 
 1. [x] **Deferred work via `ctx.wait_until`.** `deferred.rs` queues owned futures; `fetch` drains them under `Context::wait_until` (scheduled and queue handlers drain inline). Deferred: the outbox queue kick (`router.rs`), Web Push sends, StreamHub fan-out for status create/edit/delete and notifications, Cache API puts, public-endpoint KV puts. Kept awaited on purpose: Cache API deletes (clients re-read right after a profile write; the three deletes now run concurrently) and the account-capabilities KV put (a late put could outlive an invalidation). Local run: POST /statuses 48 → 25 D1 queries before the response, favourite 35 → 19, reblog 46 → 30.
-2. [ ] **Custom emoji cache.** Cache the `custom_emojis` table behind the instance-settings L1 + KV pattern; invalidate on admin writes.
+2. [x] **Custom emoji cache.** `custom_emojis/store.rs` keeps the table rows in an isolate L1 with a 60 s TTL, cleared on admin create/update/delete in the same isolate. KV was skipped: with the Worker next to D1 a KV read saves little, and a second cache layer widens the stale window after admin edits.
 3. [ ] **List timeline.** Select candidates with SQL over `account_list_memberships` and render through the shared timeline candidate/preload path instead of filtering the public timeline row by row.
 4. [ ] **Notifications.** Batch the follow / follow-request / admin collectors (accounts, actors, mutes); stop running `DELETE FROM mutes` on reads (filter by `expires_at` instead).
 5. [ ] **Status context.** Load thread ids in bulk and render through the batched preload path; keep remote hydration off the request path.
