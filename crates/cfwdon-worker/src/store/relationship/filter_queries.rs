@@ -58,22 +58,14 @@ pub(crate) async fn find_active_mute(
     target_actor_uri: &str,
 ) -> Result<Option<MuteRow>> {
     let bindings = [D1Type::Text(account_id), D1Type::Text(target_actor_uri)];
-    db.prepare(
-        "DELETE FROM mutes
-         WHERE account_id = ?1
-           AND target_actor_uri = ?2
-           AND expires_at IS NOT NULL
-           AND expires_at <= CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-
+    // Reads skip expired rows instead of deleting them, so they stay on
+    // read replicas; `purge_expired_mutes` removes them from cron.
     db.prepare(
         "SELECT notifications
          FROM mutes
          WHERE account_id = ?1
            AND target_actor_uri = ?2
+           AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
          LIMIT 1",
     )
     .bind_refs(bindings.iter())?
@@ -117,23 +109,12 @@ pub(crate) async fn list_active_muted_actor_uris(
             .map(|uri| D1Type::Text(uri.as_str())),
     );
 
-    let delete_sql = format!(
-        "DELETE FROM mutes
-         WHERE account_id = ?1
-           AND target_actor_uri IN ({placeholders})
-           AND expires_at IS NOT NULL
-           AND expires_at <= CURRENT_TIMESTAMP"
-    );
-    db.prepare(&delete_sql)
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
-
     let select_sql = format!(
         "SELECT target_actor_uri
          FROM mutes
          WHERE account_id = ?1
-           AND target_actor_uri IN ({placeholders})"
+           AND target_actor_uri IN ({placeholders})
+           AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
     );
     let result = db
         .prepare(&select_sql)
@@ -155,9 +136,8 @@ pub(crate) async fn list_active_muted_actor_uris(
 /// fetching it whole lets the check run as a plain set membership test and start
 /// as early as authentication.
 ///
-/// Unlike [`list_active_muted_actor_uris`] this does not delete expired rows: a
-/// timeline read should not write. Expired mutes are filtered out here and are
-/// still collected by [`list_mutes_for_account`].
+/// Expired mutes are filtered out here and collected by [`purge_expired_mutes`]
+/// and [`list_mutes_for_account`].
 pub(crate) async fn list_active_muted_actor_uris_for_account(
     db: &D1Database,
     account_id: &str,
@@ -178,6 +158,42 @@ pub(crate) async fn list_active_muted_actor_uris_for_account(
         .into_iter()
         .map(|row| row.target_actor_uri)
         .collect())
+}
+
+/// Actor URIs whose notifications the account currently mutes.
+pub(crate) async fn list_notification_muted_actor_uris_for_account(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<HashSet<String>> {
+    let account_id = D1Type::Text(account_id);
+    let result = db
+        .prepare(
+            "SELECT target_actor_uri
+             FROM mutes
+             WHERE account_id = ?1
+               AND notifications != 0
+               AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)",
+        )
+        .bind_refs(&account_id)?
+        .all()
+        .await?;
+
+    Ok(d1_results::<MutedActorUriRow>(&result)?
+        .into_iter()
+        .map(|row| row.target_actor_uri)
+        .collect())
+}
+
+/// Hourly cleanup for mutes past `expires_at`; reads already ignore them.
+pub(crate) async fn purge_expired_mutes(db: &D1Database) -> Result<()> {
+    db.prepare(
+        "DELETE FROM mutes
+         WHERE expires_at IS NOT NULL
+           AND expires_at <= CURRENT_TIMESTAMP",
+    )
+    .run()
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn muted_notifications_for_actor(

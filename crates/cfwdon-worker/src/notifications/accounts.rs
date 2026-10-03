@@ -5,7 +5,7 @@ use super::{
     list_remote_favourite_notifications_for_account, list_remote_follow_notifications_for_account,
     list_remote_follow_request_notifications_for_account, preload_notification_statuses,
 };
-use crate::auth::find_account_by_id;
+use crate::accounts::find_accounts_by_ids;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
     MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
@@ -13,13 +13,107 @@ use crate::notifications::{
 };
 use crate::responses::MastodonAccountResponse;
 use crate::statuses::find_statuses_by_ids;
-use crate::store::relationship::muted_notifications_for_actor;
-use crate::store::remote::find_remote_actor_by_actor_uri;
+use crate::store::relationship::list_notification_muted_actor_uris_for_account;
+use crate::store::remote::find_remote_actors_by_actor_uris;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use std::collections::HashMap;
 use worker::Result;
+/// Account-only notification rows (follow, follow request) before hydration.
+struct AccountNotificationRows {
+    /// `(follower account id, created_at)`
+    local: Vec<(String, String)>,
+    /// `(follower actor uri, created_at)`
+    remote: Vec<(String, String)>,
+}
+
+/// Hydrate every row with one batched account, actor, and mute lookup instead
+/// of three serial queries per row.
+#[allow(clippy::too_many_arguments)]
+async fn push_account_notification_entries(
+    entries: &mut Vec<NotificationEntry>,
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    query: &NotificationsQuery,
+    notification_type: &str,
+    id_prefix: &str,
+    rows: AccountNotificationRows,
+) -> Result<()> {
+    let local_ids = rows
+        .local
+        .iter()
+        .map(|(account_id, _)| account_id.clone())
+        .collect::<Vec<_>>();
+    let remote_uris = rows
+        .remote
+        .iter()
+        .map(|(actor_uri, _)| actor_uri.clone())
+        .collect::<Vec<_>>();
+    let (accounts_by_id, actors_by_uri, muted_actor_uris) = futures_util::try_join!(
+        find_accounts_by_ids(db, &local_ids),
+        find_remote_actors_by_actor_uris(db, &remote_uris),
+        list_notification_muted_actor_uris_for_account(db, viewer.id()),
+    )?;
+
+    for (account_id, created_at) in rows.local {
+        let Some(account) = accounts_by_id.get(&account_id) else {
+            continue;
+        };
+        if muted_actor_uris.contains(&actor_url(config, account.username()))
+            || !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None)
+        {
+            continue;
+        }
+        let id = format!("{id_prefix}-local-{}", account.id());
+        push_notification_entry(
+            entries,
+            MastodonNotificationResponse {
+                id: id.clone(),
+                notification_type: notification_type.to_owned(),
+                group_key: id,
+                created_at,
+                account: MastodonAccountResponse::from_account(account, config),
+                status: None,
+                report: None,
+            },
+        );
+    }
+
+    for (actor_uri, created_at) in rows.remote {
+        let Some(actor) = actors_by_uri.get(&actor_uri) else {
+            continue;
+        };
+        if muted_actor_uris.contains(&actor.actor_uri) {
+            continue;
+        }
+        let remote_id = remote_account_rest_id(&actor.actor_uri);
+        if !notification_account_matches_filter(
+            query.account_id.as_deref(),
+            &remote_id,
+            Some(&actor.actor_uri),
+        ) {
+            continue;
+        }
+        let id = format!("{id_prefix}-remote-{remote_id}");
+        push_notification_entry(
+            entries,
+            MastodonNotificationResponse {
+                id: id.clone(),
+                notification_type: notification_type.to_owned(),
+                group_key: id,
+                created_at,
+                account: MastodonAccountResponse::from_remote_actor(actor),
+                status: None,
+                report: None,
+            },
+        );
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn collect_follow_request_notification_entries(
     entries: &mut Vec<NotificationEntry>,
     db: &D1Database,
@@ -32,65 +126,31 @@ pub(crate) async fn collect_follow_request_notification_entries(
         return Ok(());
     }
 
-    for follow in
-        list_local_follow_request_notifications_for_account(db, viewer.id(), per_type_limit).await?
-    {
-        let Some(account) = find_account_by_id(db, &follow.follower_account_id).await? else {
-            continue;
-        };
-        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, account.username()))
-            .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None)
-        {
-            continue;
-        }
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("follow-request-local-{}", account.id()),
-                notification_type: "follow_request".to_owned(),
-                group_key: format!("follow-request-local-{}", account.id()),
-                created_at: follow.created_at,
-                account: MastodonAccountResponse::from_account(&account, config),
-                status: None,
-                report: None,
-            },
-        );
-    }
-
-    for follow in
-        list_remote_follow_request_notifications_for_account(db, viewer.id(), per_type_limit)
-            .await?
-    {
-        let Some(actor) = find_remote_actor_by_actor_uri(db, &follow.actor_uri).await? else {
-            continue;
-        };
-        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
-            continue;
-        }
-        let remote_id = remote_account_rest_id(&actor.actor_uri);
-        if !notification_account_matches_filter(
-            query.account_id.as_deref(),
-            &remote_id,
-            Some(&actor.actor_uri),
-        ) {
-            continue;
-        }
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("follow-request-remote-{}", remote_id),
-                notification_type: "follow_request".to_owned(),
-                group_key: format!("follow-request-remote-{}", remote_id),
-                created_at: follow.created_at,
-                account: MastodonAccountResponse::from_remote_actor(&actor),
-                status: None,
-                report: None,
-            },
-        );
-    }
-
-    Ok(())
+    let (local, remote) = futures_util::try_join!(
+        list_local_follow_request_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_remote_follow_request_notifications_for_account(db, viewer.id(), per_type_limit),
+    )?;
+    let rows = AccountNotificationRows {
+        local: local
+            .into_iter()
+            .map(|row| (row.follower_account_id, row.created_at))
+            .collect(),
+        remote: remote
+            .into_iter()
+            .map(|row| (row.actor_uri, row.created_at))
+            .collect(),
+    };
+    push_account_notification_entries(
+        entries,
+        db,
+        config,
+        viewer,
+        query,
+        "follow_request",
+        "follow-request",
+        rows,
+    )
+    .await
 }
 
 pub(crate) async fn collect_follow_notification_entries(
@@ -105,64 +165,22 @@ pub(crate) async fn collect_follow_notification_entries(
         return Ok(());
     }
 
-    for follow in
-        list_local_follow_notifications_for_account(db, viewer.id(), per_type_limit).await?
-    {
-        let Some(account) = find_account_by_id(db, &follow.follower_account_id).await? else {
-            continue;
-        };
-        if muted_notifications_for_actor(db, viewer.id(), &actor_url(config, account.username()))
-            .await?
-            || !notification_account_matches_filter(query.account_id.as_deref(), account.id(), None)
-        {
-            continue;
-        }
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("follow-local-{}", account.id()),
-                notification_type: "follow".to_owned(),
-                group_key: format!("follow-local-{}", account.id()),
-                created_at: follow.created_at,
-                account: MastodonAccountResponse::from_account(&account, config),
-                status: None,
-                report: None,
-            },
-        );
-    }
-
-    for follow in
-        list_remote_follow_notifications_for_account(db, viewer.id(), per_type_limit).await?
-    {
-        let Some(actor) = find_remote_actor_by_actor_uri(db, &follow.actor_uri).await? else {
-            continue;
-        };
-        if muted_notifications_for_actor(db, viewer.id(), &actor.actor_uri).await? {
-            continue;
-        }
-        let remote_id = remote_account_rest_id(&actor.actor_uri);
-        if !notification_account_matches_filter(
-            query.account_id.as_deref(),
-            &remote_id,
-            Some(&actor.actor_uri),
-        ) {
-            continue;
-        }
-        push_notification_entry(
-            entries,
-            MastodonNotificationResponse {
-                id: format!("follow-remote-{}", remote_id),
-                notification_type: "follow".to_owned(),
-                group_key: format!("follow-remote-{}", remote_id),
-                created_at: follow.created_at,
-                account: MastodonAccountResponse::from_remote_actor(&actor),
-                status: None,
-                report: None,
-            },
-        );
-    }
-
-    Ok(())
+    let (local, remote) = futures_util::try_join!(
+        list_local_follow_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_remote_follow_notifications_for_account(db, viewer.id(), per_type_limit),
+    )?;
+    let rows = AccountNotificationRows {
+        local: local
+            .into_iter()
+            .map(|row| (row.follower_account_id, row.created_at))
+            .collect(),
+        remote: remote
+            .into_iter()
+            .map(|row| (row.actor_uri, row.created_at))
+            .collect(),
+    };
+    push_account_notification_entries(entries, db, config, viewer, query, "follow", "follow", rows)
+        .await
 }
 
 pub(crate) async fn collect_favourite_notification_entries(

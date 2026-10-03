@@ -30,9 +30,11 @@ pub(crate) async fn collect_visible_notifications(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<Vec<NotificationEntry>> {
-    let mut entries = collect_notifications(db, config, viewer, query, per_type_limit).await?;
-    let dismissed_ids = load_dismissed_notification_ids(db, viewer.id()).await?;
-    let cleared_at = load_notification_clear_marker(db, viewer.id()).await?;
+    let (mut entries, dismissed_ids, cleared_at) = futures_util::try_join!(
+        collect_notifications(db, config, viewer, query, per_type_limit),
+        load_dismissed_notification_ids(db, viewer.id()),
+        load_notification_clear_marker(db, viewer.id()),
+    )?;
     let cleared_at_token = cleared_at
         .as_deref()
         .and_then(notification_timestamp_sort_token);

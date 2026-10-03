@@ -462,7 +462,7 @@ fn local_status_quote_count_uri(
     })
 }
 
-async fn preload_notification_mutes(
+pub(crate) async fn preload_notification_mutes(
     db: &D1Database,
     account_id: &str,
     actor_uris: &[String],
@@ -484,18 +484,6 @@ async fn preload_notification_mutes(
     bindings.push(D1Type::Text(account_id));
     bindings.extend(actor_uris.iter().map(|uri| D1Type::Text(uri.as_str())));
 
-    let delete_sql = format!(
-        "DELETE FROM mutes
-         WHERE account_id = ?1
-           AND target_actor_uri IN ({placeholders})
-           AND expires_at IS NOT NULL
-           AND expires_at <= CURRENT_TIMESTAMP"
-    );
-    db.prepare(&delete_sql)
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
-
     #[derive(Debug, serde::Deserialize)]
     struct NotificationMuteActorRow {
         target_actor_uri: String,
@@ -506,7 +494,8 @@ async fn preload_notification_mutes(
          FROM mutes
          WHERE account_id = ?1
            AND notifications != 0
-           AND target_actor_uri IN ({placeholders})"
+           AND target_actor_uri IN ({placeholders})
+           AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
     );
     let result = db
         .prepare(&select_sql)
