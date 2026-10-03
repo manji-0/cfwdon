@@ -30,6 +30,9 @@ use std::collections::HashSet;
 use worker::Result;
 const REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT: usize = 8;
 const REMOTE_CONTEXT_REPLY_ITEM_FETCH_LIMIT: usize = 128;
+/// Deferred hydration stops starting new reply fetches after this long, so it
+/// finishes (and marks the async refresh finished) inside `wait_until`.
+const REMOTE_CONTEXT_HYDRATION_BUDGET_MS: f64 = 20_000.0;
 
 struct RemoteContextDescendantQueueNode {
     object_uri: String,
@@ -78,12 +81,14 @@ pub(crate) async fn build_remote_status_context(
         );
         defer(async move {
             let mut fetched = 0;
+            let deadline_ms = js_sys::Date::now() + REMOTE_CONTEXT_HYDRATION_BUDGET_MS;
             let _ = hydrate_remote_descendants_for_context(
                 &db,
                 &config,
                 &root,
                 &root_actor,
                 &mut fetched,
+                deadline_ms,
             )
             .await;
             let _ = finish_context_async_refresh(&db, &root.id, fetched).await;
@@ -251,6 +256,7 @@ async fn hydrate_remote_descendants_for_context(
     root: &RemoteStatus,
     root_actor: &RemoteActorRow,
     fetched: &mut u64,
+    deadline_ms: f64,
 ) -> Result<()> {
     let document = match fetch_remote_activitypub_document(&root.object_uri).await {
         Ok(document) => document,
@@ -266,6 +272,7 @@ async fn hydrate_remote_descendants_for_context(
         Some(root_actor.actor_uri.as_str()),
         0,
         fetched,
+        deadline_ms,
     )
     .await
 }
@@ -277,6 +284,7 @@ async fn hydrate_remote_reply_descendants(
     fallback_actor_uri: Option<&str>,
     depth: usize,
     fetched: &mut u64,
+    deadline_ms: f64,
 ) -> Result<()> {
     if depth >= REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT {
         return Ok(());
@@ -284,6 +292,9 @@ async fn hydrate_remote_reply_descendants(
 
     let reply_references = fetch_remote_reply_references(object.get("replies")).await?;
     for reference in reply_references {
+        if js_sys::Date::now() > deadline_ms {
+            break;
+        }
         let reply_document = match reference {
             RemoteReplyReference::Document(document) => document,
             RemoteReplyReference::Uri(uri) => {
@@ -322,6 +333,7 @@ async fn hydrate_remote_reply_descendants(
             Some(actor.actor_uri.as_str()),
             depth.saturating_add(1),
             fetched,
+            deadline_ms,
         ))
         .await;
     }

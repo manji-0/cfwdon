@@ -125,7 +125,16 @@ pub(crate) async fn find_async_refresh_state(
 ) -> Result<Option<AsyncRefreshState>> {
     let row = db
         .prepare(
-            "SELECT id, status, result_count
+            // A `running` row the deferred task never closed (isolate evicted)
+            // reads as finished so clients stop polling.
+            "SELECT id,
+                    CASE
+                        WHEN status = 'running'
+                         AND updated_at < datetime('now', '-60 seconds')
+                        THEN 'finished'
+                        ELSE status
+                    END AS status,
+                    result_count
              FROM async_refreshes
              WHERE id = ?1",
         )
