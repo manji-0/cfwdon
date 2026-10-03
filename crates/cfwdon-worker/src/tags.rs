@@ -299,12 +299,13 @@ pub(crate) async fn replace_local_status_hashtags(
         .into_iter()
         .collect::<HashSet<_>>();
 
+    let mut statements = Vec::new();
     for tag in existing.difference(&next) {
         let bindings = [D1Type::Text(status_id), D1Type::Text(tag.as_str())];
-        db.prepare("DELETE FROM status_hashtags WHERE status_id = ?1 AND tag = ?2")
-            .bind_refs(bindings.iter())?
-            .run()
-            .await?;
+        statements.push(
+            db.prepare("DELETE FROM status_hashtags WHERE status_id = ?1 AND tag = ?2")
+                .bind_refs(bindings.iter())?,
+        );
     }
 
     for tag in next.difference(&existing) {
@@ -314,15 +315,18 @@ pub(crate) async fn replace_local_status_hashtags(
             D1Type::Text(account_id),
             D1Type::Text(created_at),
         ];
-        db.prepare(
-            "INSERT OR IGNORE INTO status_hashtags (status_id, tag, account_id, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        statements.push(
+            db.prepare(
+                "INSERT OR IGNORE INTO status_hashtags (status_id, tag, account_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
 
+    if !statements.is_empty() {
+        db.batch(statements).await?;
+    }
     Ok(())
 }
 

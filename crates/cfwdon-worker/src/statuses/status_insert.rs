@@ -81,44 +81,51 @@ pub(crate) async fn insert_status(
     };
     insert_local_status_intent(db, &stored, outbox_statement).await?;
 
-    if !defer_outbox {
-        enqueue_direct_create_activity(db, config, account, &preview, None).await?;
-        enqueue_addressed_create_activity(db, config, account, &preview, None).await?;
-    }
-
-    replace_local_status_hashtags(
-        db,
-        &stored.status_id,
-        &stored.account_id,
-        &stored.created_at,
-        &stored.text_content,
-    )
-    .await?;
-
-    replace_local_status_mentions(
-        db,
-        config,
-        &stored.status_id,
-        &stored.created_at,
-        &stored.text_content,
-    )
-    .await?;
-
-    if let Some(poll) = draft.poll() {
-        insert_status_poll(db, &stored.status_id, poll, &stored.created_at).await?;
-    }
-
-    if stored.card_json.is_some() {
-        let _ = soft_enqueue_background_job(
+    // Rows keyed by the new status id are independent of each other.
+    futures_util::try_join!(
+        async {
+            if !defer_outbox {
+                enqueue_direct_create_activity(db, config, account, &preview, None).await?;
+                enqueue_addressed_create_activity(db, config, account, &preview, None).await?;
+            }
+            Ok::<(), worker::Error>(())
+        },
+        replace_local_status_hashtags(
             db,
-            JOB_CARD_UNFURL,
-            &card_unfurl_payload("local", &stored.status_id),
+            &stored.status_id,
+            &stored.account_id,
             &stored.created_at,
-        )
-        .await;
-    }
+            &stored.text_content,
+        ),
+        replace_local_status_mentions(
+            db,
+            config,
+            &stored.status_id,
+            &stored.created_at,
+            &stored.text_content,
+        ),
+        async {
+            if let Some(poll) = draft.poll() {
+                insert_status_poll(db, &stored.status_id, poll, &stored.created_at).await?;
+            }
+            Ok(())
+        },
+        async {
+            if stored.card_json.is_some() {
+                let _ = soft_enqueue_background_job(
+                    db,
+                    JOB_CARD_UNFURL,
+                    &card_unfurl_payload("local", &stored.status_id),
+                    &stored.created_at,
+                )
+                .await;
+            }
+            Ok(())
+        },
+    )?;
 
-    require_status_by_id(db, &stored.status_id).await
+    // `preview` carries every column the INSERT wrote, so skip the re-read.
+    Ok(preview)
 }
 
 async fn insert_local_status_intent(
@@ -397,8 +404,9 @@ pub(crate) async fn insert_status_poll(
     let poll_id = generate_entity_id(16)?;
     let expires_at = add_seconds_to_iso_string(created_at, poll.expires_in_seconds())?;
     let bindings = status_poll_insert_bindings(&poll_id, status_id, poll, &expires_at, created_at);
-    db.prepare(
-        "INSERT INTO status_polls (
+    let mut statements = vec![
+        db.prepare(
+            "INSERT INTO status_polls (
             id,
             status_id,
             multiple,
@@ -415,16 +423,16 @@ pub(crate) async fn insert_status_poll(
             ?6,
             ?6
         )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?,
+    ];
 
     for (position, option) in poll.options().iter().enumerate() {
         let option_id = generate_entity_id(16)?;
         let bindings = status_poll_option_insert_bindings(&option_id, &poll_id, option, position);
-        db.prepare(
-            "INSERT INTO status_poll_options (
+        statements.push(
+            db.prepare(
+                "INSERT INTO status_poll_options (
                 id,
                 poll_id,
                 title,
@@ -439,12 +447,12 @@ pub(crate) async fn insert_status_poll(
                 0,
                 CURRENT_TIMESTAMP
             )",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
 
+    db.batch(statements).await?;
     Ok(())
 }
 

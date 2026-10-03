@@ -203,10 +203,10 @@ async fn replace_status_mention_rows(
     rows: &[MentionRow],
 ) -> Result<()> {
     let status_binding = D1Type::Text(status_id);
-    db.prepare("DELETE FROM status_mentions WHERE status_id = ?1")
-        .bind_refs(&status_binding)?
-        .run()
-        .await?;
+    let mut statements = vec![
+        db.prepare("DELETE FROM status_mentions WHERE status_id = ?1")
+            .bind_refs(&status_binding)?,
+    ];
 
     for row in rows {
         let account_id_val: D1Type<'_> = match &row.account_id {
@@ -227,16 +227,18 @@ async fn replace_status_mention_rows(
             D1Type::Text(&row.url),
             D1Type::Text(created_at),
         ];
-        db.prepare(
-            "INSERT OR REPLACE INTO status_mentions
-             (status_id, mention_key, account_id, actor_uri, username, acct, url, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        statements.push(
+            db.prepare(
+                "INSERT OR REPLACE INTO status_mentions
+                 (status_id, mention_key, account_id, actor_uri, username, acct, url, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
 
+    // One batch keeps the replace atomic as well as a single round trip.
+    db.batch(statements).await?;
     Ok(())
 }
 
