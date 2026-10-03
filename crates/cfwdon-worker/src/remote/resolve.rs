@@ -101,14 +101,28 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
     acct: &str,
     viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
+    resolve_lookup_account_with_fetch_state(db, config, acct, viewer)
+        .await
+        .map(|(response, _)| response)
+}
+
+/// Like [`resolve_lookup_account_with_viewer`], also returning the actor URI
+/// when the response comes from a fresh origin fetch (worth caching).
+pub(crate) async fn resolve_lookup_account_with_fetch_state(
+    db: &D1Database,
+    config: &AppConfig,
+    acct: &str,
+    viewer: Option<&LocalAccount>,
+) -> Result<(MastodonAccountResponse, Option<String>)> {
     let handle = parse_lookup_handle(acct, config)?;
     if handle.is_local_to(&config.instance_domain) {
         let Some(account) = find_account_by_username(db, &handle.username).await? else {
             return Err(Error::RustError("account not found".to_owned()));
         };
         let stats = load_account_stats(db, account.id()).await?;
-        return Ok(MastodonAccountResponse::from_account_with_stats(
-            &account, config, &stats,
+        return Ok((
+            MastodonAccountResponse::from_account_with_stats(&account, config, &stats),
+            None,
         ));
     }
 
@@ -118,7 +132,7 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
         .ok_or_else(|| Error::RustError("remote handle is missing domain".to_owned()))?;
     let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     match resolve_remote_lookup_via_fetch(db, &handle, &fetch_context).await {
-        Ok(response) => Ok(response),
+        Ok((response, actor_uri)) => Ok((response, Some(actor_uri))),
         Err(error) => {
             if let Some(actor) =
                 find_remote_actor_by_username_domain(db, &handle.username, domain).await?
@@ -141,7 +155,7 @@ pub(crate) async fn resolve_lookup_account_with_viewer(
                         "error": enrich_error.to_string(),
                     }));
                 }
-                return Ok(response);
+                return Ok((response, None));
             }
             Err(error)
         }
@@ -152,7 +166,7 @@ async fn resolve_remote_lookup_via_fetch(
     db: &D1Database,
     handle: &cfwdon_domain::AccountHandle,
     fetch_context: &RemoteCollectionFetchContext<'_>,
-) -> Result<MastodonAccountResponse> {
+) -> Result<(MastodonAccountResponse, String)> {
     let actor_uri = resolve_webfinger_actor_uri(handle).await?;
     let fetched = fetch_remote_actor_profile_with_context(&actor_uri, Some(fetch_context)).await?;
     let profile = fetched.profile;
@@ -171,7 +185,7 @@ async fn resolve_remote_lookup_via_fetch(
         Some(fetch_context),
     )
     .await?;
-    Ok(response)
+    Ok((response, profile.actor_uri))
 }
 
 pub(crate) async fn resolve_search_account(

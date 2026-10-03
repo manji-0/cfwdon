@@ -5,13 +5,13 @@ use crate::db_session::bind_request_d1;
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::delivery::enqueue_profile_update_activities;
 use crate::follow_requests::count_pending_follow_requests;
-use crate::identity::actor_url;
+use crate::identity::{actor_url, parse_lookup_handle};
 use crate::oauth_store::{
     app_bearer_token_from_request, oauth_access_token_has_any_scope_json, oauth_bearer_token_hash,
 };
 use crate::observability::log_json_event;
 use crate::remote::{
-    AccountReference, resolve_account_reference_with_fetch, resolve_lookup_account_with_viewer,
+    AccountReference, resolve_account_reference_with_fetch, resolve_lookup_account_with_fetch_state,
 };
 use crate::response::{
     RemoteCollectionFetchContext, enrich_remote_account_response,
@@ -19,12 +19,16 @@ use crate::response::{
     reconcile_remote_account_status_summary, render_profile_field_value_html,
 };
 use crate::response_cache::{
-    cache_account_api_response, cached_account_api_response, invalidate_account_public_cache,
+    cache_account_api_response, cache_remote_account_api_response, cached_account_api_response,
+    cached_remote_account_api_response, invalidate_account_public_cache,
 };
 use crate::response_utils::{CACHE_TTL_ACCOUNT_API, cache_public_json_response};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri, upsert_remote_actor};
+use crate::store::remote::{
+    RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    upsert_remote_actor,
+};
 use crate::tags::normalize_hashtag;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::LocalAccountRecord;
@@ -147,7 +151,18 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
             Response::from_json(&response)
         }
         Some(AccountReference::Remote(actor)) => {
-            let response = remote_account_response(&db, &config, &actor, viewer.as_ref()).await?;
+            if let Some(response) =
+                cached_remote_account_api_response(&config, &actor.actor_uri).await?
+            {
+                return Ok(response);
+            }
+            let (response, fetched) =
+                remote_account_response(&db, &config, &actor, viewer.as_ref()).await?;
+            // Only a fresh origin fetch is worth caching; the stored-row fallback
+            // should retry the origin on the next view.
+            if fetched {
+                cache_remote_account_api_response(&config, &actor.actor_uri, &response).await?;
+            }
             Response::from_json(&response)
         }
         None => Response::error("account not found", 404),
@@ -159,7 +174,7 @@ async fn remote_account_response(
     config: &AppConfig,
     actor: &RemoteActorRow,
     viewer: Option<&LocalAccount>,
-) -> Result<MastodonAccountResponse> {
+) -> Result<(MastodonAccountResponse, bool)> {
     let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
@@ -178,7 +193,7 @@ async fn remote_account_response(
                         "error": error.to_string(),
                     }));
                 }
-                return Ok(response);
+                return Ok((response, false));
             }
         };
     let profile = fetched.profile;
@@ -200,7 +215,7 @@ async fn remote_account_response(
         Some(&fetch_context),
     )
     .await?;
-    Ok(response)
+    Ok((response, true))
 }
 
 fn account_api_cache_candidate(account_id: &str) -> bool {
@@ -215,8 +230,26 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let query: AccountLookupQuery = req.query()?;
-    match resolve_lookup_account_with_viewer(&db, &config, &query.acct, viewer.as_ref()).await {
-        Ok(account) => Response::from_json(&account),
+    // A known remote actor is served from the response cache without the
+    // WebFinger + actor round trips to its origin.
+    if let Ok(handle) = parse_lookup_handle(&query.acct, &config)
+        && !handle.is_local_to(&config.instance_domain)
+        && let Some(domain) = handle.domain.as_deref()
+        && let Some(actor) =
+            find_remote_actor_by_username_domain(&db, &handle.username, domain).await?
+        && let Some(response) =
+            cached_remote_account_api_response(&config, &actor.actor_uri).await?
+    {
+        return Ok(response);
+    }
+    match resolve_lookup_account_with_fetch_state(&db, &config, &query.acct, viewer.as_ref()).await
+    {
+        Ok((account, fetched_actor_uri)) => {
+            if let Some(actor_uri) = fetched_actor_uri {
+                cache_remote_account_api_response(&config, &actor_uri, &account).await?;
+            }
+            Response::from_json(&account)
+        }
         Err(error) => {
             log_json_event(serde_json::json!({
                 "event": "account_lookup_failed",

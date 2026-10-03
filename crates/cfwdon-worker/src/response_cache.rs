@@ -5,9 +5,12 @@
 //! Invalidation uses `cache.delete` (Cache-Tag purge is Enterprise-only).
 use crate::deferred::defer;
 use crate::identity::instance_base_url;
-use crate::response_utils::{CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API};
+use crate::response_utils::{
+    CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_REMOTE_ACCOUNT_API, CACHE_TTL_STATUS_API,
+};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
+use sha2::{Digest, Sha256};
 use worker::{Cache, Response, ResponseBody, Result, RouteContext};
 
 pub(crate) async fn cached_account_api_response(
@@ -78,6 +81,30 @@ pub(crate) async fn cache_actor_profile_html_response(
         html,
         CACHE_TTL_FEDERATION,
         &account_cache_tag(username),
+    )
+    .await
+}
+
+/// Remote account responses keyed by actor URI. Serving them skips the origin
+/// actor fetch, which otherwise runs on every `/api/v1/accounts/:id` and lookup.
+pub(crate) async fn cached_remote_account_api_response(
+    config: &cfwdon_core::AppConfig,
+    actor_uri: &str,
+) -> Result<Option<Response>> {
+    cache_get(&remote_account_api_cache_key(config, actor_uri)).await
+}
+
+pub(crate) async fn cache_remote_account_api_response(
+    config: &cfwdon_core::AppConfig,
+    actor_uri: &str,
+    value: &MastodonAccountResponse,
+) -> Result<()> {
+    cache_put_json(
+        &remote_account_api_cache_key(config, actor_uri),
+        value,
+        "application/json; charset=utf-8",
+        CACHE_TTL_REMOTE_ACCOUNT_API,
+        &format!("remote-account-{}", value.username),
     )
     .await
 }
@@ -155,6 +182,14 @@ fn account_api_cache_key(config: &cfwdon_core::AppConfig, account_id: &str) -> S
         "{}/api/v1/accounts/{}",
         instance_base_url(config),
         account_id
+    )
+}
+
+fn remote_account_api_cache_key(config: &cfwdon_core::AppConfig, actor_uri: &str) -> String {
+    format!(
+        "{}/cfwdon-cache/remote-accounts/{:x}",
+        instance_base_url(config),
+        Sha256::digest(actor_uri.as_bytes())
     )
 }
 

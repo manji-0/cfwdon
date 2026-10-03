@@ -10,6 +10,8 @@ pub(crate) const CACHE_TTL_OAUTH_DISCOVERY: u32 = 3600;
 pub(crate) const CACHE_TTL_OEMBED: u32 = 3600;
 pub(crate) const CACHE_TTL_STATUS_API: u32 = 30;
 pub(crate) const CACHE_TTL_ACCOUNT_API: u32 = 60;
+/// Remote account documents are re-fetched from the origin at most this often.
+pub(crate) const CACHE_TTL_REMOTE_ACCOUNT_API: u32 = 300;
 
 /// HTML shell, service worker, and web app manifest must revalidate on every load.
 pub(crate) const CACHE_CONTROL_UI_SHELL: &str = "no-cache";
