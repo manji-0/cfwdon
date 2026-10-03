@@ -21,13 +21,13 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
 <!-- constrained-by ../reference/configuration.md#public-instance-vars -->
 <!-- constrained-by ../reference/configuration.md#worker-and-d1-placement -->
 
-1. Create the D1 database in the same region you will pin the Worker to. Location is fixed at create time and cannot be changed later.
+1. Create the D1 database in the same region you will pin the Worker to. Location is fixed at create time and cannot be changed later (see [Moving The Database](#moving-the-database)).
 
    ```sh
    wrangler d1 create cfwdon --location=apac
    ```
 
-   Confirm with `wrangler d1 info cfwdon` (`running_in_region` should be `APAC`) and a remote query's `meta.served_by_colo` (this instance's primary is `SIN`). Pair that with `[placement] region = "aws:ap-southeast-1"` in [`wrangler.toml`](../../wrangler.toml). See [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
+   Location hints are regional only. `apac` placed this instance's first database in Singapore (`SIN`); creating without a hint from Japan placed the current one in Osaka (`KIX`). Confirm with a remote query's `meta.served_by_colo`, then pair it with the nearest cloud region in `[placement] region` in [`wrangler.toml`](../../wrangler.toml) (`aws:ap-northeast-3` for `KIX`, `aws:ap-southeast-1` for `SIN`). See [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
 
 2. Create the R2 bucket.
 
@@ -148,6 +148,19 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
     A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
     Clients reconnect; this is expected and is logged as
     `stream_hub_websocket` with `outcome=deploy_reset`, not as an application 5xx.
+
+## Moving The Database
+<!-- derived-from #provisioning-steps -->
+
+D1 cannot change location, so moving means a new database and a copy. With about 12 MB this took under four minutes of downtime.
+
+1. Create the new database and confirm `served_by_colo` with `SELECT 1`.
+2. Deploy with `wrangler deploy --var CFWDON_MAINTENANCE:1`. HTTP answers 503 with `Retry-After`, and cron and queue invocations do no D1 work, so nothing writes to the old database. Avoid the `:17` cron minute.
+3. `wrangler d1 export DB --remote --output export.sql`.
+4. `python3 scripts/split_d1_export.py export.sql parts/`, then run each part in order with `wrangler d1 execute <new-name> --remote --file parts/<part> --yes`. Importing the whole dump at once fails with `D1_RESET_DO`, and its row order trips foreign keys.
+5. Compare `COUNT(*)` for every table against the dump (D1 rejects long `UNION ALL` chains; use one `SELECT` of scalar subqueries per batch of tables).
+6. Point `database_name` / `database_id` and `[placement] region` at the new database and `wrangler deploy` without the variable.
+7. Re-enable read replication on the new database in the dashboard if it was on, and keep the old database until the move is settled.
 
 ## Stream Hub hibernation exceptions
 <!-- derived-from #provisioning-steps -->

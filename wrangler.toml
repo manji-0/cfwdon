@@ -2,12 +2,12 @@ name = "cfwdon"
 main = "crates/cfwdon-worker/build/index.js"
 compatibility_date = "2026-04-13"
 
-# Pin the Worker next to the D1 primary (this database is APAC / SIN).
+# Pin the Worker next to the D1 primary (this database is APAC / KIX, Osaka).
 # `mode` and `region` are mutually exclusive; Smart Placement can chase
 # ActivityPub origins instead of D1. Confirm colo with:
-# wrangler d1 execute cfwdon --remote --command="SELECT 1" --json
+# wrangler d1 execute cfwdon-tokyo --remote --command="SELECT 1" --json
 [placement]
-region = "aws:ap-southeast-1"
+region = "aws:ap-northeast-3"
 
 [observability]
 enabled = true
@@ -88,8 +88,8 @@ AUTH0_ADMIN_ROLES = "fedi-admin"
 # in sync with crates/cfwdon-core/src/config.rs and the worker runtime code.
 [[d1_databases]]
 binding = "DB"
-database_name = "cfwdon"
-database_id = "69ce1fde-3bda-454e-8b30-f5bfa71e6212"
+database_name = "cfwdon-tokyo"
+database_id = "b2ff5da0-d1d5-4828-8ed6-91fea0da2d63"
 
 [[r2_buckets]]
 binding = "MEDIA"
