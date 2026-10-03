@@ -165,11 +165,10 @@ pub(super) async fn federated_emojis_for_remote_status(
     Ok(object.map(|value| extract_federated_emojis_from_activitypub_object(&value)))
 }
 
+/// The denormalized emoji map, or `None` when the row predates it (`[]` is the
+/// column default; rows written since store a map, `{}` when empty).
 pub(super) fn federated_emojis_from_json(federated_emojis_json: &str) -> Option<FederatedEmojiMap> {
-    if federated_emojis_json.is_empty()
-        || federated_emojis_json == "[]"
-        || federated_emojis_json == "{}"
-    {
+    if federated_emojis_json.is_empty() || federated_emojis_json == "[]" {
         return None;
     }
     serde_json::from_str(federated_emojis_json).ok()

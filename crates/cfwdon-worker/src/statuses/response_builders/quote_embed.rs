@@ -240,12 +240,18 @@ async fn build_remote_quoted_status_from_row(
     let Some(actor) = actor else {
         return Ok(None);
     };
-    let federated_emojis = super::remote::federated_emojis_for_remote_status(
-        db,
-        &remote_status.id,
-        embed.map(|e| &e.federated_emojis),
-    )
-    .await?;
+    let federated_emojis =
+        match super::remote::federated_emojis_from_json(&remote_status.federated_emojis_json) {
+            Some(emojis) => Some(emojis),
+            None => {
+                super::remote::federated_emojis_for_remote_status(
+                    db,
+                    &remote_status.id,
+                    embed.map(|e| &e.federated_emojis),
+                )
+                .await?
+            }
+        };
     let mut response = MastodonStatusResponse::from_remote_row(
         &remote_status,
         &actor,

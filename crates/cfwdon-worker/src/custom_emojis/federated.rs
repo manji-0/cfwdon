@@ -33,11 +33,17 @@ pub(crate) async fn preload_remote_status_federated_emojis(
 
     // O(1) binds — large trending/notification batches exceed D1's 100-parameter limit
     // when using per-id `IN (?1, ?2, …)` placeholders (#23).
+    //
+    // Rows written since `federated_emojis_json` was added carry the extracted
+    // map (`{}` when empty) and are rendered from it; only older rows, still at
+    // the `[]` default, need the AP `tag` array. Reading just that array keeps
+    // whole raw objects out of the transfer and the JSON parser.
     let ids_json = json_string_array(status_ids);
     let query = format!(
-        "SELECT id, raw_object_json
+        "SELECT id, json_extract(raw_object_json, '$.tag') AS tag_json
          FROM remote_statuses
-         WHERE id {}",
+         WHERE id {}
+           AND federated_emojis_json IN ('', '[]')",
         sql_in_json_each(1)
     );
     let binding = D1Type::Text(ids_json.as_str());
@@ -46,15 +52,20 @@ pub(crate) async fn preload_remote_status_federated_emojis(
         .bind_refs(&binding)?
         .all()
         .await
-        .and_then(|__d1| d1_results::<RemoteStatusRawObjectRow>(&__d1))?;
+        .and_then(|__d1| d1_results::<RemoteStatusTagRow>(&__d1))?;
 
     let mut by_status_id = HashMap::with_capacity(rows.len());
     for row in rows {
-        if let Ok(object) = serde_json::from_str::<serde_json::Value>(&row.raw_object_json) {
-            by_status_id.insert(
-                row.id,
-                extract_federated_emojis_from_activitypub_object(&object),
+        let Some(tag_json) = row.tag_json else {
+            continue;
+        };
+        if let Ok(tag) = serde_json::from_str::<serde_json::Value>(&tag_json) {
+            let emojis = extract_federated_emojis_from_activitypub_object(
+                &serde_json::json!({ "tag": tag }),
             );
+            if !emojis.is_empty() {
+                by_status_id.insert(row.id, emojis);
+            }
         }
     }
 
@@ -214,9 +225,9 @@ fn emoji_static_icon_url(icon: &serde_json::Value) -> Option<String> {
 }
 
 #[derive(Debug, Deserialize)]
-struct RemoteStatusRawObjectRow {
+struct RemoteStatusTagRow {
     id: String,
-    raw_object_json: String,
+    tag_json: Option<String>,
 }
 
 #[cfg(test)]
