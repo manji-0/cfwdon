@@ -1,10 +1,10 @@
 use super::super::{
-    BoostTarget, BoostTargetPreload, LocalAccount, build_remote_status_card_value,
-    build_status_card_value, build_status_mentions, find_local_status_by_object_uri,
-    local_quoted_status_document_state, pending_quote_document, quote_document_for_local_state,
-    quote_document_from_response, remote_quote_visibility_is_embeddable,
-    remote_quoted_status_document_state, resolve_local_status_response_subject,
-    unauthorized_quote_document,
+    BoostTarget, BoostTargetPreload, LocalAccount, QuoteEmbedPreloads,
+    build_remote_status_card_value, build_status_card_value, build_status_mentions,
+    find_local_status_by_object_uri, local_quoted_status_document_state, pending_quote_document,
+    quote_document_for_local_state, quote_document_from_response,
+    remote_quote_visibility_is_embeddable, remote_quoted_status_document_state,
+    resolve_local_status_response_subject, unauthorized_quote_document,
 };
 use crate::filters::AccountFilterMatcher;
 use crate::local_polls::load_mastodon_poll_response;
@@ -37,6 +37,7 @@ pub(super) async fn build_quoted_status_value(
     }
 
     if let Some(resolved) = boost_target_preload.and_then(|targets| targets.target(quote_of_uri)) {
+        let embed = boost_target_preload.and_then(BoostTargetPreload::embed_preloads);
         match resolved {
             Some(BoostTarget::Local(local_status)) => {
                 return build_local_quoted_status_from_row(
@@ -46,6 +47,7 @@ pub(super) async fn build_quoted_status_value(
                     local_status.clone(),
                     filter_matcher,
                     counts_preload,
+                    embed,
                 )
                 .await;
             }
@@ -58,6 +60,7 @@ pub(super) async fn build_quoted_status_value(
                     pending_remote_quote,
                     filter_matcher,
                     counts_preload,
+                    embed,
                 )
                 .await;
             }
@@ -109,6 +112,7 @@ async fn build_local_quoted_status_document(
         local_status,
         filter_matcher,
         counts_preload,
+        None,
     )
     .await
 }
@@ -120,6 +124,7 @@ async fn build_local_quoted_status_from_row(
     local_status: LocalStatus,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    embed: Option<&QuoteEmbedPreloads>,
 ) -> Result<Option<serde_json::Value>> {
     let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
     else {
@@ -159,13 +164,21 @@ async fn build_local_quoted_status_from_row(
     } else {
         None
     };
-    response.mentions = build_status_mentions(db, config, &local_status.text).await?;
+    response.mentions = match embed.and_then(|e| e.local_mentions.mentions(&local_status.id)) {
+        Some(Some(stored)) => stored,
+        _ => build_status_mentions(db, config, &local_status.text).await?,
+    };
     let (favourites_count, reblogs_count) =
         super::local::local_status_counts(db, counts_preload, &local_status.id).await?;
     response.favourites_count = favourites_count;
     response.reblogs_count = reblogs_count;
-    let viewer_state =
-        super::local::local_status_response_viewer_state(db, viewer, &local_status, None).await?;
+    let viewer_state = super::local::local_status_response_viewer_state(
+        db,
+        viewer,
+        &local_status,
+        embed.and_then(|e| e.local_viewer_state.as_ref()),
+    )
+    .await?;
     let viewer_fields =
         super::local::local_viewer_interaction_fields(viewer, &local_status, viewer_state);
     response.favourited = viewer_fields.favourited;
@@ -199,6 +212,7 @@ async fn build_remote_quoted_status_document(
         pending_remote_quote,
         filter_matcher,
         counts_preload,
+        None,
     )
     .await
 }
@@ -211,6 +225,7 @@ async fn build_remote_quoted_status_from_row(
     pending_remote_quote: bool,
     filter_matcher: Option<&AccountFilterMatcher>,
     counts_preload: Option<&StatusCountsPreload>,
+    embed: Option<&QuoteEmbedPreloads>,
 ) -> Result<Option<serde_json::Value>> {
     if pending_remote_quote {
         return Ok(Some(pending_quote_document()));
@@ -218,11 +233,19 @@ async fn build_remote_quoted_status_from_row(
     if !remote_quote_visibility_is_embeddable(remote_status.visibility.as_str()) {
         return Ok(Some(unauthorized_quote_document()));
     }
-    let Some(actor) = find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await? else {
+    let actor = match embed.and_then(|e| e.remote_actors.get(&remote_status.actor_uri)) {
+        Some(actor) => Some(actor.clone()),
+        None => find_remote_actor_by_actor_uri(db, &remote_status.actor_uri).await?,
+    };
+    let Some(actor) = actor else {
         return Ok(None);
     };
-    let federated_emojis =
-        super::remote::federated_emojis_for_remote_status(db, &remote_status.id, None).await?;
+    let federated_emojis = super::remote::federated_emojis_for_remote_status(
+        db,
+        &remote_status.id,
+        embed.map(|e| &e.federated_emojis),
+    )
+    .await?;
     let mut response = MastodonStatusResponse::from_remote_row(
         &remote_status,
         &actor,
@@ -230,8 +253,14 @@ async fn build_remote_quoted_status_from_row(
         federated_emojis.as_ref(),
     );
     let text_content = remote_status.plain_text();
-    let remote_attachments =
-        find_remote_status_attachments_by_status_id(db, &remote_status.id).await?;
+    let remote_attachments = match embed {
+        Some(e) => e
+            .remote_attachments
+            .get(&remote_status.id)
+            .cloned()
+            .unwrap_or_default(),
+        None => find_remote_status_attachments_by_status_id(db, &remote_status.id).await?,
+    };
     response.card = build_remote_status_card_value(&text_content, &remote_attachments);
     response.media_attachments = super::remote::remote_media_attachment_values(&remote_attachments);
     response.filtered = if viewer.is_some() {
@@ -248,7 +277,10 @@ async fn build_remote_quoted_status_from_row(
     } else {
         None
     };
-    response.mentions = build_status_mentions(db, config, &text_content).await?;
+    response.mentions = match embed.and_then(|e| e.remote_mentions.mentions(&remote_status.id)) {
+        Some(Some(stored)) => stored,
+        _ => build_status_mentions(db, config, &text_content).await?,
+    };
     let (favourites_count, reblogs_count) =
         super::remote::remote_status_counts(db, counts_preload, &remote_status).await?;
     response.favourites_count = favourites_count;
@@ -258,7 +290,7 @@ async fn build_remote_quoted_status_from_row(
         viewer,
         &remote_status,
         &actor,
-        None,
+        embed.and_then(|e| e.remote_viewer_state.as_ref()),
     )
     .await?;
     if viewer.is_some() {
@@ -267,13 +299,22 @@ async fn build_remote_quoted_status_from_row(
         response.bookmarked = Some(viewer_state.bookmarked);
         response.muted = Some(viewer_state.muted);
     }
-    response.in_reply_to_id = super::remote::resolve_remote_in_reply_to_status_id(
-        db,
-        config,
-        remote_status.in_reply_to_uri.as_deref(),
-    )
-    .await?;
-    response.poll = load_remote_mastodon_poll_response(db, &remote_status, viewer).await?;
+    response.in_reply_to_id = match embed.and_then(|e| e.remote_in_reply_to.get(&remote_status.id))
+    {
+        Some(id) => id.clone(),
+        None => {
+            super::remote::resolve_remote_in_reply_to_status_id(
+                db,
+                config,
+                remote_status.in_reply_to_uri.as_deref(),
+            )
+            .await?
+        }
+    };
+    response.poll = match embed {
+        Some(e) => e.remote_polls.poll_response(&remote_status.id),
+        None => load_remote_mastodon_poll_response(db, &remote_status, viewer).await?,
+    };
     response.quote = None;
     let state = remote_quoted_status_document_state(db, viewer, &actor).await?;
     Ok(Some(quote_document_from_response(state, response)))

@@ -286,7 +286,11 @@ async fn load_remote_status_response_details(
         build_remote_status_card_value(&text_content, &remote_attachments)
     };
     let media_attachments = remote_media_attachment_values(&remote_attachments);
-    let mentions = if let Some(stored) = load_stored_remote_status_mentions(db, &status.id).await? {
+    let stored_mentions = match mention_preload.and_then(|p| p.stored_remote_mentions(&status.id)) {
+        Some(stored) => stored,
+        None => load_stored_remote_status_mentions(db, &status.id).await?,
+    };
+    let mentions = if let Some(stored) = stored_mentions {
         stored
     } else {
         build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?

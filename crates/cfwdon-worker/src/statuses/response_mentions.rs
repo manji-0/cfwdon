@@ -1,4 +1,5 @@
 use super::LocalAccount;
+use super::status_mentions::StoredMentionsPreload;
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
 use crate::identity::{actor_url, remote_account_rest_id};
@@ -20,6 +21,34 @@ pub(crate) async fn build_status_mentions(
 pub(crate) struct MentionAccountsPreload {
     local_accounts: HashMap<String, LocalAccount>,
     remote_actors: HashMap<(String, String), RemoteActorRow>,
+    stored_local: StoredMentionsPreload,
+    stored_remote: StoredMentionsPreload,
+}
+
+impl MentionAccountsPreload {
+    /// Attach stored mention rows so builders skip a per-status query.
+    pub(crate) fn add_stored_mentions(
+        &mut self,
+        local: StoredMentionsPreload,
+        remote: StoredMentionsPreload,
+    ) {
+        self.stored_local.extend(local);
+        self.stored_remote.extend(remote);
+    }
+
+    pub(crate) fn stored_local_mentions(
+        &self,
+        status_id: &str,
+    ) -> Option<Option<Vec<serde_json::Value>>> {
+        self.stored_local.mentions(status_id)
+    }
+
+    pub(crate) fn stored_remote_mentions(
+        &self,
+        status_id: &str,
+    ) -> Option<Option<Vec<serde_json::Value>>> {
+        self.stored_remote.mentions(status_id)
+    }
 }
 
 pub(crate) async fn preload_mention_accounts_from_texts(
@@ -55,6 +84,7 @@ pub(crate) async fn preload_mention_accounts_from_texts(
     Ok(MentionAccountsPreload {
         local_accounts,
         remote_actors,
+        ..Default::default()
     })
 }
 

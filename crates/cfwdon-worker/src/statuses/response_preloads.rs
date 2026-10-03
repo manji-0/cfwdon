@@ -224,7 +224,7 @@ impl StatusQuoteCountsPreload {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct LocalStatusViewerStatePreload {
     favourited_target_uris: HashSet<String>,
     reblogged_target_uris: HashSet<String>,
@@ -311,7 +311,7 @@ pub(crate) fn preloaded_local_status_response_viewer_state(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct RemoteStatusViewerStatePreload {
     favourited_status_ids: HashSet<String>,
     reblogged_status_ids: HashSet<String>,

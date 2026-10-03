@@ -21,13 +21,13 @@ use crate::remote::{
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
 };
 use crate::statuses::{
-    BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
+    BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload, QuoteEmbedPreloads,
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
-    build_local_status_response_with_timeline_preloads,
+    StoredMentionsPreload, StoredMentionsTable, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, enrich_card_with_remote_preview,
     preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
     preload_remote_status_ids_viewer_state, preload_status_applications,
-    preload_status_quote_counts,
+    preload_status_quote_counts, preload_stored_status_mentions,
 };
 use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
 use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
@@ -97,6 +97,25 @@ fn collect_timeline_candidate_mention_texts(
     mention_texts
 }
 
+/// Stored mention rows for every candidate, one query per table.
+async fn preload_candidate_stored_mentions(
+    db: &D1Database,
+    candidates: &[PublicTimelineCandidateEntry],
+) -> Result<(StoredMentionsPreload, StoredMentionsPreload)> {
+    let mut local_ids = Vec::new();
+    let mut remote_ids = Vec::new();
+    for entry in candidates {
+        match &entry.candidate {
+            PublicTimelineCandidate::Local { status, .. } => local_ids.push(status.id.clone()),
+            PublicTimelineCandidate::Remote { status, .. } => remote_ids.push(status.id.clone()),
+        }
+    }
+    futures_util::try_join!(
+        preload_stored_status_mentions(db, StoredMentionsTable::Local, &local_ids),
+        preload_stored_status_mentions(db, StoredMentionsTable::Remote, &remote_ids),
+    )
+}
+
 async fn preload_public_timeline_status_applications(
     db: &D1Database,
     config: &AppConfig,
@@ -137,9 +156,10 @@ async fn preload_timeline_candidate_render_context(
         in_reply_to_account_ids,
         application_preload,
         mut remote_attachments_by_status_id,
-        mention_preload,
+        mut mention_preload,
         emoji_resolved_config,
-        boost_target_preload,
+        mut boost_target_preload,
+        (candidate_local_mentions, candidate_remote_mentions),
     ) = futures_util::try_join!(
         preload_public_timeline_candidate_counts(db, candidates),
         preload_public_timeline_quote_counts(db, config, candidates, local_accounts_by_id),
@@ -160,7 +180,9 @@ async fn preload_timeline_candidate_render_context(
         preload_mention_accounts_from_texts(db, config, &mention_text_refs),
         config_with_resolved_custom_emojis(db, config),
         preload_boost_targets(db, config, &boost_of_uris),
+        preload_candidate_stored_mentions(db, candidates),
     )?;
+    mention_preload.add_stored_mentions(candidate_local_mentions, candidate_remote_mentions);
 
     let boost_ids = collect_boost_target_preload_ids(&boost_target_preload);
     let boost_remote_status_refs = boost_ids.remote_statuses.iter().collect::<Vec<_>>();
@@ -168,6 +190,8 @@ async fn preload_timeline_candidate_render_context(
     let (
         boost_local_viewer_state,
         boost_remote_viewer_state,
+        boost_local_mentions,
+        boost_remote_mentions,
         boost_counts,
         boost_quote_counts,
         boost_remote_polls,
@@ -209,6 +233,8 @@ async fn preload_timeline_candidate_render_context(
                 _ => Ok(None),
             }
         },
+        preload_stored_status_mentions(db, StoredMentionsTable::Local, &boost_ids.local_ids),
+        preload_stored_status_mentions(db, StoredMentionsTable::Remote, &boost_ids.remote_ids),
         preload_status_counts_for_remote_rows(db, &boost_ids.local_ids, &boost_remote_status_refs),
         preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
         preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
@@ -218,6 +244,20 @@ async fn preload_timeline_candidate_render_context(
         find_remote_actors_by_actor_uris(db, &boost_ids.remote_actor_uris),
         preload_remote_in_reply_to_status_ids(db, config, candidates, &boost_remote_status_refs),
     )?;
+    // Quote embeds resolve through the boost-target preload; hand them the
+    // target-only data so they skip per-quote lookups.
+    boost_target_preload.set_embed_preloads(QuoteEmbedPreloads {
+        remote_actors: boost_remote_actors.clone(),
+        remote_attachments: boost_remote_attachments.clone(),
+        federated_emojis: boost_remote_emojis.clone(),
+        remote_polls: boost_remote_polls.clone(),
+        local_viewer_state: boost_local_viewer_state.clone(),
+        remote_viewer_state: boost_remote_viewer_state.clone(),
+        local_mentions: boost_local_mentions.clone(),
+        remote_mentions: boost_remote_mentions.clone(),
+        remote_in_reply_to: remote_in_reply_to_preload.clone(),
+    });
+    mention_preload.add_stored_mentions(boost_local_mentions, boost_remote_mentions);
     if let Some(state) = boost_local_viewer_state {
         local_viewer_state_preload.extend(state);
     }
@@ -258,7 +298,7 @@ async fn preload_timeline_candidate_render_context(
 fn prepare_owned_timeline_candidates<'a>(
     local_accounts_by_id: &'a HashMap<String, LocalAccount>,
     candidates: Vec<PublicTimelineCandidateEntry>,
-    remote_attachments_by_status_id: &mut HashMap<String, Vec<RemoteStatusAttachmentRow>>,
+    remote_attachments_by_status_id: &HashMap<String, Vec<RemoteStatusAttachmentRow>>,
 ) -> Vec<(String, String, PreparedTimelineCandidate<'a>)> {
     let mut prepared = Vec::with_capacity(candidates.len());
     for candidate in candidates {
@@ -278,8 +318,11 @@ fn prepare_owned_timeline_candidates<'a>(
                 ));
             }
             PublicTimelineCandidate::Remote { status, actor } => {
+                // Cloned, not removed: the same status can also be a boost or
+                // quote target that reads this map while rendering.
                 let attachments = remote_attachments_by_status_id
-                    .remove(&status.id)
+                    .get(&status.id)
+                    .cloned()
                     .unwrap_or_default();
                 prepared.push((
                     candidate.timestamp,
@@ -382,7 +425,7 @@ pub(super) async fn timeline_entries_from_candidates(
     enrich_cards: bool,
     known_viewer_has_thread_mutes: Option<bool>,
 ) -> Result<Vec<TimelineEntry>> {
-    let mut context = preload_timeline_candidate_render_context(
+    let context = preload_timeline_candidate_render_context(
         db,
         config,
         viewer,
@@ -394,7 +437,7 @@ pub(super) async fn timeline_entries_from_candidates(
     let prepared = prepare_owned_timeline_candidates(
         local_accounts_by_id,
         candidates,
-        &mut context.remote_attachments_by_status_id,
+        &context.remote_attachments_by_status_id,
     );
     render_prepared_timeline_candidates(
         db,

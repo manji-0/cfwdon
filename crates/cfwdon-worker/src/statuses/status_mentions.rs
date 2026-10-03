@@ -3,10 +3,11 @@ use super::response_mentions::{
     load_mention_local_accounts, load_mention_remote_actors, mention_lookup_keys,
 };
 use crate::content_helpers::extract_account_handles_from_text;
-use crate::db_utils::d1_results;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::store::remote::find_remote_actor_by_actor_uri;
 use cfwdon_core::AppConfig;
+use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
 
 struct MentionRow {
@@ -307,6 +308,80 @@ pub(crate) async fn load_stored_status_mentions(
         return Ok(None);
     }
     Ok(Some(rows.into_iter().map(stored_mention_to_json).collect()))
+}
+
+/// Stored mention documents for many statuses, keyed by status id. Every id
+/// asked for is recorded as loaded, so a status without rows reads as "none
+/// stored" (fall back to text) rather than "not preloaded".
+#[derive(Debug, Default, Clone)]
+pub(crate) struct StoredMentionsPreload {
+    loaded: HashSet<String>,
+    by_status_id: HashMap<String, Vec<serde_json::Value>>,
+}
+
+impl StoredMentionsPreload {
+    /// `None` when `status_id` was not preloaded; `Some(None)` when it has no rows.
+    pub(crate) fn mentions(&self, status_id: &str) -> Option<Option<Vec<serde_json::Value>>> {
+        self.loaded
+            .contains(status_id)
+            .then(|| self.by_status_id.get(status_id).cloned())
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.loaded.extend(other.loaded);
+        self.by_status_id.extend(other.by_status_id);
+    }
+}
+
+/// Which mention table a preload reads.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum StoredMentionsTable {
+    Local,
+    Remote,
+}
+
+/// Batched [`load_stored_status_mentions`] / [`load_stored_remote_status_mentions`].
+pub(crate) async fn preload_stored_status_mentions(
+    db: &D1Database,
+    table: StoredMentionsTable,
+    status_ids: &[String],
+) -> Result<StoredMentionsPreload> {
+    if status_ids.is_empty() {
+        return Ok(StoredMentionsPreload::default());
+    }
+    #[derive(serde::Deserialize)]
+    struct Row {
+        status_id: String,
+        #[serde(flatten)]
+        mention: StoredMentionRow,
+    }
+    let table_name = match table {
+        StoredMentionsTable::Local => "status_mentions",
+        StoredMentionsTable::Remote => "remote_status_mentions",
+    };
+    let ids = json_string_array(status_ids);
+    let result = db
+        .prepare(format!(
+            "SELECT status_id, account_id, actor_uri, username, acct, url
+             FROM {table_name}
+             WHERE status_id {}",
+            sql_in_json_each(1)
+        ))
+        .bind_refs(&D1Type::Text(&ids))?
+        .all()
+        .await?;
+    let mut preload = StoredMentionsPreload {
+        loaded: status_ids.iter().cloned().collect(),
+        by_status_id: HashMap::new(),
+    };
+    for row in d1_results::<Row>(&result)? {
+        preload
+            .by_status_id
+            .entry(row.status_id)
+            .or_default()
+            .push(stored_mention_to_json(row.mention));
+    }
+    Ok(preload)
 }
 
 /// Load mention JSON documents for a remote status from the pre-computed table.

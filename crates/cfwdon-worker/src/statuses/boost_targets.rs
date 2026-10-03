@@ -6,12 +6,17 @@
 //! boost-heavy timeline page multiplies by its item count. This module resolves
 //! every URI on a page in a fixed number of batched queries instead.
 
+use super::{LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, StoredMentionsPreload};
 use super::{find_local_status_by_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids};
 use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::local_status_identity_from_uri;
+use crate::custom_emojis::RemoteStatusFederatedEmojisPreload;
+use crate::media::RemoteStatusAttachmentRow;
+use crate::remote::RemoteMastodonPollResponsePreload;
 use crate::remote::{
     find_remote_status_by_url_or_object_uri, find_remote_statuses_by_url_or_object_uris,
 };
+use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
@@ -33,9 +38,33 @@ pub(crate) enum BoostTarget {
 pub(crate) struct BoostTargetPreload {
     by_uri: HashMap<String, BoostTarget>,
     resolved_uris: HashSet<String>,
+    embed: Option<QuoteEmbedPreloads>,
+}
+
+/// Per-target data the timeline preloads for resolved targets, so a quote
+/// embed renders from memory instead of issuing its own lookups.
+#[derive(Debug, Default)]
+pub(crate) struct QuoteEmbedPreloads {
+    pub(crate) remote_actors: HashMap<String, RemoteActorRow>,
+    pub(crate) remote_attachments: HashMap<String, Vec<RemoteStatusAttachmentRow>>,
+    pub(crate) federated_emojis: RemoteStatusFederatedEmojisPreload,
+    pub(crate) remote_polls: RemoteMastodonPollResponsePreload,
+    pub(crate) local_viewer_state: Option<LocalStatusViewerStatePreload>,
+    pub(crate) remote_viewer_state: Option<RemoteStatusViewerStatePreload>,
+    pub(crate) local_mentions: StoredMentionsPreload,
+    pub(crate) remote_mentions: StoredMentionsPreload,
+    pub(crate) remote_in_reply_to: HashMap<String, Option<String>>,
 }
 
 impl BoostTargetPreload {
+    pub(crate) fn set_embed_preloads(&mut self, embed: QuoteEmbedPreloads) {
+        self.embed = Some(embed);
+    }
+
+    pub(crate) fn embed_preloads(&self) -> Option<&QuoteEmbedPreloads> {
+        self.embed.as_ref()
+    }
+
     /// `None` when `uri` was never looked up, `Some(None)` when it was looked
     /// up and matched nothing.
     pub(crate) fn target(&self, uri: &str) -> Option<Option<&BoostTarget>> {
@@ -159,6 +188,7 @@ pub(crate) async fn preload_boost_targets(
     Ok(BoostTargetPreload {
         by_uri,
         resolved_uris,
+        embed: None,
     })
 }
 
@@ -171,6 +201,7 @@ mod tests {
         let preload = BoostTargetPreload {
             by_uri: HashMap::new(),
             resolved_uris: HashSet::from(["https://example.test/statuses/1".to_owned()]),
+            embed: None,
         };
 
         // Looked up, matched nothing: the caller must not retry.

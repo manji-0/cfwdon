@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
 pub(crate) type FederatedEmojiMap = HashMap<String, CustomEmoji>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct RemoteStatusFederatedEmojisPreload {
     by_status_id: HashMap<String, FederatedEmojiMap>,
 }

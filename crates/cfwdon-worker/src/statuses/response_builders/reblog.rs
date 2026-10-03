@@ -239,8 +239,13 @@ async fn build_remote_reblog_embedded_response(
         &looked_up_actor
     };
 
-    let remote_attachments = remote_attachments_preload
-        .and_then(|attachments| attachments.get(&remote_status.id).cloned());
+    // The preload covers every resolved target; a missing entry means none.
+    let remote_attachments = remote_attachments_preload.map(|attachments| {
+        attachments
+            .get(&remote_status.id)
+            .cloned()
+            .unwrap_or_default()
+    });
 
     Ok(Some(
         Box::pin(super::remote::build_remote_status_response_inner(

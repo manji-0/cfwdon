@@ -40,7 +40,7 @@ struct RemoteStatusPollVotePreloadRow {
     option_title: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct RemoteMastodonPollResponsePreload {
     polls_by_status_id: HashMap<String, serde_json::Value>,
 }

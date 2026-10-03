@@ -295,7 +295,11 @@ async fn load_local_status_response_details(
         build_status_card_value(&status.text)
     };
     let poll = local_status_poll_response(db, poll_preload, &status.id, viewer).await?;
-    let mentions = if let Some(stored) = load_stored_status_mentions(db, &status.id).await? {
+    let stored_mentions = match mention_preload.and_then(|p| p.stored_local_mentions(&status.id)) {
+        Some(stored) => stored,
+        None => load_stored_status_mentions(db, &status.id).await?,
+    };
+    let mentions = if let Some(stored) = stored_mentions {
         stored
     } else {
         build_status_mentions_with_preload(db, config, &status.text, mention_preload).await?
