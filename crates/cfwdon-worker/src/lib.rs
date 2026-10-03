@@ -103,8 +103,26 @@ mod ui_assets;
 mod web_api;
 mod web_ui;
 
+/// Set `CFWDON_MAINTENANCE=1` (e.g. `wrangler deploy --var CFWDON_MAINTENANCE:1`)
+/// to stop every D1 read and write: HTTP answers 503, cron and queue batches
+/// return without work. Used while moving the database.
+fn maintenance_mode(env: &Env) -> bool {
+    env.var("CFWDON_MAINTENANCE")
+        .map(|value| value.to_string() == "1")
+        .unwrap_or(false)
+}
+
+fn maintenance_response() -> Result<Response> {
+    let mut response = Response::error("Service temporarily unavailable for maintenance", 503)?;
+    response.headers_mut().set("Retry-After", "300")?;
+    Ok(response)
+}
+
 #[event(fetch, respond_with_errors)]
 async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
+    if maintenance_mode(&env) {
+        return maintenance_response();
+    }
     let response = router::handle_fetch(req, env).await;
     // Loops until empty, so work deferred by a deferred task also runs.
     ctx.wait_until(deferred::run_deferred_tasks_inline());
@@ -124,6 +142,9 @@ fn scheduled_runs_trend_refresh(cron: &str) -> bool {
 
 #[event(scheduled)]
 async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    if maintenance_mode(&env) {
+        return;
+    }
     let cron = event.cron();
     let run_hourly = scheduled_runs_hourly_maintenance(&cron);
     let run_trends = scheduled_runs_trend_refresh(&cron);
@@ -263,6 +284,11 @@ async fn queue(
     env: Env,
     _ctx: Context,
 ) -> Result<()> {
+    // Acknowledge without work: outbox rows stay queued in D1 and the hourly
+    // cron re-kicks the queue once maintenance ends.
+    if maintenance_mode(&env) {
+        return Ok(());
+    }
     let result = consume_outbox_process_queue_batch(batch, env).await;
     deferred::run_deferred_tasks_inline().await;
     result
