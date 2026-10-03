@@ -235,6 +235,19 @@ pub(crate) struct LocalStatusViewerStatePreload {
 }
 
 impl LocalStatusViewerStatePreload {
+    /// Merge state preloaded for another set of statuses (e.g. boost targets).
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.favourited_target_uris
+            .extend(other.favourited_target_uris);
+        self.reblogged_target_uris
+            .extend(other.reblogged_target_uris);
+        self.bookmarked_target_uris
+            .extend(other.bookmarked_target_uris);
+        self.pinned_status_ids.extend(other.pinned_status_ids);
+        self.muted_status_ids.extend(other.muted_status_ids);
+        self.has_thread_mutes |= other.has_thread_mutes;
+    }
+
     fn favourited(&self, status: &LocalStatus) -> bool {
         self.favourited_target_uris
             .contains(&local_status_target_uri(status))
@@ -307,6 +320,16 @@ pub(crate) struct RemoteStatusViewerStatePreload {
 }
 
 impl RemoteStatusViewerStatePreload {
+    /// Merge state preloaded for another set of statuses (e.g. boost targets).
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.favourited_status_ids
+            .extend(other.favourited_status_ids);
+        self.reblogged_status_ids.extend(other.reblogged_status_ids);
+        self.bookmarked_status_ids
+            .extend(other.bookmarked_status_ids);
+        self.muted_actor_uris.extend(other.muted_actor_uris);
+    }
+
     fn favourited(&self, status_id: &str) -> bool {
         self.favourited_status_ids.contains(status_id)
     }
@@ -495,17 +518,36 @@ pub(crate) async fn preload_remote_status_viewer_state(
     account_id: &str,
     statuses: &[(&RemoteStatus, &RemoteActorRow)],
 ) -> Result<RemoteStatusViewerStatePreload> {
-    let mut seen_status_ids = HashSet::new();
     let status_ids = statuses
         .iter()
         .map(|(status, _)| status.id.clone())
-        .filter(|id| seen_status_ids.insert(id.clone()))
         .collect::<Vec<_>>();
-    let mut seen_actor_uris = HashSet::new();
     let actor_uris = statuses
         .iter()
         .map(|(_, actor)| actor.actor_uri.clone())
-        .filter(|uri| seen_actor_uris.insert(uri.clone()))
+        .collect::<Vec<_>>();
+    preload_remote_status_ids_viewer_state(db, account_id, &status_ids, &actor_uris).await
+}
+
+/// [`preload_remote_status_viewer_state`] keyed by ids, for statuses whose
+/// actor rows are not loaded yet (boost targets).
+pub(crate) async fn preload_remote_status_ids_viewer_state(
+    db: &D1Database,
+    account_id: &str,
+    status_ids: &[String],
+    actor_uris: &[String],
+) -> Result<RemoteStatusViewerStatePreload> {
+    let mut seen_status_ids = HashSet::new();
+    let status_ids = status_ids
+        .iter()
+        .filter(|id| seen_status_ids.insert(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut seen_actor_uris = HashSet::new();
+    let actor_uris = actor_uris
+        .iter()
+        .filter(|uri| seen_actor_uris.insert(uri.as_str()))
+        .cloned()
         .collect::<Vec<_>>();
 
     let caps = load_account_capabilities(db, account_id).await?;

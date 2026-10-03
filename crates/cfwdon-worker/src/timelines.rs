@@ -515,6 +515,7 @@ async fn preload_remote_in_reply_to_status_ids(
 
 struct BoostTargetPreloadIds {
     local_ids: Vec<String>,
+    local_statuses: Vec<LocalStatus>,
     remote_ids: Vec<String>,
     remote_actor_uris: Vec<String>,
     remote_quote_uris: Vec<String>,
@@ -523,13 +524,17 @@ struct BoostTargetPreloadIds {
 
 fn collect_boost_target_preload_ids(boost_targets: &BoostTargetPreload) -> BoostTargetPreloadIds {
     let mut local_ids = Vec::new();
+    let mut local_statuses = Vec::new();
     let mut remote_ids = Vec::new();
     let mut remote_actor_uris = Vec::new();
     let mut remote_quote_uris = Vec::new();
     let mut remote_statuses = Vec::new();
     for target in boost_targets.resolved_targets() {
         match target {
-            BoostTarget::Local(status) => local_ids.push(status.id.clone()),
+            BoostTarget::Local(status) => {
+                local_ids.push(status.id.clone());
+                local_statuses.push(status.clone());
+            }
             BoostTarget::Remote(status) => {
                 remote_ids.push(status.id.clone());
                 remote_actor_uris.push(status.actor_uri.clone());
@@ -540,6 +545,7 @@ fn collect_boost_target_preload_ids(boost_targets: &BoostTargetPreload) -> Boost
     }
     BoostTargetPreloadIds {
         local_ids,
+        local_statuses,
         remote_ids,
         remote_actor_uris,
         remote_quote_uris,

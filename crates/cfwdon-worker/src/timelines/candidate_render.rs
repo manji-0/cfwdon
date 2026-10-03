@@ -25,7 +25,8 @@ use crate::statuses::{
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
     build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, enrich_card_with_remote_preview,
-    preload_boost_targets, preload_mention_accounts_from_texts, preload_status_applications,
+    preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
+    preload_remote_status_ids_viewer_state, preload_status_applications,
     preload_status_quote_counts,
 };
 use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
@@ -128,8 +129,8 @@ async fn preload_timeline_candidate_render_context(
         mut counts_preload,
         mut quote_counts_preload,
         local_poll_preload,
-        local_viewer_state_preload,
-        remote_viewer_state_preload,
+        mut local_viewer_state_preload,
+        mut remote_viewer_state_preload,
         mut remote_poll_preload,
         mut remote_edit_updated_at_preload,
         mut remote_federated_emojis_preload,
@@ -163,7 +164,10 @@ async fn preload_timeline_candidate_render_context(
 
     let boost_ids = collect_boost_target_preload_ids(&boost_target_preload);
     let boost_remote_status_refs = boost_ids.remote_statuses.iter().collect::<Vec<_>>();
+    let boost_local_status_refs = boost_ids.local_statuses.iter().collect::<Vec<_>>();
     let (
+        boost_local_viewer_state,
+        boost_remote_viewer_state,
         boost_counts,
         boost_quote_counts,
         boost_remote_polls,
@@ -173,6 +177,38 @@ async fn preload_timeline_candidate_render_context(
         boost_remote_actors,
         remote_in_reply_to_preload,
     ) = futures_util::try_join!(
+        // Boost targets that are not page candidates need their own viewer
+        // state, or `favourited` / `reblogged` read false on the embedded status.
+        async {
+            match viewer {
+                Some(viewer) if !boost_local_status_refs.is_empty() => {
+                    preload_local_status_viewer_state(
+                        db,
+                        viewer.id(),
+                        &boost_local_status_refs,
+                        known_viewer_has_thread_mutes,
+                    )
+                    .await
+                    .map(Some)
+                }
+                _ => Ok(None),
+            }
+        },
+        async {
+            match viewer {
+                Some(viewer) if !boost_ids.remote_ids.is_empty() => {
+                    preload_remote_status_ids_viewer_state(
+                        db,
+                        viewer.id(),
+                        &boost_ids.remote_ids,
+                        &boost_ids.remote_actor_uris,
+                    )
+                    .await
+                    .map(Some)
+                }
+                _ => Ok(None),
+            }
+        },
         preload_status_counts_for_remote_rows(db, &boost_ids.local_ids, &boost_remote_status_refs),
         preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
         preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
@@ -182,6 +218,12 @@ async fn preload_timeline_candidate_render_context(
         find_remote_actors_by_actor_uris(db, &boost_ids.remote_actor_uris),
         preload_remote_in_reply_to_status_ids(db, config, candidates, &boost_remote_status_refs),
     )?;
+    if let Some(state) = boost_local_viewer_state {
+        local_viewer_state_preload.extend(state);
+    }
+    if let Some(state) = boost_remote_viewer_state {
+        remote_viewer_state_preload.extend(state);
+    }
     counts_preload.extend(boost_counts);
     quote_counts_preload.extend(boost_quote_counts);
     remote_poll_preload.extend(boost_remote_polls);
