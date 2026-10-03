@@ -74,7 +74,7 @@ async fn list_home_timeline_candidate_ids_for_source(
     d1_results::<HomeTimelineCandidateRow>(&result)
 }
 
-pub(super) fn merge_home_timeline_candidate_rows(
+pub(crate) fn merge_home_timeline_candidate_rows(
     local_rows: Vec<HomeTimelineCandidateRow>,
     remote_rows: Vec<HomeTimelineCandidateRow>,
     limit: u32,

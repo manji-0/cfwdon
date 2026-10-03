@@ -173,6 +173,58 @@ def main() -> int:
             None,
         ),
         (
+            "list timeline local members seekable",
+            """WITH members AS (
+                 SELECT a.id AS account_id
+                 FROM account_list_memberships m
+                 CROSS JOIN accounts a ON a.id = m.target_account_ref
+                 WHERE m.list_id = ?1
+                 UNION
+                 SELECT a.id AS account_id
+                 FROM account_list_memberships m
+                 CROSS JOIN accounts a
+                   ON a.username = substr(m.target_account_ref, 1, instr(m.target_account_ref, '@') - 1)
+                 WHERE m.list_id = ?1
+                   AND m.target_account_ref = a.username || '@' || ?2
+               )
+               SELECT s.id FROM members mb
+               CROSS JOIN statuses s ON s.account_id = mb.account_id
+               WHERE s.visibility = 'public'
+                 AND s.created_at <= ?3 AND (s.created_at < ?3 OR s.id < ?4)
+               ORDER BY s.created_at DESC, s.id DESC LIMIT ?5""",
+            ("list-1", "example.com", "2026-01-15T12:00:00Z", "status-50", 80),
+            "a,s",
+        ),
+        (
+            "list timeline remote members seekable",
+            """WITH members AS (
+                 SELECT ra.actor_uri AS actor_uri
+                 FROM account_list_memberships m
+                 CROSS JOIN remote_actors ra ON ra.actor_uri = m.target_account_ref
+                 WHERE m.list_id = ?1
+                 UNION
+                 SELECT actor_uri FROM (
+                     SELECT (
+                         SELECT ra.actor_uri
+                         FROM remote_actors ra
+                         WHERE lower(ra.username) = lower(substr(m.target_account_ref, 1, instr(m.target_account_ref, '@') - 1))
+                           AND lower(ra.domain) = lower(substr(m.target_account_ref, instr(m.target_account_ref, '@') + 1))
+                     ) AS actor_uri
+                     FROM account_list_memberships m
+                     WHERE m.list_id = ?1
+                       AND instr(m.target_account_ref, '@') > 0
+                 )
+                 WHERE actor_uri IS NOT NULL
+               )
+               SELECT rs.id FROM members mb
+               CROSS JOIN remote_statuses rs ON rs.actor_uri = mb.actor_uri
+               WHERE rs.visibility = 'public'
+                 AND rs.published_at <= ?2 AND (rs.published_at < ?2 OR rs.id < ?3)
+               ORDER BY rs.published_at DESC, rs.id DESC LIMIT ?4""",
+            ("list-1", "2026-01-15T12:00:00Z", "status-50", 80),
+            "ra,rs",
+        ),
+        (
             "status quotes seekable",
             """SELECT id FROM statuses
                WHERE quote_of_uri = ?
@@ -331,7 +383,8 @@ def main() -> int:
                 plan = plan_text(conn, sql, params)
                 assert_uses_index(plan, label)
                 if seek_alias is not None:
-                    assert_seeks_alias(plan, label, seek_alias)
+                    for alias in seek_alias.split(","):
+                        assert_seeks_alias(plan, label, alias)
                 assert_no_null_cursor_disjunction(plan, sql, label)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)

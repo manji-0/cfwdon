@@ -1,9 +1,9 @@
 use super::{
-    HomeTimelineQuery, PublicTimelineCandidate, PublicTimelineCandidateEntry, candidate_render,
-    empty_timeline_response, local_status_actor_uri, muted_local_timeline_status_ids,
-    preload_local_timeline_rows_from_status_refs, resolve_timeline_cursor,
-    select_public_timeline_candidates, timeline_cursor_is_unresolved, timeline_fetch_limit,
-    timeline_invalid_access_token_response, timeline_limit,
+    HomeTimelineQuery, PublicTimelineCandidate, PublicTimelineCandidateEntry, TimelineEntry,
+    candidate_render, empty_timeline_response, local_status_actor_uri,
+    muted_local_timeline_status_ids, preload_local_timeline_rows_from_status_refs,
+    resolve_timeline_cursor, select_public_timeline_candidates, timeline_cursor_is_unresolved,
+    timeline_fetch_limit, timeline_invalid_access_token_response, timeline_limit,
     timeline_outside_authorized_scopes_response, timeline_response_from_entries,
 };
 use crate::app_cache::load_account_capabilities;
@@ -12,12 +12,15 @@ use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::home_timeline::{
     HOME_TIMELINE_CANDIDATE_SOURCE_LOCAL, HOME_TIMELINE_CANDIDATE_SOURCE_REMOTE,
-    list_home_timeline_candidate_ids,
+    HomeTimelineCandidateRow, list_home_timeline_candidate_ids,
 };
 use crate::oauth_store::oauth_access_token_has_any_scope;
 use crate::runtime_config::load_config;
 use crate::statuses::{find_remote_statuses_with_actors_by_ids, find_statuses_by_ids};
 use crate::store::relationship::list_active_muted_actor_uris_for_account;
+use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
+use cfwdon_domain::LocalAccount;
 use std::collections::{HashMap, HashSet};
 use worker::{Request, Response, Result, RouteContext};
 
@@ -77,7 +80,37 @@ pub(crate) async fn home_timeline_response(
         include_followed_tags,
     )
     .await?;
+    let entries = timeline_entries_from_candidate_rows(
+        &db,
+        &config,
+        &viewer,
+        &filter_matcher,
+        viewer_has_thread_mutes,
+        &muted_actor_uris,
+        candidate_rows,
+        limit,
+    )
+    .await?;
 
+    with_d1_bookmark(
+        timeline_response_from_entries(&req, limit, entries)?,
+        &session,
+    )
+}
+
+/// Hydrate merged candidate rows (newest first) and render the page, skipping
+/// muted authors and thread-muted local statuses.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn timeline_entries_from_candidate_rows(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    filter_matcher: &AccountFilterMatcher,
+    viewer_has_thread_mutes: bool,
+    muted_actor_uris: &HashSet<String>,
+    candidate_rows: Vec<HomeTimelineCandidateRow>,
+    limit: u32,
+) -> Result<Vec<TimelineEntry>> {
     let mut local_candidate_ids = Vec::new();
     let mut remote_candidate_ids = Vec::new();
     for row in &candidate_rows {
@@ -93,8 +126,8 @@ pub(crate) async fn home_timeline_response(
     }
 
     let (local_statuses, remote_statuses) = futures_util::try_join!(
-        find_statuses_by_ids(&db, &local_candidate_ids),
-        find_remote_statuses_with_actors_by_ids(&db, &remote_candidate_ids),
+        find_statuses_by_ids(db, &local_candidate_ids),
+        find_remote_statuses_with_actors_by_ids(db, &remote_candidate_ids),
     )?;
     let mut local_statuses_by_id = local_statuses
         .into_iter()
@@ -109,9 +142,9 @@ pub(crate) async fn home_timeline_response(
     let ((local_accounts_by_id, mut media_by_status_id), muted_local_status_ids) = {
         let local_status_refs = local_statuses_by_id.values().collect::<Vec<_>>();
         futures_util::try_join!(
-            preload_local_timeline_rows_from_status_refs(&db, &local_status_refs),
+            preload_local_timeline_rows_from_status_refs(db, &local_status_refs),
             muted_local_timeline_status_ids(
-                &db,
+                db,
                 viewer.id(),
                 viewer_has_thread_mutes,
                 &local_status_refs,
@@ -131,7 +164,7 @@ pub(crate) async fn home_timeline_response(
                     continue;
                 };
                 let Some(actor_uri) =
-                    local_status_actor_uri(&config, &local_accounts_by_id, &status)
+                    local_status_actor_uri(config, &local_accounts_by_id, &status)
                 else {
                     continue;
                 };
@@ -166,20 +199,15 @@ pub(crate) async fn home_timeline_response(
     }
 
     let candidates = select_public_timeline_candidates(candidates, limit);
-    let entries = candidate_render::timeline_entries_from_candidates(
-        &db,
-        &config,
-        Some(&viewer),
-        Some(&filter_matcher),
+    candidate_render::timeline_entries_from_candidates(
+        db,
+        config,
+        Some(viewer),
+        Some(filter_matcher),
         &local_accounts_by_id,
         candidates,
         false,
         Some(viewer_has_thread_mutes),
     )
-    .await?;
-
-    with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
-        &session,
-    )
+    .await
 }
