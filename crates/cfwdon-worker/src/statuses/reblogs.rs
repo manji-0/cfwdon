@@ -7,10 +7,7 @@ use super::{
 };
 use crate::delivery::{enqueue_announce_activity, enqueue_undo_announce_activity};
 use crate::response_cache::invalidate_status_api_cache;
-use crate::statuses::{
-    AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus,
-    find_owned_local_status_response_subject,
-};
+use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
 use serde::Deserialize;
 use worker::{Error, Request, Response, Result, RouteContext};
 
@@ -86,12 +83,15 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let wrapper_subject =
-                find_owned_local_status_response_subject(&action.auth.db, &wrapper.id, viewer)
-                    .await?
-                    .ok_or_else(|| {
-                        worker::Error::RustError("reblog wrapper status not found".to_owned())
-                    })?;
+            // The wrapper was just written by this request and has no media or reply.
+            let wrapper_subject = super::LoadedLocalStatusResponseSubject {
+                status: wrapper,
+                account: viewer.clone(),
+                preload: super::LocalStatusResponsePreload {
+                    media: Vec::new(),
+                    in_reply_to_account_id: None,
+                },
+            };
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,
@@ -138,12 +138,15 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             )
             .await?;
             invalidate_status_api_cache(&ctx, &action.status_id).await;
-            let wrapper_subject =
-                find_owned_local_status_response_subject(&action.auth.db, &wrapper.id, viewer)
-                    .await?
-                    .ok_or_else(|| {
-                        worker::Error::RustError("reblog wrapper status not found".to_owned())
-                    })?;
+            // The wrapper was just written by this request and has no media or reply.
+            let wrapper_subject = super::LoadedLocalStatusResponseSubject {
+                status: wrapper,
+                account: viewer.clone(),
+                preload: super::LocalStatusResponsePreload {
+                    media: Vec::new(),
+                    in_reply_to_account_id: None,
+                },
+            };
             let response = build_local_action_status_response(
                 &action.auth.db,
                 &action.auth.config,

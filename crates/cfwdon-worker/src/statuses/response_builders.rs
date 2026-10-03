@@ -18,8 +18,7 @@ pub(crate) use local::{
     build_local_status_response_with_timeline_preloads,
 };
 pub(crate) use remote::{
-    build_remote_status_response, build_remote_status_response_with_filter_matcher,
-    build_remote_status_response_with_timeline_preloads,
+    build_remote_status_response, build_remote_status_response_with_timeline_preloads,
 };
 
 #[cfg(test)]

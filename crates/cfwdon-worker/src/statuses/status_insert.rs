@@ -264,7 +264,8 @@ pub(crate) async fn upsert_reblog_wrapper_status(
 
     insert_local_reblog_intent(db, &stored).await?;
 
-    require_status_by_id(db, &stored.status_id).await
+    LocalStatus::try_from_record(stored.to_record())
+        .map_err(|error| worker::Error::RustError(error.to_string()))
 }
 
 async fn update_reblog_wrapper_status_row(

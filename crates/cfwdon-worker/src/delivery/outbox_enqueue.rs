@@ -377,6 +377,7 @@ pub(crate) async fn enqueue_targeted_outbox_activity(
 ) -> Result<()> {
     let descriptor = describe_outbound_activity(payload_json)?;
     let mut seen = HashSet::new();
+    let mut statements = Vec::new();
 
     for target_inbox in target_inboxes {
         let target_inbox = target_inbox.trim();
@@ -395,8 +396,9 @@ pub(crate) async fn enqueue_targeted_outbox_activity(
             D1Type::Text(target_inbox),
             D1Type::Text(payload_json),
         ];
-        db.prepare(
-            "INSERT OR IGNORE INTO outbox_deliveries (
+        statements.push(
+            db.prepare(
+                "INSERT OR IGNORE INTO outbox_deliveries (
                 id,
                 account_id,
                 status_id,
@@ -425,11 +427,14 @@ pub(crate) async fn enqueue_targeted_outbox_activity(
                 CURRENT_TIMESTAMP,
                 CURRENT_TIMESTAMP
             )",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
 
+    // One round trip for every inbox instead of one per follower inbox.
+    if !statements.is_empty() {
+        db.batch(statements).await?;
+    }
     Ok(())
 }

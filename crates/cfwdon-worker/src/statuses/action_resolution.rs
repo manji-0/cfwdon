@@ -1,23 +1,22 @@
 use super::{
-    LocalAccount, build_local_status_response, build_remote_status_response_with_filter_matcher,
-    find_local_status_by_object_uri, find_status_by_id, find_visible_local_status_response_subject,
-    load_visible_local_status_response_subject,
+    LocalAccount, find_local_status_by_object_uri, find_remote_statuses_with_actors_by_ids,
+    find_status_by_id, find_statuses_by_ids, load_visible_local_status_response_subject,
 };
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
-use crate::custom_emojis::preload_remote_status_federated_emojis;
 use crate::db_session::bind_request_d1;
 use crate::remote::{
     find_remote_status_by_id, find_remote_status_by_url_or_object_uri, resolve_remote_status_by_url,
 };
 use crate::request_utils::status_id_from_context;
-use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
 use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
+use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use serde::Deserialize;
+use std::collections::HashMap;
 use worker::{Error, Request, Response, Result, RouteContext};
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct StatusActionQuery {
@@ -197,27 +196,22 @@ async fn resolve_action_uri_reference(
     Ok(None)
 }
 
+/// Render the acting viewer's status response through the batched preloads.
 pub(crate) async fn build_local_action_status_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
     subject: super::LoadedLocalStatusResponseSubject,
-) -> Result<MastodonStatusResponse> {
-    let super::LoadedLocalStatusResponseSubject {
-        status,
-        account,
-        preload,
-    } = subject;
-    build_local_status_response(
+) -> Result<serde_json::Value> {
+    Ok(render_status_items(
         db,
         config,
         Some(viewer),
-        &status,
-        &account,
-        preload.in_reply_to_account_id,
-        preload.media,
+        vec![StatusRenderItem::Local(subject.status)],
     )
-    .await
+    .await?
+    .pop()
+    .unwrap_or(serde_json::Value::Null))
 }
 
 pub(crate) async fn build_saved_status_collection_response<
@@ -240,54 +234,51 @@ where
     FStatusId: Fn(&T) -> Option<&str>,
     FRemoteStatusId: Fn(&T) -> Option<&str>,
 {
+    let local_status_ids = entries
+        .iter()
+        .filter_map(|entry| status_id(entry).map(str::to_owned))
+        .collect::<Vec<_>>();
     let remote_status_ids = entries
         .iter()
         .filter_map(|entry| remote_status_id(entry).map(str::to_owned))
         .collect::<Vec<_>>();
-    let federated_emojis_preload =
-        preload_remote_status_federated_emojis(db, &remote_status_ids).await?;
-    let mut response_entries = Vec::new();
-    for entry in entries {
-        if let Some(local_status_id) = status_id(entry)
-            && let Some(subject) =
-                find_visible_local_status_response_subject(db, Some(viewer), local_status_id)
-                    .await?
-        {
-            let response = build_local_action_status_response(db, config, viewer, subject).await?;
-            response_entries.push((
-                created_at(entry).to_owned(),
-                serde_json::to_value(response).unwrap_or_default(),
-            ));
-            continue;
-        }
-
-        if let Some(remote_status_id) = remote_status_id(entry)
-            && let Some(status) = find_remote_status_by_id(db, remote_status_id).await?
-            && let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await?
-        {
-            let response = build_remote_status_response_with_filter_matcher(
-                db,
-                config,
-                Some(viewer),
-                &status,
-                &actor,
-                None,
-                Some(&federated_emojis_preload),
-            )
-            .await?;
-            response_entries.push((
-                created_at(entry).to_owned(),
-                serde_json::to_value(response).unwrap_or_default(),
-            ));
-        }
-    }
-
-    response_entries.sort_by(|left, right| right.0.cmp(&left.0));
-    Response::from_json(
-        &response_entries
+    let (local_statuses, remote_statuses) = futures_util::try_join!(
+        find_statuses_by_ids(db, &local_status_ids),
+        find_remote_statuses_with_actors_by_ids(db, &remote_status_ids),
+    )?;
+    // Visibility checks run concurrently; rendering is one batched pass below.
+    let visible_local = futures_util::future::try_join_all(
+        local_statuses
             .into_iter()
-            .map(|(_, value)| value)
-            .take(limit as usize)
-            .collect::<Vec<_>>(),
+            .map(|status| load_visible_local_status_response_subject(db, Some(viewer), status)),
     )
+    .await?
+    .into_iter()
+    .flatten()
+    .map(|subject| (subject.status.id.clone(), subject.status))
+    .collect::<HashMap<_, _>>();
+    let mut remote_by_id = remote_statuses
+        .into_iter()
+        .map(|(status, actor)| (status.id.clone(), (status, actor)))
+        .collect::<HashMap<_, _>>();
+    let mut visible_local = visible_local;
+
+    let mut ordered = Vec::new();
+    for entry in entries {
+        let item = if let Some(status) = status_id(entry).and_then(|id| visible_local.remove(id)) {
+            StatusRenderItem::Local(status)
+        } else if let Some((status, actor)) =
+            remote_status_id(entry).and_then(|id| remote_by_id.remove(id))
+        {
+            StatusRenderItem::Remote { status, actor }
+        } else {
+            continue;
+        };
+        ordered.push((created_at(entry).to_owned(), item));
+    }
+    ordered.sort_by(|left, right| right.0.cmp(&left.0));
+    ordered.truncate(limit as usize);
+    let items = ordered.into_iter().map(|(_, item)| item).collect();
+
+    Response::from_json(&render_status_items(db, config, Some(viewer), items).await?)
 }
