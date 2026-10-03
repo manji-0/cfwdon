@@ -1,17 +1,19 @@
 use super::{
     PreparedTimelineCandidate, PublicTimelineCandidate, PublicTimelineCandidateEntry,
-    TimelineEntry, collect_boost_target_preload_ids, preload_public_timeline_candidate_counts,
-    preload_public_timeline_local_polls, preload_public_timeline_local_viewer_state,
-    preload_public_timeline_quote_counts, preload_public_timeline_remote_attachments,
-    preload_public_timeline_remote_edits, preload_public_timeline_remote_federated_emojis,
-    preload_public_timeline_remote_polls, preload_public_timeline_remote_viewer_state,
-    preload_remote_in_reply_to_status_ids, preload_timeline_candidate_reply_account_ids,
+    TimelineEntry, collect_boost_target_preload_ids, preload_local_timeline_rows_from_status_refs,
+    preload_public_timeline_candidate_counts, preload_public_timeline_local_polls,
+    preload_public_timeline_local_viewer_state, preload_public_timeline_quote_counts,
+    preload_public_timeline_remote_attachments, preload_public_timeline_remote_edits,
+    preload_public_timeline_remote_federated_emojis, preload_public_timeline_remote_polls,
+    preload_public_timeline_remote_viewer_state, preload_remote_in_reply_to_status_ids,
+    preload_timeline_candidate_reply_account_ids,
 };
+use crate::app_cache::load_account_capabilities;
 use crate::custom_emojis::{
     RemoteStatusFederatedEmojisPreload, config_with_resolved_custom_emojis,
     preload_remote_status_federated_emojis,
 };
-use crate::filters::AccountFilterMatcher;
+use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::local_polls::MastodonPollResponsePreload;
 use crate::media::{RemoteStatusAttachmentRow, find_remote_status_attachments_by_status_ids};
 use crate::remote::{
@@ -30,7 +32,7 @@ use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
 use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::{Error, Result};
 
@@ -362,4 +364,82 @@ pub(super) async fn timeline_entries_from_candidates(
         enrich_cards,
     )
     .await
+}
+
+/// A status rendered outside a timeline page, such as a thread context node.
+pub(crate) enum StatusRenderItem {
+    Local(LocalStatus),
+    Remote {
+        status: RemoteStatus,
+        actor: RemoteActorRow,
+    },
+}
+
+/// Render `items` in order with the timeline's batched preloads, so a thread
+/// costs a fixed number of D1 rounds instead of a full status build per node.
+pub(crate) async fn render_status_items(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    items: Vec<StatusRenderItem>,
+) -> Result<Vec<serde_json::Value>> {
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let local_status_refs = items
+        .iter()
+        .filter_map(|item| match item {
+            StatusRenderItem::Local(status) => Some(status),
+            StatusRenderItem::Remote { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let ((local_accounts_by_id, mut media_by_status_id), viewer_preload) = futures_util::try_join!(
+        preload_local_timeline_rows_from_status_refs(db, &local_status_refs),
+        async {
+            let Some(viewer) = viewer else {
+                return Ok::<_, Error>(None);
+            };
+            let caps = load_account_capabilities(db, viewer.id()).await?;
+            let filter_matcher = if caps.has_filters {
+                load_account_filter_matcher(db, viewer.id()).await?
+            } else {
+                AccountFilterMatcher::default()
+            };
+            Ok(Some((filter_matcher, caps.has_thread_mutes)))
+        },
+    )?;
+    let candidates = items
+        .into_iter()
+        .map(|item| match item {
+            StatusRenderItem::Local(status) => PublicTimelineCandidateEntry {
+                timestamp: status.created_at.clone(),
+                id: status.id.clone(),
+                candidate: PublicTimelineCandidate::Local {
+                    media: media_by_status_id.remove(&status.id).unwrap_or_default(),
+                    status,
+                },
+            },
+            StatusRenderItem::Remote { status, actor } => PublicTimelineCandidateEntry {
+                timestamp: status.published_at.clone(),
+                id: status.id.clone(),
+                candidate: PublicTimelineCandidate::Remote { status, actor },
+            },
+        })
+        .collect::<Vec<_>>();
+    let (filter_matcher, has_thread_mutes) = match viewer_preload {
+        Some((filter_matcher, has_thread_mutes)) => (Some(filter_matcher), Some(has_thread_mutes)),
+        None => (None, None),
+    };
+    let entries = timeline_entries_from_candidates(
+        db,
+        config,
+        viewer,
+        filter_matcher.as_ref(),
+        &local_accounts_by_id,
+        candidates,
+        false,
+        has_thread_mutes,
+    )
+    .await?;
+    Ok(entries.into_iter().map(|(_, _, value)| value).collect())
 }

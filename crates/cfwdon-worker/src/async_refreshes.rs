@@ -1,5 +1,6 @@
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
+use crate::deferred::defer;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
@@ -81,17 +82,41 @@ async fn upsert_async_refresh(
     Ok(())
 }
 
-pub(crate) async fn build_finished_context_async_refresh_header(
+/// Header for a context with nothing left to fetch. The row is written after
+/// the response; clients poll it no sooner than the retry interval.
+pub(crate) fn finished_context_async_refresh_header(db: &D1Database, status_id: &str) -> String {
+    let id = context_async_refresh_id(status_id);
+    let db = db.detached();
+    let row_id = id.clone();
+    defer(async move {
+        let _ = upsert_async_refresh(&db, &row_id, "finished", Some(0)).await;
+    });
+    format_async_refresh_header_value(&id, ASYNC_REFRESH_RETRY_SECONDS, Some(0))
+}
+
+/// Mark a context refresh as running and return its header. The row is written
+/// before the response so an immediate poll finds it.
+pub(crate) async fn running_context_async_refresh_header(
     db: &D1Database,
     status_id: &str,
 ) -> Result<String> {
     let id = context_async_refresh_id(status_id);
-    upsert_async_refresh(db, &id, "finished", Some(0)).await?;
+    upsert_async_refresh(db, &id, "running", None).await?;
     Ok(format_async_refresh_header_value(
         &id,
         ASYNC_REFRESH_RETRY_SECONDS,
-        Some(0),
+        None,
     ))
+}
+
+/// Close a refresh opened by [`running_context_async_refresh_header`].
+pub(crate) async fn finish_context_async_refresh(
+    db: &D1Database,
+    status_id: &str,
+    result_count: u64,
+) -> Result<()> {
+    let id = context_async_refresh_id(status_id);
+    upsert_async_refresh(db, &id, "finished", Some(result_count)).await
 }
 
 pub(crate) async fn find_async_refresh_state(

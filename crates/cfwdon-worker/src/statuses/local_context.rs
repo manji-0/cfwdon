@@ -1,6 +1,5 @@
 use super::{
-    LocalAccount, build_loaded_local_status_response, build_remote_status_response,
-    can_view_local_status, find_status_by_id, list_direct_local_replies,
+    LocalAccount, can_view_local_status, find_status_by_id, list_direct_local_replies,
     list_direct_remote_replies_by_uri,
 };
 use crate::activitypub::is_public_activitypub_visibility;
@@ -10,7 +9,7 @@ use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
     trim_context_descendants,
 };
-use crate::responses::MastodonStatusResponse;
+use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalStatus;
@@ -54,7 +53,27 @@ struct RemoteContextQueueNode {
     depth: usize,
 }
 
-type ContextDescendant = (String, MastodonStatusResponse);
+/// A descendant with the timestamp it is ordered by.
+type ContextDescendant = (String, StatusRenderItem);
+
+/// Render ancestors and descendants in one batched pass.
+pub(super) async fn render_context_response(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: Option<&LocalAccount>,
+    ancestors: Vec<StatusRenderItem>,
+    descendants: Vec<StatusRenderItem>,
+) -> Result<MastodonContextResponse> {
+    let ancestor_count = ancestors.len();
+    let mut items = ancestors;
+    items.extend(descendants);
+    let mut rendered = render_status_items(db, config, viewer, items).await?;
+    let descendants = rendered.split_off(ancestor_count.min(rendered.len()));
+    Ok(MastodonContextResponse {
+        ancestors: rendered,
+        descendants,
+    })
+}
 
 pub(crate) async fn build_local_status_context(
     db: &D1Database,
@@ -81,9 +100,8 @@ pub(crate) async fn build_local_status_context(
         if !can_view_local_status(db, &status, viewer, &owner).await? {
             break;
         }
-        ancestors
-            .push(build_loaded_local_status_response(db, config, viewer, &status, &owner).await?);
         current = status.in_reply_to_id.clone();
+        ancestors.push(StatusRenderItem::Local(status));
     }
     ancestors.reverse();
     let ancestors = trim_context_ancestors(ancestors, is_authenticated);
@@ -92,10 +110,7 @@ pub(crate) async fn build_local_status_context(
     let descendants =
         collect_descendants_for_local_root(db, config, viewer, root, &root_uri).await?;
 
-    Ok(MastodonContextResponse {
-        ancestors,
-        descendants,
-    })
+    render_context_response(db, config, viewer, ancestors, descendants).await
 }
 
 async fn collect_descendants_for_local_root(
@@ -104,7 +119,7 @@ async fn collect_descendants_for_local_root(
     viewer: Option<&LocalAccount>,
     root: &LocalStatus,
     root_uri: &str,
-) -> Result<Vec<MastodonStatusResponse>> {
+) -> Result<Vec<StatusRenderItem>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
     let mut descendants = Vec::new();
     let mut queued_local_nodes = vec![LocalContextQueueNode {
@@ -130,8 +145,6 @@ async fn collect_descendants_for_local_root(
         .await?;
         append_remote_child_descendants(
             db,
-            config,
-            viewer,
             &node.object_uri,
             node.depth,
             max_depth,
@@ -145,8 +158,6 @@ async fn collect_descendants_for_local_root(
     while let Some(node) = queued_remote_uris.pop() {
         append_remote_child_descendants(
             db,
-            config,
-            viewer,
             &node.object_uri,
             node.depth,
             max_depth,
@@ -187,15 +198,12 @@ async fn append_local_child_descendants(
         if !can_view_local_status(db, &status, viewer, &owner).await? {
             continue;
         }
-        descendants.push((
-            status.created_at.clone(),
-            build_loaded_local_status_response(db, config, viewer, &status, &owner).await?,
-        ));
         queued_local_nodes.push(LocalContextQueueNode {
             status_id: status.id.clone(),
             object_uri: local_context_object_uri(config, &owner, &status),
             depth: child_depth,
         });
+        descendants.push((status.created_at.clone(), StatusRenderItem::Local(status)));
     }
 
     Ok(())
@@ -203,8 +211,6 @@ async fn append_local_child_descendants(
 
 async fn append_remote_child_descendants(
     db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
     object_uri: &str,
     depth: usize,
     max_depth: Option<usize>,
@@ -222,14 +228,14 @@ async fn append_remote_child_descendants(
         if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
-        descendants.push((
-            status.published_at.clone(),
-            build_remote_status_response(db, config, viewer, &status, &actor).await?,
-        ));
         queued_remote_uris.push(RemoteContextQueueNode {
             object_uri: status.object_uri.clone(),
             depth: child_depth,
         });
+        descendants.push((
+            status.published_at.clone(),
+            StatusRenderItem::Remote { status, actor },
+        ));
     }
 
     Ok(())

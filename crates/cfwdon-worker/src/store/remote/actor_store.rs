@@ -49,7 +49,7 @@ fn json_u64(value: Option<&serde_json::Value>) -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RemoteActorRow {
     pub(crate) actor_uri: String,
     pub(crate) username: String,

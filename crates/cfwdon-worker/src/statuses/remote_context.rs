@@ -1,15 +1,17 @@
+use super::local_context::render_context_response;
 use super::{
-    LocalAccount, build_loaded_local_status_response, build_remote_status_response,
-    find_status_by_ap_id, find_status_by_id, list_direct_remote_replies_by_uri,
+    LocalAccount, find_status_by_ap_id, find_status_by_id, list_direct_remote_replies_by_uri,
 };
 use crate::activitypub::{
     extract_remote_note_object, is_public_activitypub_visibility,
     visibility_from_activitypub_object,
 };
+use crate::async_refreshes::finish_context_async_refresh;
 use crate::auth::find_account_by_id;
 use crate::background_jobs::{
     JOB_REMOTE_CONTEXT_FETCH, remote_context_fetch_payload, soft_enqueue_background_job,
 };
+use crate::deferred::defer;
 use crate::federation::{fetch_remote_activitypub_document, fetch_remote_actor_profile};
 use crate::remote::{
     find_remote_status_by_object_uri, resolve_remote_status_by_url, upsert_remote_status,
@@ -18,9 +20,9 @@ use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
     trim_context_descendants,
 };
-use crate::responses::MastodonStatusResponse;
 use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri, upsert_remote_actor};
 use crate::time_html::now_iso_string;
+use crate::timelines::StatusRenderItem;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::RemoteStatus;
@@ -34,7 +36,7 @@ struct RemoteContextDescendantQueueNode {
     depth: usize,
 }
 
-type RemoteContextDescendant = (String, MastodonStatusResponse);
+type RemoteContextDescendant = (String, StatusRenderItem);
 
 fn next_remote_context_child_depth(max_depth: Option<usize>, depth: usize) -> Option<usize> {
     let child_depth = depth.saturating_add(1);
@@ -45,25 +47,49 @@ fn next_remote_context_child_depth(max_depth: Option<usize>, depth: usize) -> Op
     }
 }
 
+/// Build the context from stored replies. For a signed-in viewer the remote
+/// reply tree is fetched after the response; the returned flag says so, and the
+/// caller advertises it as a running async refresh.
 pub(crate) async fn build_remote_status_context(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
     root: &RemoteStatus,
     root_actor: &RemoteActorRow,
-) -> Result<MastodonContextResponse> {
+) -> Result<(MastodonContextResponse, bool)> {
     let is_authenticated = viewer.is_some();
     let ancestors = collect_ancestors_for_remote_root(db, config, viewer, root).await?;
-
-    if viewer.is_some() {
-        let _ = hydrate_remote_descendants_for_context(db, config, root, root_actor, 0).await;
-    }
-    let descendants =
-        collect_descendants_for_remote_root(db, config, viewer, root, root_actor).await?;
-    Ok(MastodonContextResponse {
-        ancestors: trim_context_ancestors(ancestors, is_authenticated),
+    let descendants = collect_descendants_for_remote_root(db, viewer, root).await?;
+    let context = render_context_response(
+        db,
+        config,
+        viewer,
+        trim_context_ancestors(ancestors, is_authenticated),
         descendants,
-    })
+    )
+    .await?;
+
+    if is_authenticated {
+        let (db, config, root, root_actor) = (
+            db.detached(),
+            config.clone(),
+            root.clone(),
+            root_actor.clone(),
+        );
+        defer(async move {
+            let mut fetched = 0;
+            let _ = hydrate_remote_descendants_for_context(
+                &db,
+                &config,
+                &root,
+                &root_actor,
+                &mut fetched,
+            )
+            .await;
+            let _ = finish_context_async_refresh(&db, &root.id, fetched).await;
+        });
+    }
+    Ok((context, is_authenticated))
 }
 
 async fn collect_ancestors_for_remote_root(
@@ -71,7 +97,7 @@ async fn collect_ancestors_for_remote_root(
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
     root: &RemoteStatus,
-) -> Result<Vec<MastodonStatusResponse>> {
+) -> Result<Vec<StatusRenderItem>> {
     let mut ancestors = Vec::new();
     let mut current = root.in_reply_to_uri.clone();
     let mut seen_local_ids = HashSet::new();
@@ -84,19 +110,17 @@ async fn collect_ancestors_for_remote_root(
                 if !seen_local_ids.insert(status.id.clone()) {
                     break;
                 }
-                let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
+                if find_account_by_id(db, &status.account_id).await?.is_none() {
                     break;
-                };
+                }
                 if !is_public_activitypub_visibility(status.visibility.as_str()) {
                     break;
                 }
-                ancestors.push(
-                    build_loaded_local_status_response(db, config, viewer, &status, &owner).await?,
-                );
                 current_local = match status.in_reply_to_id.as_deref() {
                     Some(parent_id) => find_status_by_id(db, parent_id).await?,
                     None => None,
                 };
+                ancestors.push(StatusRenderItem::Local(status));
             }
             break;
         }
@@ -134,8 +158,8 @@ async fn collect_ancestors_for_remote_root(
         let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
             break;
         };
-        ancestors.push(build_remote_status_response(db, config, viewer, &status, &actor).await?);
         current = status.in_reply_to_uri.clone();
+        ancestors.push(StatusRenderItem::Remote { status, actor });
     }
     ancestors.reverse();
     Ok(ancestors)
@@ -143,11 +167,9 @@ async fn collect_ancestors_for_remote_root(
 
 async fn collect_descendants_for_remote_root(
     db: &D1Database,
-    config: &AppConfig,
     viewer: Option<&LocalAccount>,
     root: &RemoteStatus,
-    _root_actor: &RemoteActorRow,
-) -> Result<Vec<MastodonStatusResponse>> {
+) -> Result<Vec<StatusRenderItem>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
     let mut descendants = Vec::new();
     let mut queued_uris = vec![RemoteContextDescendantQueueNode {
@@ -159,8 +181,6 @@ async fn collect_descendants_for_remote_root(
     while let Some(node) = queued_uris.pop() {
         append_remote_context_child_descendants(
             db,
-            config,
-            viewer,
             &node,
             max_depth,
             &mut seen_remote_ids,
@@ -179,8 +199,6 @@ async fn collect_descendants_for_remote_root(
 
 async fn append_remote_context_child_descendants(
     db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
     node: &RemoteContextDescendantQueueNode,
     max_depth: Option<usize>,
     seen_remote_ids: &mut HashSet<String>,
@@ -197,14 +215,14 @@ async fn append_remote_context_child_descendants(
         if !is_public_activitypub_visibility(status.visibility.as_str()) {
             continue;
         }
-        descendants.push((
-            status.published_at.clone(),
-            build_remote_status_response(db, config, viewer, &status, &actor).await?,
-        ));
         queued_uris.push(RemoteContextDescendantQueueNode {
             object_uri: status.object_uri.clone(),
             depth: child_depth,
         });
+        descendants.push((
+            status.published_at.clone(),
+            StatusRenderItem::Remote { status, actor },
+        ));
     }
 
     Ok(())
@@ -232,7 +250,7 @@ async fn hydrate_remote_descendants_for_context(
     config: &AppConfig,
     root: &RemoteStatus,
     root_actor: &RemoteActorRow,
-    depth: usize,
+    fetched: &mut u64,
 ) -> Result<()> {
     let document = match fetch_remote_activitypub_document(&root.object_uri).await {
         Ok(document) => document,
@@ -246,7 +264,8 @@ async fn hydrate_remote_descendants_for_context(
         config,
         object,
         Some(root_actor.actor_uri.as_str()),
-        depth,
+        0,
+        fetched,
     )
     .await
 }
@@ -257,6 +276,7 @@ async fn hydrate_remote_reply_descendants(
     object: &serde_json::Value,
     fallback_actor_uri: Option<&str>,
     depth: usize,
+    fetched: &mut u64,
 ) -> Result<()> {
     if depth >= REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT {
         return Ok(());
@@ -294,12 +314,14 @@ async fn hydrate_remote_reply_descendants(
         };
         upsert_remote_actor(db, &actor).await?;
         upsert_remote_status(db, config, &actor, &reply_document, None).await?;
+        *fetched += 1;
         let _ = Box::pin(hydrate_remote_reply_descendants(
             db,
             config,
             &reply_document,
             Some(actor.actor_uri.as_str()),
             depth.saturating_add(1),
+            fetched,
         ))
         .await;
     }

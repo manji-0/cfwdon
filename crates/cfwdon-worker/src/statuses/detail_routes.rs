@@ -1,5 +1,7 @@
 use crate::activitypub::is_public_activitypub_visibility;
-use crate::async_refreshes::build_finished_context_async_refresh_header;
+use crate::async_refreshes::{
+    finished_context_async_refresh_header, running_context_async_refresh_header,
+};
 use crate::db_session::with_d1_bookmark;
 use crate::media::find_remote_status_attachments_by_status_id;
 use crate::remote::{
@@ -254,15 +256,12 @@ async fn load_remote_status_api_subject(
     Ok(Some(LoadedStatusApiSubject::Remote { status, actor }))
 }
 
-async fn context_response_with_async_refresh<T: Serialize>(
-    db: &D1Database,
-    status_id: &str,
-    viewer_present: bool,
+fn context_response_with_async_refresh<T: Serialize>(
+    async_refresh_header: Option<String>,
     context: &T,
 ) -> Result<Response> {
     let mut response = Response::from_json(context)?;
-    if viewer_present {
-        let header = build_finished_context_async_refresh_header(db, status_id).await?;
+    if let Some(header) = async_refresh_header {
         response
             .headers_mut()
             .set("Mastodon-Async-Refresh", &header)?;
@@ -357,13 +356,11 @@ pub(crate) async fn status_context_response(
                 &owner,
             )
             .await?;
-            context_response_with_async_refresh(
-                &detail.base.db,
-                &status.id,
-                detail.viewer.is_some(),
-                &context,
-            )
-            .await?
+            let header = detail
+                .viewer
+                .is_some()
+                .then(|| finished_context_async_refresh_header(&detail.base.db, &status.id));
+            context_response_with_async_refresh(header, &context)?
         }
         ResolvedStatus::Remote(status) => {
             if !is_public_activitypub_visibility(status.visibility.as_str()) {
@@ -374,7 +371,7 @@ pub(crate) async fn status_context_response(
             else {
                 return Response::error("status not found", 404);
             };
-            let context = build_remote_status_context(
+            let (context, refreshing) = build_remote_status_context(
                 &detail.base.db,
                 &detail.base.config,
                 detail.viewer.as_ref(),
@@ -382,13 +379,12 @@ pub(crate) async fn status_context_response(
                 &actor,
             )
             .await?;
-            context_response_with_async_refresh(
-                &detail.base.db,
-                &status.id,
-                detail.viewer.is_some(),
-                &context,
-            )
-            .await?
+            let header = if refreshing {
+                Some(running_context_async_refresh_header(&detail.base.db, &status.id).await?)
+            } else {
+                None
+            };
+            context_response_with_async_refresh(header, &context)?
         }
     };
     with_d1_bookmark(response, &detail.base.session)

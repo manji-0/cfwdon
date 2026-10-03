@@ -16,8 +16,8 @@ pub(crate) struct MastodonSearchResponse {
 
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct MastodonContextResponse {
-    pub(crate) ancestors: Vec<MastodonStatusResponse>,
-    pub(crate) descendants: Vec<MastodonStatusResponse>,
+    pub(crate) ancestors: Vec<serde_json::Value>,
+    pub(crate) descendants: Vec<serde_json::Value>,
 }
 
 pub(crate) fn context_descendant_max_depth(is_authenticated: bool) -> Option<usize> {

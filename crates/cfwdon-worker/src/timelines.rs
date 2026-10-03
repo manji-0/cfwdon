@@ -48,6 +48,7 @@ pub(crate) use cursor_sql::{
 pub(crate) use request_parsing::ResolvedTimelineCursor;
 pub(crate) use search::*;
 
+pub(crate) use candidate_render::{StatusRenderItem, render_status_items};
 pub(crate) use direct_timeline::direct_timeline_response;
 pub(crate) use home_timeline::home_timeline_response;
 pub(crate) use link_timeline::link_timeline_response;
