@@ -6,7 +6,7 @@
 use crate::deferred::defer;
 use crate::identity::instance_base_url;
 use crate::response_utils::{CACHE_TTL_ACCOUNT_API, CACHE_TTL_FEDERATION, CACHE_TTL_STATUS_API};
-use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
+use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use worker::{Cache, Response, ResponseBody, Result, RouteContext};
 
@@ -93,7 +93,7 @@ pub(crate) async fn cached_status_api_response(
 pub(crate) async fn cache_status_api_response(
     ctx: &RouteContext<()>,
     status_id: &str,
-    value: &MastodonStatusResponse,
+    value: &impl serde::Serialize,
 ) -> Result<()> {
     let config = load_config(ctx);
     cache_put_json(

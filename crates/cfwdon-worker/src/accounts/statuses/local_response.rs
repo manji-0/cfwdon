@@ -1,22 +1,15 @@
 use super::filters::{account_status_list_options, local_status_matches_account_filters};
 use super::html::{account_statuses_html_response, local_status_html_item};
 use super::pagination::account_statuses_older_page_url;
-use crate::activitypub::local_status_ap_id;
-use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::identity::actor_url;
-use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::find_media_attachments_by_status_ids;
 use crate::relationship::is_local_follower_authorized;
 use crate::statuses::{
-    AccountStatusVisibilityScope, AccountStatusesQuery, LocalStatusViewerStatePreload,
-    StatusApplicationPreload, StatusQuoteCountsPreload,
-    build_local_status_response_with_quote_count_preloads, can_view_local_status,
+    AccountStatusVisibilityScope, AccountStatusesQuery, can_view_local_status,
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
-    load_in_reply_to_account_ids, preload_local_status_viewer_state, preload_status_applications,
-    preload_status_quote_counts,
+    load_in_reply_to_account_ids,
 };
-use crate::store::media::MediaAttachmentRow;
-use crate::store::statuses::{StatusCountsPreload, preload_status_counts};
+use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
@@ -137,77 +130,8 @@ async fn respond_local_account_statuses_html(
     )
 }
 
-struct LocalAccountStatusJsonPreloads {
-    counts_preload: StatusCountsPreload,
-    quote_counts_preload: StatusQuoteCountsPreload,
-    poll_preload: MastodonPollResponsePreload,
-    viewer_state_preload: LocalStatusViewerStatePreload,
-    application_preload: StatusApplicationPreload,
-    media_by_status_id: HashMap<String, Vec<MediaAttachmentRow>>,
-    in_reply_to_account_ids: HashMap<String, String>,
-    filter_matcher: Option<AccountFilterMatcher>,
-}
-
-async fn preload_local_account_status_json_context(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
-    account: &LocalAccount,
-    statuses: &[LocalStatus],
-) -> Result<LocalAccountStatusJsonPreloads> {
-    let status_ids = statuses
-        .iter()
-        .map(|status| status.id.clone())
-        .collect::<Vec<_>>();
-    let status_refs = statuses.iter().collect::<Vec<_>>();
-    let quote_uris = statuses
-        .iter()
-        .map(|status| local_status_ap_id(config, account, status))
-        .collect::<Vec<_>>();
-    let (
-        counts_preload,
-        quote_counts_preload,
-        poll_preload,
-        viewer_state_preload,
-        application_preload,
-        media_by_status_id,
-        in_reply_to_account_ids,
-        filter_matcher,
-    ) = futures_util::try_join!(
-        preload_status_counts(db, &status_ids, &[]),
-        preload_status_quote_counts(db, &quote_uris),
-        preload_mastodon_poll_responses(db, &status_ids, viewer),
-        async {
-            match viewer {
-                Some(viewer) => {
-                    preload_local_status_viewer_state(db, viewer.id(), &status_refs, None).await
-                }
-                None => Ok(Default::default()),
-            }
-        },
-        preload_status_applications(db, config, &status_refs),
-        find_media_attachments_by_status_ids(db, &status_ids),
-        load_in_reply_to_account_ids(db, statuses),
-        async {
-            match viewer {
-                Some(viewer) => load_account_filter_matcher(db, viewer.id()).await.map(Some),
-                None => Ok(None),
-            }
-        },
-    )?;
-
-    Ok(LocalAccountStatusJsonPreloads {
-        counts_preload,
-        quote_counts_preload,
-        poll_preload,
-        viewer_state_preload,
-        application_preload,
-        media_by_status_id,
-        in_reply_to_account_ids,
-        filter_matcher,
-    })
-}
-
+/// Render the JSON page: visibility and account filters first, then one
+/// batched render of the survivors through the timeline preloads.
 async fn respond_local_account_statuses_json(
     db: &D1Database,
     config: &AppConfig,
@@ -216,59 +140,48 @@ async fn respond_local_account_statuses_json(
     query: &AccountStatusesQuery,
     limit: u32,
     statuses: Vec<LocalStatus>,
-    preloads: LocalAccountStatusJsonPreloads,
 ) -> Result<Response> {
-    let LocalAccountStatusJsonPreloads {
-        counts_preload,
-        quote_counts_preload,
-        poll_preload,
-        viewer_state_preload,
-        application_preload,
-        mut media_by_status_id,
-        in_reply_to_account_ids,
-        filter_matcher,
-    } = preloads;
-    let mut response = Vec::new();
+    let statuses = statuses
+        .into_iter()
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let status_ids = statuses
+        .iter()
+        .map(|status| status.id.clone())
+        .collect::<Vec<_>>();
+    let (media_by_status_id, in_reply_to_account_ids, visible) = futures_util::try_join!(
+        find_media_attachments_by_status_ids(db, &status_ids),
+        load_in_reply_to_account_ids(db, &statuses),
+        futures_util::future::try_join_all(
+            statuses
+                .iter()
+                .map(|status| can_view_local_status(db, status, viewer, account)),
+        ),
+    )?;
 
-    for status in statuses.into_iter().take(limit as usize) {
-        if !can_view_local_status(db, &status, viewer, account).await? {
-            continue;
-        }
-        let media = media_by_status_id.remove(&status.id).unwrap_or_default();
-        if !local_status_matches_account_filters(
-            &status,
-            account.id(),
-            query,
-            &media,
-            status
-                .in_reply_to_id
-                .as_ref()
-                .and_then(|_| in_reply_to_account_ids.get(&status.id)),
-        ) {
-            continue;
-        }
+    let items = statuses
+        .into_iter()
+        .zip(visible)
+        .filter(|(status, visible)| {
+            *visible
+                && local_status_matches_account_filters(
+                    status,
+                    account.id(),
+                    query,
+                    media_by_status_id
+                        .get(&status.id)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    status
+                        .in_reply_to_id
+                        .as_ref()
+                        .and_then(|_| in_reply_to_account_ids.get(&status.id)),
+                )
+        })
+        .map(|(status, _)| StatusRenderItem::Local(status))
+        .collect::<Vec<_>>();
 
-        response.push(
-            build_local_status_response_with_quote_count_preloads(
-                db,
-                config,
-                viewer,
-                &status,
-                account,
-                in_reply_to_account_ids.get(&status.id).cloned(),
-                media,
-                filter_matcher.as_ref(),
-                Some(&counts_preload),
-                Some(&quote_counts_preload),
-                Some(&poll_preload),
-                Some(&viewer_state_preload),
-                Some(&application_preload),
-            )
-            .await?,
-        );
-    }
-
-    Response::from_json(&response)
+    Response::from_json(&render_status_items(db, config, viewer, items).await?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -304,18 +217,6 @@ pub(crate) async fn local_account_statuses_response(
         .await;
     }
 
-    let preloads =
-        preload_local_account_status_json_context(db, config, viewer, &account, &page.statuses)
-            .await?;
-    respond_local_account_statuses_json(
-        db,
-        config,
-        viewer,
-        &account,
-        query,
-        limit,
-        page.statuses,
-        preloads,
-    )
-    .await
+    respond_local_account_statuses_json(db, config, viewer, &account, query, limit, page.statuses)
+        .await
 }

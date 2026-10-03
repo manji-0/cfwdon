@@ -13,6 +13,7 @@ use crate::responses::MastodonStatusResponse;
 use crate::statuses::{list_status_edit_snapshots, load_status_updated_at};
 use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::time_html::timestamp_to_mastodon_iso8601;
+use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use worker::{Request, Response, Result, RouteContext};
@@ -195,38 +196,24 @@ async fn load_status_api_subject(
     }
 }
 
+/// Render one status through the batched timeline preloads (a fixed number of
+/// D1 rounds instead of one query per response field).
 async fn build_status_api_document(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     viewer: Option<&cfwdon_domain::LocalAccount>,
     subject: LoadedStatusApiSubject,
-) -> Result<MastodonStatusResponse> {
-    match subject {
-        LoadedStatusApiSubject::Local(subject) => {
-            let super::LoadedLocalStatusResponseSubject {
-                status,
-                account,
-                preload:
-                    super::LocalStatusResponsePreload {
-                        in_reply_to_account_id,
-                        media,
-                    },
-            } = subject;
-            build_local_status_response(
-                db,
-                config,
-                viewer,
-                &status,
-                &account,
-                in_reply_to_account_id,
-                media,
-            )
-            .await
-        }
+) -> Result<serde_json::Value> {
+    let item = match subject {
+        LoadedStatusApiSubject::Local(subject) => StatusRenderItem::Local(subject.status),
         LoadedStatusApiSubject::Remote { status, actor } => {
-            build_remote_status_response(db, config, viewer, &status, &actor).await
+            StatusRenderItem::Remote { status, actor }
         }
-    }
+    };
+    Ok(render_status_items(db, config, viewer, vec![item])
+        .await?
+        .pop()
+        .unwrap_or(serde_json::Value::Null))
 }
 
 async fn load_local_status_api_subject(
