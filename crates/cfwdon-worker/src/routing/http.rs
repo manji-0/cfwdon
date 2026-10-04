@@ -59,7 +59,15 @@ impl HttpRequestContext {
         self.log_response(response)
     }
 
-    pub(crate) fn finish_response(&self, mut response: Response) -> Result<Response> {
+    pub(crate) fn finish_response(&self, response: Response) -> Result<Response> {
+        self.finish_response_with_error(response, None)
+    }
+
+    pub(crate) fn finish_response_with_error(
+        &self,
+        mut response: Response,
+        error_message: Option<&str>,
+    ) -> Result<Response> {
         if should_apply_cors_headers(
             &self.path,
             response.status_code(),
@@ -68,10 +76,18 @@ impl HttpRequestContext {
         ) {
             apply_cors_headers(&mut response, self.origin.as_deref())?;
         }
-        self.log_response(response)
+        self.log_response_with_error(response, error_message)
     }
 
     pub(crate) fn log_response(&self, response: Response) -> Result<Response> {
+        self.log_response_with_error(response, None)
+    }
+
+    fn log_response_with_error(
+        &self,
+        response: Response,
+        error_message: Option<&str>,
+    ) -> Result<Response> {
         log_api_request(
             self.log_api_requests,
             &self.method,
@@ -79,6 +95,7 @@ impl HttpRequestContext {
             response.status_code(),
             &self.user_agent,
             observability_duration_ms(self.started_at_ms),
+            error_message,
         );
         Ok(response)
     }
@@ -104,13 +121,14 @@ fn log_api_request(
     status: u16,
     user_agent: &str,
     duration_ms: u64,
+    error_message: Option<&str>,
 ) {
     if !enabled || !is_logged_api_path(path) {
         return;
     }
     let d1_metrics = snapshot_d1_request_metrics();
     publish_d1_request_pressure();
-    let payload = add_log_message(
+    let mut payload = add_log_message(
         serde_json::json!({
             "event": "api_request",
             "method": method,
@@ -126,6 +144,12 @@ fn log_api_request(
             d1_metrics.query_count, d1_metrics.sql_ms_sum
         ),
     );
+    if let (Some(error), Some(object)) = (error_message, payload.as_object_mut()) {
+        object.insert(
+            "error".to_owned(),
+            serde_json::json!(sanitize_log_value(error)),
+        );
+    }
 
     log_json_event(payload);
 }
@@ -240,6 +264,36 @@ pub(crate) fn ensure_missing_content_type(mut response: Response) -> Result<Resp
     Ok(response)
 }
 
+/// Mastodon API errors are `{"error": "..."}` JSON; clients parse that body.
+/// Handlers return bare `Response::error` text (no Content-Type), so wrap it
+/// here once and hand back the message for the request log.
+pub(crate) async fn mastodon_json_error_response(
+    path: &str,
+    mut response: Response,
+) -> Result<(Response, Option<String>)> {
+    let has_content_type = response
+        .headers()
+        .get("Content-Type")?
+        .is_some_and(|value| !value.trim().is_empty());
+    if !is_mastodon_api_error(path, response.status_code(), has_content_type) {
+        return Ok((response, None));
+    }
+    let status = response.status_code();
+    let headers = response.headers().clone();
+    let message = response.text().await?.trim().to_owned();
+    headers.set("Content-Type", "application/json; charset=utf-8")?;
+    let response = Response::from_json(&serde_json::json!({ "error": message }))?
+        .with_status(status)
+        .with_headers(headers);
+    Ok((response, Some(message)))
+}
+
+fn is_mastodon_api_error(path: &str, status: u16, has_content_type: bool) -> bool {
+    status >= 400
+        && !has_content_type
+        && (path.starts_with("/api/v1/") || path.starts_with("/api/v2/"))
+}
+
 pub(crate) fn error_response_with_plain_content_type(
     message: impl Into<String>,
     status: u16,
@@ -254,9 +308,9 @@ pub(crate) fn error_response_with_plain_content_type(
 #[cfg(test)]
 mod tests {
     use super::{
-        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_websocket_upgrade,
-        is_websocket_upgrade_header, missing_content_type_fallback, sanitize_log_value,
-        should_apply_auth0_web_session_cookies, should_apply_cors_headers,
+        PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_mastodon_api_error,
+        is_websocket_upgrade, is_websocket_upgrade_header, missing_content_type_fallback,
+        sanitize_log_value, should_apply_auth0_web_session_cookies, should_apply_cors_headers,
     };
 
     #[test]
@@ -389,5 +443,19 @@ mod tests {
     fn auth0_session_cookies_applied_for_html_and_api_responses() {
         assert!(should_apply_auth0_web_session_cookies(200, None, None));
         assert!(should_apply_auth0_web_session_cookies(302, None, None));
+    }
+
+    #[test]
+    fn mastodon_api_errors_without_content_type_become_json() {
+        assert!(is_mastodon_api_error("/api/v1/statuses", 422, false));
+        assert!(is_mastodon_api_error("/api/v2/media", 404, false));
+        assert!(!is_mastodon_api_error("/api/v1/statuses", 200, false));
+        assert!(!is_mastodon_api_error("/api/v1/statuses", 401, true));
+        assert!(!is_mastodon_api_error(
+            "/api/cfwdon/admin/reports",
+            422,
+            false
+        ));
+        assert!(!is_mastodon_api_error("/oauth/token", 400, false));
     }
 }

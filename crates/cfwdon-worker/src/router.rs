@@ -7,7 +7,8 @@ use crate::federation::install_remote_dns_cache;
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
     HttpRequestContext, dispatch_route, ensure_missing_content_type,
-    error_response_with_plain_content_type, should_apply_auth0_web_session_cookies,
+    error_response_with_plain_content_type, mastodon_json_error_response,
+    should_apply_auth0_web_session_cookies,
 };
 use crate::runtime_config::load_config_from_env;
 use worker::{Env, Request, Response, Result, console_error};
@@ -55,5 +56,10 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             .await;
     });
 
-    request_context.finish_response(ensure_missing_content_type(response)?)
+    let (response, error_message) =
+        mastodon_json_error_response(request_context.path(), response).await?;
+    request_context.finish_response_with_error(
+        ensure_missing_content_type(response)?,
+        error_message.as_deref(),
+    )
 }
