@@ -19,13 +19,6 @@ pub(crate) async fn parse_media_upload(
         None => return Err("file field is required".to_owned()),
     };
 
-    let content_type = file.type_().trim().to_ascii_lowercase();
-    if content_type.is_empty() {
-        return Err("uploaded file is missing a content type".to_owned());
-    }
-
-    let kind = classify_media_kind(&content_type)
-        .ok_or_else(|| format!("unsupported media content type: {content_type}"))?;
     let bytes = file
         .bytes()
         .await
@@ -33,6 +26,14 @@ pub(crate) async fn parse_media_upload(
     if bytes.is_empty() {
         return Err("uploaded file must not be empty".to_owned());
     }
+
+    let declared_type = file.type_().trim().to_ascii_lowercase();
+    let content_type = resolve_upload_content_type(&declared_type, &bytes);
+    if content_type.is_empty() {
+        return Err("uploaded file is missing a content type".to_owned());
+    }
+    let kind = classify_media_kind(&content_type)
+        .ok_or_else(|| format!("unsupported media content type: {content_type}"))?;
 
     let size_limit = max_upload_size(kind);
     if bytes.len() > size_limit {
@@ -57,6 +58,60 @@ pub(crate) async fn parse_media_upload(
             .unwrap_or_default(),
         kind,
     })
+}
+
+/// Mastodon trusts file contents over the multipart part's declared type, so
+/// clients that send `application/octet-stream` (or nothing) still upload.
+/// A declared media type is kept; otherwise the magic bytes decide.
+pub(crate) fn resolve_upload_content_type(declared_type: &str, bytes: &[u8]) -> String {
+    let declared_type = declared_type.split(';').next().unwrap_or_default().trim();
+    if classify_media_kind(declared_type).is_some() {
+        return declared_type.to_owned();
+    }
+    sniff_media_content_type(bytes).map_or_else(|| declared_type.to_owned(), str::to_owned)
+}
+
+fn sniff_media_content_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"\xFF\xD8\xFF") {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") {
+        return match &bytes[8..12] {
+            b"WEBP" => Some("image/webp"),
+            b"WAVE" => Some("audio/wav"),
+            _ => None,
+        };
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return Some(match &bytes[8..12] {
+            b"heic" | b"heix" | b"heim" | b"heis" | b"mif1" | b"msf1" => "image/heic",
+            b"avif" | b"avis" => "image/avif",
+            b"qt  " => "video/quicktime",
+            b"M4A " => "audio/mp4",
+            _ => "video/mp4",
+        });
+    }
+    if bytes.starts_with(b"\x1A\x45\xDF\xA3") {
+        return Some("video/webm");
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some("audio/ogg");
+    }
+    if bytes.starts_with(b"fLaC") {
+        return Some("audio/flac");
+    }
+    if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)
+    {
+        return Some("audio/mpeg");
+    }
+    None
 }
 
 pub(crate) fn image_dimensions(content_type: &str, bytes: &[u8]) -> Option<(u32, u32)> {

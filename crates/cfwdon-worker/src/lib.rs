@@ -15,6 +15,7 @@ use crate::relays::purge_stale_public_remote_content;
 use crate::runtime_config::load_config_from_env;
 use crate::scheduled_statuses::process_due_scheduled_statuses_for_config;
 use crate::store::relationship::purge_expired_mutes;
+use crate::store::statuses::purge_expired_status_idempotency_keys;
 use crate::tags::refresh_trending_tags_cache;
 use crate::timelines::refresh_public_timeline_cache;
 use crate::tracked_d1::D1Database;
@@ -234,6 +235,9 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             }
             if let Err(error) = purge_expired_mutes(&db).await {
                 console_error!("expired mute purge failed: {error}");
+            }
+            if let Err(error) = purge_expired_status_idempotency_keys(&db).await {
+                console_error!("status idempotency key purge failed: {error}");
             }
             if let Err(error) = purge_stale_public_remote_content(&db).await {
                 console_error!("public remote retention purge failed: {error}");

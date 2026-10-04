@@ -14,12 +14,15 @@ use crate::relationship::is_local_follower_authorized;
 use crate::remote::{find_remote_status_by_id, find_remote_status_by_url_or_object_uri};
 use crate::request_utils::status_id_from_context;
 use crate::response_cache::{invalidate_account_dynamic_public_cache, invalidate_status_api_cache};
+use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
 use crate::scheduled_statuses::create_scheduled_status;
 use crate::statuses::request_parsing::ParsedStatusDraft;
 use crate::store::media::delete_media_attachments;
 use crate::store::relationship::is_blocking_actor;
+use crate::store::statuses::{find_idempotent_status_id, record_idempotent_status};
 use crate::tracked_d1::D1Database;
+use cfwdon_core::AppConfig;
 use worker::{Request, Response, Result, RouteContext};
 
 mod action_resolution;
@@ -272,6 +275,17 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         }
         Err(error) => return Err(error),
     };
+    // A client retrying after a timeout replays the same Idempotency-Key; answer
+    // with the status it already created before its media read as attached.
+    let publish_idempotency_key = idempotency_key
+        .as_deref()
+        .filter(|_| scheduled_at.is_none());
+    if let Some(key) = publish_idempotency_key
+        && let Some(response) =
+            idempotent_status_response(&db, &config, &access.account, key).await?
+    {
+        return Response::from_json(&response);
+    }
     let pending_media =
         match resolve_attachable_media(&db, &access.account, draft.media_ids()).await {
             Ok(media) => media,
@@ -332,9 +346,45 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
         },
     )
     .await?;
+    // The status already exists; a failed key write must not turn this into an error.
+    if let Some(key) = publish_idempotency_key
+        && let Err(error) =
+            record_idempotent_status(&db, access.account.id(), key, &response.id).await
+    {
+        worker::console_warn!("status idempotency key record failed: {error}");
+    }
     invalidate_account_dynamic_public_cache(&ctx, access.account.id(), access.account.username())
         .await;
     Response::from_json(&response)
+}
+
+async fn idempotent_status_response(
+    db: &D1Database,
+    config: &AppConfig,
+    account: &LocalAccount,
+    idempotency_key: &str,
+) -> Result<Option<MastodonStatusResponse>> {
+    let Some(status_id) = find_idempotent_status_id(db, account.id(), idempotency_key).await?
+    else {
+        return Ok(None);
+    };
+    // The earlier status may have been deleted since; then post a fresh one.
+    let Some(subject) = find_owned_local_status_response_subject(db, &status_id, account).await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        build_local_status_response(
+            db,
+            config,
+            Some(account),
+            &subject.status,
+            &subject.account,
+            subject.preload.in_reply_to_account_id,
+            subject.preload.media,
+        )
+        .await?,
+    ))
 }
 
 pub(crate) async fn delete_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {

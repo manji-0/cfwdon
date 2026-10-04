@@ -1,4 +1,6 @@
-use crate::media::{RemoteStatusAttachmentRow, image_dimensions, parse_media_focus};
+use crate::media::{
+    RemoteStatusAttachmentRow, image_dimensions, parse_media_focus, resolve_upload_content_type,
+};
 use crate::statuses::build_remote_status_card_value;
 
 #[test]
@@ -86,4 +88,50 @@ fn build_remote_status_card_value_falls_back_without_link_attachment() {
     assert_eq!(card["url"], "https://example.com/post");
     assert_eq!(card["provider_name"], "example.com");
     assert!(card["image"].is_null());
+}
+
+#[test]
+fn resolve_upload_content_type_keeps_declared_media_types() {
+    assert_eq!(
+        resolve_upload_content_type("image/png", b"\xFF\xD8\xFFjpeg"),
+        "image/png"
+    );
+    assert_eq!(
+        resolve_upload_content_type("image/jpeg; name=a.jpg", b"\xFF\xD8\xFF"),
+        "image/jpeg"
+    );
+}
+
+#[test]
+fn resolve_upload_content_type_sniffs_generic_or_missing_types() {
+    let cases: [(&[u8], &str); 12] = [
+        (b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "image/png"),
+        (b"\xFF\xD8\xFF\xE0\0\x10JFIF", "image/jpeg"),
+        (b"GIF89a\x01\0\x01\0", "image/gif"),
+        (b"RIFF\0\0\0\0WEBPVP8 ", "image/webp"),
+        (b"\0\0\0\x18ftypheic\0\0\0\0", "image/heic"),
+        (b"\0\0\0\x1cftypavif\0\0\0\0", "image/avif"),
+        (b"\0\0\0\x18ftypisom\0\0\x02\0", "video/mp4"),
+        (b"\0\0\0\x14ftypqt  \0\0\0\0", "video/quicktime"),
+        (b"\x1A\x45\xDF\xA3\x01\0", "video/webm"),
+        (b"OggS\0\x02", "audio/ogg"),
+        (b"ID3\x04\0\0", "audio/mpeg"),
+        (b"RIFF\0\0\0\0WAVEfmt ", "audio/wav"),
+    ];
+    for (bytes, expected) in cases {
+        assert_eq!(
+            resolve_upload_content_type("application/octet-stream", bytes),
+            expected
+        );
+        assert_eq!(resolve_upload_content_type("", bytes), expected);
+    }
+}
+
+#[test]
+fn resolve_upload_content_type_leaves_unknown_bytes_unsupported() {
+    assert_eq!(
+        resolve_upload_content_type("application/octet-stream", b"%PDF-1.7"),
+        "application/octet-stream"
+    );
+    assert_eq!(resolve_upload_content_type("", b"plain text"), "");
 }
