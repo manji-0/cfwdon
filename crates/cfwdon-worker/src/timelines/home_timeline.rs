@@ -53,33 +53,27 @@ pub(crate) async fn home_timeline_response(
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return with_d1_bookmark(empty_timeline_response()?, &session);
     }
-    let (filter_matcher, viewer_has_thread_mutes, include_followed_tags, muted_actor_uris) = {
-        let caps = load_account_capabilities(&db, viewer.id()).await?;
-        let (filter_matcher, muted_actor_uris) = futures_util::try_join!(
-            async {
-                if caps.has_filters {
-                    load_account_filter_matcher(&db, viewer.id()).await
-                } else {
-                    Ok(AccountFilterMatcher::default())
-                }
-            },
-            list_active_muted_actor_uris_for_account(&db, viewer.id()),
-        )?;
-        (
-            filter_matcher,
-            caps.has_thread_mutes,
+    // Capabilities gate the candidate SQL (followed tags); the mute set and
+    // filters are only applied after candidates load, so all three share a wave.
+    let caps = load_account_capabilities(&db, viewer.id()).await?;
+    let viewer_has_thread_mutes = caps.has_thread_mutes;
+    let (filter_matcher, muted_actor_uris, candidate_rows) = futures_util::try_join!(
+        async {
+            if caps.has_filters {
+                load_account_filter_matcher(&db, viewer.id()).await
+            } else {
+                Ok(AccountFilterMatcher::default())
+            }
+        },
+        list_active_muted_actor_uris_for_account(&db, viewer.id()),
+        list_home_timeline_candidate_ids(
+            &db,
+            viewer.id(),
+            &cursor,
+            query_limit,
             caps.has_followed_tags,
-            muted_actor_uris,
-        )
-    };
-    let candidate_rows = list_home_timeline_candidate_ids(
-        &db,
-        viewer.id(),
-        &cursor,
-        query_limit,
-        include_followed_tags,
-    )
-    .await?;
+        ),
+    )?;
     let entries = timeline_entries_from_candidate_rows(
         &db,
         &config,

@@ -123,9 +123,12 @@ pub(crate) async fn preload_boost_targets(
         .map(|(_, _, status_id)| status_id.clone())
         .collect::<Vec<_>>();
 
-    let (by_ap_id, by_identity_id) = futures_util::try_join!(
+    // Remote rows are looked up for every URI in the same wave; local matches
+    // still win because remote rows only fill keys left unresolved below.
+    let (by_ap_id, by_identity_id, remote_statuses) = futures_util::try_join!(
         find_statuses_by_ap_ids(db, &uris),
         find_statuses_by_ids(db, &identity_status_ids),
+        find_remote_statuses_by_url_or_object_uris(db, &uris),
     )?;
     let by_ap_id = by_ap_id
         .into_iter()
@@ -168,12 +171,7 @@ pub(crate) async fn preload_boost_targets(
         }
     }
 
-    let remote_uris = uris
-        .iter()
-        .filter(|uri| !by_uri.contains_key(*uri))
-        .cloned()
-        .collect::<Vec<_>>();
-    for status in find_remote_statuses_by_url_or_object_uris(db, &remote_uris).await? {
+    for status in remote_statuses {
         for key in [Some(status.object_uri.as_str()), status.url.as_deref()]
             .into_iter()
             .flatten()

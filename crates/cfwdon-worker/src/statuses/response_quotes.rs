@@ -92,13 +92,11 @@ async fn quote_state_for_local_quoted_status(
     quoted_account: &LocalAccount,
 ) -> Result<Option<&'static str>> {
     let quoted_actor_uri = actor_url(config, quoted_account.username());
-    if is_blocking_actor(db, viewer.id(), &quoted_actor_uri).await? {
-        return Ok(Some("blocked_account"));
-    }
-    if is_muted_actor(db, viewer.id(), &quoted_actor_uri).await? {
-        return Ok(Some("muted_account"));
-    }
-    Ok(None)
+    let (blocked, muted) = futures_util::try_join!(
+        is_blocking_actor(db, viewer.id(), &quoted_actor_uri),
+        is_muted_actor(db, viewer.id(), &quoted_actor_uri),
+    )?;
+    Ok(quote_relationship_state(blocked, false, muted))
 }
 
 async fn quote_state_for_remote_quoted_status(
@@ -106,16 +104,29 @@ async fn quote_state_for_remote_quoted_status(
     viewer: &LocalAccount,
     actor: &RemoteActorRow,
 ) -> Result<Option<&'static str>> {
-    if is_blocking_actor(db, viewer.id(), &actor.actor_uri).await? {
-        return Ok(Some("blocked_account"));
+    let (blocked, domain_blocked, muted) = futures_util::try_join!(
+        is_blocking_actor(db, viewer.id(), &actor.actor_uri),
+        viewer_blocks_domain(db, viewer.id(), &actor.domain),
+        is_muted_actor(db, viewer.id(), &actor.actor_uri),
+    )?;
+    Ok(quote_relationship_state(blocked, domain_blocked, muted))
+}
+
+/// The checks run in one wave; the placeholder keeps the old precedence.
+fn quote_relationship_state(
+    blocked_account: bool,
+    blocked_domain: bool,
+    muted_account: bool,
+) -> Option<&'static str> {
+    if blocked_account {
+        Some("blocked_account")
+    } else if blocked_domain {
+        Some("blocked_domain")
+    } else if muted_account {
+        Some("muted_account")
+    } else {
+        None
     }
-    if viewer_blocks_domain(db, viewer.id(), &actor.domain).await? {
-        return Ok(Some("blocked_domain"));
-    }
-    if is_muted_actor(db, viewer.id(), &actor.actor_uri).await? {
-        return Ok(Some("muted_account"));
-    }
-    Ok(None)
 }
 
 pub(crate) async fn local_quoted_status_document_state(
@@ -219,7 +230,7 @@ pub(crate) fn build_remote_quote_approval(status: &RemoteStatus) -> serde_json::
 #[cfg(test)]
 mod tests {
     use super::{
-        accepted_quote_document_state, quote_state_uses_placeholder,
+        accepted_quote_document_state, quote_relationship_state, quote_state_uses_placeholder,
         remote_quote_visibility_is_embeddable, unauthorized_quote_document,
     };
 
@@ -252,5 +263,22 @@ mod tests {
 
         assert_eq!(document["state"], serde_json::json!("unauthorized"));
         assert_eq!(document["quoted_status"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn quote_relationship_state_keeps_block_before_domain_before_mute() {
+        assert_eq!(
+            quote_relationship_state(true, true, true),
+            Some("blocked_account")
+        );
+        assert_eq!(
+            quote_relationship_state(false, true, true),
+            Some("blocked_domain")
+        );
+        assert_eq!(
+            quote_relationship_state(false, false, true),
+            Some("muted_account")
+        );
+        assert_eq!(quote_relationship_state(false, false, false), None);
     }
 }
