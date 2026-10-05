@@ -6,28 +6,44 @@ use worker::{FormEntry, Request};
 pub(crate) async fn parse_media_upload(
     req: &mut Request,
 ) -> std::result::Result<MediaUploadDraft, String> {
+    // Kept for clients whose file part has no `filename`, which the runtime
+    // turns into a lossy text field (see `multipart_file_part`).
+    let mut raw_request = req
+        .clone()
+        .map_err(|error| format!("invalid multipart media payload: {error}"))?;
     let form = req
         .form_data()
         .await
         .map_err(|error| format!("invalid multipart media payload: {error}"))?;
 
-    let file = match form.get("file") {
-        Some(FormEntry::File(file)) => file,
+    let (bytes, declared_type) = match form.get("file") {
+        Some(FormEntry::File(file)) => (
+            file.bytes()
+                .await
+                .map_err(|error| format!("failed to read uploaded file: {error}"))?,
+            file.type_(),
+        ),
         Some(FormEntry::Field(_)) => {
-            return Err("file field must be sent as multipart file data".to_owned());
+            let content_type = raw_request
+                .headers()
+                .get("Content-Type")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let body = raw_request
+                .bytes()
+                .await
+                .map_err(|error| format!("failed to read uploaded file: {error}"))?;
+            multipart_file_part(&content_type, &body, "file")
+                .ok_or_else(|| "file field must be sent as multipart file data".to_owned())?
         }
         None => return Err("file field is required".to_owned()),
     };
-
-    let bytes = file
-        .bytes()
-        .await
-        .map_err(|error| format!("failed to read uploaded file: {error}"))?;
     if bytes.is_empty() {
         return Err("uploaded file must not be empty".to_owned());
     }
 
-    let declared_type = file.type_().trim().to_ascii_lowercase();
+    let declared_type = declared_type.trim().to_ascii_lowercase();
     let content_type = resolve_upload_content_type(&declared_type, &bytes);
     if content_type.is_empty() {
         return Err("uploaded file is missing a content type".to_owned());
@@ -58,6 +74,68 @@ pub(crate) async fn parse_media_upload(
             .unwrap_or_default(),
         kind,
     })
+}
+
+/// Bytes and part Content-Type of the multipart part named `field`.
+///
+/// The Workers runtime only yields a `File` when the part carries a `filename`;
+/// some clients omit it, and Rack (Mastodon) still accepts such parts as uploads.
+pub(crate) fn multipart_file_part(
+    content_type: &str,
+    body: &[u8],
+    field: &str,
+) -> Option<(Vec<u8>, String)> {
+    let boundary = content_type.split(';').skip(1).find_map(|param| {
+        let (name, value) = param.split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case("boundary")
+            .then(|| value.trim().trim_matches('"').to_owned())
+    })?;
+    let delimiter = format!("--{boundary}");
+    let mut rest = body;
+    loop {
+        let start = find_bytes(rest, delimiter.as_bytes())? + delimiter.len();
+        rest = &rest[start..];
+        if rest.starts_with(b"--") {
+            return None;
+        }
+        let headers_end = find_bytes(rest, b"\r\n\r\n")?;
+        let headers = String::from_utf8_lossy(&rest[..headers_end]);
+        let content = &rest[headers_end + 4..];
+        let content_end = find_bytes(content, format!("\r\n{delimiter}").as_bytes())?;
+        if multipart_part_name(&headers).as_deref() == Some(field) {
+            let part_type = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.trim()
+                        .eq_ignore_ascii_case("content-type")
+                        .then(|| value.trim().to_owned())
+                })
+                .unwrap_or_default();
+            return Some((content[..content_end].to_vec(), part_type));
+        }
+        rest = &content[content_end + 2..];
+    }
+}
+
+fn multipart_part_name(headers: &str) -> Option<String> {
+    let disposition = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-disposition")
+            .then_some(value)
+    })?;
+    disposition.split(';').skip(1).find_map(|param| {
+        let (name, value) = param.split_once('=')?;
+        (name.trim() == "name").then(|| value.trim().trim_matches('"').to_owned())
+    })
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Mastodon trusts file contents over the multipart part's declared type, so

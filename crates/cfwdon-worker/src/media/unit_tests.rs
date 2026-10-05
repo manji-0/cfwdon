@@ -1,5 +1,6 @@
 use crate::media::{
-    RemoteStatusAttachmentRow, image_dimensions, parse_media_focus, resolve_upload_content_type,
+    RemoteStatusAttachmentRow, image_dimensions, multipart_file_part, parse_media_focus,
+    resolve_upload_content_type,
 };
 use crate::statuses::build_remote_status_card_value;
 
@@ -134,4 +135,21 @@ fn resolve_upload_content_type_leaves_unknown_bytes_unsupported() {
         "application/octet-stream"
     );
     assert_eq!(resolve_upload_content_type("", b"plain text"), "");
+}
+
+#[test]
+fn multipart_file_part_reads_file_parts_without_filename() {
+    let body = b"---b-1\r\nContent-Disposition: form-data; name=\"description\"\r\n\r\nalt\r\n\
+---b-1\r\nContent-Disposition: form-data; name=\"file\"\r\nContent-Type: image/png\r\n\r\n\
+\x89PNG\r\n\x1a\n\xff\x00\r\n---b-1--\r\n";
+    let (bytes, content_type) =
+        multipart_file_part("multipart/form-data; boundary=-b-1", body, "file").unwrap();
+    assert_eq!(bytes, b"\x89PNG\r\n\x1a\n\xff\x00");
+    assert_eq!(content_type, "image/png");
+    assert_eq!(
+        multipart_file_part("multipart/form-data; boundary=\"-b-1\"", body, "file").map(|p| p.0),
+        Some(bytes)
+    );
+    assert!(multipart_file_part("multipart/form-data; boundary=-b-1", body, "missing").is_none());
+    assert!(multipart_file_part("multipart/form-data", body, "file").is_none());
 }
