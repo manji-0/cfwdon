@@ -54,20 +54,22 @@ python3 scripts/generate_mastodon_api_compat.py
 
 Routes that exist in `cfwdon` but not in the current upstream `config/routes/api.rb` snapshot:
 
+- `GET /api/v1/follow_requests/:id` via `follow_request_response`
 - `GET /api/v1/timelines/direct` via `direct_timeline_response`
 - `GET /api/v1/statuses/:id/card` via `status_card_response`
+- `POST /api/v1/statuses/:id/quotes/:quote_id/approve` via `approve_quote_response`
+- `POST /api/v1/statuses/:id/quotes/:quote_id/reject` via `reject_quote_response`
 - `PUT /api/v2/media/:id` via `update_media_attachment`
 - `PATCH /api/v2/media/:id` via `update_media_attachment`
-- `GET /api/v1/follow_requests/:id` via `follow_request_response`
 - `GET /api/v1/search` via `search_v1`
 
 Treat these as compatibility review items. Some may be deprecated Mastodon routes or deliberate extensions, so confirm upstream behavior before removing them.
 
 ## Snapshot
 
-- tracked upstream routes: `225`
-- local tracked routes: `226`
+- tracked upstream routes: `235`
+- local tracked routes: `232`
 - implemented routes: `225`
 - compatibility gaps: `0`
-- missing routes: `0`
-- extra routes: `6`
+- missing routes: `10`
+- extra routes: `8`

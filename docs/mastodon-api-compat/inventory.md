@@ -19,9 +19,9 @@ Local `cfwdon` routes are mapped to handler names from `crates/cfwdon-worker/src
 
 | Method | Mastodon route | cfwdon handler | Status | Note |
 | --- | --- | --- | --- | --- |
+| GET | `/api/v1_alpha/async_refreshes/:id` | `async_refresh_response` | `implemented` |  |
 | GET | `/api/v1_alpha/accounts/:account_id/collections` | `alpha_account_collections_response` | `implemented` |  |
 | GET | `/api/v1_alpha/accounts/:account_id/in_collections` | `alpha_account_in_collections_response` | `implemented` |  |
-| GET | `/api/v1_alpha/async_refreshes/:id` | `async_refresh_response` | `implemented` |  |
 | GET | `/api/v1_alpha/collections/:id` | `alpha_collection_response` | `implemented` |  |
 | POST | `/api/v1_alpha/collections` | `create_alpha_collection_response` | `implemented` |  |
 | PUT | `/api/v1_alpha/collections/:id` | `update_alpha_collection_response` | `implemented` |  |
@@ -98,6 +98,7 @@ Local `cfwdon` routes are mapped to handler names from `crates/cfwdon-worker/src
 | GET | `/api/v1/statuses/:status_id/reblogged_by` | `status_reblogged_by_response` | `implemented` |  |
 | GET | `/api/v1/statuses/:status_id/favourited_by` | `status_favourited_by_response` | `implemented` |  |
 | POST | `/api/v1/statuses/:status_id/reblog` | `reblog_status` | `implemented` |  |
+| GET | `/api/v1/statuses/:status_id/context` | `status_context_response` | `implemented` |  |
 | POST | `/api/v1/statuses/:status_id/unreblog` | `unreblog_status` | `implemented` |  |
 | GET | `/api/v1/statuses/:status_id/quotes` | `status_quotes_response` | `implemented` |  |
 | POST | `/api/v1/statuses/:status_id/quotes/:id/revoke` | `revoke_quote_response` | `implemented` |  |
@@ -114,7 +115,6 @@ Local `cfwdon` routes are mapped to handler names from `crates/cfwdon-worker/src
 | PUT | `/api/v1/statuses/:status_id/interaction_policy` | `status_interaction_policy_response` | `implemented` |  |
 | PATCH | `/api/v1/statuses/:status_id/interaction_policy` | `status_interaction_policy_response` | `implemented` |  |
 | POST | `/api/v1/statuses/:status_id/translate` | `translate_status_response` | `implemented` |  |
-| GET | `/api/v1/statuses/:id/context` | `status_context_response` | `implemented` |  |
 | GET | `/api/v1/scheduled_statuses` | `scheduled_statuses_response` | `implemented` |  |
 | GET | `/api/v1/scheduled_statuses/:id` | `scheduled_status_response` | `implemented` |  |
 | PUT | `/api/v1/scheduled_statuses/:id` | `update_scheduled_status_response` | `implemented` |  |
@@ -164,6 +164,8 @@ Local `cfwdon` routes are mapped to handler names from `crates/cfwdon-worker/src
 | GET | `/api/v1/accounts/:account_id/featured_tags` | `account_featured_tags_response` | `implemented` |  |
 | GET | `/api/v1/accounts/:account_id/endorsements` | `account_endorsements_response` | `implemented` |  |
 | POST | `/api/v1/accounts/:account_id/email_subscriptions` | `account_email_subscriptions_response` | `implemented` |  |
+| GET | `/api/v1/accounts/:account_id/collections` | - | `missing` |  |
+| GET | `/api/v1/accounts/:account_id/in_collections` | - | `missing` |  |
 | POST | `/api/v1/accounts/:id/follow` | `follow_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/unfollow` | `unfollow_account` | `implemented` |  |
 | POST | `/api/v1/accounts/:id/remove_from_followers` | `remove_from_followers_response` | `implemented` |  |
@@ -186,6 +188,14 @@ Local `cfwdon` routes are mapped to handler names from `crates/cfwdon-worker/src
 | GET | `/api/v1/featured_tags` | `featured_tags_response` | `implemented` |  |
 | POST | `/api/v1/featured_tags` | `feature_tag_response` | `implemented` |  |
 | DELETE | `/api/v1/featured_tags/:id` | `unfeature_tag_response` | `implemented` |  |
+| GET | `/api/v1/collections/:id` | - | `missing` |  |
+| POST | `/api/v1/collections` | - | `missing` |  |
+| PUT | `/api/v1/collections/:id` | - | `missing` |  |
+| PATCH | `/api/v1/collections/:id` | - | `missing` |  |
+| DELETE | `/api/v1/collections/:id` | - | `missing` |  |
+| POST | `/api/v1/collections/:collection_id/items` | - | `missing` |  |
+| DELETE | `/api/v1/collections/:collection_id/items/:id` | - | `missing` |  |
+| POST | `/api/v1/collections/:collection_id/items/:id/revoke` | - | `missing` |  |
 
 ## Notifications / Conversations / Lists / Filters / Push
 

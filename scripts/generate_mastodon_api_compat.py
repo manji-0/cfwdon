@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ROUTER_RS = REPO_ROOT / "crates/cfwdon-worker/src/router.rs"
+ROUTING_DIR = REPO_ROOT / "crates/cfwdon-worker/src/routing"
 DOC_DIR = REPO_ROOT / "docs/mastodon-api-compat"
 
 UPSTREAM_ROUTES_RB = "https://raw.githubusercontent.com/mastodon/mastodon/main/config/routes.rb"
@@ -133,6 +133,7 @@ GROUPS = [
             "/api/v1/tags",
             "/api/v1/featured_tags",
             "/api/v1/endorsements",
+            "/api/v1/collections",
         ),
     ),
     InventoryGroup(
@@ -265,6 +266,13 @@ def parse_upstream_api_routes(api_text: str) -> list[Route]:
             frames.append(Frame(nested, nested, nested))
             continue
 
+        # `scope :v1_alpha, module: :v1 do` adds a path segment; `scope module:` does not.
+        scope_match = re.match(r"scope\s+:(\w+)\b.*\bdo$", line)
+        if scope_match:
+            nested = normalize_path(current.nested + "/" + scope_match.group(1))
+            frames.append(Frame(nested, nested, nested))
+            continue
+
         if (line.startswith("scope module:") or line.startswith("with_options")) and line.endswith("do"):
             frames.append(Frame(current.nested, current.collection, current.member))
             continue
@@ -307,6 +315,12 @@ def parse_upstream_api_routes(api_text: str) -> list[Route]:
                 frames.append(Frame(base, base, base))
             continue
 
+        # Any other block (`concern :approvable do`, ...) still closes with `end`;
+        # count it so later `end`s do not pop the enclosing namespace.
+        if re.search(r"\bdo(\s*\|[^|]*\|)?$", line):
+            frames.append(Frame(current.nested, current.collection, current.member))
+            continue
+
         direct_match = re.match(r"(get|post|put|patch|delete)\s+([:\"'/][^,\s]*)", line)
         if direct_match:
             method = direct_match.group(1).upper()
@@ -335,10 +349,14 @@ def parse_local_routes(router_text: str) -> list[LocalRoute]:
         r"\.(get|post|put|patch|delete)_async\(\s*\"([^\"]+)\"\s*,\s*\|.*?\|\s*async move \{\s*([a-zA-Z0-9_]+)",
         re.S,
     )
-    routes = [
-        LocalRoute(method=method.upper(), path=path, handler=handler)
-        for method, path, handler in pattern.findall(router_text)
-    ]
+    routes: list[LocalRoute] = []
+    seen: set[tuple[str, str]] = set()
+    for method, path, handler in pattern.findall(router_text):
+        key = (method.upper(), path)
+        if key in seen:
+            continue
+        seen.add(key)
+        routes.append(LocalRoute(method=method.upper(), path=path, handler=handler))
     return routes
 
 
@@ -610,10 +628,15 @@ def format_readme(local_routes: list[LocalRoute], upstream_routes: list[Route]) 
 
 def main() -> int:
     api_text = fetch_text(UPSTREAM_API_RB)
-    router_text = ROUTER_RS.read_text()
+    # Routes are registered across the routing modules (fast and fallback routers
+    # repeat some of them), so read them all and keep one entry per route.
+    router_text = "\n".join(path.read_text() for path in sorted(ROUTING_DIR.glob("*.rs")))
 
     upstream_routes = [route for route in parse_upstream_api_routes(api_text) if should_track(route)]
-    local_routes = parse_local_routes(router_text)
+    # `/api/cfwdon/` is this server's own web/admin surface, not Mastodon API.
+    local_routes = [
+        route for route in parse_local_routes(router_text) if not route.path.startswith("/api/cfwdon/")
+    ]
 
     DOC_DIR.mkdir(parents=True, exist_ok=True)
     (DOC_DIR / "README.md").write_text(format_readme(local_routes, upstream_routes))
