@@ -1,3 +1,4 @@
+use super::{NotificationTimeWindow, StoredTimestampFormat};
 use crate::db_utils::d1_results;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
@@ -46,17 +47,21 @@ pub(crate) async fn list_local_follow_request_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<LocalFollowRequestNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT follower_account_id, created_at
              FROM follows
              WHERE target_account_id = ?1
-               AND state = 'pending'
+               AND state = 'pending'{}
              ORDER BY created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -68,16 +73,20 @@ pub(crate) async fn list_remote_follow_request_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteFollowRequestNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT requester_actor_uri AS actor_uri, created_at
              FROM follow_requests
-             WHERE account_id = ?1
+             WHERE account_id = ?1{}
              ORDER BY created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -89,17 +98,21 @@ pub(crate) async fn list_local_follow_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<LocalFollowNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT follower_account_id, created_at
              FROM follows
              WHERE target_account_id = ?1
-               AND state = 'accepted'
+               AND state = 'accepted'{}
              ORDER BY created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -138,16 +151,20 @@ pub(crate) async fn list_remote_follow_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteFollowNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT actor_uri, created_at
              FROM followers
-             WHERE account_id = ?1
+             WHERE account_id = ?1{}
              ORDER BY created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -159,46 +176,27 @@ pub(crate) async fn list_favourite_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
-    min_created_at: Option<&str>,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<FavouriteNotificationRow>> {
-    let result = if let Some(min_created_at) = min_created_at {
-        let bindings = [
-            D1Type::Text(account_id),
-            D1Type::Text(min_created_at),
-            D1Type::Integer(limit as i32),
-        ];
-        db.prepare(
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
+    let result = db
+        .prepare(format!(
             "SELECT f.account_id, f.status_id, f.created_at
              FROM favourites f
              JOIN statuses s
                ON s.id = f.status_id
              WHERE s.account_id = ?1
                AND f.account_id != ?1
-               AND f.status_id IS NOT NULL
-               AND f.created_at >= ?2
-             ORDER BY f.created_at DESC
-             LIMIT ?3",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?
-    } else {
-        let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-        db.prepare(
-            "SELECT f.account_id, f.status_id, f.created_at
-             FROM favourites f
-             JOIN statuses s
-               ON s.id = f.status_id
-             WHERE s.account_id = ?1
-               AND f.account_id != ?1
-               AND f.status_id IS NOT NULL
+               AND f.status_id IS NOT NULL{}
              ORDER BY f.created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("f.created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-    };
+        .await?;
 
     d1_results::<FavouriteNotificationRow>(&result)
 }
@@ -207,42 +205,25 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
-    min_created_at: Option<&str>,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteStatusInteractionRow>> {
-    let result = if let Some(min_created_at) = min_created_at {
-        let bindings = [
-            D1Type::Text(account_id),
-            D1Type::Text(min_created_at),
-            D1Type::Integer(limit as i32),
-        ];
-        db.prepare(
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
+    let result = db
+        .prepare(format!(
             "SELECT rf.remote_actor_uri, rf.status_id, rf.created_at
              FROM remote_favourites rf
              JOIN statuses s
                ON s.id = rf.status_id
-             WHERE s.account_id = ?1
-               AND rf.created_at >= ?2
-             ORDER BY rf.created_at DESC
-             LIMIT ?3",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?
-    } else {
-        let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-        db.prepare(
-            "SELECT rf.remote_actor_uri, rf.status_id, rf.created_at
-             FROM remote_favourites rf
-             JOIN statuses s
-               ON s.id = rf.status_id
-             WHERE s.account_id = ?1
+             WHERE s.account_id = ?1{}
              ORDER BY rf.created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("rf.created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
-        .await?
-    };
+        .await?;
 
     d1_results::<RemoteStatusInteractionRow>(&result)
 }
@@ -251,18 +232,22 @@ pub(crate) async fn list_remote_reblog_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteStatusInteractionRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT rr.remote_actor_uri, rr.status_id, rr.created_at
              FROM remote_reblogs rr
              JOIN statuses s
                ON s.id = rr.status_id
-             WHERE s.account_id = ?1
+             WHERE s.account_id = ?1{}
              ORDER BY rr.created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("rr.created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;

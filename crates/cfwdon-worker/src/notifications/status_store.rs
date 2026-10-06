@@ -1,3 +1,4 @@
+use super::{NotificationTimeWindow, StoredTimestampFormat};
 use crate::db_utils::d1_results;
 use crate::statuses::statuses_from_records;
 use crate::tracked_d1::D1Database;
@@ -38,10 +39,13 @@ pub(crate) async fn list_local_status_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<LocalStatus>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
              FROM statuses s
              JOIN follows f
@@ -50,10 +54,11 @@ pub(crate) async fn list_local_status_notifications_for_account(
               AND f.state = 'accepted'
               AND f.notify = 1
              WHERE s.account_id != ?1
-               AND s.created_at >= f.updated_at
+               AND s.created_at >= strftime('%Y-%m-%dT%H:%M:%S', f.updated_at){}
              ORDER BY s.created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("s.created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -65,10 +70,13 @@ pub(crate) async fn list_remote_status_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteStatusNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
              FROM remote_statuses rs
              JOIN follows f
@@ -76,10 +84,11 @@ pub(crate) async fn list_remote_status_notifications_for_account(
               AND f.follower_account_id = ?1
               AND f.state = 'accepted'
               AND f.notify = 1
-             WHERE rs.published_at >= f.updated_at
+             WHERE rs.published_at >= strftime('%Y-%m-%dT%H:%M:%S', f.updated_at){}
              ORDER BY rs.published_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("rs.published_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;

@@ -52,7 +52,7 @@ pub(super) fn remote_status_upsert_sql() -> &'static str {
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
         updated_at = ?16,
-        edited_at = excluded.edited_at,
+        edited_at = COALESCE(excluded.edited_at, remote_statuses.edited_at),
         card_json = CASE
             WHEN excluded.card_json IS NOT NULL THEN excluded.card_json
             ELSE remote_statuses.card_json
@@ -163,7 +163,9 @@ mod tests {
         assert!(sql.contains("WHEN remote_statuses.quote_state IN ('rejected', 'revoked')"));
         assert!(sql.contains("ELSE excluded.quote_state"));
         assert!(sql.contains("updated_at = ?16"));
-        assert!(sql.contains("edited_at = excluded.edited_at"));
+        assert!(
+            sql.contains("edited_at = COALESCE(excluded.edited_at, remote_statuses.edited_at)")
+        );
         assert!(sql.contains("federated_emojis_json = excluded.federated_emojis_json"));
         assert!(sql.contains("in_reply_to_id = COALESCE(excluded.in_reply_to_id"));
     }

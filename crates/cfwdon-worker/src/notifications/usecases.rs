@@ -60,8 +60,12 @@ pub(crate) async fn load_notification_entry_usecase(
     viewer: &LocalAccount,
     notification_id: &str,
 ) -> Result<Option<NotificationEntry>> {
+    // A snowflake id names its creation second; bounding both ends by it keeps
+    // every source to that second. Untimed ids still scan the newest rows.
     let query = NotificationsQuery {
         limit: Some(200),
+        max_id: Some(notification_id.to_owned()),
+        since_id: Some(notification_id.to_owned()),
         ..NotificationsQuery::default()
     };
     Ok(

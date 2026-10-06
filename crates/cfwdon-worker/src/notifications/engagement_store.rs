@@ -1,3 +1,4 @@
+use super::{NotificationTimeWindow, StoredTimestampFormat};
 use crate::db_utils::d1_results;
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
@@ -22,20 +23,24 @@ pub(crate) async fn list_reblog_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<ReblogNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Sqlite);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT r.account_id, r.status_id, r.created_at
              FROM reblogs r
              JOIN statuses s
                ON s.id = r.status_id
              WHERE s.account_id = ?1
                AND r.account_id != ?1
-               AND r.status_id IS NOT NULL
+               AND r.status_id IS NOT NULL{}
              ORDER BY r.created_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("r.created_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
@@ -47,10 +52,13 @@ pub(crate) async fn list_poll_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<PollNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT p.id AS poll_id,
                     p.status_id,
                     s.account_id,
@@ -62,11 +70,12 @@ pub(crate) async fn list_poll_notifications_for_account(
                ON v.poll_id = p.id
               AND v.account_id = ?1
              WHERE datetime(replace(replace(p.expires_at, 'T', ' '), 'Z', '')) <= CURRENT_TIMESTAMP
-               AND (s.account_id = ?1 OR v.account_id = ?1)
+               AND (s.account_id = ?1 OR v.account_id = ?1){}
              GROUP BY p.id, p.status_id, s.account_id, p.expires_at
              ORDER BY p.expires_at DESC
              LIMIT ?2",
-        )
+            bounds.clause("p.expires_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;

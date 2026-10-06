@@ -1,6 +1,6 @@
 use super::{
     NotificationsQuery, build_status_notification_entry, list_poll_notifications_for_account,
-    preload_notification_statuses,
+    notification_time_window, preload_notification_statuses,
 };
 use crate::identity::actor_url;
 use crate::notifications::{
@@ -21,11 +21,13 @@ pub(crate) async fn collect_poll_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "poll") {
         return Ok(());
     }
 
-    let polls = list_poll_notifications_for_account(db, viewer.id(), per_type_limit).await?;
+    let polls =
+        list_poll_notifications_for_account(db, viewer.id(), per_type_limit, &window).await?;
     let status_ids = polls
         .iter()
         .map(|poll| poll.status_id.clone())

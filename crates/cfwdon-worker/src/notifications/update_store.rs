@@ -1,3 +1,4 @@
+use super::{NotificationTimeWindow, StoredTimestampFormat};
 use crate::db_utils::d1_results;
 use crate::remote::remote_status_from_record;
 use crate::tracked_d1::D1Database;
@@ -31,21 +32,26 @@ pub(crate) async fn list_update_notifications_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
+    window: &NotificationTimeWindow,
 ) -> Result<Vec<UpdateNotificationRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
+    let mut bindings = vec![D1Type::Text(account_id), D1Type::Integer(limit as i32)];
+    bindings.extend(bounds.bindings());
     let result = db
-        .prepare(
+        .prepare(format!(
             "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri,
                     rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive,
-                    rs.language, rs.quote_state, rs.published_at, rs.updated_at AS remote_updated_at
+                    rs.language, rs.quote_state, rs.published_at, rs.edited_at AS remote_updated_at
              FROM remote_statuses rs
              JOIN reblogs r
                ON r.remote_status_id = rs.id
              WHERE r.account_id = ?1
-               AND rs.updated_at > r.updated_at
-             ORDER BY rs.updated_at DESC, rs.id DESC
+               AND rs.edited_at IS NOT NULL
+               AND rs.edited_at > strftime('%Y-%m-%dT%H:%M:%S', r.updated_at){}
+             ORDER BY rs.edited_at DESC, rs.id DESC
              LIMIT ?2",
-        )
+            bounds.clause("rs.edited_at", 3)
+        ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;

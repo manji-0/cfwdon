@@ -1,6 +1,6 @@
 use super::{
     NotificationsQuery, RemoteStatusNotificationRow, list_local_status_notifications_for_account,
-    list_remote_status_notifications_for_account,
+    list_remote_status_notifications_for_account, notification_time_window,
 };
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
@@ -78,13 +78,14 @@ pub(crate) async fn collect_status_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "status") {
         return Ok(());
     }
 
     let (local_statuses, remote_status_rows) = futures_util::try_join!(
-        list_local_status_notifications_for_account(db, viewer.id(), per_type_limit),
-        list_remote_status_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_local_status_notifications_for_account(db, viewer.id(), per_type_limit, &window),
+        list_remote_status_notifications_for_account(db, viewer.id(), per_type_limit, &window),
     )?;
     let remote_statuses = remote_status_rows
         .iter()

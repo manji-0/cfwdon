@@ -1,7 +1,8 @@
 use super::{
     MentionNotificationRow, NotificationsQuery, RemoteMentionNotificationRow,
     build_status_notification_entry, list_local_mention_notifications_for_account,
-    list_remote_mention_notifications_for_account, preload_notification_statuses,
+    list_remote_mention_notifications_for_account, notification_time_window,
+    preload_notification_statuses,
 };
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::identity::{actor_url, remote_account_rest_id};
@@ -79,25 +80,14 @@ pub(crate) async fn collect_mention_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "mention") {
         return Ok(());
     }
 
     let (local_mentions, remote_mentions) = futures_util::try_join!(
-        list_local_mention_notifications_for_account(
-            db,
-            viewer,
-            config,
-            per_type_limit,
-            query.min_created_at.as_deref(),
-        ),
-        list_remote_mention_notifications_for_account(
-            db,
-            viewer,
-            config,
-            per_type_limit,
-            query.min_created_at.as_deref(),
-        ),
+        list_local_mention_notifications_for_account(db, viewer, config, per_type_limit, &window),
+        list_remote_mention_notifications_for_account(db, viewer, config, per_type_limit, &window),
     )?;
     let local_statuses = local_mentions
         .into_iter()

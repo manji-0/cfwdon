@@ -1,7 +1,8 @@
 use super::{
     NotificationEntry, NotificationsQuery, default_grouped_notification_types,
     is_legacy_notification_api_id, notification_api_numeric_id,
-    notification_entry_matches_cursor_id, notification_v2_group_key,
+    notification_entry_matches_cursor_id, notification_query_has_untimed_cursor,
+    notification_v2_group_key,
 };
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
@@ -47,8 +48,18 @@ pub(crate) fn filter_notification_entries_by_query(
         .collect()
 }
 
+/// Rows each source reads for one page. Timed cursors bound every source in
+/// SQL, so a newest-first page only needs a margin over `limit` for rows that
+/// mutes, filters and dismissals drop. `min_id` wants the oldest rows after
+/// its cursor while sources sort newest first, and untimed cursors are only
+/// resolved in Rust, so both still read a wide window.
 pub(crate) fn notifications_fetch_limit(query: &NotificationsQuery, limit: u32) -> u32 {
-    if query.max_id.is_some() || query.since_id.is_some() || query.min_id.is_some() {
+    let forward = query
+        .min_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if forward || notification_query_has_untimed_cursor(query) {
         1000
     } else {
         limit.saturating_mul(4)

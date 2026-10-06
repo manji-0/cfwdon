@@ -1,6 +1,6 @@
 use super::{
     NotificationsQuery, build_status_notification_entry, list_update_notifications_for_account,
-    notification_timestamp_sort_token, preload_notification_statuses,
+    notification_time_window, notification_timestamp_sort_token, preload_notification_statuses,
 };
 use crate::identity::remote_account_rest_id;
 use crate::notifications::{
@@ -19,11 +19,13 @@ pub(crate) async fn collect_update_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "update") {
         return Ok(());
     }
 
-    let updates = list_update_notifications_for_account(db, viewer.id(), per_type_limit).await?;
+    let updates =
+        list_update_notifications_for_account(db, viewer.id(), per_type_limit, &window).await?;
     let mut status_updates = Vec::new();
     for update in updates {
         let Ok(status) = update.as_remote_status_row() else {

@@ -1,8 +1,8 @@
 use super::{
     NotificationsQuery, build_status_notification_entry,
     list_local_quote_notifications_for_account, list_quoted_update_notifications_for_account,
-    list_remote_quote_notifications_for_account, notification_timestamp_sort_token,
-    preload_notification_statuses,
+    list_remote_quote_notifications_for_account, notification_time_window,
+    notification_timestamp_sort_token, preload_notification_statuses,
 };
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
@@ -23,13 +23,14 @@ pub(crate) async fn collect_quote_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "quote") {
         return Ok(());
     }
 
     let (local_quotes, remote_quotes) = futures_util::try_join!(
-        list_local_quote_notifications_for_account(db, viewer.id(), per_type_limit),
-        list_remote_quote_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_local_quote_notifications_for_account(db, viewer.id(), per_type_limit, &window),
+        list_remote_quote_notifications_for_account(db, viewer.id(), per_type_limit, &window),
     )?;
     let preloads =
         preload_notification_statuses(db, config, viewer, &local_quotes, &remote_quotes, &[], &[])
@@ -128,12 +129,14 @@ pub(crate) async fn collect_quoted_update_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "quoted_update") {
         return Ok(());
     }
 
     let updates =
-        list_quoted_update_notifications_for_account(db, viewer.id(), per_type_limit).await?;
+        list_quoted_update_notifications_for_account(db, viewer.id(), per_type_limit, &window)
+            .await?;
     let statuses = updates
         .iter()
         .map(quoted_update_status_row)

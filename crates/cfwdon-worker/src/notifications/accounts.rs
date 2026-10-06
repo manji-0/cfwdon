@@ -3,7 +3,8 @@ use super::{
     list_local_follow_notifications_for_account,
     list_local_follow_request_notifications_for_account,
     list_remote_favourite_notifications_for_account, list_remote_follow_notifications_for_account,
-    list_remote_follow_request_notifications_for_account, preload_notification_statuses,
+    list_remote_follow_request_notifications_for_account, notification_time_window,
+    preload_notification_statuses,
 };
 use crate::accounts::find_accounts_by_ids;
 use crate::identity::{actor_url, remote_account_rest_id};
@@ -122,13 +123,24 @@ pub(crate) async fn collect_follow_request_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "follow_request") {
         return Ok(());
     }
 
     let (local, remote) = futures_util::try_join!(
-        list_local_follow_request_notifications_for_account(db, viewer.id(), per_type_limit),
-        list_remote_follow_request_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_local_follow_request_notifications_for_account(
+            db,
+            viewer.id(),
+            per_type_limit,
+            &window
+        ),
+        list_remote_follow_request_notifications_for_account(
+            db,
+            viewer.id(),
+            per_type_limit,
+            &window
+        ),
     )?;
     let rows = AccountNotificationRows {
         local: local
@@ -161,13 +173,14 @@ pub(crate) async fn collect_follow_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "follow") {
         return Ok(());
     }
 
     let (local, remote) = futures_util::try_join!(
-        list_local_follow_notifications_for_account(db, viewer.id(), per_type_limit),
-        list_remote_follow_notifications_for_account(db, viewer.id(), per_type_limit),
+        list_local_follow_notifications_for_account(db, viewer.id(), per_type_limit, &window),
+        list_remote_follow_notifications_for_account(db, viewer.id(), per_type_limit, &window),
     )?;
     let rows = AccountNotificationRows {
         local: local
@@ -191,23 +204,14 @@ pub(crate) async fn collect_favourite_notification_entries(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
+    let window = notification_time_window(query);
     if !notification_type_allowed(query, "favourite") {
         return Ok(());
     }
 
     let (local_favourites, remote_favourites) = futures_util::try_join!(
-        list_favourite_notifications_for_account(
-            db,
-            viewer.id(),
-            per_type_limit,
-            query.min_created_at.as_deref(),
-        ),
-        list_remote_favourite_notifications_for_account(
-            db,
-            viewer.id(),
-            per_type_limit,
-            query.min_created_at.as_deref(),
-        ),
+        list_favourite_notifications_for_account(db, viewer.id(), per_type_limit, &window,),
+        list_remote_favourite_notifications_for_account(db, viewer.id(), per_type_limit, &window,),
     )?;
     let status_ids = local_favourites
         .iter()
