@@ -1,5 +1,6 @@
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
+use crate::request_utils::query_array_param;
 use crate::runtime_config::load_config;
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
@@ -116,14 +117,9 @@ async fn save_marker(
 
 fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
     let url = req.url()?;
-    let requested = url
-        .query_pairs()
-        .filter(|(key, _)| key == "timeline[]")
-        .map(|(_, value)| value.into_owned())
-        .collect::<Vec<_>>();
-    if requested.is_empty() {
+    let Some(requested) = query_array_param(&url, "timeline") else {
         return Ok((true, true));
-    }
+    };
 
     Ok((
         requested.iter().any(|scope| scope == HOME_MARKER_SCOPE),
@@ -133,6 +129,50 @@ fn requested_marker_scopes(req: &Request) -> Result<(bool, bool)> {
     ))
 }
 
+/// Mastodon's marker document only carries the timelines that have a marker.
+fn markers_document(
+    home: Option<serde_json::Value>,
+    notifications: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut document = serde_json::Map::new();
+    if let Some(home) = home {
+        document.insert(HOME_MARKER_SCOPE.to_owned(), home);
+    }
+    if let Some(notifications) = notifications {
+        document.insert(NOTIFICATIONS_MARKER_SCOPE.to_owned(), notifications);
+    }
+    serde_json::Value::Object(document)
+}
+
+/// `POST /api/v1/markers` takes JSON or form params (`home[last_read_id]=…`).
+async fn parse_save_markers_request(
+    req: &mut Request,
+) -> std::result::Result<SaveMarkersRequest, String> {
+    let content_type = req
+        .headers()
+        .get("Content-Type")
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if content_type.contains("application/json") {
+        return req
+            .json::<SaveMarkersRequest>()
+            .await
+            .map_err(|error| format!("invalid markers payload: {error}"));
+    }
+    let form = req
+        .form_data()
+        .await
+        .map_err(|error| format!("invalid markers payload: {error}"))?;
+    let marker = |scope: &str| {
+        form.get_field(&format!("{scope}[last_read_id]"))
+            .map(|last_read_id| MarkerUpdateRequest { last_read_id })
+    };
+    Ok(SaveMarkersRequest {
+        home: marker(HOME_MARKER_SCOPE),
+        notifications: marker(NOTIFICATIONS_MARKER_SCOPE),
+    })
+}
 pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
@@ -158,10 +198,7 @@ pub(crate) async fn markers_response(req: Request, ctx: RouteContext<()>) -> Res
         },
     )?;
 
-    Response::from_json(&serde_json::json!({
-        "home": home,
-        "notifications": notifications,
-    }))
+    Response::from_json(&markers_document(home, notifications))
 }
 
 pub(crate) async fn save_markers_response(
@@ -170,15 +207,22 @@ pub(crate) async fn save_markers_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
 
-    let request = req
-        .json::<SaveMarkersRequest>()
-        .await
-        .map_err(|error| worker::Error::RustError(format!("invalid markers payload: {error}")))?;
     let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
+    let request = match parse_save_markers_request(&mut req).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
+    if [&request.home, &request.notifications]
+        .into_iter()
+        .flatten()
+        .any(|marker| marker.last_read_id.trim().is_empty())
+    {
+        return Response::error("Validation failed: Last read can't be blank", 422);
+    }
 
     let (home, notifications) = futures_util::try_join!(
         async {
@@ -186,7 +230,7 @@ pub(crate) async fn save_markers_response(
                 Some(home) => save_marker(&db, account.id(), HOME_MARKER_SCOPE, home)
                     .await
                     .map(Some),
-                None => load_marker(&db, account.id(), HOME_MARKER_SCOPE).await,
+                None => Ok(None),
             }
         },
         async {
@@ -196,13 +240,10 @@ pub(crate) async fn save_markers_response(
                         .await
                         .map(Some)
                 }
-                None => load_marker(&db, account.id(), NOTIFICATIONS_MARKER_SCOPE).await,
+                None => Ok(None),
             }
         },
     )?;
 
-    Response::from_json(&serde_json::json!({
-        "home": home,
-        "notifications": notifications,
-    }))
+    Response::from_json(&markers_document(home, notifications))
 }
