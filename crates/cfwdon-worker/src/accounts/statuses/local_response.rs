@@ -9,7 +9,7 @@ use crate::statuses::{
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
     load_in_reply_to_account_ids,
 };
-use crate::timelines::{StatusRenderItem, render_status_items};
+use crate::timelines::{StatusRenderItem, build_timeline_link_header, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
@@ -132,7 +132,9 @@ async fn respond_local_account_statuses_html(
 
 /// Render the JSON page: visibility and account filters first, then one
 /// batched render of the survivors through the timeline preloads.
+#[allow(clippy::too_many_arguments)]
 async fn respond_local_account_statuses_json(
+    req: &Request,
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
@@ -145,6 +147,14 @@ async fn respond_local_account_statuses_json(
         .into_iter()
         .take(limit as usize)
         .collect::<Vec<_>>();
+    // Page links follow the fetched window, so a page whose statuses are all
+    // filtered out still points past itself.
+    let link = build_timeline_link_header(
+        req,
+        limit,
+        statuses.first().map(|status| status.id.as_str()),
+        statuses.last().map(|status| status.id.as_str()),
+    )?;
     let status_ids = statuses
         .iter()
         .map(|status| status.id.clone())
@@ -181,7 +191,11 @@ async fn respond_local_account_statuses_json(
         .map(|(status, _)| StatusRenderItem::Local(status))
         .collect::<Vec<_>>();
 
-    Response::from_json(&render_status_items(db, config, viewer, items).await?)
+    let mut builder = Response::builder();
+    if let Some(link) = link {
+        builder = builder.with_header("Link", &link)?;
+    }
+    builder.from_json(&render_status_items(db, config, viewer, items).await?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -217,6 +231,15 @@ pub(crate) async fn local_account_statuses_response(
         .await;
     }
 
-    respond_local_account_statuses_json(db, config, viewer, &account, query, limit, page.statuses)
-        .await
+    respond_local_account_statuses_json(
+        req,
+        db,
+        config,
+        viewer,
+        &account,
+        query,
+        limit,
+        page.statuses,
+    )
+    .await
 }

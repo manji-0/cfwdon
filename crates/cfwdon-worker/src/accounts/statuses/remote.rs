@@ -43,6 +43,7 @@ use crate::store::remote::{
     RemoteActorRow, RemoteActorSocialCounts, find_remote_actor_by_actor_uri, upsert_remote_actor,
 };
 use crate::store::statuses::preload_status_counts_for_remote_rows;
+use crate::timelines::build_timeline_link_header;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};
@@ -109,7 +110,8 @@ pub(crate) async fn remote_account_statuses_response(
         .await;
     }
 
-    remote_account_statuses_json_response(db, config, viewer, page, query, &status_ids).await
+    remote_account_statuses_json_response(req, db, config, viewer, page, query, limit, &status_ids)
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -282,12 +284,15 @@ async fn remote_account_statuses_html_response(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn remote_account_statuses_json_response(
+    req: &Request,
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
     page: RemoteAccountStatusPage,
     query: &AccountStatusesQuery,
+    limit: u32,
     status_ids: &[String],
 ) -> Result<Response> {
     let RemoteAccountStatusPage {
@@ -388,7 +393,17 @@ async fn remote_account_statuses_json_response(
         }
         response.push(status_response);
     }
-    Response::from_json(&response)
+    let link = build_timeline_link_header(
+        req,
+        limit,
+        response.first().map(|status| status.id.as_str()),
+        response.last().map(|status| status.id.as_str()),
+    )?;
+    let mut builder = Response::builder();
+    if let Some(link) = link {
+        builder = builder.with_header("Link", &link)?;
+    }
+    builder.from_json(&response)
 }
 
 async fn refresh_remote_status_actor(
