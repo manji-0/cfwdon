@@ -331,7 +331,10 @@ async fn publish_remote_list_timeline_events_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
-    if remote_status.visibility != Visibility::Public {
+    if !matches!(
+        remote_status.visibility,
+        Visibility::Public | Visibility::Unlisted
+    ) {
         return;
     }
 
@@ -1318,7 +1321,7 @@ mod tests {
             "list",
             None
         ));
-        assert!(!local_status_visible_on_list_timeline(
+        assert!(local_status_visible_on_list_timeline(
             Visibility::Unlisted,
             "list",
             None

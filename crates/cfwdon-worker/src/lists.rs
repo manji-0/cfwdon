@@ -309,13 +309,18 @@ pub(crate) struct ListStreamFanout {
     pub(crate) truncated: bool,
 }
 
+/// Live list delivery: public and unlisted posts. Followers-only posts also
+/// belong on the list timeline when the owner follows the author; the REST
+/// query checks that, the stream does not and leaves them to the next fetch.
 pub(crate) fn local_status_visible_on_list_timeline(
     visibility: cfwdon_domain::Visibility,
     replies_policy: &str,
     in_reply_to_id: Option<&str>,
 ) -> bool {
-    visibility == cfwdon_domain::Visibility::Public
-        && !(replies_policy == "none" && in_reply_to_id.is_some())
+    matches!(
+        visibility,
+        cfwdon_domain::Visibility::Public | cfwdon_domain::Visibility::Unlisted
+    ) && !(replies_policy == "none" && in_reply_to_id.is_some())
 }
 
 pub(crate) async fn list_local_account_list_stream_fanout(

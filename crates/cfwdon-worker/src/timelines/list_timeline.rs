@@ -72,14 +72,20 @@ struct ListCandidateQuery<'a> {
 fn list_candidate_query<'a>(
     list_id: &'a str,
     instance_domain: &'a str,
+    viewer_account_id: &'a str,
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
     exclude_replies: bool,
     source: ListCandidateSource,
 ) -> ListCandidateQuery<'a> {
     let dir = cursor.order_direction();
-    // `?1` list id, `?2` instance domain; cursor bounds and then the limit follow.
-    let mut bindings = vec![D1Type::Text(list_id), D1Type::Text(instance_domain)];
+    // `?1` list id, `?2` instance domain, `?3` list owner; cursor bounds and
+    // then the limit follow.
+    let mut bindings = vec![
+        D1Type::Text(list_id),
+        D1Type::Text(instance_domain),
+        D1Type::Text(viewer_account_id),
+    ];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
     let limit_slot = bindings.len();
@@ -98,7 +104,18 @@ fn list_candidate_query<'a>(
              SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
              FROM members mb
              CROSS JOIN statuses s ON s.account_id = mb.account_id
-             WHERE s.visibility = 'public'{replies}{cursor_predicates}
+             WHERE (
+                    s.visibility IN ('public', 'unlisted')
+                    OR (
+                        s.visibility = 'private'
+                        AND EXISTS (
+                            SELECT 1 FROM follows f
+                            WHERE f.follower_account_id = ?3
+                              AND f.target_account_id = s.account_id
+                              AND f.state = 'accepted'
+                        )
+                    )
+                 ){replies}{cursor_predicates}
              ORDER BY s.created_at {dir}, s.id {dir}
              LIMIT ?{limit_slot}"
             )
@@ -116,7 +133,18 @@ fn list_candidate_query<'a>(
              SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
              FROM members mb
              CROSS JOIN remote_statuses rs ON rs.actor_uri = mb.actor_uri
-             WHERE rs.visibility = 'public'{replies}{cursor_predicates}
+             WHERE (
+                    rs.visibility IN ('public', 'unlisted')
+                    OR (
+                        rs.visibility = 'private'
+                        AND EXISTS (
+                            SELECT 1 FROM follows f
+                            WHERE f.follower_account_id = ?3
+                              AND f.target_actor_uri = rs.actor_uri
+                              AND f.state = 'accepted'
+                        )
+                    )
+                 ){replies}{cursor_predicates}
              ORDER BY rs.published_at {dir}, rs.id {dir}
              LIMIT ?{limit_slot}"
             )
@@ -161,6 +189,7 @@ pub(crate) async fn list_timeline_page_response(
     let local_query = list_candidate_query(
         list_id,
         &config.instance_domain,
+        viewer.id(),
         &cursor,
         query_limit,
         exclude_replies,
@@ -169,6 +198,7 @@ pub(crate) async fn list_timeline_page_response(
     let remote_query = list_candidate_query(
         list_id,
         &config.instance_domain,
+        viewer.id(),
         &cursor,
         query_limit,
         exclude_replies,
@@ -223,16 +253,20 @@ mod tests {
         let query = list_candidate_query(
             "list-1",
             "social.example",
+            "viewer-1",
             &cursor,
             80,
             false,
             ListCandidateSource::Local,
         );
-        assert_eq!(query.bindings.len(), 3);
+        assert_eq!(query.bindings.len(), 4);
         assert!(matches!(query.bindings[0], D1Type::Text("list-1")));
         assert!(matches!(query.bindings[1], D1Type::Text("social.example")));
-        assert!(matches!(query.bindings[2], D1Type::Integer(80)));
-        assert!(query.sql.contains("LIMIT ?3"));
+        assert!(matches!(query.bindings[2], D1Type::Text("viewer-1")));
+        assert!(matches!(query.bindings[3], D1Type::Integer(80)));
+        assert!(query.sql.contains("LIMIT ?4"));
+        assert!(query.sql.contains("s.visibility IN ('public', 'unlisted')"));
+        assert!(query.sql.contains("f.follower_account_id = ?3"));
         assert!(!query.sql.contains("in_reply_to_id IS NULL"));
     }
 
@@ -248,14 +282,15 @@ mod tests {
         let query = list_candidate_query(
             "list-1",
             "social.example",
+            "viewer-1",
             &cursor,
             80,
             true,
             ListCandidateSource::Remote,
         );
-        assert_eq!(query.bindings.len(), 5);
+        assert_eq!(query.bindings.len(), 6);
         assert!(query.sql.contains("rs.in_reply_to_uri IS NULL"));
-        assert!(query.sql.contains("rs.published_at <= ?3"));
-        assert!(query.sql.contains("LIMIT ?5"));
+        assert!(query.sql.contains("rs.published_at <= ?4"));
+        assert!(query.sql.contains("LIMIT ?6"));
     }
 }
