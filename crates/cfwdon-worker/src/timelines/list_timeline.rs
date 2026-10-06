@@ -77,6 +77,7 @@ fn list_candidate_query<'a>(
     exclude_replies: bool,
     source: ListCandidateSource,
 ) -> ListCandidateQuery<'a> {
+    let dir = cursor.order_direction();
     // `?1` list id, `?2` instance domain; cursor bounds and then the limit follow.
     let mut bindings = vec![D1Type::Text(list_id), D1Type::Text(instance_domain)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
@@ -98,7 +99,7 @@ fn list_candidate_query<'a>(
              FROM members mb
              CROSS JOIN statuses s ON s.account_id = mb.account_id
              WHERE s.visibility = 'public'{replies}{cursor_predicates}
-             ORDER BY s.created_at DESC, s.id DESC
+             ORDER BY s.created_at {dir}, s.id {dir}
              LIMIT ?{limit_slot}"
             )
         }
@@ -116,7 +117,7 @@ fn list_candidate_query<'a>(
              FROM members mb
              CROSS JOIN remote_statuses rs ON rs.actor_uri = mb.actor_uri
              WHERE rs.visibility = 'public'{replies}{cursor_predicates}
-             ORDER BY rs.published_at DESC, rs.id DESC
+             ORDER BY rs.published_at {dir}, rs.id {dir}
              LIMIT ?{limit_slot}"
             )
         }
@@ -184,7 +185,8 @@ pub(crate) async fn list_timeline_page_response(
         list_candidate_rows_for_source(db, local_query),
         list_candidate_rows_for_source(db, remote_query),
     )?;
-    let candidate_rows = merge_home_timeline_candidate_rows(local_rows, remote_rows, query_limit);
+    let candidate_rows =
+        merge_home_timeline_candidate_rows(local_rows, remote_rows, query_limit, cursor.forward);
 
     let entries = timeline_entries_from_candidate_rows(
         db,
@@ -195,9 +197,10 @@ pub(crate) async fn list_timeline_page_response(
         &muted_actor_uris,
         candidate_rows,
         limit,
+        cursor.forward,
     )
     .await?;
-    timeline_response_from_entries(req, limit, entries)
+    timeline_response_from_entries(req, limit, cursor.forward, entries)
 }
 
 #[cfg(test)]
@@ -206,6 +209,7 @@ mod tests {
 
     fn empty_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: None,
             max_id: None,
             min_timestamp: None,
@@ -235,6 +239,7 @@ mod tests {
     #[test]
     fn remote_list_query_excludes_replies_and_seeks_cursor() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: None,

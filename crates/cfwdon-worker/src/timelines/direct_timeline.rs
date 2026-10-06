@@ -129,7 +129,7 @@ pub(crate) async fn direct_timeline_response(
         });
     }
 
-    let candidates = select_public_timeline_candidates(candidates, limit);
+    let candidates = select_public_timeline_candidates(candidates, limit, cursor.forward);
     let entries = candidate_render::timeline_entries_from_candidates(
         &db,
         &config,
@@ -143,7 +143,7 @@ pub(crate) async fn direct_timeline_response(
     .await?;
 
     with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
+        timeline_response_from_entries(&req, limit, cursor.forward, entries)?,
         &session,
     )
 }

@@ -1,4 +1,7 @@
-use super::filters::{remote_account_status_list_options, remote_status_matches_account_filters};
+use super::filters::{
+    account_statuses_page_walks_forward, remote_account_status_list_options,
+    remote_status_matches_account_filters,
+};
 use super::html::{account_statuses_html_response, remote_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::activitypub::{
@@ -43,7 +46,7 @@ use crate::store::remote::{
     RemoteActorRow, RemoteActorSocialCounts, find_remote_actor_by_actor_uri, upsert_remote_actor,
 };
 use crate::store::statuses::preload_status_counts_for_remote_rows;
-use crate::timelines::build_timeline_link_header;
+use crate::timelines::{build_timeline_link_header, keep_timeline_page};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};
@@ -298,11 +301,16 @@ async fn remote_account_statuses_json_response(
     let RemoteAccountStatusPage {
         actor,
         actor_social_counts,
-        statuses,
+        mut statuses,
         transient_statuses,
         is_following_remote_actor,
         ..
     } = page;
+    keep_timeline_page(
+        &mut statuses,
+        limit as usize,
+        account_statuses_page_walks_forward(query),
+    );
     let remote_status_refs = statuses
         .iter()
         .map(|status| (status, &actor))

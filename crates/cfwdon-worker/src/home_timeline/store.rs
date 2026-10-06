@@ -1,6 +1,7 @@
 use super::{HomeTimelineCandidateSource, home_timeline_candidate_query};
 use crate::db_utils::d1_results;
 use crate::timelines::ResolvedTimelineCursor;
+use crate::timelines::keep_timeline_page;
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -48,6 +49,7 @@ pub(crate) async fn list_home_timeline_candidate_ids(
         local_rows,
         remote_rows,
         limit,
+        cursor.forward,
     ))
 }
 
@@ -78,6 +80,7 @@ pub(crate) fn merge_home_timeline_candidate_rows(
     local_rows: Vec<HomeTimelineCandidateRow>,
     remote_rows: Vec<HomeTimelineCandidateRow>,
     limit: u32,
+    forward: bool,
 ) -> Vec<HomeTimelineCandidateRow> {
     let mut rows = local_rows;
     rows.extend(remote_rows);
@@ -90,10 +93,11 @@ pub(crate) fn merge_home_timeline_candidate_rows(
 
     let mut seen_status_ids = HashSet::new();
     rows.retain(|row| seen_status_ids.insert(row.status_id.clone()));
-    let keep = usize::try_from(limit).unwrap_or(usize::MAX);
-    if rows.len() > keep {
-        rows.truncate(keep);
-    }
+    keep_timeline_page(
+        &mut rows,
+        usize::try_from(limit).unwrap_or(usize::MAX),
+        forward,
+    );
     rows
 }
 
@@ -121,6 +125,7 @@ mod tests {
                 row("local", "status-a", "2026-01-02T00:00:00Z"),
             ],
             10,
+            false,
         );
 
         assert_eq!(
@@ -141,6 +146,7 @@ mod tests {
             ],
             vec![row("remote", "status-c", "2026-01-01T00:00:00Z")],
             2,
+            false,
         );
 
         assert_eq!(merged.len(), 2);

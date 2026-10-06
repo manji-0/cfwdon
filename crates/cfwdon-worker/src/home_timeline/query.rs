@@ -122,6 +122,7 @@ pub(crate) fn home_timeline_candidate_query<'a>(
     source: HomeTimelineCandidateSource,
     include_followed_tags: bool,
 ) -> HomeTimelineCandidateQuery<'a> {
+    let dir = cursor.order_direction();
     // `?1` is always the viewer; cursor bounds and then the limit follow.
     let mut bindings = vec![D1Type::Text(viewer_account_id)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
@@ -131,7 +132,7 @@ pub(crate) fn home_timeline_candidate_query<'a>(
     let branches = source
         .branches(include_followed_tags)
         .iter()
-        .map(|branch| branch_sql(branch, &slots, limit_slot))
+        .map(|branch| branch_sql(branch, &slots, limit_slot, dir))
         .collect::<Vec<_>>()
         .join("\n\n                UNION\n\n                ");
 
@@ -140,14 +141,19 @@ pub(crate) fn home_timeline_candidate_query<'a>(
              FROM (
                 {branches}
              )
-             ORDER BY timestamp DESC, status_id DESC
+             ORDER BY timestamp {dir}, status_id {dir}
              LIMIT ?{limit_slot}"
     );
 
     HomeTimelineCandidateQuery { sql, bindings }
 }
 
-fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) -> String {
+fn branch_sql(
+    branch: &CandidateBranch,
+    slots: &CursorSlots,
+    limit_slot: usize,
+    dir: &str,
+) -> String {
     let CandidateBranch {
         source,
         from_and_where,
@@ -162,7 +168,7 @@ fn branch_sql(branch: &CandidateBranch, slots: &CursorSlots, limit_slot: usize) 
                 FROM (
                     SELECT '{source}' AS source, {id_column} AS status_id, {timestamp_column} AS timestamp
                     {from_and_where}{cursor_predicates}
-                    ORDER BY {timestamp_column} DESC, {id_column} DESC
+                    ORDER BY {timestamp_column} {dir}, {id_column} {dir}
                     LIMIT ?{limit_slot}
                 )"
     )
@@ -175,6 +181,7 @@ mod tests {
 
     fn empty_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: None,
             max_id: None,
             min_timestamp: None,
@@ -184,6 +191,7 @@ mod tests {
 
     fn max_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: None,
@@ -241,6 +249,7 @@ mod tests {
     #[test]
     fn both_cursor_bounds_get_distinct_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),

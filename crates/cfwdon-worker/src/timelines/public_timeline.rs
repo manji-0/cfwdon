@@ -153,7 +153,7 @@ pub(crate) async fn public_timeline_response(
     }
 
     if let Some(url) = page_cache_url.as_deref() {
-        let (page, first_id, last_id) = timeline_page_response(entries, limit);
+        let (page, first_id, last_id) = timeline_page_response(entries, limit, cursor.forward);
         let link =
             build_timeline_link_header(&req, limit, first_id.as_deref(), last_id.as_deref())?;
         cache_anonymous_timeline_page(url, &page, link.as_deref())?;
@@ -165,7 +165,7 @@ pub(crate) async fn public_timeline_response(
     }
 
     with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
+        timeline_response_from_entries(&req, limit, cursor.forward, entries)?,
         &session,
     )
 }
@@ -299,7 +299,7 @@ async fn build_public_timeline_entries(
         }
     }
 
-    let candidates = select_public_timeline_candidates(candidates, select_limit);
+    let candidates = select_public_timeline_candidates(candidates, select_limit, cursor.forward);
     candidate_render::timeline_entries_from_candidates(
         db,
         config,

@@ -1,4 +1,7 @@
-use super::filters::{account_status_list_options, local_status_matches_account_filters};
+use super::filters::{
+    account_status_list_options, account_statuses_page_walks_forward,
+    local_status_matches_account_filters,
+};
 use super::html::{account_statuses_html_response, local_status_html_item};
 use super::pagination::account_statuses_older_page_url;
 use crate::identity::actor_url;
@@ -9,7 +12,9 @@ use crate::statuses::{
     list_account_statuses, list_pinned_statuses_for_account, list_public_account_statuses,
     load_in_reply_to_account_ids,
 };
-use crate::timelines::{StatusRenderItem, build_timeline_link_header, render_status_items};
+use crate::timelines::{
+    StatusRenderItem, build_timeline_link_header, keep_timeline_page, render_status_items,
+};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
@@ -143,10 +148,12 @@ async fn respond_local_account_statuses_json(
     limit: u32,
     statuses: Vec<LocalStatus>,
 ) -> Result<Response> {
-    let statuses = statuses
-        .into_iter()
-        .take(limit as usize)
-        .collect::<Vec<_>>();
+    let mut statuses = statuses;
+    keep_timeline_page(
+        &mut statuses,
+        limit as usize,
+        account_statuses_page_walks_forward(query),
+    );
     // Page links follow the fetched window, so a page whose statuses are all
     // filtered out still points past itself.
     let link = build_timeline_link_header(

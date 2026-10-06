@@ -244,6 +244,7 @@ mod tests {
 
     fn full_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),

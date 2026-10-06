@@ -52,6 +52,8 @@ const REMOTE_STATUS_WITH_ACTOR_SELECT: &str = "rs.id,
 pub(crate) struct RemoteAccountStatusListOptions<'a> {
     pub(crate) max_id: Option<&'a str>,
     pub(crate) min_id: Option<&'a str>,
+    /// `min_id` paging: rows come back newest first, taken from just after the cursor.
+    pub(crate) forward: bool,
     pub(crate) limit: u32,
     pub(crate) visibility: AccountStatusVisibilityScope,
     pub(crate) only_media: bool,
@@ -73,6 +75,7 @@ fn remote_public_timeline_statuses_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = Vec::new();
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -86,7 +89,7 @@ fn remote_public_timeline_statuses_sql<'a>(
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'{cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -107,6 +110,7 @@ fn remote_home_timeline_statuses_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = vec![D1Type::Text(viewer_account_id)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -124,7 +128,7 @@ fn remote_home_timeline_statuses_sql<'a>(
           AND f.follower_account_id = ?1
           AND f.state = 'accepted'
          WHERE rs.visibility IN ('public', 'unlisted', 'private'){cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -194,7 +198,7 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
             .cmp(&left_status.published_at)
             .then_with(|| right_status.id.cmp(&left_status.id))
     });
-    rows.truncate(limit as usize);
+    cursor.keep_page(&mut rows, limit as usize);
     Ok(rows)
 }
 
@@ -230,6 +234,7 @@ fn remote_public_statuses_by_tags_indexed_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let tag_placeholders = (1..=tags.len())
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
@@ -255,7 +260,7 @@ fn remote_public_statuses_by_tags_indexed_sql<'a>(
                FROM remote_status_hashtags h
                WHERE h.tag IN ({tag_placeholders})
            ){cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -284,6 +289,7 @@ fn remote_public_statuses_by_tags_legacy_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let match_clause = (1..=patterns.len())
         .map(|index| format!("lower(rs.content_html) LIKE ?{index}"))
         .collect::<Vec<_>>()
@@ -305,7 +311,7 @@ fn remote_public_statuses_by_tags_legacy_sql<'a>(
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'public'
            AND ({match_clause}){cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -335,8 +341,10 @@ fn remote_public_statuses_by_link_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let match_clause = (1..=patterns.len())
         .map(|position| {
+
             format!(
                 "(rs.content_html LIKE ?{position} OR rs.url LIKE ?{position} OR rs.object_uri LIKE ?{position})"
             )
@@ -361,7 +369,7 @@ fn remote_public_statuses_by_link_sql<'a>(
          WHERE rs.visibility = 'public'
            AND ra.discoverable = 1
            AND ({match_clause}){cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -381,9 +389,14 @@ pub(crate) async fn list_remote_statuses_by_actor_uri(
         &filter_predicates,
         &query_bindings.cursor_parts,
         query_bindings.limit_binding,
+        options.forward,
     );
 
-    query_remote_status_rows(db, &sql, &query_bindings.bindings).await
+    let mut statuses = query_remote_status_rows(db, &sql, &query_bindings.bindings).await?;
+    if options.forward {
+        statuses.reverse();
+    }
+    Ok(statuses)
 }
 
 struct RemoteActorStatusQueryBindings<'a> {
@@ -470,7 +483,9 @@ fn remote_actor_statuses_by_actor_uri_sql(
     predicates: &[String],
     cursor_parts: &StatusIdCursorParts,
     limit_binding: usize,
+    forward: bool,
 ) -> String {
+    let dir = if forward { "ASC" } else { "DESC" };
     let with_clause = format_with_clauses(&cursor_parts.with_clauses);
     let mut all_predicates = predicates.to_vec();
     all_predicates.extend(cursor_parts.predicates.clone());
@@ -479,7 +494,7 @@ fn remote_actor_statuses_by_actor_uri_sql(
          FROM remote_statuses
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE {}
-         ORDER BY published_at DESC, id DESC
+         ORDER BY published_at {dir}, id {dir}
          LIMIT ?{limit_binding}",
         all_predicates.join("\n           AND ")
     )
@@ -550,6 +565,7 @@ fn remote_direct_statuses_mentioning_viewer_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = vec![D1Type::Text(mention_pattern)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -564,7 +580,7 @@ fn remote_direct_statuses_mentioning_viewer_sql<'a>(
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
          WHERE rs.visibility = 'direct'
            AND (lower(rs.content_html) LIKE ?1 OR lower(rs.spoiler_text) LIKE ?1){cursor_predicates}
-         ORDER BY rs.published_at DESC, rs.id DESC
+         ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -693,6 +709,7 @@ mod tests {
     #[test]
     fn remote_public_statuses_by_tags_indexed_sql_uses_tag_and_cursor_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
@@ -726,6 +743,7 @@ mod tests {
     #[test]
     fn remote_public_statuses_by_tags_legacy_sql_uses_pattern_and_cursor_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
@@ -759,6 +777,7 @@ mod tests {
     #[test]
     fn remote_public_statuses_by_link_sql_uses_pattern_and_cursor_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
@@ -784,6 +803,7 @@ mod tests {
     #[test]
     fn remote_direct_statuses_mentioning_viewer_sql_uses_seekable_cursor_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: None,
@@ -815,6 +835,7 @@ mod tests {
             RemoteAccountStatusListOptions {
                 max_id: Some("max"),
                 min_id: Some("min"),
+                forward: false,
                 limit: 20,
                 visibility: AccountStatusVisibilityScope::All,
                 only_media: false,
@@ -841,6 +862,7 @@ mod tests {
             RemoteAccountStatusListOptions {
                 max_id: None,
                 min_id: None,
+                forward: false,
                 limit: 8,
                 visibility: AccountStatusVisibilityScope::All,
                 only_media: false,
@@ -864,6 +886,7 @@ mod tests {
             RemoteAccountStatusListOptions {
                 max_id: Some("max"),
                 min_id: Some("min"),
+                forward: false,
                 limit: 20,
                 visibility: AccountStatusVisibilityScope::PublicUnlistedPrivate,
                 only_media: true,
@@ -916,7 +939,7 @@ mod tests {
             with_clauses: vec!["max_cursor AS (SELECT id, created_at FROM remote_statuses WHERE id = ?2 LIMIT 1)".to_owned()],
             predicates: vec!["EXISTS (SELECT 1 FROM max_cursor WHERE remote_statuses.published_at < max_cursor.published_at)".to_owned()],
         };
-        let sql = remote_actor_statuses_by_actor_uri_sql(&predicates, &cursor_parts, 3);
+        let sql = remote_actor_statuses_by_actor_uri_sql(&predicates, &cursor_parts, 3, false);
 
         assert!(sql.contains("WITH max_cursor AS"));
         assert!(sql.contains("LEFT JOIN remote_status_counts rsc"));
@@ -958,6 +981,7 @@ mod tests {
     #[test]
     fn remote_public_timeline_statuses_sql_uses_seekable_cursor_slots_and_limit() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: None,
@@ -976,6 +1000,7 @@ mod tests {
     #[test]
     fn remote_home_timeline_statuses_sql_uses_viewer_and_seekable_cursor_slots() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("status-max".to_owned()),
             min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),

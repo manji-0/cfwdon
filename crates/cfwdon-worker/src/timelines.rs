@@ -60,7 +60,8 @@ pub(crate) use self::request_parsing::{
     HomeTimelineQuery, LinkTimelineQuery, PublicTimelineQuery, TagTimelineQuery,
     TimelinePaginationQuery, build_timeline_link_header, canonicalize_link_timeline_url,
     derive_link_timeline_match_urls, include_local_source, include_remote_source,
-    matches_tag_timeline_filters, resolve_timeline_cursor, timeline_fetch_limit, timeline_limit,
+    keep_timeline_page, matches_tag_timeline_filters, resolve_timeline_cursor,
+    timeline_fetch_limit, timeline_limit,
 };
 use crate::auth::find_authenticated_local_account;
 use crate::oauth_apps::oauth_app_has_any_scope;
@@ -634,6 +635,7 @@ async fn remote_media_status_ids_for_filter(
 fn select_public_timeline_candidates(
     mut candidates: Vec<PublicTimelineCandidateEntry>,
     limit: u32,
+    forward: bool,
 ) -> Vec<PublicTimelineCandidateEntry> {
     candidates.sort_by(|left, right| {
         right
@@ -641,7 +643,7 @@ fn select_public_timeline_candidates(
             .cmp(&left.timestamp)
             .then_with(|| right.id.cmp(&left.id))
     });
-    candidates.truncate(limit.saturating_add(1) as usize);
+    keep_timeline_page(&mut candidates, limit.saturating_add(1) as usize, forward);
     candidates
 }
 
@@ -687,9 +689,10 @@ fn empty_timeline_response() -> Result<Response> {
 fn timeline_response_from_entries(
     req: &Request,
     limit: u32,
+    forward: bool,
     entries: Vec<TimelineEntry>,
 ) -> Result<Response> {
-    let (response, first_id, last_id) = timeline_page_response(entries, limit);
+    let (response, first_id, last_id) = timeline_page_response(entries, limit, forward);
     let mut builder = Response::from_json(&response)?;
     if let Some(link) =
         build_timeline_link_header(req, limit, first_id.as_deref(), last_id.as_deref())?
@@ -702,10 +705,14 @@ fn timeline_response_from_entries(
 fn timeline_page_response(
     mut entries: Vec<TimelineEntry>,
     limit: u32,
+    forward: bool,
 ) -> (Vec<serde_json::Value>, Option<String>, Option<String>) {
     entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let has_next_page = entries.len() > limit as usize;
-    let page = entries.into_iter().take(limit as usize).collect::<Vec<_>>();
+    // A forward page sits right after its cursor, so older entries always
+    // exist; otherwise the over-fetched entry tells whether one more page does.
+    let has_next_page = forward || entries.len() > limit as usize;
+    let mut page = entries;
+    keep_timeline_page(&mut page, limit as usize, forward);
     let first_id = page
         .first()
         .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
@@ -863,7 +870,7 @@ mod tests {
             timeline_test_entry("2026-05-08T23:59:59Z", "not-returned"),
         ];
 
-        let (page, first_id, last_id) = timeline_page_response(entries, 2);
+        let (page, first_id, last_id) = timeline_page_response(entries, 2, false);
 
         assert_eq!(
             page.iter()
@@ -883,7 +890,7 @@ mod tests {
             timeline_test_entry("2026-05-09T00:00:00Z", "a"),
         ];
 
-        let (page, first_id, last_id) = timeline_page_response(entries, 2);
+        let (page, first_id, last_id) = timeline_page_response(entries, 2, false);
 
         assert_eq!(
             page.iter()
@@ -902,10 +909,51 @@ mod tests {
             timeline_test_entry("2026-05-09T00:00:00Z", "second"),
         ];
 
-        let (_page, first_id, last_id) = timeline_page_response(entries, 20);
+        let (_page, first_id, last_id) = timeline_page_response(entries, 20, false);
 
         assert_eq!(first_id.as_deref(), Some("first"));
         assert_eq!(last_id, None);
+    }
+
+    #[test]
+    fn forward_timeline_page_keeps_entries_next_to_the_cursor() {
+        let entries = vec![
+            timeline_test_entry("2026-05-09T00:00:04Z", "newest"),
+            timeline_test_entry("2026-05-09T00:00:03Z", "newer"),
+            timeline_test_entry("2026-05-09T00:00:02Z", "older"),
+            timeline_test_entry("2026-05-09T00:00:01Z", "oldest"),
+        ];
+
+        let (page, first_id, last_id) = timeline_page_response(entries, 2, true);
+
+        assert_eq!(
+            page.iter()
+                .filter_map(|value| value.get("id").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["older", "oldest"]
+        );
+        assert_eq!(first_id.as_deref(), Some("older"));
+        assert_eq!(last_id.as_deref(), Some("oldest"));
+    }
+
+    #[test]
+    fn forward_candidate_selection_keeps_oldest_candidates() {
+        let candidates = vec![
+            public_timeline_test_candidate("2026-05-09T00:00:01Z", "first"),
+            public_timeline_test_candidate("2026-05-09T00:00:03Z", "third"),
+            public_timeline_test_candidate("2026-05-09T00:00:02Z", "second"),
+            public_timeline_test_candidate("2026-05-09T00:00:04Z", "fourth"),
+        ];
+
+        let selected = select_public_timeline_candidates(candidates, 1, true);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "first"]
+        );
     }
 
     #[test]
@@ -917,7 +965,7 @@ mod tests {
             public_timeline_test_candidate("2026-05-09T00:00:00Z", "not-hydrated"),
         ];
 
-        let selected = select_public_timeline_candidates(candidates, 2);
+        let selected = select_public_timeline_candidates(candidates, 2, false);
 
         assert_eq!(
             selected

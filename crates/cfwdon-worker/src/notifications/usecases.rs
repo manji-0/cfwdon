@@ -3,6 +3,7 @@ use super::{
     dismiss_account_notification, filter_notification_entries_by_query,
     load_visible_notifications_for_account, notification_group_entries, notifications_fetch_limit,
 };
+use crate::timelines::keep_timeline_page;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -22,10 +23,16 @@ pub(crate) async fn list_notifications_usecase(
         notifications_fetch_limit(query, limit),
     )
     .await?;
-    Ok(filter_notification_entries_by_query(entries, query)
-        .into_iter()
-        .take(limit as usize)
-        .collect())
+    let mut entries = filter_notification_entries_by_query(entries, query);
+    // `min_id` asks for the page just after the cursor, i.e. the oldest
+    // matches; `since_id` keeps the newest.
+    let forward = query
+        .min_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    keep_timeline_page(&mut entries, limit as usize, forward);
+    Ok(entries)
 }
 
 pub(crate) async fn list_notification_group_entries_usecase(

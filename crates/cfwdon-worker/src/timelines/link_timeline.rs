@@ -117,7 +117,7 @@ pub(crate) async fn link_timeline_response(
         });
     }
 
-    let candidates = select_public_timeline_candidates(candidates, limit);
+    let candidates = select_public_timeline_candidates(candidates, limit, cursor.forward);
     if candidates.is_empty() && !timeline_cursor_requested(&pagination) {
         return Response::error("Record not found", 404);
     }
@@ -134,7 +134,7 @@ pub(crate) async fn link_timeline_response(
     .await?;
 
     with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
+        timeline_response_from_entries(&req, limit, cursor.forward, entries)?,
         &session,
     )
 }

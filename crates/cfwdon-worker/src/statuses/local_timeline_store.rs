@@ -29,6 +29,7 @@ pub(crate) async fn list_local_home_timeline_statuses(
             min_timestamp,
             cursor.min_id.as_deref(),
             limit,
+            cursor.order_direction(),
         )
         .await;
     }
@@ -45,9 +46,10 @@ async fn list_local_home_timeline_statuses_since(
     min_timestamp: &str,
     min_id: Option<&str>,
     limit: u32,
+    dir: &str,
 ) -> Result<Vec<LocalStatus>> {
     let (sql, bindings) =
-        local_home_timeline_since_sql(viewer_account_id, min_timestamp, min_id, limit);
+        local_home_timeline_since_sql(viewer_account_id, min_timestamp, min_id, limit, dir);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
     d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
@@ -58,6 +60,7 @@ fn local_home_timeline_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = vec![
         D1Type::Text(viewer_account_id),
         D1Type::Text(viewer_account_id),
@@ -84,7 +87,7 @@ fn local_home_timeline_sql<'a>(
                   AND f.state = 'accepted'
                   AND s.visibility IN ('public', 'unlisted', 'private'){cursor_predicates}
                )
-             ORDER BY created_at DESC, id DESC
+             ORDER BY created_at {dir}, id {dir}
              LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -95,6 +98,7 @@ fn local_home_timeline_since_sql<'a>(
     min_timestamp: &'a str,
     min_id: Option<&'a str>,
     limit: u32,
+    dir: &str,
 ) -> (String, Vec<D1Type<'a>>) {
     let mut bindings = vec![
         D1Type::Text(viewer_account_id),
@@ -122,7 +126,7 @@ fn local_home_timeline_since_sql<'a>(
                   AND f.state = 'accepted'
                   AND s.visibility IN ('public', 'unlisted', 'private'){cursor_predicates}
                )
-             ORDER BY created_at DESC, id DESC
+             ORDER BY created_at {dir}, id {dir}
              LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -143,6 +147,7 @@ fn local_public_timeline_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = Vec::new();
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -153,7 +158,7 @@ fn local_public_timeline_sql<'a>(
         "SELECT {LOCAL_STATUS_COLUMNS}
          FROM statuses
          WHERE visibility = 'public'{cursor_predicates}
-         ORDER BY created_at DESC, id DESC
+         ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -194,7 +199,7 @@ pub(crate) async fn list_local_public_statuses_by_tags(
             .cmp(&left.created_at)
             .then_with(|| right.id.cmp(&left.id))
     });
-    rows.truncate(limit as usize);
+    cursor.keep_page(&mut rows, limit as usize);
     Ok(rows)
 }
 
@@ -234,6 +239,7 @@ fn local_public_statuses_by_tags_indexed_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let tag_placeholders = (1..=tags.len())
         .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
@@ -256,7 +262,7 @@ fn local_public_statuses_by_tags_indexed_sql<'a>(
                FROM status_hashtags h
                WHERE h.tag IN ({tag_placeholders})
            ){cursor_predicates}
-         ORDER BY created_at DESC, id DESC
+         ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -286,6 +292,7 @@ fn local_public_statuses_by_tags_legacy_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let match_clause = (1..=patterns.len())
         .map(|index| format!("lower(text_content) LIKE ?{index}"))
         .collect::<Vec<_>>()
@@ -304,7 +311,7 @@ fn local_public_statuses_by_tags_legacy_sql<'a>(
          FROM statuses
          WHERE visibility = 'public'
            AND ({match_clause}){cursor_predicates}
-         ORDER BY created_at DESC, id DESC
+         ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -336,6 +343,7 @@ fn local_public_statuses_by_link_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let match_clause = (1..=patterns.len())
         .map(|position| {
             format!("(s.text_content LIKE ?{position} OR s.content_html LIKE ?{position})")
@@ -358,7 +366,7 @@ fn local_public_statuses_by_link_sql<'a>(
          WHERE s.visibility = 'public'
            AND a.discoverable = 1
            AND ({match_clause}){cursor_predicates}
-         ORDER BY s.created_at DESC, s.id DESC
+         ORDER BY s.created_at {dir}, s.id {dir}
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -381,6 +389,7 @@ fn local_direct_timeline_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = vec![D1Type::Text(viewer_account_id)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -397,7 +406,7 @@ fn local_direct_timeline_sql<'a>(
               AND cst.account_id = ?1
               AND cst.deleted_at IS NULL
              WHERE s.visibility = 'direct'{cursor_predicates}
-             ORDER BY s.created_at DESC, s.id DESC
+             ORDER BY s.created_at {dir}, s.id {dir}
              LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -409,6 +418,7 @@ mod tests {
 
     fn empty_cursor() -> ResolvedTimelineCursor {
         ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: None,
             max_id: None,
             min_timestamp: None,
@@ -451,8 +461,13 @@ mod tests {
 
     #[test]
     fn local_home_timeline_since_sql_keeps_slot_order_stable() {
-        let (sql, bindings) =
-            local_home_timeline_since_sql("viewer", "2026-01-01T00:00:00Z", Some("status-min"), 10);
+        let (sql, bindings) = local_home_timeline_since_sql(
+            "viewer",
+            "2026-01-01T00:00:00Z",
+            Some("status-min"),
+            10,
+            "DESC",
+        );
 
         assert!(matches!(bindings[0], D1Type::Text("viewer")));
         assert!(matches!(bindings[1], D1Type::Text("viewer")));
@@ -466,7 +481,7 @@ mod tests {
     #[test]
     fn local_home_timeline_since_sql_omits_id_tie_break_without_min_id() {
         let (sql, bindings) =
-            local_home_timeline_since_sql("viewer", "2026-01-01T00:00:00Z", None, 10);
+            local_home_timeline_since_sql("viewer", "2026-01-01T00:00:00Z", None, 10, "DESC");
 
         assert_eq!(bindings.len(), 4);
         assert!(sql.contains("s.created_at > ?3"));

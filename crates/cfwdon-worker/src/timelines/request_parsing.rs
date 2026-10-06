@@ -140,6 +140,33 @@ pub(crate) struct ResolvedTimelineCursor {
     pub(crate) max_timestamp: Option<String>,
     pub(crate) min_id: Option<String>,
     pub(crate) min_timestamp: Option<String>,
+    /// `min_id` paging: the page immediately after the cursor, so queries run
+    /// oldest-first and merges keep the oldest rows. `since_id` keeps the
+    /// newest-first walk.
+    pub(crate) forward: bool,
+}
+
+impl ResolvedTimelineCursor {
+    pub(crate) fn order_direction(&self) -> &'static str {
+        if self.forward { "ASC" } else { "DESC" }
+    }
+
+    pub(crate) fn keep_page<T>(&self, rows: &mut Vec<T>, keep: usize) {
+        keep_timeline_page(rows, keep, self.forward);
+    }
+}
+
+/// Keep one page of newest-first `rows`: the newest `keep` rows, or for a
+/// forward (`min_id`) page the oldest `keep`, which sit next to the cursor.
+pub(crate) fn keep_timeline_page<T>(rows: &mut Vec<T>, keep: usize, forward: bool) {
+    if rows.len() <= keep {
+        return;
+    }
+    if forward {
+        rows.drain(..rows.len() - keep);
+    } else {
+        rows.truncate(keep);
+    }
 }
 
 pub(crate) fn timeline_limit(pagination: &TimelinePaginationQuery) -> u32 {
@@ -215,6 +242,7 @@ pub(crate) async fn resolve_timeline_cursor(
     )?;
 
     Ok(ResolvedTimelineCursor {
+        forward: normalize_timeline_cursor(pagination.min_id.as_deref()).is_some(),
         max_timestamp,
         min_timestamp,
         max_id,
@@ -438,3 +466,29 @@ pub(crate) fn matches_tag_timeline_filters(
 
 #[cfg(test)]
 mod unit_tests;
+
+#[cfg(test)]
+mod forward_paging_tests {
+    use super::{ResolvedTimelineCursor, keep_timeline_page};
+
+    #[test]
+    fn forward_cursor_orders_ascending() {
+        let cursor = ResolvedTimelineCursor {
+            forward: true,
+            ..ResolvedTimelineCursor::default()
+        };
+        assert_eq!(cursor.order_direction(), "ASC");
+        assert_eq!(ResolvedTimelineCursor::default().order_direction(), "DESC");
+    }
+
+    #[test]
+    fn keep_timeline_page_trims_the_end_away_from_the_cursor() {
+        let mut backward = vec![5, 4, 3, 2, 1];
+        keep_timeline_page(&mut backward, 2, false);
+        assert_eq!(backward, vec![5, 4]);
+
+        let mut forward = vec![5, 4, 3, 2, 1];
+        keep_timeline_page(&mut forward, 2, true);
+        assert_eq!(forward, vec![2, 1]);
+    }
+}

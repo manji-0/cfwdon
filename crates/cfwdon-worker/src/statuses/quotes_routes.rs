@@ -45,7 +45,7 @@ use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remo
 use crate::time_html::now_iso_string;
 use crate::timelines::{
     ResolvedTimelineCursor, TimelinePaginationQuery, append_resolved_timeline_cursor_bindings,
-    build_timeline_link_header, resolve_timeline_cursor,
+    build_timeline_link_header, keep_timeline_page, resolve_timeline_cursor,
     seekable_resolved_timeline_cursor_predicates, timeline_fetch_limit, timeline_limit,
 };
 use crate::tracked_d1::D1Database;
@@ -134,7 +134,7 @@ pub(crate) async fn status_quotes_response(
         &mut preloads,
     )
     .await?;
-    paginated_status_quotes_response(&req, limit, quotes)
+    paginated_status_quotes_response(&req, limit, cursor.forward, quotes)
 }
 
 async fn resolve_visible_status_quotes_target(
@@ -371,8 +371,10 @@ async fn build_status_quote_values(
 fn paginated_status_quotes_response(
     req: &Request,
     limit: u32,
-    quotes: Vec<(String, String, serde_json::Value)>,
+    forward: bool,
+    mut quotes: Vec<(String, String, serde_json::Value)>,
 ) -> Result<Response> {
+    keep_timeline_page(&mut quotes, limit as usize, forward);
     let first_id = quotes
         .first()
         .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
@@ -381,7 +383,6 @@ fn paginated_status_quotes_response(
         .and_then(|(_, id, _)| (!id.is_empty()).then_some(id.clone()));
     let values = quotes
         .into_iter()
-        .take(limit as usize)
         .map(|(_, _, value)| value)
         .collect::<Vec<_>>();
     let mut builder = Response::from_json(&values)?;
@@ -443,6 +444,7 @@ fn status_quotes_list_sql<'a>(
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
 ) -> (String, Vec<D1Type<'a>>) {
+    let dir = cursor.order_direction();
     let mut bindings = vec![D1Type::Text(status_uri)];
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
     bindings.push(D1Type::Integer(limit as i32));
@@ -451,7 +453,7 @@ fn status_quotes_list_sql<'a>(
         seekable_resolved_timeline_cursor_predicates(timestamp_column, id_column, &slots);
     let sql = format!(
         "{select_from_where}{cursor_predicates}
-             ORDER BY {timestamp_column} DESC, {id_column} DESC
+             ORDER BY {timestamp_column} {dir}, {id_column} {dir}
              LIMIT ?{limit_slot}"
     );
     (sql, bindings)
@@ -466,6 +468,7 @@ mod tests {
     #[test]
     fn status_quotes_list_sql_emits_seekable_cursor_bounds() {
         let cursor = ResolvedTimelineCursor {
+            forward: false,
             max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
             max_id: Some("quote-max".to_owned()),
             min_timestamp: None,

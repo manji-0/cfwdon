@@ -83,11 +83,12 @@ pub(crate) async fn home_timeline_response(
         &muted_actor_uris,
         candidate_rows,
         limit,
+        cursor.forward,
     )
     .await?;
 
     with_d1_bookmark(
-        timeline_response_from_entries(&req, limit, entries)?,
+        timeline_response_from_entries(&req, limit, cursor.forward, entries)?,
         &session,
     )
 }
@@ -104,6 +105,7 @@ pub(super) async fn timeline_entries_from_candidate_rows(
     muted_actor_uris: &HashSet<String>,
     candidate_rows: Vec<HomeTimelineCandidateRow>,
     limit: u32,
+    forward: bool,
 ) -> Result<Vec<TimelineEntry>> {
     let mut local_candidate_ids = Vec::new();
     let mut remote_candidate_ids = Vec::new();
@@ -192,7 +194,7 @@ pub(super) async fn timeline_entries_from_candidate_rows(
         }
     }
 
-    let candidates = select_public_timeline_candidates(candidates, limit);
+    let candidates = select_public_timeline_candidates(candidates, limit, forward);
     candidate_render::timeline_entries_from_candidates(
         db,
         config,

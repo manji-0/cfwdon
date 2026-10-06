@@ -22,6 +22,8 @@ pub(crate) enum AccountStatusVisibilityScope {
 pub(crate) struct AccountStatusListOptions<'a> {
     pub(crate) max_id: Option<&'a str>,
     pub(crate) min_id: Option<&'a str>,
+    /// `min_id` paging: rows come back newest first, taken from just after the cursor.
+    pub(crate) forward: bool,
     pub(crate) limit: u32,
     pub(crate) visibility: AccountStatusVisibilityScope,
     pub(crate) only_media: bool,
@@ -318,17 +320,22 @@ pub(crate) async fn list_account_statuses(
     let limit_binding = next_binding;
     bindings.push(D1Type::Integer(options.limit as i32));
     let with_clause = format_with_clauses(&cursor_parts.with_clauses);
+    let dir = if options.forward { "ASC" } else { "DESC" };
     let sql = format!(
         "{with_clause}SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
          FROM statuses
          WHERE {}
-         ORDER BY created_at DESC, id DESC
+         ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_binding}",
         predicates.join("\n           AND ")
     );
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
 
-    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
+    let mut statuses = d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)?;
+    if options.forward {
+        statuses.reverse();
+    }
+    Ok(statuses)
 }
 
 pub(crate) async fn list_public_account_statuses(

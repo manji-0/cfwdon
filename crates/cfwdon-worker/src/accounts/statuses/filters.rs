@@ -18,6 +18,7 @@ pub(crate) fn remote_account_status_list_options<'a>(
     RemoteAccountStatusListOptions {
         max_id: query.max_id.as_deref(),
         min_id,
+        forward: account_statuses_page_walks_forward(query),
         limit,
         visibility: AccountStatusVisibilityScope::PublicUnlistedPrivate,
         only_media: query.only_media.unwrap_or(false),
@@ -25,6 +26,16 @@ pub(crate) fn remote_account_status_list_options<'a>(
         exclude_reblogs: query.exclude_reblogs.unwrap_or(false),
         tagged: query.tagged.as_deref(),
     }
+}
+
+/// Mastodon pages forward from `min_id`; `since_id` alone still walks back
+/// from the newest status.
+pub(crate) fn account_statuses_page_walks_forward(query: &AccountStatusesQuery) -> bool {
+    query
+        .min_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 pub(crate) fn account_status_list_options<'a>(
@@ -36,6 +47,7 @@ pub(crate) fn account_status_list_options<'a>(
     AccountStatusListOptions {
         max_id: query.max_id.as_deref(),
         min_id,
+        forward: account_statuses_page_walks_forward(query),
         limit,
         visibility,
         only_media: query.only_media.unwrap_or(false),
