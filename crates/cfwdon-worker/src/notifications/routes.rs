@@ -3,8 +3,9 @@ use super::{
     clear_notifications_usecase, dismiss_notification_entry_usecase,
     dismiss_notification_group_usecase, list_notification_group_entries_usecase,
     list_notifications_usecase, load_notification_entry_usecase,
-    resolve_notification_entry_route_context, resolve_notification_group_route_context,
-    resolve_notification_list_route_context, unread_notifications_count_usecase,
+    notification_api_numeric_id_string, resolve_notification_entry_route_context,
+    resolve_notification_group_route_context, resolve_notification_list_route_context,
+    unread_notifications_count_usecase,
 };
 use crate::db_session::with_d1_bookmark;
 use crate::timelines::build_timeline_link_header;
@@ -14,7 +15,7 @@ pub(crate) async fn notifications_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let Some(list) = resolve_notification_list_route_context(&req, &ctx, 20, 40).await? else {
+    let Some(list) = resolve_notification_list_route_context(&req, &ctx, 40, 80).await? else {
         return Response::error("Auth0 authentication required", 401);
     };
     let limited_entries = list_notifications_usecase(
@@ -46,7 +47,7 @@ pub(crate) async fn notifications_v2_response(
     req: Request,
     ctx: RouteContext<()>,
 ) -> Result<Response> {
-    let Some(list) = resolve_notification_list_route_context(&req, &ctx, 20, 40).await? else {
+    let Some(list) = resolve_notification_list_route_context(&req, &ctx, 40, 80).await? else {
         return Response::error("Auth0 authentication required", 401);
     };
     let limited_entries = list_notifications_usecase(
@@ -57,11 +58,21 @@ pub(crate) async fn notifications_v2_response(
         list.limit,
     )
     .await?;
+    // v2 pages by the numeric ids the grouped document exposes.
+    let first_id = limited_entries
+        .first()
+        .map(notification_api_numeric_id_string);
+    let last_id = limited_entries
+        .last()
+        .map(notification_api_numeric_id_string);
 
-    with_d1_bookmark(
-        Response::from_json(&build_notifications_v2_document(&limited_entries))?,
-        &list.auth.session,
-    )
+    let mut builder = Response::from_json(&build_notifications_v2_document(&limited_entries))?;
+    if let Some(link_header) =
+        build_timeline_link_header(&req, list.limit, first_id.as_deref(), last_id.as_deref())?
+    {
+        builder.headers_mut().set("Link", &link_header)?;
+    }
+    with_d1_bookmark(builder, &list.auth.session)
 }
 
 pub(crate) async fn notification_group_response(
