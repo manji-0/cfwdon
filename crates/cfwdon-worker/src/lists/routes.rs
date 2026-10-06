@@ -66,9 +66,10 @@ pub(crate) async fn create_list_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let request = parse_list_request(req)
-        .await
-        .map_err(worker::Error::RustError)?;
+    let request = match parse_list_request(req, true).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
     let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,
@@ -98,9 +99,10 @@ pub(crate) async fn update_list_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let list_id = list_id_from_context(&ctx)?;
-    let request = parse_list_request(req)
-        .await
-        .map_err(worker::Error::RustError)?;
+    let request = match parse_list_request(req, false).await {
+        Ok(request) => request,
+        Err(message) => return Response::error(message, 422),
+    };
     let db = bind_request_d1(&ctx, &config)?;
     let account = match find_authenticated_local_account(req, &db, &config).await? {
         Some(account) => account,

@@ -68,8 +68,8 @@ impl ListTimelineQuery {
     }
 }
 
-fn normalize_replies_policy(value: Option<&str>) -> std::result::Result<String, String> {
-    let normalized = value.unwrap_or("list").trim().to_ascii_lowercase();
+fn normalize_replies_policy(value: &str) -> std::result::Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "followed" | "list" | "none" => Ok(normalized),
         _ => Err("replies_policy must be one of: followed, list, none".to_owned()),
@@ -108,7 +108,12 @@ fn list_account_ids_from_form_fields(
         .find(|ids| !ids.is_empty())
 }
 
-async fn parse_list_request(req: &mut Request) -> std::result::Result<ListRequest, String> {
+/// Parse a create (`require_title`) or update body. Updates are partial like
+/// Mastodon's: fields left out keep their stored values.
+async fn parse_list_request(
+    req: &mut Request,
+    require_title: bool,
+) -> std::result::Result<ListRequest, String> {
     let content_type = req
         .headers()
         .get("Content-Type")
@@ -135,10 +140,15 @@ async fn parse_list_request(req: &mut Request) -> std::result::Result<ListReques
     if let Some(title) = request.title.as_mut() {
         *title = title.trim().to_owned();
     }
-    if request.title.as_deref().unwrap_or_default().is_empty() {
-        return Err("title must not be empty".to_owned());
+    let title_missing = request.title.is_none();
+    if request.title.as_deref() == Some("") || (require_title && title_missing) {
+        return Err("Validation failed: Title can't be blank".to_owned());
     }
-    request.replies_policy = Some(normalize_replies_policy(request.replies_policy.as_deref())?);
+    request.replies_policy = request
+        .replies_policy
+        .as_deref()
+        .map(normalize_replies_policy)
+        .transpose()?;
     Ok(request)
 }
 
@@ -252,8 +262,13 @@ async fn update_list_row(
         return Ok(None);
     };
     let bindings = [
-        D1Type::Text(request.title.as_deref().unwrap_or_default()),
-        D1Type::Text(request.replies_policy.as_deref().unwrap_or("list")),
+        D1Type::Text(request.title.as_deref().unwrap_or(existing.title.as_str())),
+        D1Type::Text(
+            request
+                .replies_policy
+                .as_deref()
+                .unwrap_or(existing.replies_policy.as_str()),
+        ),
         D1Type::Integer(if request.exclusive.unwrap_or(existing.exclusive != 0) {
             1
         } else {
@@ -535,18 +550,15 @@ mod tests {
 
     #[test]
     fn normalize_replies_policy_accepts_supported_values() {
-        assert_eq!(normalize_replies_policy(None).unwrap(), "list");
-        assert_eq!(
-            normalize_replies_policy(Some("followed")).unwrap(),
-            "followed"
-        );
-        assert_eq!(normalize_replies_policy(Some("LIST")).unwrap(), "list");
-        assert_eq!(normalize_replies_policy(Some(" none ")).unwrap(), "none");
+        assert_eq!(normalize_replies_policy("followed").unwrap(), "followed");
+        assert_eq!(normalize_replies_policy("LIST").unwrap(), "list");
+        assert_eq!(normalize_replies_policy(" none ").unwrap(), "none");
+        assert!(normalize_replies_policy("everyone").is_err());
     }
 
     #[test]
     fn normalize_replies_policy_rejects_unknown_value() {
-        assert!(normalize_replies_policy(Some("all")).is_err());
+        assert!(normalize_replies_policy("all").is_err());
     }
 
     #[test]
