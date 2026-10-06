@@ -46,6 +46,8 @@ struct RelationshipStateRow {
     mute_notifications: Option<i32>,
     mute_expires_at: Option<String>,
     requested_by: i32,
+    #[serde(default)]
+    domain_blocking: i32,
     endorsed: Option<i32>,
     note: Option<String>,
 }
@@ -128,6 +130,16 @@ const RELATIONSHIP_STATE_SQL: &str = "SELECT
                     LIMIT 1
                 )
             END AS requested_by,
+            EXISTS (
+                SELECT 1
+                FROM account_domain_blocks domain_block
+                JOIN remote_actors target_actor
+                  ON target_actor.actor_uri = ?4
+                WHERE ?5 != 0
+                  AND domain_block.account_id = ?1
+                  AND domain_block.domain = lower(target_actor.domain)
+                LIMIT 1
+            ) AS domain_blocking,
             metadata.endorsed AS endorsed,
             metadata.note AS note
          FROM (SELECT 1) seed
@@ -186,7 +198,7 @@ fn relationship_response_from_state(
         muting_expires_at: timestamp_to_mastodon_iso8601_opt(state_row.mute_expires_at.as_deref()),
         requested: state == "pending",
         requested_by: state_row.requested_by != 0,
-        domain_blocking: false,
+        domain_blocking: state_row.domain_blocking != 0,
         endorsed: state_row.endorsed.map(|value| value != 0).unwrap_or(false),
         note: state_row.note.unwrap_or_default(),
     }
@@ -301,6 +313,7 @@ mod tests {
             mute_notifications: None,
             mute_expires_at: None,
             requested_by: 0,
+            domain_blocking: 0,
             endorsed: None,
             note: None,
         }
