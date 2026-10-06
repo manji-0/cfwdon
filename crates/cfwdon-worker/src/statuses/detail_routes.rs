@@ -192,7 +192,7 @@ async fn load_status_api_subject(
         ResolvedStatus::Local(status) => {
             load_local_status_api_subject(db, config, viewer, status).await
         }
-        ResolvedStatus::Remote(status) => load_remote_status_api_subject(db, status).await,
+        ResolvedStatus::Remote(status) => load_remote_status_api_subject(db, viewer, status).await,
     }
 }
 
@@ -232,9 +232,10 @@ async fn load_local_status_api_subject(
 
 async fn load_remote_status_api_subject(
     db: &D1Database,
+    viewer: Option<&cfwdon_domain::LocalAccount>,
     status: RemoteStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
-    if !is_public_activitypub_visibility(status.visibility.as_str()) {
+    if !super::can_view_remote_status(db, &status, viewer).await? {
         return Ok(None);
     }
     let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
@@ -350,7 +351,9 @@ pub(crate) async fn status_context_response(
             context_response_with_async_refresh(header, &context)?
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+            if !super::can_view_remote_status(&detail.base.db, &status, detail.viewer.as_ref())
+                .await?
+            {
                 return Response::error("status not found", 404);
             }
             let Some(actor) =
@@ -421,7 +424,7 @@ pub(crate) async fn status_history_response(
     }
 
     if let Some(status) = find_remote_status_by_id(&detail.base.db, &detail.base.status_id).await? {
-        if !is_public_activitypub_visibility(status.visibility.as_str()) {
+        if !super::can_view_remote_status(&detail.base.db, &status, detail.viewer.as_ref()).await? {
             return Response::error("status not found", 404);
         }
         let Some(actor) =

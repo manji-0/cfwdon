@@ -158,7 +158,7 @@ async fn resolve_visible_status_quotes_target(
             Ok(Some(local_status_target_uri(&status)))
         }
         ResolvedStatus::Remote(status) => {
-            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+            if !super::can_view_remote_status(db, &status, viewer).await? {
                 return Ok(None);
             }
             Ok(Some(status.object_uri))

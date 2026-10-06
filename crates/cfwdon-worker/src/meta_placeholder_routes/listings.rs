@@ -1,5 +1,4 @@
 use crate::accounts::{load_account_stats, parse_relationship_query_ids};
-use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
 use crate::media::find_media_attachments_by_status_id;
@@ -13,7 +12,8 @@ use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::statuses::{
     ResolvedStatus, build_local_status_response, build_remote_status_response,
-    can_view_local_status, load_in_reply_to_account_id, resolve_status_reference,
+    can_view_local_status, can_view_remote_status, load_in_reply_to_account_id,
+    resolve_status_reference,
 };
 use crate::store::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
 use worker::{Request, Response, Result, RouteContext};
@@ -57,7 +57,7 @@ pub(crate) async fn statuses_index_placeholder_response(
                 );
             }
             ResolvedStatus::Remote(status) => {
-                if !is_public_activitypub_visibility(status.visibility.as_str()) {
+                if !can_view_remote_status(&db, &status, viewer.as_ref()).await? {
                     continue;
                 }
                 let Some(actor) = find_remote_actor_by_actor_uri(&db, &status.actor_uri).await?

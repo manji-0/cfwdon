@@ -2,7 +2,6 @@ use super::{
     LocalAccount, find_local_status_by_object_uri, find_remote_statuses_with_actors_by_ids,
     find_status_by_id, find_statuses_by_ids, load_visible_local_status_response_subject,
 };
-use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
 use crate::remote::{
@@ -161,7 +160,7 @@ pub(crate) async fn resolve_visible_action_status(
                 .map(ResolvedVisibleActionStatus::Local),
         ),
         Some(ResolvedActionStatus::Remote(status, actor)) => {
-            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+            if !super::can_view_remote_status(db, &status, Some(viewer)).await? {
                 return Ok(None);
             }
             Ok(Some(ResolvedVisibleActionStatus::Remote(status, actor)))
