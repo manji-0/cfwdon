@@ -8,12 +8,46 @@ use super::{
 use crate::delivery::{enqueue_announce_activity, enqueue_undo_announce_activity};
 use crate::response_cache::invalidate_status_api_cache;
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
+use cfwdon_domain::Visibility;
 use serde::Deserialize;
 use worker::{Error, Request, Response, Result, RouteContext};
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ReblogStatusRequest {
     pub(crate) visibility: Option<String>,
+}
+
+/// Mastodon's `StatusPolicy#reblog?` plus `ReblogService`'s visibility pick:
+/// direct posts never, followers-only posts only by their author (and the
+/// boost keeps that visibility), otherwise the requested visibility or the
+/// booster's default. `None` means the boost is not permitted.
+fn reblog_visibility(
+    target: Visibility,
+    owned: bool,
+    requested: Option<&str>,
+    default: Visibility,
+) -> Option<String> {
+    match target {
+        Visibility::Direct => None,
+        Visibility::FollowersOnly if !owned => None,
+        Visibility::FollowersOnly => Some(target.as_str().to_owned()),
+        Visibility::Public | Visibility::Unlisted => Some(
+            requested
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(|value| Visibility::parse(value).ok())
+                .unwrap_or(default)
+                .as_str()
+                .to_owned(),
+        ),
+    }
+}
+
+fn reblog_not_permitted_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This action is not allowed",
+    }))?
+    .with_status(403))
 }
 
 pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -29,7 +63,6 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
     let request = parse_reblog_status_request(req)
         .await
         .map_err(Error::RustError)?;
-    let visibility = request.visibility.unwrap_or_else(|| "public".to_owned());
     let viewer = &action.auth.viewer;
 
     match resolve_visible_action_status(
@@ -42,9 +75,14 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
     .await?
     {
         Some(ResolvedVisibleActionStatus::Local(subject)) => {
-            if viewer.id() == subject.account.id() {
-                return Response::error("cannot reblog your own status", 422);
-            }
+            let Some(visibility) = reblog_visibility(
+                subject.status.visibility,
+                viewer.id() == subject.account.id(),
+                request.visibility.as_deref(),
+                viewer.default_visibility(),
+            ) else {
+                return reblog_not_permitted_response();
+            };
             let wrapper = upsert_reblog_wrapper_status(
                 &action.auth.db,
                 &action.auth.config,
@@ -102,6 +140,14 @@ pub(crate) async fn reblog_status(req: &mut Request, ctx: RouteContext<()>) -> R
             Response::from_json(&response)
         }
         Some(ResolvedVisibleActionStatus::Remote(status, actor)) => {
+            let Some(visibility) = reblog_visibility(
+                status.visibility,
+                false,
+                request.visibility.as_deref(),
+                viewer.default_visibility(),
+            ) else {
+                return reblog_not_permitted_response();
+            };
             let existing = find_reblog_activity_by_target_uri(
                 &action.auth.db,
                 viewer.id(),
@@ -289,4 +335,46 @@ async fn parse_reblog_status_request(
     }
 
     Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reblog_visibility;
+    use cfwdon_domain::Visibility;
+
+    #[test]
+    fn reblog_visibility_follows_mastodon_policy() {
+        assert_eq!(
+            reblog_visibility(Visibility::Direct, true, None, Visibility::Public),
+            None
+        );
+        assert_eq!(
+            reblog_visibility(Visibility::FollowersOnly, false, None, Visibility::Public),
+            None
+        );
+        assert_eq!(
+            reblog_visibility(
+                Visibility::FollowersOnly,
+                true,
+                Some("public"),
+                Visibility::Public
+            )
+            .as_deref(),
+            Some("private")
+        );
+        assert_eq!(
+            reblog_visibility(Visibility::Public, true, None, Visibility::Unlisted).as_deref(),
+            Some("unlisted")
+        );
+        assert_eq!(
+            reblog_visibility(
+                Visibility::Public,
+                false,
+                Some("unlisted"),
+                Visibility::Public
+            )
+            .as_deref(),
+            Some("unlisted")
+        );
+    }
 }
