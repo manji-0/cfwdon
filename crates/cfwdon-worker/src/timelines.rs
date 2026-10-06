@@ -61,7 +61,7 @@ pub(crate) use self::request_parsing::{
     TimelinePaginationQuery, build_timeline_link_header, canonicalize_link_timeline_url,
     derive_link_timeline_match_urls, include_local_source, include_remote_source,
     keep_timeline_page, matches_tag_timeline_filters, resolve_timeline_cursor,
-    timeline_fetch_limit, timeline_limit,
+    tag_timeline_candidate_tags, timeline_fetch_limit, timeline_limit,
 };
 use crate::auth::find_authenticated_local_account;
 use crate::oauth_apps::oauth_app_has_any_scope;

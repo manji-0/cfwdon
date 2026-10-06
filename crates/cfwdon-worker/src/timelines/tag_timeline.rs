@@ -3,16 +3,18 @@ use super::{
     empty_timeline_response, include_local_source, include_remote_source,
     matches_tag_timeline_filters, muted_local_timeline_status_ids, preload_local_timeline_rows,
     remote_media_status_ids_for_filter, resolve_timeline_cursor, resolve_timeline_request_access,
-    select_public_timeline_candidates, timeline_cursor_is_unresolved, timeline_fetch_limit,
-    timeline_invalid_access_token_response, timeline_limit,
+    select_public_timeline_candidates, tag_timeline_candidate_tags, timeline_cursor_is_unresolved,
+    timeline_fetch_limit, timeline_invalid_access_token_response, timeline_limit,
     timeline_request_requires_authorization, timeline_response_from_entries,
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::load_account_filter_matcher;
+use crate::request_utils::query_array_param;
 use crate::runtime_config::load_config;
 use crate::statuses::{
-    account_has_thread_mutes, list_local_public_statuses_by_tag, list_remote_public_statuses_by_tag,
+    account_has_thread_mutes, list_local_public_statuses_by_tags,
+    list_remote_public_statuses_by_tags,
 };
 use crate::tags::normalize_hashtag;
 use std::collections::HashSet;
@@ -25,7 +27,11 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         .map(|value| normalize_hashtag(value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing hashtag route parameter".to_owned()))?;
-    let query: TagTimelineQuery = req.query().unwrap_or_default();
+    let mut query: TagTimelineQuery = req.query().unwrap_or_default();
+    let url = req.url()?;
+    query.any = query_array_param(&url, "any");
+    query.all = query_array_param(&url, "all");
+    query.none = query_array_param(&url, "none");
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);
     let query_limit = timeline_fetch_limit(limit);
@@ -51,17 +57,19 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
         Some(viewer) => Some(load_account_filter_matcher(&db, viewer.id()).await?),
         None => None,
     };
+    let candidate_tags = tag_timeline_candidate_tags(&tag, &query);
     let (local_statuses, remote_statuses) = futures_util::try_join!(
         async {
             if include_local {
-                list_local_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await
+                list_local_public_statuses_by_tags(&db, &candidate_tags, &cursor, query_limit).await
             } else {
                 Ok(Vec::new())
             }
         },
         async {
             if include_remote {
-                list_remote_public_statuses_by_tag(&db, &tag, &cursor, query_limit).await
+                list_remote_public_statuses_by_tags(&db, &candidate_tags, &cursor, query_limit)
+                    .await
             } else {
                 Ok(Vec::new())
             }

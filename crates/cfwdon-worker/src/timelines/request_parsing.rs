@@ -42,8 +42,20 @@ pub(crate) struct PublicTimelineQuery {
     pub(crate) since_id: Option<String>,
     #[serde(rename = "min_id")]
     pub(crate) min_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) local: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) remote: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) only_media: Option<bool>,
 }
 
@@ -67,14 +79,26 @@ pub(crate) struct TagTimelineQuery {
     pub(crate) since_id: Option<String>,
     #[serde(rename = "min_id")]
     pub(crate) min_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) only_media: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) local: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) remote: Option<bool>,
-    #[serde(rename = "any[]")]
+    #[serde(skip)]
     pub(crate) any: Option<Vec<String>>,
-    #[serde(rename = "all[]")]
+    #[serde(skip)]
     pub(crate) all: Option<Vec<String>>,
-    #[serde(rename = "none[]")]
+    #[serde(skip)]
     pub(crate) none: Option<Vec<String>>,
 }
 
@@ -420,25 +444,33 @@ pub(crate) fn include_remote_source(local: Option<bool>, remote: Option<bool>) -
     remote.unwrap_or(false) || !local.unwrap_or(false)
 }
 
+/// The primary tag plus every `any[]` tag: the tags whose statuses can appear.
+pub(crate) fn tag_timeline_candidate_tags(
+    primary_tag: &str,
+    query: &TagTimelineQuery,
+) -> Vec<String> {
+    let mut tags = vec![primary_tag.to_owned()];
+    for tag in query.any.iter().flatten() {
+        let tag = normalize_hashtag(tag);
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
 pub(crate) fn matches_tag_timeline_filters(
     tags: &[String],
     primary_tag: &str,
     query: &TagTimelineQuery,
 ) -> bool {
     let tag_set = tags.iter().map(|tag| tag.as_str()).collect::<HashSet<_>>();
-    if !tag_set.contains(primary_tag) {
+    // Mastodon's `any[]` widens the timeline: the primary tag or any listed one.
+    if !tag_timeline_candidate_tags(primary_tag, query)
+        .iter()
+        .any(|tag| tag_set.contains(tag.as_str()))
+    {
         return false;
-    }
-
-    if let Some(any_tags) = query.any.as_ref() {
-        let normalized = any_tags
-            .iter()
-            .map(|tag| normalize_hashtag(tag))
-            .filter(|tag| !tag.is_empty())
-            .collect::<Vec<_>>();
-        if !normalized.is_empty() && !normalized.iter().any(|tag| tag_set.contains(tag.as_str())) {
-            return false;
-        }
     }
 
     if let Some(all_tags) = query.all.as_ref()

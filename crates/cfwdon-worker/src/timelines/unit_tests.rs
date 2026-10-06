@@ -36,6 +36,21 @@ fn matches_tag_timeline_filters_applies_any_all_none() {
 }
 
 #[test]
+fn tag_timeline_any_widens_beyond_the_primary_tag() {
+    let tags = vec!["workers".to_owned()];
+    let query = TagTimelineQuery {
+        any: Some(vec!["workers".to_owned()]),
+        ..TagTimelineQuery::default()
+    };
+    assert!(matches_tag_timeline_filters(&tags, "rust", &query));
+    assert!(!matches_tag_timeline_filters(
+        &tags,
+        "rust",
+        &TagTimelineQuery::default()
+    ));
+}
+
+#[test]
 fn tag_timeline_source_flags_default_to_both_sources() {
     assert!(include_local_source(None, None));
     assert!(include_remote_source(None, None));
