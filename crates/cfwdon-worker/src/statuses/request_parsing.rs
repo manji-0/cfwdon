@@ -22,6 +22,27 @@ pub(crate) struct CreateStatusRequest {
     pub(crate) language: Option<String>,
 }
 
+/// Account posting preferences that fill fields a create request leaves out,
+/// as Mastodon's `PostStatusService` does.
+#[derive(Debug, Clone)]
+pub(crate) struct StatusComposeDefaults {
+    pub(crate) visibility: super::Visibility,
+    pub(crate) sensitive: bool,
+    pub(crate) language: Option<String>,
+    pub(crate) quote_approval_policy: Option<cfwdon_domain::QuoteApprovalPolicy>,
+}
+
+impl StatusComposeDefaults {
+    pub(crate) fn for_account(account: &cfwdon_domain::LocalAccount) -> Self {
+        Self {
+            visibility: account.default_visibility(),
+            sensitive: account.default_sensitive(),
+            language: account.default_language().map(str::to_owned),
+            quote_approval_policy: Some(account.default_quote_policy()),
+        }
+    }
+}
+
 pub(crate) struct ParsedStatusDraft {
     pub(crate) draft: StatusDraft,
     pub(crate) idempotency_key: Option<String>,
@@ -79,10 +100,11 @@ pub(crate) struct AccountStatusesQuery {
 pub(crate) async fn parse_status_draft(
     req: &mut Request,
     config: &cfwdon_core::AppConfig,
+    defaults: &StatusComposeDefaults,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let idempotency_key = read_idempotency_key(req)?;
     let request = read_create_status_request(req).await?;
-    parsed_status_draft_from_request(request, idempotency_key, config)
+    parsed_status_draft_from_request(request, idempotency_key, config, defaults)
 }
 
 fn read_idempotency_key(req: &Request) -> std::result::Result<Option<String>, String> {
@@ -144,20 +166,28 @@ fn parsed_status_draft_from_request(
     request: CreateStatusRequest,
     idempotency_key: Option<String>,
     config: &cfwdon_core::AppConfig,
+    defaults: &StatusComposeDefaults,
 ) -> std::result::Result<ParsedStatusDraft, String> {
     let scheduled_at = normalize_scheduled_at(request.scheduled_at.as_deref())?;
     let poll = normalize_status_poll(request.poll, config)?;
     let media_ids = normalize_status_media_ids(request.media_ids);
     let quoted_status_id = normalized_optional_string(request.quoted_status_id);
-    let visibility = status_visibility_from_request(request.visibility.as_deref())?;
-    let quote_approval_policy = normalize_quote_approval_policy(request.quote_approval_policy)?;
+    let visibility = status_visibility_from_request(request.visibility.as_deref())?
+        .unwrap_or(defaults.visibility);
+    let quote_approval_policy = normalize_quote_approval_policy(request.quote_approval_policy)?
+        .or(defaults.quote_approval_policy);
+    let spoiler_text = request.spoiler_text.unwrap_or_default();
+    // A content warning always marks the status sensitive.
+    let sensitive =
+        request.sensitive.unwrap_or(defaults.sensitive) || !spoiler_text.trim().is_empty();
+    let language = normalized_optional_string(request.language).or(defaults.language.clone());
 
     let composing = ComposingStatus {
         text: request.status.unwrap_or_default(),
         visibility,
-        spoiler_text: request.spoiler_text.unwrap_or_default(),
-        sensitive: request.sensitive.unwrap_or(false),
-        language: request.language,
+        spoiler_text,
+        sensitive,
+        language,
         quote_approval_policy,
         in_reply_to_id: request.in_reply_to_id,
         media_ids,
@@ -180,10 +210,11 @@ fn parsed_status_draft_from_request(
 
 fn status_visibility_from_request(
     value: Option<&str>,
-) -> std::result::Result<super::Visibility, String> {
+) -> std::result::Result<Option<super::Visibility>, String> {
     match value.map(str::trim) {
-        Some("") | None => Ok(super::Visibility::Public),
+        Some("") | None => Ok(None),
         Some(value) => super::Visibility::parse(value)
+            .map(Some)
             .map_err(|_| "visibility must be one of: public, unlisted, private, direct".to_owned()),
     }
 }
@@ -385,15 +416,104 @@ mod tests {
 
     #[test]
     fn status_visibility_from_request_defaults_and_normalizes() {
-        assert_eq!(
-            status_visibility_from_request(None).unwrap(),
-            cfwdon_domain::Visibility::Public
-        );
+        assert_eq!(status_visibility_from_request(None).unwrap(), None);
+        assert_eq!(status_visibility_from_request(Some(" ")).unwrap(), None);
         assert_eq!(
             status_visibility_from_request(Some(" unlisted ")).unwrap(),
-            cfwdon_domain::Visibility::Unlisted
+            Some(cfwdon_domain::Visibility::Unlisted)
         );
         assert!(status_visibility_from_request(Some("friends")).is_err());
+    }
+
+    fn public_defaults() -> StatusComposeDefaults {
+        StatusComposeDefaults {
+            visibility: cfwdon_domain::Visibility::Public,
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+        }
+    }
+
+    #[test]
+    fn parsed_status_draft_falls_back_to_account_posting_defaults() {
+        let defaults = StatusComposeDefaults {
+            visibility: cfwdon_domain::Visibility::FollowersOnly,
+            sensitive: true,
+            language: Some("ja".to_owned()),
+            quote_approval_policy: Some(cfwdon_domain::QuoteApprovalPolicy::Followers),
+        };
+        let request = CreateStatusRequest {
+            status: Some("hello".to_owned()),
+            ..CreateStatusRequest::default()
+        };
+
+        let parsed = parsed_status_draft_from_request(
+            request,
+            None,
+            &cfwdon_core::AppConfig::default(),
+            &defaults,
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.draft.visibility(),
+            cfwdon_domain::Visibility::FollowersOnly
+        );
+        assert!(parsed.draft.sensitive());
+        assert_eq!(parsed.draft.language(), Some("ja"));
+        assert_eq!(
+            parsed.draft.quote_approval_policy(),
+            Some(cfwdon_domain::QuoteApprovalPolicy::Followers)
+        );
+    }
+
+    #[test]
+    fn parsed_status_draft_explicit_fields_override_defaults() {
+        let defaults = StatusComposeDefaults {
+            visibility: cfwdon_domain::Visibility::FollowersOnly,
+            sensitive: true,
+            language: Some("ja".to_owned()),
+            quote_approval_policy: None,
+        };
+        let request = CreateStatusRequest {
+            status: Some("hello".to_owned()),
+            visibility: Some("public".to_owned()),
+            sensitive: Some(false),
+            language: Some("en".to_owned()),
+            ..CreateStatusRequest::default()
+        };
+
+        let parsed = parsed_status_draft_from_request(
+            request,
+            None,
+            &cfwdon_core::AppConfig::default(),
+            &defaults,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.draft.visibility(), cfwdon_domain::Visibility::Public);
+        assert!(!parsed.draft.sensitive());
+        assert_eq!(parsed.draft.language(), Some("en"));
+    }
+
+    #[test]
+    fn parsed_status_draft_spoiler_text_forces_sensitive() {
+        let request = CreateStatusRequest {
+            status: Some("hello".to_owned()),
+            spoiler_text: Some("cw".to_owned()),
+            sensitive: Some(false),
+            ..CreateStatusRequest::default()
+        };
+
+        let parsed = parsed_status_draft_from_request(
+            request,
+            None,
+            &cfwdon_core::AppConfig::default(),
+            &public_defaults(),
+        )
+        .unwrap();
+
+        assert!(parsed.draft.sensitive());
     }
 
     #[test]
@@ -413,6 +533,7 @@ mod tests {
             request,
             Some(" key ".to_owned()),
             &cfwdon_core::AppConfig::default(),
+            &public_defaults(),
         )
         .unwrap();
 

@@ -17,7 +17,7 @@ use crate::response_cache::{invalidate_account_dynamic_public_cache, invalidate_
 use crate::responses::MastodonStatusResponse;
 use crate::runtime_config::load_config;
 use crate::scheduled_statuses::create_scheduled_status;
-use crate::statuses::request_parsing::ParsedStatusDraft;
+use crate::statuses::request_parsing::{ParsedStatusDraft, StatusComposeDefaults};
 use crate::store::media::delete_media_attachments;
 use crate::store::relationship::is_blocking_actor;
 use crate::store::statuses::{find_idempotent_status_id, record_idempotent_status};
@@ -243,20 +243,6 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
     let config = config_with_resolved_custom_emojis(&db, &config).await?;
-    let parsed = match parse_status_draft(&mut req, &config).await {
-        Ok(draft) => draft,
-        Err(message) => return Response::error(message, 422),
-    };
-    let ParsedStatusDraft {
-        mut draft,
-        idempotency_key,
-        scheduled_at,
-        quoted_status_id,
-    } = parsed;
-    draft = match sanitize_status_draft(draft, &config) {
-        Ok(draft) => draft,
-        Err(message) => return Response::error(message, 422),
-    };
     let access = match resolve_create_status_access(&req, &db, &config).await {
         Ok(Some(access)) => access,
         Ok(None) => {
@@ -274,6 +260,21 @@ pub(crate) async fn create_status(mut req: Request, ctx: RouteContext<()>) -> Re
             .with_status(403));
         }
         Err(error) => return Err(error),
+    };
+    let defaults = StatusComposeDefaults::for_account(&access.account);
+    let parsed = match parse_status_draft(&mut req, &config, &defaults).await {
+        Ok(draft) => draft,
+        Err(message) => return Response::error(message, 422),
+    };
+    let ParsedStatusDraft {
+        mut draft,
+        idempotency_key,
+        scheduled_at,
+        quoted_status_id,
+    } = parsed;
+    draft = match sanitize_status_draft(draft, &config) {
+        Ok(draft) => draft,
+        Err(message) => return Response::error(message, 422),
     };
     // A client retrying after a timeout replays the same Idempotency-Key; answer
     // with the status it already created before its media read as attached.
