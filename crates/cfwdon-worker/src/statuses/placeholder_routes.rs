@@ -171,10 +171,11 @@ pub(crate) async fn translate_status_response(
         return Response::from_json(&document);
     }
 
+    // Mastodon's TranslationsController maps NotConfiguredError to 404.
     Ok(Response::from_json(&serde_json::json!({
-        "error": "Translation provider is not configured",
+        "error": "Record not found",
     }))?
-    .with_status(503))
+    .with_status(404))
 }
 
 #[cfg(test)]
