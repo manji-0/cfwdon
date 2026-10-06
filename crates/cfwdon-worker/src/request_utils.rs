@@ -134,6 +134,42 @@ fn rails_query_bool(value: &str) -> Option<bool> {
     ))
 }
 
+/// Offset-paged `Link` header as Mastodon's trends endpoints send it: `next`
+/// while a page comes back full, `prev` once past the first page.
+pub(crate) fn offset_link_header(
+    url: &Url,
+    limit: u32,
+    offset: u32,
+    page_len: usize,
+) -> Option<String> {
+    let link = |offset: u32, rel: &str| {
+        let mut url = url.clone();
+        let pairs = url
+            .query_pairs()
+            .filter(|(key, _)| key != "offset" && key != "limit")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect::<Vec<_>>();
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            for (key, value) in pairs {
+                query.append_pair(&key, &value);
+            }
+            query.append_pair("limit", &limit.to_string());
+            query.append_pair("offset", &offset.to_string());
+        }
+        format!("<{url}>; rel=\"{rel}\"")
+    };
+    let mut links = Vec::new();
+    if page_len >= limit as usize {
+        links.push(link(offset.saturating_add(limit), "next"));
+    }
+    if offset > 0 {
+        links.push(link(offset.saturating_sub(limit), "prev"));
+    }
+    (!links.is_empty()).then(|| links.join(", "))
+}
+
 pub(crate) fn parse_optional_bool(
     value: Option<&str>,
 ) -> std::result::Result<Option<bool>, String> {
@@ -204,7 +240,7 @@ mod unit_tests;
 
 #[cfg(test)]
 mod query_param_tests {
-    use super::{query_array_param, rails_query_bool};
+    use super::{offset_link_header, query_array_param, rails_query_bool};
     use serde::Deserialize;
 
     #[derive(Debug, Default, Deserialize)]
@@ -246,5 +282,18 @@ mod query_param_tests {
         assert_eq!(parse("only_media=").only_media, None);
         assert_eq!(parse("limit=2").only_media, None);
         assert_eq!(rails_query_bool("F"), Some(false));
+    }
+
+    #[test]
+    fn offset_link_header_pages_by_offset() {
+        let url = url::Url::parse("https://example.com/api/v1/trends/statuses?offset=20").unwrap();
+        assert_eq!(
+            offset_link_header(&url, 20, 20, 20).as_deref(),
+            Some(
+                "<https://example.com/api/v1/trends/statuses?limit=20&offset=40>; rel=\"next\", \
+                 <https://example.com/api/v1/trends/statuses?limit=20&offset=0>; rel=\"prev\""
+            )
+        );
+        assert_eq!(offset_link_header(&url, 20, 0, 5), None);
     }
 }

@@ -50,17 +50,16 @@ pub(crate) async fn trending_links_response(
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
     let db = bind_request_d1(&ctx, &config)?;
-    cache_public_response(
-        Response::from_json(
-            &list_trending_link_documents(
-                &db,
-                query.limit.unwrap_or(10).clamp(1, 20),
-                query.offset.unwrap_or(0),
-            )
-            .await?,
-        )?,
-        CACHE_TTL_TRENDS,
-    )
+    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    let offset = query.offset.unwrap_or(0);
+    let documents = list_trending_link_documents(&db, limit, offset).await?;
+    let mut response = Response::from_json(&documents)?;
+    if let Some(link) =
+        crate::request_utils::offset_link_header(&req.url()?, limit, offset, documents.len())
+    {
+        response.headers_mut().set("Link", &link)?;
+    }
+    cache_public_response(response, CACHE_TTL_TRENDS)
 }
 pub(crate) async fn trending_link_target_is_known(
     db: &D1Database,

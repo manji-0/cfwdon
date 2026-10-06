@@ -11,6 +11,7 @@ use crate::policy_documents::{build_default_terms_of_service_document, configure
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
 };
+use crate::request_utils::offset_link_header;
 use crate::response_cache::{cache_instance_document, cached_instance_document};
 use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
@@ -341,7 +342,8 @@ pub(crate) async fn trending_statuses_response(
 
     let config = load_config(&ctx);
     let query: TrendsQuery = req.query().unwrap_or_default();
-    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    // Mastodon: statuses default 20 / max 40 (tags and links use 10 / 20).
+    let limit = query.limit.unwrap_or(20).clamp(1, 40);
     let offset = query.offset.unwrap_or(0);
     let (session, db) = open_bound_request_session(&ctx, &config, &req)?;
 
@@ -359,10 +361,11 @@ pub(crate) async fn trending_statuses_response(
         slice_trending_cache(live, offset, limit)
     };
 
-    with_d1_bookmark(
-        cache_public_response(Response::from_json(&statuses)?, CACHE_TTL_TRENDS)?,
-        &session,
-    )
+    let mut response = Response::from_json(&statuses)?;
+    if let Some(link) = offset_link_header(&req.url()?, limit, offset, statuses.len()) {
+        response.headers_mut().set("Link", &link)?;
+    }
+    with_d1_bookmark(cache_public_response(response, CACHE_TTL_TRENDS)?, &session)
 }
 
 pub(crate) async fn refresh_trending_statuses_cache(
@@ -403,7 +406,11 @@ pub(crate) async fn trending_tags_response(
             .collect::<Result<Vec<_>, _>>()?
     };
 
-    cache_public_response(Response::from_json(&documents)?, CACHE_TTL_TRENDS)
+    let mut response = Response::from_json(&documents)?;
+    if let Some(link) = offset_link_header(&req.url()?, limit, offset, documents.len()) {
+        response.headers_mut().set("Link", &link)?;
+    }
+    cache_public_response(response, CACHE_TTL_TRENDS)
 }
 
 pub(crate) async fn custom_emojis_response(ctx: RouteContext<()>) -> Result<Response> {
