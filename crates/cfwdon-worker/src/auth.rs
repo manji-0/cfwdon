@@ -12,14 +12,16 @@ use crate::tracked_d1::D1Database;
 
 mod account_store;
 mod jwt;
+mod scopes;
 pub(crate) use account_store::*;
 pub(crate) use jwt::*;
+use scopes::required_oauth_scopes;
 
 pub(crate) use self::account_store::find_account_by_email;
 pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
 use cfwdon_core::{AppConfig, AuthenticatedUser};
 use cfwdon_domain::LocalAccount;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use worker::{Error, Request, Response, Result};
 
 pub(crate) use self::account_store::{
@@ -36,6 +38,7 @@ struct PendingAuth0WebSession {
 
 thread_local! {
     static AUTH0_WEB_SESSION: RefCell<Option<PendingAuth0WebSession>> = const { RefCell::new(None) };
+    static OAUTH_SCOPE_DENIED: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +178,21 @@ async fn refresh_auth0_cookie_session(
 
 pub(crate) fn reset_auth0_web_session_state() {
     AUTH0_WEB_SESSION.with(|slot| slot.borrow_mut().take());
+    OAUTH_SCOPE_DENIED.with(|flag| flag.set(false));
+}
+
+/// True when this request presented a valid OAuth token whose scopes did not
+/// cover the endpoint. Handlers only see "unauthenticated" and answer 401; the
+/// router rewrites that to Mastodon's 403 scope error.
+pub(crate) fn oauth_scope_denied() -> bool {
+    OAUTH_SCOPE_DENIED.with(Cell::get)
+}
+
+pub(crate) fn oauth_scope_denied_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "This action is outside the authorized scopes",
+    }))?
+    .with_status(403))
 }
 
 pub(crate) fn apply_auth0_web_session_cookies(response: &mut Response) -> Result<()> {
@@ -242,6 +260,7 @@ pub(crate) async fn find_authenticated_local_account_with_roles(
         if oauth_access_token_allows_request(req, &auth.token) {
             return Ok(auth.account.map(|account| (account, Vec::new())));
         }
+        OAUTH_SCOPE_DENIED.with(|flag| flag.set(true));
         return Ok(None);
     }
 
@@ -276,65 +295,7 @@ fn oauth_access_token_allows_method_path(
     path: &str,
     token: &OAuthAccessTokenRow,
 ) -> bool {
-    if method == "GET"
-        && matches!(
-            path,
-            "/api/v1/accounts/verify_credentials" | "/api/v1/profile"
-        )
-        && oauth_access_token_has_any_scope(token, &["profile", "read:accounts", "read"])
-    {
-        return true;
-    }
-
-    if matches!(method, "PATCH" | "PUT" | "POST")
-        && path == "/api/v1/accounts/update_credentials"
-        && oauth_access_token_has_any_scope(token, &["write:accounts", "write"])
-    {
-        return true;
-    }
-
-    match method {
-        "GET" | "HEAD" | "OPTIONS" => oauth_access_token_has_any_scope(
-            token,
-            &[
-                "read",
-                "read:accounts",
-                "read:blocks",
-                "read:bookmarks",
-                "read:collections",
-                "read:favourites",
-                "read:filters",
-                "read:follows",
-                "read:lists",
-                "read:mutes",
-                "read:notifications",
-                "read:search",
-                "read:statuses",
-            ],
-        ),
-        _ => oauth_access_token_has_any_scope(
-            token,
-            &[
-                "write",
-                "write:accounts",
-                "write:blocks",
-                "write:bookmarks",
-                "write:collections",
-                "write:conversations",
-                "write:favourites",
-                "write:filters",
-                "write:follows",
-                "write:lists",
-                "write:media",
-                "write:mutes",
-                "write:notifications",
-                "write:reports",
-                "write:statuses",
-                "follow",
-                "push",
-            ],
-        ),
-    }
+    oauth_access_token_has_any_scope(token, required_oauth_scopes(method, path))
 }
 
 pub(crate) async fn authenticate_local_api_request(

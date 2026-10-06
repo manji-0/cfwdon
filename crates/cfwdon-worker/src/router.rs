@@ -1,5 +1,8 @@
 use crate::app_cache::{install_app_cache, reset_app_cache_request_state};
-use crate::auth::{apply_auth0_web_session_cookies, reset_auth0_web_session_state};
+use crate::auth::{
+    apply_auth0_web_session_cookies, oauth_scope_denied, oauth_scope_denied_response,
+    reset_auth0_web_session_state,
+};
 use crate::d1_metrics::reset_d1_request_metrics;
 use crate::deferred::defer;
 use crate::delivery::kick_outbox_process_queue_after_request;
@@ -32,7 +35,14 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let response = match dispatch_route(req, env, &method, &path).await {
         Ok(response) => {
             // Durable Object / ASSETS / Cache API responses are immutable.
-            let mut response = into_mutable_response(response)?;
+            let mut response = if response.status_code() == 401
+                && oauth_scope_denied()
+                && path.starts_with("/api/")
+            {
+                oauth_scope_denied_response()?
+            } else {
+                into_mutable_response(response)?
+            };
             if should_apply_auth0_web_session_cookies(
                 response.status_code(),
                 response.headers().get("Upgrade")?.as_deref(),
