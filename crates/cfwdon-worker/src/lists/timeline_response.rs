@@ -27,7 +27,7 @@ pub(crate) async fn list_timeline_response(
         &config,
         &account,
         &list_id,
-        list.replies_policy == "none",
+        &list.replies_policy,
         &pagination,
     )
     .await?;

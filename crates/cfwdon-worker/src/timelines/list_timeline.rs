@@ -75,7 +75,7 @@ fn list_candidate_query<'a>(
     viewer_account_id: &'a str,
     cursor: &'a ResolvedTimelineCursor,
     limit: u32,
-    exclude_replies: bool,
+    replies_policy: &str,
     source: ListCandidateSource,
 ) -> ListCandidateQuery<'a> {
     let dir = cursor.order_direction();
@@ -94,11 +94,7 @@ fn list_candidate_query<'a>(
         ListCandidateSource::Local => {
             let cursor_predicates =
                 seekable_resolved_timeline_cursor_predicates("s.created_at", "s.id", &slots);
-            let replies = if exclude_replies {
-                "\n               AND s.in_reply_to_id IS NULL"
-            } else {
-                ""
-            };
+            let replies = local_list_replies_predicate(replies_policy);
             format!(
                 "WITH members AS ({LOCAL_LIST_MEMBERS_SQL})
              SELECT 'local' AS source, s.id AS status_id, s.created_at AS timestamp
@@ -123,11 +119,7 @@ fn list_candidate_query<'a>(
         ListCandidateSource::Remote => {
             let cursor_predicates =
                 seekable_resolved_timeline_cursor_predicates("rs.published_at", "rs.id", &slots);
-            let replies = if exclude_replies {
-                "\n               AND rs.in_reply_to_uri IS NULL"
-            } else {
-                ""
-            };
+            let replies = remote_list_replies_predicate(replies_policy);
             format!(
                 "WITH members AS ({REMOTE_LIST_MEMBERS_SQL})
              SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
@@ -153,6 +145,85 @@ fn list_candidate_query<'a>(
     ListCandidateQuery { sql, bindings }
 }
 
+/// Mastodon's `FeedManager#filter_from_list?`: self-replies and replies to the
+/// list owner always show; other replies show for `followed` when the owner
+/// follows the replied-to account, for `list` when it is a list member, and
+/// never for `none`. `?3` is the list owner.
+fn local_list_replies_predicate(replies_policy: &str) -> String {
+    let extra = match replies_policy {
+        "followed" => {
+            "
+                    OR EXISTS (
+                        SELECT 1 FROM follows f
+                        WHERE f.follower_account_id = ?3
+                          AND f.target_account_id = s.in_reply_to_account_id
+                          AND f.state = 'accepted'
+                    )"
+        }
+        "list" => {
+            "\n                    OR s.in_reply_to_account_id IN (SELECT account_id FROM members)"
+        }
+        _ => "",
+    };
+    format!(
+        "
+               AND (
+                    s.in_reply_to_id IS NULL
+                    OR s.in_reply_to_account_id = s.account_id
+                    OR s.in_reply_to_account_id = ?3{extra}
+               )"
+    )
+}
+
+/// Remote replies resolve their parent through `in_reply_to_id`, which names
+/// either a local or a remote status.
+fn remote_list_replies_predicate(replies_policy: &str) -> String {
+    let extra = match replies_policy {
+        "followed" => {
+            "
+                    OR EXISTS (
+                        SELECT 1 FROM remote_statuses parent
+                        JOIN follows f ON f.target_actor_uri = parent.actor_uri
+                        WHERE parent.id = rs.in_reply_to_id
+                          AND f.follower_account_id = ?3
+                          AND f.state = 'accepted'
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM statuses parent
+                        JOIN follows f ON f.target_account_id = parent.account_id
+                        WHERE parent.id = rs.in_reply_to_id
+                          AND f.follower_account_id = ?3
+                          AND f.state = 'accepted'
+                    )"
+        }
+        "list" => {
+            "
+                    OR EXISTS (
+                        SELECT 1 FROM remote_statuses parent
+                        WHERE parent.id = rs.in_reply_to_id
+                          AND parent.actor_uri IN (SELECT actor_uri FROM members)
+                    )"
+        }
+        _ => "",
+    };
+    format!(
+        "
+               AND (
+                    rs.in_reply_to_uri IS NULL
+                    OR EXISTS (
+                        SELECT 1 FROM remote_statuses parent
+                        WHERE parent.id = rs.in_reply_to_id
+                          AND parent.actor_uri = rs.actor_uri
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM statuses parent
+                        WHERE parent.id = rs.in_reply_to_id
+                          AND parent.account_id = ?3
+                    ){extra}
+               )"
+    )
+}
+
 async fn list_candidate_rows_for_source(
     db: &D1Database,
     query: ListCandidateQuery<'_>,
@@ -172,7 +243,7 @@ pub(crate) async fn list_timeline_page_response(
     config: &AppConfig,
     viewer: &LocalAccount,
     list_id: &str,
-    exclude_replies: bool,
+    replies_policy: &str,
     pagination: &TimelinePaginationQuery,
 ) -> Result<Response> {
     let limit = timeline_limit(pagination);
@@ -192,7 +263,7 @@ pub(crate) async fn list_timeline_page_response(
         viewer.id(),
         &cursor,
         query_limit,
-        exclude_replies,
+        replies_policy,
         ListCandidateSource::Local,
     );
     let remote_query = list_candidate_query(
@@ -201,7 +272,7 @@ pub(crate) async fn list_timeline_page_response(
         viewer.id(),
         &cursor,
         query_limit,
-        exclude_replies,
+        replies_policy,
         ListCandidateSource::Remote,
     );
     let (filter_matcher, local_rows, remote_rows) = futures_util::try_join!(
@@ -256,7 +327,7 @@ mod tests {
             "viewer-1",
             &cursor,
             80,
-            false,
+            "list",
             ListCandidateSource::Local,
         );
         assert_eq!(query.bindings.len(), 4);
@@ -267,7 +338,7 @@ mod tests {
         assert!(query.sql.contains("LIMIT ?4"));
         assert!(query.sql.contains("s.visibility IN ('public', 'unlisted')"));
         assert!(query.sql.contains("f.follower_account_id = ?3"));
-        assert!(!query.sql.contains("in_reply_to_id IS NULL"));
+        assert!(query.sql.contains("SELECT account_id FROM members"));
     }
 
     #[test]
@@ -285,11 +356,12 @@ mod tests {
             "viewer-1",
             &cursor,
             80,
-            true,
+            "none",
             ListCandidateSource::Remote,
         );
         assert_eq!(query.bindings.len(), 6);
         assert!(query.sql.contains("rs.in_reply_to_uri IS NULL"));
+        assert!(!query.sql.contains("JOIN follows f"));
         assert!(query.sql.contains("rs.published_at <= ?4"));
         assert!(query.sql.contains("LIMIT ?6"));
     }
