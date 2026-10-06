@@ -6,7 +6,7 @@ use super::{
     collect_quote_notification_entries, collect_quoted_update_notification_entries,
     collect_reblog_notification_entries, collect_status_notification_entries,
     collect_update_notification_entries, load_dismissed_notification_ids,
-    load_notification_clear_marker, notification_sort_key, notification_timestamp_sort_token,
+    load_notification_clear_marker, notification_api_numeric_id, notification_timestamp_sort_token,
 };
 use crate::collections_alpha::collect_collection_notification_entries;
 use crate::tracked_d1::D1Database;
@@ -51,11 +51,8 @@ pub(crate) async fn collect_visible_notifications(
             _ => true,
         }
     });
-    entries.sort_by(|left, right| {
-        notification_sort_key(&right.created_at)
-            .cmp(&notification_sort_key(&left.created_at))
-            .then_with(|| right.id.cmp(&left.id))
-    });
+    // Newest first by API id, which is time ordered; cursors compare the same ids.
+    entries.sort_by_cached_key(|entry| std::cmp::Reverse(notification_api_numeric_id(entry)));
     Ok(entries)
 }
 

@@ -34,10 +34,6 @@ pub(crate) fn notification_timestamp_sort_token(value: &str) -> Option<String> {
     Some(digits)
 }
 
-pub(crate) fn notification_sort_key(value: &str) -> String {
-    notification_timestamp_sort_token(value).unwrap_or_default()
-}
-
 pub(crate) fn notification_type_allowed(
     query: &NotificationsQuery,
     notification_type: &str,

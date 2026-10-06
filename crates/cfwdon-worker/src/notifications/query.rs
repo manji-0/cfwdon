@@ -1,25 +1,30 @@
 use super::{
     NotificationEntry, NotificationsQuery, default_grouped_notification_types,
-    notification_entry_matches_cursor_id, notification_sort_key, notification_v2_group_key,
+    is_legacy_notification_api_id, notification_api_numeric_id,
+    notification_entry_matches_cursor_id, notification_v2_group_key,
 };
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn notification_cursor_key(entry: &NotificationEntry) -> (String, String) {
-    (notification_sort_key(&entry.created_at), entry.id.clone())
-}
-
-fn resolve_notification_cursor_key(
+/// API ids are time ordered, so a numeric cursor bounds the page even when its
+/// notification has dropped out of the loaded window. Internal keys from
+/// before API ids existed still resolve through the window.
+pub(crate) fn resolve_notification_cursor_key(
     entries: &[NotificationEntry],
     cursor_id: Option<&str>,
-) -> Option<(String, String)> {
+) -> Option<i64> {
     let cursor_id = normalized_notification_cursor(cursor_id)?;
+    if let Ok(api_id) = cursor_id.parse::<i64>()
+        && !is_legacy_notification_api_id(api_id)
+    {
+        return Some(api_id);
+    }
     entries
         .iter()
         .find(|entry| notification_entry_matches_cursor_id(entry, cursor_id))
-        .map(notification_cursor_key)
+        .map(notification_api_numeric_id)
 }
 
 pub(crate) fn filter_notification_entries_by_query(
@@ -35,9 +40,9 @@ pub(crate) fn filter_notification_entries_by_query(
     entries
         .into_iter()
         .filter(|entry| {
-            let cursor_key = notification_cursor_key(entry);
-            max_cursor.as_ref().is_none_or(|value| cursor_key < *value)
-                && min_cursor.as_ref().is_none_or(|value| cursor_key > *value)
+            let cursor_key = notification_api_numeric_id(entry);
+            max_cursor.is_none_or(|value| cursor_key < value)
+                && min_cursor.is_none_or(|value| cursor_key > value)
         })
         .collect()
 }

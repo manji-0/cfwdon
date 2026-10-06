@@ -1,8 +1,9 @@
 use super::{
     NotificationEntry, NotificationsQuery, clear_account_notifications,
     dismiss_account_notification, filter_notification_entries_by_query,
-    load_visible_notifications_for_account, notification_entry_matches_cursor_id,
-    notification_group_entries, notification_sort_key, notifications_fetch_limit,
+    load_visible_notifications_for_account, notification_api_numeric_id,
+    notification_entry_matches_cursor_id, notification_group_entries, notifications_fetch_limit,
+    resolve_notification_cursor_key,
 };
 use crate::markers::load_notifications_last_read_id;
 use crate::timelines::keep_timeline_page;
@@ -67,7 +68,7 @@ pub(crate) async fn load_notification_entry_usecase(
         load_visible_notifications_for_account(db, config, viewer, &query, 200)
             .await?
             .into_iter()
-            .find(|entry| entry.id == notification_id),
+            .find(|entry| notification_entry_matches_cursor_id(entry, notification_id)),
     )
 }
 
@@ -77,13 +78,12 @@ pub(crate) async fn dismiss_notification_entry_usecase(
     viewer: &LocalAccount,
     notification_id: &str,
 ) -> Result<bool> {
-    if load_notification_entry_usecase(db, config, viewer, notification_id)
-        .await?
-        .is_none()
-    {
+    let Some(entry) = load_notification_entry_usecase(db, config, viewer, notification_id).await?
+    else {
         return Ok(false);
-    }
-    dismiss_account_notification(db, viewer.id(), notification_id).await?;
+    };
+    // Dismissals are stored under the internal key the collectors filter on.
+    dismiss_account_notification(db, viewer.id(), &entry.id).await?;
     Ok(true)
 }
 
@@ -147,18 +147,11 @@ pub(crate) fn count_unread_notification_entries(
     let Some(last_read_id) = last_read_id else {
         return entries.len();
     };
-    let Some(marker) = entries
-        .iter()
-        .find(|entry| notification_entry_matches_cursor_id(entry, last_read_id))
-    else {
+    let Some(marker) = resolve_notification_cursor_key(entries, Some(last_read_id)) else {
         return entries.len();
     };
-    let marker_key = (
-        notification_sort_key(&marker.created_at),
-        marker.id.as_str(),
-    );
     entries
         .iter()
-        .filter(|entry| (notification_sort_key(&entry.created_at), entry.id.as_str()) > marker_key)
+        .filter(|entry| notification_api_numeric_id(entry) > marker)
         .count()
 }

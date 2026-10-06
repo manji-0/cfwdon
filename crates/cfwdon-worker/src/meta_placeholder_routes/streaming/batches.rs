@@ -10,6 +10,7 @@ use crate::lists::{
 use crate::media::{find_media_attachments_by_status_id, remote_status_has_media};
 use crate::notifications::{
     NotificationsQuery, collect_visible_notifications, filter_notification_entries_by_query,
+    notification_api_numeric_id_string, notification_v1_value,
 };
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, is_local_status_thread_muted_by,
@@ -47,20 +48,22 @@ pub(super) async fn streaming_notification_batch(
     };
     let entries = collect_visible_notifications(db, config, viewer, &query, 160).await?;
     let filtered = filter_notification_entries_by_query(entries, &query);
-    let last_id = filtered.first().map(|entry| entry.id.clone());
+    // API ids are time ordered, so the next poll's `since_id` bounds the
+    // query even after this notification leaves the loaded window.
+    let last_id = filtered.first().map(notification_api_numeric_id_string);
     let last_created_at = filtered.first().map(|entry| entry.created_at.clone());
     let mut events = Vec::with_capacity(filtered.len());
 
     for entry in filtered.into_iter().rev() {
         events.push(StreamingEvent {
-            created_at: entry.created_at,
-            id: entry.id,
+            id: notification_api_numeric_id_string(&entry),
             event: "notification",
-            data: serde_json::to_string(&entry.value).map_err(|error| {
+            data: serde_json::to_string(&notification_v1_value(&entry)).map_err(|error| {
                 worker::Error::RustError(format!(
                     "failed to serialize notification stream payload: {error}"
                 ))
             })?,
+            created_at: entry.created_at,
         });
     }
 

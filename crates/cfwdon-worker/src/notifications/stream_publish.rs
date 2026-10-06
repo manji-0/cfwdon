@@ -1,5 +1,6 @@
 use super::notification_timestamp_sort_token;
-use super::types::MastodonNotificationResponse;
+use super::types::{MastodonNotificationResponse, NotificationEntry};
+use super::{notification_api_numeric_id_string, notification_v1_value};
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_mentions_from_text;
@@ -477,9 +478,16 @@ async fn publish_notification_response_now(
 ) {
     let mut notification = notification;
     notification.created_at = timestamp_to_mastodon_iso8601(&notification.created_at);
-    let notification_id = notification.id.clone();
+    // Streamed notifications carry the same API id and group key as REST.
+    let entry = NotificationEntry {
+        id: notification.id.clone(),
+        created_at: notification.created_at.clone(),
+        value: serde_json::to_value(&notification).unwrap_or_default(),
+    };
+    let document = notification_v1_value(&entry);
+    let notification_id = notification_api_numeric_id_string(&entry);
 
-    let payload = match serde_json::to_string(&notification) {
+    let payload = match serde_json::to_string(&document) {
         Ok(payload) => payload,
         Err(error) => {
             console_error!("failed to serialize notification for stream hub: {error}");

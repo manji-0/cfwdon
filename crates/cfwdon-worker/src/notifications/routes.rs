@@ -3,7 +3,7 @@ use super::{
     clear_notifications_usecase, default_grouped_notification_types,
     dismiss_notification_entry_usecase, dismiss_notification_group_usecase,
     list_notification_group_entries_usecase, list_notifications_usecase,
-    load_notification_entry_usecase, notification_api_numeric_id_string,
+    load_notification_entry_usecase, notification_api_numeric_id_string, notification_v1_value,
     resolve_notification_entry_route_context, resolve_notification_group_route_context,
     resolve_notification_list_route_context, unread_notifications_count_usecase,
 };
@@ -26,13 +26,17 @@ pub(crate) async fn notifications_response(
         list.limit,
     )
     .await?;
-    let first_id = limited_entries.first().map(|entry| entry.id.clone());
-    let last_id = limited_entries.last().map(|entry| entry.id.clone());
+    let first_id = limited_entries
+        .first()
+        .map(notification_api_numeric_id_string);
+    let last_id = limited_entries
+        .last()
+        .map(notification_api_numeric_id_string);
 
     let mut builder = Response::from_json(
         &limited_entries
-            .into_iter()
-            .map(|entry| entry.value)
+            .iter()
+            .map(notification_v1_value)
             .collect::<Vec<_>>(),
     )?;
     if let Some(link_header) =
@@ -184,7 +188,7 @@ pub(crate) async fn notification_response(req: Request, ctx: RouteContext<()>) -
     };
 
     with_d1_bookmark(
-        Response::from_json(&entry.value)?,
+        Response::from_json(&notification_v1_value(&entry))?,
         &entry_context.auth.session,
     )
 }

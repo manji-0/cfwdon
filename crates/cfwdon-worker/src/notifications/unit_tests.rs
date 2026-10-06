@@ -2,7 +2,7 @@ use crate::notifications::{
     NotificationEntry, NotificationsQuery, build_notifications_v2_document,
     count_unread_notification_entries, default_grouped_notification_types,
     filter_notification_entries_by_query, is_admin_account, is_admin_authorized,
-    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
+    notification_api_numeric_id, notification_timestamp_sort_token, notification_v1_value,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
@@ -213,11 +213,10 @@ fn notification_timestamp_sort_token_supports_sqlite_and_iso_shapes() {
 }
 
 #[test]
-fn notification_sort_key_orders_newer_timestamps_higher() {
-    assert!(
-        notification_sort_key("2026-04-14T12:34:56.000Z")
-            > notification_sort_key("2026-04-14 12:33:56")
-    );
+fn notification_api_ids_order_across_timestamp_formats() {
+    let newer = favourite_entry("a", "2026-04-14T12:34:56.000Z", "x", "s");
+    let older = favourite_entry("b", "2026-04-14 12:33:56", "x", "s");
+    assert!(notification_api_numeric_id(&newer) > notification_api_numeric_id(&older));
 }
 
 #[test]
@@ -302,4 +301,87 @@ fn unread_count_only_counts_notifications_newer_than_the_marker() {
     );
     assert_eq!(count_unread_notification_entries(&entries, None), 3);
     assert_eq!(count_unread_notification_entries(&entries, Some("gone")), 3);
+}
+
+#[test]
+fn notification_api_ids_are_numeric_time_ordered_and_stable() {
+    let older = favourite_entry("favourite-remote-a-1", "2026-04-19T08:00:00Z", "a", "s");
+    let newer = favourite_entry("favourite-remote-b-1", "2026-04-19T08:00:01Z", "b", "s");
+    let older_id = notification_api_numeric_id(&older);
+    assert!(older_id > 0);
+    assert!(notification_api_numeric_id(&newer) > older_id);
+    assert_eq!(notification_api_numeric_id(&older), older_id);
+    // Snowflake layout: creation time in milliseconds above 16 low bits.
+    assert_eq!(older_id >> 16, 1_776_585_600_000);
+}
+
+#[test]
+fn notification_v1_value_exposes_api_id_and_group_key() {
+    let entry = favourite_entry(
+        "favourite-remote-a-1",
+        "2026-04-19T08:00:00Z",
+        "a",
+        "status-1",
+    );
+    let value = notification_v1_value(&entry);
+    assert_eq!(value["id"], notification_api_numeric_id(&entry).to_string());
+    assert!(
+        value["group_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("favourite-status-1-")
+    );
+}
+
+#[test]
+fn numeric_cursor_bounds_page_without_finding_its_entry() {
+    let entries = vec![
+        favourite_entry("n3", "2026-04-19T10:00:00Z", "c", "s"),
+        favourite_entry("n2", "2026-04-19T09:00:00Z", "b", "s"),
+        favourite_entry("n1", "2026-04-19T08:00:00Z", "a", "s"),
+    ];
+    // A cursor for a notification no longer in the window, between n2 and n3.
+    let gone = favourite_entry("gone", "2026-04-19T09:30:00Z", "x", "s");
+    let query = NotificationsQuery {
+        max_id: Some(notification_api_numeric_id(&gone).to_string()),
+        ..NotificationsQuery::default()
+    };
+    let page = filter_notification_entries_by_query(entries.clone(), &query);
+    assert_eq!(
+        page.iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["n2", "n1"]
+    );
+    let marker = notification_api_numeric_id(&gone).to_string();
+    assert_eq!(
+        count_unread_notification_entries(&entries, Some(&marker)),
+        1
+    );
+}
+
+#[test]
+fn legacy_hash_ids_still_resolve_inside_the_window() {
+    let entries = vec![
+        favourite_entry("n2", "2026-04-19T09:00:00Z", "b", "s"),
+        favourite_entry("n1", "2026-04-19T08:00:00Z", "a", "s"),
+    ];
+    // The pre-snowflake id of "n2": FNV-1a hash folded into [1e15, 9e15).
+    let mut hash = 14695981039346656037_u64;
+    for byte in b"n2" {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    let legacy = (1_000_000_000_000_000_u64 + hash % 8_000_000_000_000_000).to_string();
+    assert_eq!(
+        count_unread_notification_entries(&entries, Some(&legacy)),
+        0
+    );
+    let query = NotificationsQuery {
+        max_id: Some(legacy),
+        ..NotificationsQuery::default()
+    };
+    let page = filter_notification_entries_by_query(entries, &query);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].id, "n1");
 }
