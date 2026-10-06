@@ -32,6 +32,37 @@ pub(crate) async fn is_local_status_pinned_by(
         .is_some())
 }
 
+/// Mastodon's `StatusPinValidator::PIN_LIMIT` for local accounts.
+const STATUS_PIN_LIMIT: u64 = 5;
+
+/// Mastodon's `StatusPinValidator` messages (`statuses.pin_errors`).
+fn pin_validation_error(status: &LocalStatus, pinned_count: u64) -> Option<&'static str> {
+    if status.boost_of_uri.is_some() {
+        Some("A boost cannot be pinned")
+    } else if status.visibility == cfwdon_domain::Visibility::Direct {
+        Some("Posts that are only visible to mentioned users cannot be pinned")
+    } else if pinned_count >= STATUS_PIN_LIMIT {
+        Some("You have already pinned the maximum number of posts")
+    } else {
+        None
+    }
+}
+
+async fn count_pinned_statuses(db: &D1Database, account_id: &str) -> Result<u64> {
+    #[derive(serde::Deserialize)]
+    struct CountRow {
+        count: u64,
+    }
+    let account_id = D1Type::Text(account_id);
+    Ok(db
+        .prepare("SELECT COUNT(*) AS count FROM status_pins WHERE account_id = ?1")
+        .bind_refs(&account_id)?
+        .first::<CountRow>(None)
+        .await?
+        .map(|row| row.count)
+        .unwrap_or(0))
+}
+
 pub(crate) async fn pin_local_status(
     db: &D1Database,
     account_id: &str,
@@ -126,6 +157,12 @@ pub(crate) async fn pin_status_response(req: Request, ctx: RouteContext<()>) -> 
         return Response::error("status not found", 404);
     };
 
+    if !is_local_status_pinned_by(&db, viewer.id(), &subject.status.id).await? {
+        let pinned_count = count_pinned_statuses(&db, viewer.id()).await?;
+        if let Some(message) = pin_validation_error(&subject.status, pinned_count) {
+            return Response::error(format!("Validation failed: {message}"), 422);
+        }
+    }
     pin_local_status(&db, viewer.id(), &subject.status.id).await?;
     enqueue_add_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
@@ -151,4 +188,39 @@ pub(crate) async fn unpin_status_response(req: Request, ctx: RouteContext<()>) -
     unpin_local_status(&db, viewer.id(), &subject.status.id).await?;
     enqueue_remove_featured_status_activity(&db, &config, &viewer, &subject.status).await?;
     Response::from_json(&pinned_status_response(&db, &config, &viewer, subject).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{STATUS_PIN_LIMIT, pin_validation_error};
+    use cfwdon_domain::{LocalStatus, LocalStatusRecord};
+
+    fn status(visibility: &str, boost_of_uri: Option<&str>) -> LocalStatus {
+        let record: LocalStatusRecord = serde_json::from_value(serde_json::json!({
+            "id": "status-1",
+            "account_id": "acct-1",
+            "boost_of_uri": boost_of_uri,
+            "content_html": "<p>hi</p>",
+            "text_content": "hi",
+            "spoiler_text": "",
+            "visibility": visibility,
+            "sensitive": 0,
+            "quote_state": "accepted",
+            "created_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        LocalStatus::try_from_record(record).unwrap()
+    }
+
+    #[test]
+    fn pin_validation_matches_mastodon_status_pin_validator() {
+        assert_eq!(pin_validation_error(&status("public", None), 0), None);
+        assert!(pin_validation_error(&status("public", Some("https://x/1")), 0).is_some());
+        assert!(pin_validation_error(&status("direct", None), 0).is_some());
+        assert!(pin_validation_error(&status("private", None), STATUS_PIN_LIMIT).is_some());
+        assert_eq!(
+            pin_validation_error(&status("private", None), STATUS_PIN_LIMIT - 1),
+            None
+        );
+    }
 }
