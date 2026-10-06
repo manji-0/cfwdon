@@ -264,8 +264,11 @@ fn status_history_response_from_parts(
 ) -> Result<Response> {
     let mut current_revision = serde_json::to_value(response).unwrap_or(serde_json::json!({}));
     current_revision["created_at"] = serde_json::json!(created_at);
-    let mut history = vec![normalize_status_history_entry(current_revision)];
-    history.extend(snapshots);
+    // Snapshots arrive newest first; Mastodon lists revisions oldest first and
+    // ends with the current one.
+    let mut history = snapshots;
+    history.reverse();
+    history.push(normalize_status_history_entry(current_revision));
     Response::from_json(&history)
 }
 
