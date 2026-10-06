@@ -77,6 +77,7 @@ impl UpdateNotificationRow {
             in_reply_to_id: None,
             favourites_count: None,
             reblogs_count: None,
+            replies_count: None,
         })
     }
 }

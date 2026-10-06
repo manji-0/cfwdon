@@ -45,7 +45,8 @@ const REMOTE_STATUS_SEARCH_SELECT: &str = "SELECT
                 ra.discoverable,
                 ra.indexable,
                 COALESCE(rsc.favourites_count, 0) AS favourites_count,
-                COALESCE(rsc.reblogs_count, 0) AS reblogs_count
+                COALESCE(rsc.reblogs_count, 0) AS reblogs_count,
+                COALESCE(rsc.replies_count, 0) AS replies_count
              FROM remote_statuses rs
              JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
              LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id";
@@ -172,6 +173,7 @@ fn remote_status_row_from_search_value(value: &serde_json::Value) -> Result<Remo
         in_reply_to_id: None,
         favourites_count: json_optional_u64(value, "favourites_count"),
         reblogs_count: json_optional_u64(value, "reblogs_count"),
+        replies_count: json_optional_u64(value, "replies_count"),
     })
 }
 

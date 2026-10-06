@@ -168,10 +168,10 @@ async fn build_local_quoted_status_from_row(
         Some(Some(stored)) => stored,
         _ => build_status_mentions(db, config, &local_status.text).await?,
     };
-    let (favourites_count, reblogs_count) =
-        super::local::local_status_counts(db, counts_preload, &local_status.id).await?;
-    response.favourites_count = favourites_count;
-    response.reblogs_count = reblogs_count;
+    let counts = super::local::local_status_counts(db, counts_preload, &local_status.id).await?;
+    response.favourites_count = counts.favourites;
+    response.reblogs_count = counts.reblogs;
+    response.replies_count = counts.replies;
     let viewer_state = super::local::local_status_response_viewer_state(
         db,
         viewer,
@@ -287,10 +287,10 @@ async fn build_remote_quoted_status_from_row(
         Some(Some(stored)) => stored,
         _ => build_status_mentions(db, config, &text_content).await?,
     };
-    let (favourites_count, reblogs_count) =
-        super::remote::remote_status_counts(db, counts_preload, &remote_status).await?;
-    response.favourites_count = favourites_count;
-    response.reblogs_count = reblogs_count;
+    let counts = super::remote::remote_status_counts(db, counts_preload, &remote_status).await?;
+    response.favourites_count = counts.favourites;
+    response.reblogs_count = counts.reblogs;
+    response.replies_count = counts.replies;
     let viewer_state = super::remote::remote_status_response_viewer_state(
         db,
         viewer,

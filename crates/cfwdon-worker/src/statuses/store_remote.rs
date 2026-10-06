@@ -45,7 +45,8 @@ const REMOTE_STATUS_WITH_ACTOR_SELECT: &str = "rs.id,
             ra.discoverable,
             ra.indexable,
             COALESCE(rsc.favourites_count, 0) AS favourites_count,
-            COALESCE(rsc.reblogs_count, 0) AS reblogs_count";
+            COALESCE(rsc.reblogs_count, 0) AS reblogs_count,
+            COALESCE(rsc.replies_count, 0) AS replies_count";
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RemoteAccountStatusListOptions<'a> {
@@ -474,7 +475,7 @@ fn remote_actor_statuses_by_actor_uri_sql(
     let mut all_predicates = predicates.to_vec();
     all_predicates.extend(cursor_parts.predicates.clone());
     format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count, COALESCE(rsc.replies_count, 0) AS replies_count
          FROM remote_statuses
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE {}
@@ -513,7 +514,7 @@ fn public_remote_statuses_by_actor_uri_sql<'a>(
     ];
     predicates.extend(cursor_parts.predicates);
     let sql = format!(
-        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
+        "{with_clause}SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count, COALESCE(rsc.replies_count, 0) AS replies_count
          FROM remote_statuses
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id
          WHERE {}
@@ -634,6 +635,7 @@ fn remote_status_row_from_value(value: &serde_json::Value) -> Result<RemoteStatu
         in_reply_to_id: optional_json_string(value, "in_reply_to_id"),
         favourites_count: json_optional_u64(value, "favourites_count"),
         reblogs_count: json_optional_u64(value, "reblogs_count"),
+        replies_count: json_optional_u64(value, "replies_count"),
     })
 }
 

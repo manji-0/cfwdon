@@ -294,8 +294,7 @@ async fn load_remote_status_response_details(
     } else {
         build_status_mentions_with_preload(db, config, &text_content, mention_preload).await?
     };
-    let (favourites_count, reblogs_count) =
-        remote_status_counts(db, counts_preload, status).await?;
+    let counts = remote_status_counts(db, counts_preload, status).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
     let viewer_state =
         remote_status_response_viewer_state(db, viewer, status, actor, viewer_state_preload)
@@ -370,8 +369,9 @@ async fn load_remote_status_response_details(
         card,
         poll,
         mentions,
-        favourites_count,
-        reblogs_count,
+        favourites_count: counts.favourites,
+        reblogs_count: counts.reblogs,
+        replies_count: counts.replies,
         quotes_count,
         favourited,
         reblogged,
@@ -452,7 +452,7 @@ pub(super) async fn remote_status_counts(
     db: &D1Database,
     counts_preload: Option<&StatusCountsPreload>,
     status: &RemoteStatus,
-) -> Result<(u64, u64)> {
+) -> Result<cfwdon_domain::StatusInteractionCounts> {
     if let Some(counts) = counts_preload.and_then(|counts| counts.remote_counts(&status.id)) {
         return Ok(counts);
     }

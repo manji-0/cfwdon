@@ -66,6 +66,7 @@ fn remote_mention_status_row(mention: RemoteMentionNotificationRow) -> Option<Re
         in_reply_to_id: mention.in_reply_to_id,
         favourites_count: None,
         reblogs_count: None,
+        replies_count: None,
     })
     .ok()
 }

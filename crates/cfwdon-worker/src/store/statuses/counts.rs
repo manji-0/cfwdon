@@ -1,6 +1,6 @@
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::RemoteStatus;
+use cfwdon_domain::{RemoteStatus, StatusInteractionCounts};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
@@ -13,20 +13,32 @@ struct StatusCountsRow {
     remote_status_id: String,
     favourites_count: u64,
     reblogs_count: u64,
+    #[serde(default)]
+    replies_count: u64,
+}
+
+impl StatusCountsRow {
+    fn counts(&self) -> StatusInteractionCounts {
+        StatusInteractionCounts {
+            favourites: self.favourites_count,
+            reblogs: self.reblogs_count,
+            replies: self.replies_count,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct StatusCountsPreload {
-    local: HashMap<String, (u64, u64)>,
-    remote: HashMap<String, (u64, u64)>,
+    local: HashMap<String, StatusInteractionCounts>,
+    remote: HashMap<String, StatusInteractionCounts>,
 }
 
 impl StatusCountsPreload {
-    pub(crate) fn local_counts(&self, status_id: &str) -> Option<(u64, u64)> {
+    pub(crate) fn local_counts(&self, status_id: &str) -> Option<StatusInteractionCounts> {
         self.local.get(status_id).copied()
     }
 
-    pub(crate) fn remote_counts(&self, status_id: &str) -> Option<(u64, u64)> {
+    pub(crate) fn remote_counts(&self, status_id: &str) -> Option<StatusInteractionCounts> {
         self.remote.get(status_id).copied()
     }
 
@@ -39,11 +51,11 @@ impl StatusCountsPreload {
 pub(crate) async fn load_local_status_counts(
     db: &D1Database,
     status_id: &str,
-) -> Result<(u64, u64)> {
+) -> Result<StatusInteractionCounts> {
     let status_id = D1Type::Text(status_id);
     let row = db
         .prepare(
-            "SELECT favourites_count, reblogs_count
+            "SELECT favourites_count, reblogs_count, replies_count
              FROM status_counts
              WHERE status_id = ?1",
         )
@@ -51,15 +63,13 @@ pub(crate) async fn load_local_status_counts(
         .first::<StatusCountsRow>(None)
         .await?;
 
-    Ok(row
-        .map(|row| (row.favourites_count, row.reblogs_count))
-        .unwrap_or((0, 0)))
+    Ok(row.map(|row| row.counts()).unwrap_or_default())
 }
 
 pub(crate) async fn load_local_status_counts_map(
     db: &D1Database,
     status_ids: &[String],
-) -> Result<HashMap<String, (u64, u64)>> {
+) -> Result<HashMap<String, StatusInteractionCounts>> {
     let mut seen = HashSet::new();
     let ids = status_ids
         .iter()
@@ -70,12 +80,12 @@ pub(crate) async fn load_local_status_counts_map(
     }
     let mut counts = ids
         .iter()
-        .map(|id| ((*id).clone(), (0, 0)))
+        .map(|id| ((*id).clone(), StatusInteractionCounts::default()))
         .collect::<HashMap<_, _>>();
 
     let ids_json = json_string_array(&ids);
     let sql = format!(
-        "SELECT status_id, favourites_count, reblogs_count
+        "SELECT status_id, favourites_count, reblogs_count, replies_count
          FROM status_counts
          WHERE status_id {}",
         sql_in_json_each(1)
@@ -84,7 +94,8 @@ pub(crate) async fn load_local_status_counts_map(
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     for row in d1_results::<StatusCountsRow>(&result)? {
-        counts.insert(row.status_id, (row.favourites_count, row.reblogs_count));
+        let value = row.counts();
+        counts.insert(row.status_id, value);
     }
     Ok(counts)
 }
@@ -92,11 +103,11 @@ pub(crate) async fn load_local_status_counts_map(
 pub(crate) async fn load_remote_status_counts(
     db: &D1Database,
     remote_status_id: &str,
-) -> Result<(u64, u64)> {
+) -> Result<StatusInteractionCounts> {
     let remote_status_id = D1Type::Text(remote_status_id);
     let row = db
         .prepare(
-            "SELECT favourites_count, reblogs_count
+            "SELECT favourites_count, reblogs_count, replies_count
              FROM remote_status_counts
              WHERE remote_status_id = ?1",
         )
@@ -104,15 +115,13 @@ pub(crate) async fn load_remote_status_counts(
         .first::<StatusCountsRow>(None)
         .await?;
 
-    Ok(row
-        .map(|row| (row.favourites_count, row.reblogs_count))
-        .unwrap_or((0, 0)))
+    Ok(row.map(|row| row.counts()).unwrap_or_default())
 }
 
 pub(crate) async fn load_remote_status_counts_map(
     db: &D1Database,
     remote_status_ids: &[String],
-) -> Result<HashMap<String, (u64, u64)>> {
+) -> Result<HashMap<String, StatusInteractionCounts>> {
     let mut seen = HashSet::new();
     let ids = remote_status_ids
         .iter()
@@ -123,12 +132,12 @@ pub(crate) async fn load_remote_status_counts_map(
     }
     let mut counts = ids
         .iter()
-        .map(|id| ((*id).clone(), (0, 0)))
+        .map(|id| ((*id).clone(), StatusInteractionCounts::default()))
         .collect::<HashMap<_, _>>();
 
     let ids_json = json_string_array(&ids);
     let sql = format!(
-        "SELECT remote_status_id, favourites_count, reblogs_count
+        "SELECT remote_status_id, favourites_count, reblogs_count, replies_count
          FROM remote_status_counts
          WHERE remote_status_id {}",
         sql_in_json_each(1)
@@ -137,10 +146,8 @@ pub(crate) async fn load_remote_status_counts_map(
     let result = db.prepare(&sql).bind_refs(&binding)?.all().await?;
 
     for row in d1_results::<StatusCountsRow>(&result)? {
-        counts.insert(
-            row.remote_status_id,
-            (row.favourites_count, row.reblogs_count),
-        );
+        let value = row.counts();
+        counts.insert(row.remote_status_id, value);
     }
     Ok(counts)
 }

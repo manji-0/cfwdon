@@ -10,7 +10,7 @@ use serde::Deserialize;
 use worker::d1::D1Type;
 use worker::{Error, Result};
 
-pub(super) const REMOTE_STATUS_ROW_SELECT: &str = "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count
+pub(super) const REMOTE_STATUS_ROW_SELECT: &str = "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at, edited_at, card_json, federated_emojis_json, in_reply_to_id, COALESCE(rsc.favourites_count, 0) AS favourites_count, COALESCE(rsc.reblogs_count, 0) AS reblogs_count, COALESCE(rsc.replies_count, 0) AS replies_count
          FROM remote_statuses
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id";
 

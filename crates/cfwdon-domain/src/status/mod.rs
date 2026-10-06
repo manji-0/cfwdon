@@ -16,3 +16,12 @@ pub use stored::{
     StoredLocalStatusIntent,
 };
 pub use visibility::Visibility;
+
+/// Denormalized per-status counters kept in `status_counts` /
+/// `remote_status_counts` by triggers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StatusInteractionCounts {
+    pub favourites: u64,
+    pub reblogs: u64,
+    pub replies: u64,
+}

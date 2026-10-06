@@ -1,7 +1,7 @@
 use crate::error::RecordHydrationError;
 use crate::quote::QuoteState;
 use crate::remote::record::RemoteStatusRecord;
-use crate::status::Visibility;
+use crate::status::{StatusInteractionCounts, Visibility};
 
 /// Domain entity for a persisted remote status.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub struct RemoteStatus {
     pub federated_emojis_json: String,
     pub in_reply_to_id: Option<String>,
     /// Snapshot from a `remote_status_counts` join. `None` means the loader did not join.
-    pub interaction_counts: Option<(u64, u64)>,
+    pub interaction_counts: Option<StatusInteractionCounts>,
 }
 
 impl RemoteStatus {
@@ -55,9 +55,17 @@ impl RemoteStatus {
                 record.federated_emojis_json
             },
             in_reply_to_id: record.in_reply_to_id,
-            interaction_counts: match (record.favourites_count, record.reblogs_count) {
-                (None, None) => None,
-                (favourites, reblogs) => Some((favourites.unwrap_or(0), reblogs.unwrap_or(0))),
+            interaction_counts: match (
+                record.favourites_count,
+                record.reblogs_count,
+                record.replies_count,
+            ) {
+                (None, None, None) => None,
+                (favourites, reblogs, replies) => Some(StatusInteractionCounts {
+                    favourites: favourites.unwrap_or(0),
+                    reblogs: reblogs.unwrap_or(0),
+                    replies: replies.unwrap_or(0),
+                }),
             },
         })
     }
@@ -87,8 +95,9 @@ impl RemoteStatus {
             card_json: self.card_json.clone(),
             federated_emojis_json: self.federated_emojis_json.clone(),
             in_reply_to_id: self.in_reply_to_id.clone(),
-            favourites_count: self.interaction_counts.map(|(favourites, _)| favourites),
-            reblogs_count: self.interaction_counts.map(|(_, reblogs)| reblogs),
+            favourites_count: self.interaction_counts.map(|counts| counts.favourites),
+            reblogs_count: self.interaction_counts.map(|counts| counts.reblogs),
+            replies_count: self.interaction_counts.map(|counts| counts.replies),
         }
     }
 
@@ -152,12 +161,19 @@ mod tests {
             card_json: None,
             federated_emojis_json: "[]".to_owned(),
             in_reply_to_id: None,
-            interaction_counts: Some((3, 1)),
+            interaction_counts: Some(StatusInteractionCounts {
+                favourites: 3,
+                reblogs: 1,
+                replies: 2,
+            }),
         };
 
         let restored = RemoteStatus::from_record(status.to_record());
         assert_eq!(status, restored);
-        assert_eq!(restored.interaction_counts, Some((3, 1)));
+        assert_eq!(
+            restored.interaction_counts.map(|counts| counts.replies),
+            Some(2)
+        );
     }
 
     #[test]
@@ -184,6 +200,7 @@ mod tests {
             in_reply_to_id: None,
             favourites_count: None,
             reblogs_count: None,
+            replies_count: None,
         };
         let status = RemoteStatus::from_record(record);
         assert_eq!(status.interaction_counts, None);
@@ -213,8 +230,12 @@ mod tests {
             in_reply_to_id: None,
             favourites_count: Some(0),
             reblogs_count: Some(0),
+            replies_count: Some(0),
         };
         let status = RemoteStatus::from_record(record);
-        assert_eq!(status.interaction_counts, Some((0, 0)));
+        assert_eq!(
+            status.interaction_counts,
+            Some(StatusInteractionCounts::default())
+        );
     }
 }

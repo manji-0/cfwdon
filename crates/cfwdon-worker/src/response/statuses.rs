@@ -16,6 +16,7 @@ pub(crate) struct LocalStatusResponseDetails {
     pub(crate) mentions: Vec<serde_json::Value>,
     pub(crate) favourites_count: u64,
     pub(crate) reblogs_count: u64,
+    pub(crate) replies_count: u64,
     pub(crate) quotes_count: u64,
     pub(crate) favourited: Option<bool>,
     pub(crate) reblogged: Option<bool>,
@@ -35,6 +36,7 @@ pub(crate) struct RemoteStatusResponseDetails {
     pub(crate) mentions: Vec<serde_json::Value>,
     pub(crate) favourites_count: u64,
     pub(crate) reblogs_count: u64,
+    pub(crate) replies_count: u64,
     pub(crate) quotes_count: u64,
     pub(crate) favourited: Option<bool>,
     pub(crate) reblogged: Option<bool>,
@@ -202,6 +204,7 @@ impl MastodonStatusResponse {
         self.mentions = details.mentions;
         self.favourites_count = details.favourites_count;
         self.reblogs_count = details.reblogs_count;
+        self.replies_count = details.replies_count;
         self.quotes_count = details.quotes_count;
         self.favourited = details.favourited;
         self.reblogged = details.reblogged;
@@ -221,6 +224,7 @@ impl MastodonStatusResponse {
         self.mentions = details.mentions;
         self.favourites_count = details.favourites_count;
         self.reblogs_count = details.reblogs_count;
+        self.replies_count = details.replies_count;
         self.quotes_count = details.quotes_count;
         self.favourited = details.favourited;
         self.reblogged = details.reblogged;

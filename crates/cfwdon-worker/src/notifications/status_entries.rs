@@ -38,6 +38,7 @@ fn remote_status_notification_row(status: &RemoteStatusNotificationRow) -> Optio
         in_reply_to_id: status.in_reply_to_id.clone(),
         favourites_count: None,
         reblogs_count: None,
+        replies_count: None,
     })
     .ok()
 }

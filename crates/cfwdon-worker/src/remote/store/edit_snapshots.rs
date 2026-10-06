@@ -34,6 +34,7 @@ pub(super) async fn find_remote_status_edit_state_by_object_uri(
                 edited_at, card_json, federated_emojis_json, in_reply_to_id,
                 COALESCE(rsc.favourites_count, 0) AS favourites_count,
                 COALESCE(rsc.reblogs_count, 0) AS reblogs_count,
+                COALESCE(rsc.replies_count, 0) AS replies_count,
                 raw_object_json
          FROM remote_statuses
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = remote_statuses.id

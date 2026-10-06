@@ -38,6 +38,9 @@ pub struct RemoteStatusRecord {
     /// Present when the loader LEFT JOINed `remote_status_counts`.
     #[serde(default)]
     pub reblogs_count: Option<u64>,
+    /// Present when the loader LEFT JOINed `remote_status_counts`.
+    #[serde(default)]
+    pub replies_count: Option<u64>,
 }
 
 fn default_quote_state() -> String {
@@ -94,6 +97,7 @@ mod tests {
             in_reply_to_id: None,
             favourites_count: None,
             reblogs_count: None,
+            replies_count: None,
         }
     }
 

@@ -304,8 +304,7 @@ async fn load_local_status_response_details(
     } else {
         build_status_mentions_with_preload(db, config, &status.text, mention_preload).await?
     };
-    let (favourites_count, reblogs_count) =
-        local_status_counts(db, counts_preload, &status.id).await?;
+    let counts = local_status_counts(db, counts_preload, &status.id).await?;
     let quotes_count = status_quotes_count(db, quote_counts_preload, status_uri).await?;
     let viewer_state =
         local_status_response_viewer_state(db, viewer, status, viewer_state_preload).await?;
@@ -339,8 +338,9 @@ async fn load_local_status_response_details(
         card,
         poll,
         mentions,
-        favourites_count,
-        reblogs_count,
+        favourites_count: counts.favourites,
+        reblogs_count: counts.reblogs,
+        replies_count: counts.replies,
         quotes_count,
         favourited: viewer_fields.favourited,
         reblogged: viewer_fields.reblogged,
@@ -462,7 +462,7 @@ pub(super) async fn local_status_counts(
     db: &D1Database,
     counts_preload: Option<&StatusCountsPreload>,
     status_id: &str,
-) -> Result<(u64, u64)> {
+) -> Result<cfwdon_domain::StatusInteractionCounts> {
     if let Some(counts) = counts_preload.and_then(|counts| counts.local_counts(status_id)) {
         return Ok(counts);
     }
