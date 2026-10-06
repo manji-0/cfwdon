@@ -13,7 +13,9 @@ use crate::custom_emojis::{
     RemoteStatusFederatedEmojisPreload, config_with_resolved_custom_emojis,
     preload_remote_status_federated_emojis,
 };
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
+use crate::identity::remote_account_rest_id;
 use crate::local_polls::MastodonPollResponsePreload;
 use crate::media::{RemoteStatusAttachmentRow, find_remote_status_attachments_by_status_ids};
 use crate::remote::{
@@ -439,7 +441,7 @@ pub(super) async fn timeline_entries_from_candidates(
         candidates,
         &context.remote_attachments_by_status_id,
     );
-    render_prepared_timeline_candidates(
+    let mut entries = render_prepared_timeline_candidates(
         db,
         config,
         viewer,
@@ -448,7 +450,89 @@ pub(super) async fn timeline_entries_from_candidates(
         prepared,
         enrich_cards,
     )
-    .await
+    .await?;
+    fill_in_reply_to_account_ids(db, &mut entries).await?;
+    Ok(entries)
+}
+
+fn status_values_mut(value: &mut serde_json::Value) -> Vec<&mut serde_json::Value> {
+    let mut values = Vec::new();
+    let has_reblog = value
+        .get("reblog")
+        .is_some_and(serde_json::Value::is_object);
+    if has_reblog {
+        if let Some(reblog) = value.get_mut("reblog") {
+            values.push(reblog);
+        }
+    } else {
+        values.push(value);
+    }
+    values
+}
+
+fn missing_in_reply_to_account(value: &serde_json::Value) -> Option<&str> {
+    let in_reply_to_id = value.get("in_reply_to_id")?.as_str()?;
+    value
+        .get("in_reply_to_account_id")
+        .is_none_or(serde_json::Value::is_null)
+        .then_some(in_reply_to_id)
+}
+
+/// Remote replies only carry the parent's id; look up who wrote each parent
+/// in one batch so `in_reply_to_account_id` is set as in Mastodon.
+async fn fill_in_reply_to_account_ids(
+    db: &D1Database,
+    entries: &mut [TimelineEntry],
+) -> Result<()> {
+    let parent_ids = entries
+        .iter_mut()
+        .flat_map(|(_, _, value)| status_values_mut(value))
+        .filter_map(|value| missing_in_reply_to_account(value).map(str::to_owned))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if parent_ids.is_empty() {
+        return Ok(());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ParentAuthorRow {
+        id: String,
+        account_id: Option<String>,
+        actor_uri: Option<String>,
+    }
+    let ids_json = json_string_array(&parent_ids);
+    let binding = worker::d1::D1Type::Text(ids_json.as_str());
+    let result = db
+        .prepare(format!(
+            "SELECT id, account_id, NULL AS actor_uri FROM statuses WHERE id {in_ids}
+             UNION ALL
+             SELECT id, NULL AS account_id, actor_uri FROM remote_statuses WHERE id {in_ids}",
+            in_ids = sql_in_json_each(1)
+        ))
+        .bind_refs(&binding)?
+        .all()
+        .await?;
+    let authors = d1_results::<ParentAuthorRow>(&result)?
+        .into_iter()
+        .filter_map(|row| {
+            let author = row
+                .account_id
+                .or_else(|| row.actor_uri.as_deref().map(remote_account_rest_id))?;
+            Some((row.id, author))
+        })
+        .collect::<HashMap<_, _>>();
+
+    for (_, _, value) in entries.iter_mut() {
+        for status in status_values_mut(value) {
+            if let Some(author) =
+                missing_in_reply_to_account(status).and_then(|parent_id| authors.get(parent_id))
+            {
+                status["in_reply_to_account_id"] = serde_json::json!(author);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A status rendered outside a timeline page, such as a thread context node.
