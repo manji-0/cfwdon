@@ -1,8 +1,10 @@
 use super::{
     NotificationEntry, NotificationsQuery, clear_account_notifications,
     dismiss_account_notification, filter_notification_entries_by_query,
-    load_visible_notifications_for_account, notification_group_entries, notifications_fetch_limit,
+    load_visible_notifications_for_account, notification_entry_matches_cursor_id,
+    notification_group_entries, notification_sort_key, notifications_fetch_limit,
 };
+use crate::markers::load_notifications_last_read_id;
 use crate::timelines::keep_timeline_page;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -125,9 +127,38 @@ pub(crate) async fn unread_notifications_count_usecase(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<usize> {
-    Ok(
-        load_visible_notifications_for_account(db, config, viewer, query, per_type_limit)
-            .await?
-            .len(),
-    )
+    let (entries, last_read_id) = futures_util::try_join!(
+        load_visible_notifications_for_account(db, config, viewer, query, per_type_limit),
+        load_notifications_last_read_id(db, viewer.id()),
+    )?;
+    Ok(count_unread_notification_entries(
+        &entries,
+        last_read_id.as_deref(),
+    ))
+}
+
+/// Mastodon counts notifications newer than the notifications marker. A marker
+/// that is not in the loaded window is older than all of it, so the whole
+/// window is unread.
+pub(crate) fn count_unread_notification_entries(
+    entries: &[NotificationEntry],
+    last_read_id: Option<&str>,
+) -> usize {
+    let Some(last_read_id) = last_read_id else {
+        return entries.len();
+    };
+    let Some(marker) = entries
+        .iter()
+        .find(|entry| notification_entry_matches_cursor_id(entry, last_read_id))
+    else {
+        return entries.len();
+    };
+    let marker_key = (
+        notification_sort_key(&marker.created_at),
+        marker.id.as_str(),
+    );
+    entries
+        .iter()
+        .filter(|entry| (notification_sort_key(&entry.created_at), entry.id.as_str()) > marker_key)
+        .count()
 }

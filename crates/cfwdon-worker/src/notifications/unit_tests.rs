@@ -1,8 +1,8 @@
 use crate::notifications::{
     NotificationEntry, NotificationsQuery, build_notifications_v2_document,
-    default_grouped_notification_types, filter_notification_entries_by_query, is_admin_account,
-    is_admin_authorized, notification_api_numeric_id, notification_sort_key,
-    notification_timestamp_sort_token,
+    count_unread_notification_entries, default_grouped_notification_types,
+    filter_notification_entries_by_query, is_admin_account, is_admin_authorized,
+    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
@@ -285,4 +285,21 @@ fn filter_notification_entries_by_query_applies_max_and_min_cursor() {
             .collect::<Vec<_>>(),
         vec!["notif-old".to_owned()]
     );
+}
+
+#[test]
+fn unread_count_only_counts_notifications_newer_than_the_marker() {
+    let entries = vec![
+        favourite_entry("n3", "2026-04-19T10:00:00Z", "carol", "status-1"),
+        favourite_entry("n2", "2026-04-19T09:00:00Z", "bob", "status-1"),
+        favourite_entry("n1", "2026-04-19T08:00:00Z", "alice", "status-1"),
+    ];
+    assert_eq!(count_unread_notification_entries(&entries, Some("n2")), 1);
+    let numeric = notification_api_numeric_id(&entries[0]).to_string();
+    assert_eq!(
+        count_unread_notification_entries(&entries, Some(&numeric)),
+        0
+    );
+    assert_eq!(count_unread_notification_entries(&entries, None), 3);
+    assert_eq!(count_unread_notification_entries(&entries, Some("gone")), 3);
 }

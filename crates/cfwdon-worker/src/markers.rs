@@ -54,6 +54,22 @@ async fn load_marker(
         }))
 }
 
+/// The notifications marker's `last_read_id`, which `unread_count` counts past.
+pub(crate) async fn load_notifications_last_read_id(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Option<String>> {
+    Ok(load_marker(db, account_id, NOTIFICATIONS_MARKER_SCOPE)
+        .await?
+        .and_then(|marker| {
+            marker
+                .get("last_read_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .filter(|value| !value.trim().is_empty()))
+}
+
 async fn save_marker(
     db: &D1Database,
     account_id: &str,
