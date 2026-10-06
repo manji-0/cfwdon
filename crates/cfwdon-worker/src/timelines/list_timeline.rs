@@ -150,18 +150,33 @@ fn list_candidate_query<'a>(
 /// follows the replied-to account, for `list` when it is a list member, and
 /// never for `none`. `?3` is the list owner.
 fn local_list_replies_predicate(replies_policy: &str) -> String {
+    // Parent authors come from the parent rows: `in_reply_to_account_id` is
+    // NULL on replies stored before that column existed.
     let extra = match replies_policy {
         "followed" => {
             "
                     OR EXISTS (
-                        SELECT 1 FROM follows f
-                        WHERE f.follower_account_id = ?3
-                          AND f.target_account_id = s.in_reply_to_account_id
+                        SELECT 1 FROM statuses parent
+                        JOIN follows f ON f.target_account_id = parent.account_id
+                        WHERE parent.id = s.in_reply_to_id
+                          AND f.follower_account_id = ?3
+                          AND f.state = 'accepted'
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM remote_statuses parent
+                        JOIN follows f ON f.target_actor_uri = parent.actor_uri
+                        WHERE parent.id = s.in_reply_to_id
+                          AND f.follower_account_id = ?3
                           AND f.state = 'accepted'
                     )"
         }
         "list" => {
-            "\n                    OR s.in_reply_to_account_id IN (SELECT account_id FROM members)"
+            "
+                    OR EXISTS (
+                        SELECT 1 FROM statuses parent
+                        WHERE parent.id = s.in_reply_to_id
+                          AND parent.account_id IN (SELECT account_id FROM members)
+                    )"
         }
         _ => "",
     };
@@ -169,8 +184,11 @@ fn local_list_replies_predicate(replies_policy: &str) -> String {
         "
                AND (
                     s.in_reply_to_id IS NULL
-                    OR s.in_reply_to_account_id = s.account_id
-                    OR s.in_reply_to_account_id = ?3{extra}
+                    OR EXISTS (
+                        SELECT 1 FROM statuses parent
+                        WHERE parent.id = s.in_reply_to_id
+                          AND parent.account_id IN (s.account_id, ?3)
+                    ){extra}
                )"
     )
 }
@@ -338,7 +356,12 @@ mod tests {
         assert!(query.sql.contains("LIMIT ?4"));
         assert!(query.sql.contains("s.visibility IN ('public', 'unlisted')"));
         assert!(query.sql.contains("f.follower_account_id = ?3"));
-        assert!(query.sql.contains("SELECT account_id FROM members"));
+        assert!(
+            query
+                .sql
+                .contains("parent.account_id IN (SELECT account_id FROM members)")
+        );
+        assert!(!query.sql.contains("in_reply_to_account_id"));
     }
 
     #[test]
