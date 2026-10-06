@@ -77,18 +77,21 @@ pub(crate) async fn upsert_reblog_local_status(
     .run()
     .await?;
 
-    let _ = send_push_notification(
-        db,
-        config,
-        &status.account_id,
-        "reblog",
-        serde_json::json!({
-            "account_id": account_id,
-            "status_id": status.id,
-            "visibility": visibility,
-        }),
-    )
-    .await;
+    // Boosting your own status notifies nobody, as in Mastodon.
+    if status.account_id != account_id {
+        let _ = send_push_notification(
+            db,
+            config,
+            &status.account_id,
+            "reblog",
+            serde_json::json!({
+                "account_id": account_id,
+                "status_id": status.id,
+                "visibility": visibility,
+            }),
+        )
+        .await;
+    }
 
     let _ = publish_local_status_interaction_notification_soft(
         env,
