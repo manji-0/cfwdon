@@ -54,6 +54,14 @@ pub(crate) fn notification_group_entries<'a>(
     entries: &'a [NotificationEntry],
     group_key: &str,
 ) -> Vec<&'a NotificationEntry> {
+    // `ungrouped-<id>` names one notification whatever `grouped_types[]` the
+    // listing used, so match it by id rather than by recomputed key.
+    if let Some(notification_id) = group_key.strip_prefix("ungrouped-") {
+        return entries
+            .iter()
+            .filter(|entry| notification_entry_matches_cursor_id(entry, notification_id))
+            .collect();
+    }
     let grouped_types = default_grouped_notification_types();
     entries
         .iter()
