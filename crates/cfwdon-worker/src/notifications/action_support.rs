@@ -13,6 +13,9 @@ pub(crate) struct NotificationsQuery {
     pub(crate) types: Option<Vec<String>>,
     #[serde(skip)]
     pub(crate) exclude_types: Option<Vec<String>>,
+    /// v2 only: which types fold into groups (`None` = every groupable type).
+    #[serde(skip)]
+    pub(crate) grouped_types: Option<Vec<String>>,
     #[serde(rename = "max_id")]
     pub(crate) max_id: Option<String>,
     #[serde(rename = "since_id")]
@@ -28,6 +31,7 @@ pub(crate) fn parse_notifications_query(req: &Request) -> Result<NotificationsQu
     let mut query: NotificationsQuery = req.query().unwrap_or_default();
     query.types = query_array_param(&url, "types");
     query.exclude_types = query_array_param(&url, "exclude_types");
+    query.grouped_types = query_array_param(&url, "grouped_types");
     Ok(query)
 }
 

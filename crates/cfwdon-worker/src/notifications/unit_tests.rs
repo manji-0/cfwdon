@@ -1,7 +1,8 @@
 use crate::notifications::{
     NotificationEntry, NotificationsQuery, build_notifications_v2_document,
-    filter_notification_entries_by_query, is_admin_account, is_admin_authorized,
-    notification_api_numeric_id, notification_sort_key, notification_timestamp_sort_token,
+    default_grouped_notification_types, filter_notification_entries_by_query, is_admin_account,
+    is_admin_authorized, notification_api_numeric_id, notification_sort_key,
+    notification_timestamp_sort_token,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
@@ -32,7 +33,7 @@ fn build_notifications_v2_document_collects_accounts_statuses_and_groups() {
         },
     ];
 
-    let document = build_notifications_v2_document(&entries);
+    let document = build_notifications_v2_document(&entries, &default_grouped_notification_types());
     assert_eq!(document["accounts"].as_array().unwrap().len(), 1);
     assert_eq!(document["statuses"].as_array().unwrap().len(), 1);
     assert_eq!(document["notification_groups"].as_array().unwrap().len(), 2);
@@ -60,6 +61,73 @@ fn build_notifications_v2_document_collects_accounts_statuses_and_groups() {
     );
 }
 
+fn favourite_entry(
+    id: &str,
+    created_at: &str,
+    account_id: &str,
+    status_id: &str,
+) -> NotificationEntry {
+    NotificationEntry {
+        id: id.to_owned(),
+        created_at: created_at.to_owned(),
+        value: serde_json::json!({
+            "id": id,
+            "type": "favourite",
+            "account": {"id": account_id},
+            "status": {"id": status_id}
+        }),
+    }
+}
+
+#[test]
+fn build_notifications_v2_document_groups_favourites_of_one_status() {
+    let entries = vec![
+        favourite_entry("fav-3", "2026-04-19T10:00:00Z", "carol", "status-1"),
+        favourite_entry("fav-2", "2026-04-19T09:00:00Z", "bob", "status-1"),
+        favourite_entry("fav-other", "2026-04-19T08:30:00Z", "bob", "status-2"),
+        favourite_entry("fav-1", "2026-04-19T08:00:00Z", "alice", "status-1"),
+        // Same status, but outside the 12-hour bucket.
+        favourite_entry("fav-old", "2026-04-18T08:00:00Z", "dave", "status-1"),
+    ];
+
+    let document = build_notifications_v2_document(&entries, &default_grouped_notification_types());
+    let groups = document["notification_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(groups[0]["notifications_count"], 3);
+    assert_eq!(
+        groups[0]["sample_account_ids"],
+        serde_json::json!(["carol", "bob", "alice"])
+    );
+    assert_eq!(
+        groups[0]["page_max_id"],
+        notification_api_numeric_id(&entries[0]).to_string()
+    );
+    assert_eq!(
+        groups[0]["page_min_id"],
+        notification_api_numeric_id(&entries[3]).to_string()
+    );
+    assert_eq!(groups[1]["status_id"], "status-2");
+    assert_eq!(groups[2]["notifications_count"], 1);
+}
+
+#[test]
+fn build_notifications_v2_document_leaves_types_outside_grouped_types_ungrouped() {
+    let entries = vec![
+        favourite_entry("fav-2", "2026-04-19T09:00:00Z", "bob", "status-1"),
+        favourite_entry("fav-1", "2026-04-19T08:00:00Z", "alice", "status-1"),
+    ];
+
+    let document = build_notifications_v2_document(&entries, &["follow".to_owned()]);
+    let groups = document["notification_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert!(
+        groups[0]["group_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("ungrouped-")
+    );
+}
+
 #[test]
 fn build_notifications_v2_document_uses_numeric_ids_for_remote_follow_notifications() {
     let entry = NotificationEntry {
@@ -76,7 +144,10 @@ fn build_notifications_v2_document_uses_numeric_ids_for_remote_follow_notificati
         }),
     };
 
-    let document = build_notifications_v2_document(std::slice::from_ref(&entry));
+    let document = build_notifications_v2_document(
+        std::slice::from_ref(&entry),
+        &default_grouped_notification_types(),
+    );
     let group = &document["notification_groups"][0];
     assert!(group["most_recent_notification_id"].is_number());
     assert_eq!(

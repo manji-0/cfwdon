@@ -1,11 +1,11 @@
 use super::{
     build_notification_group_document, build_notifications_v2_document,
-    clear_notifications_usecase, dismiss_notification_entry_usecase,
-    dismiss_notification_group_usecase, list_notification_group_entries_usecase,
-    list_notifications_usecase, load_notification_entry_usecase,
-    notification_api_numeric_id_string, resolve_notification_entry_route_context,
-    resolve_notification_group_route_context, resolve_notification_list_route_context,
-    unread_notifications_count_usecase,
+    clear_notifications_usecase, default_grouped_notification_types,
+    dismiss_notification_entry_usecase, dismiss_notification_group_usecase,
+    list_notification_group_entries_usecase, list_notifications_usecase,
+    load_notification_entry_usecase, notification_api_numeric_id_string,
+    resolve_notification_entry_route_context, resolve_notification_group_route_context,
+    resolve_notification_list_route_context, unread_notifications_count_usecase,
 };
 use crate::db_session::with_d1_bookmark;
 use crate::timelines::build_timeline_link_header;
@@ -66,7 +66,15 @@ pub(crate) async fn notifications_v2_response(
         .last()
         .map(notification_api_numeric_id_string);
 
-    let mut builder = Response::from_json(&build_notifications_v2_document(&limited_entries))?;
+    let grouped_types = list
+        .query
+        .grouped_types
+        .clone()
+        .unwrap_or_else(default_grouped_notification_types);
+    let mut builder = Response::from_json(&build_notifications_v2_document(
+        &limited_entries,
+        &grouped_types,
+    ))?;
     if let Some(link_header) =
         build_timeline_link_header(&req, list.limit, first_id.as_deref(), last_id.as_deref())?
     {

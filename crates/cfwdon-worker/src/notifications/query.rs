@@ -1,6 +1,6 @@
 use super::{
-    NotificationEntry, NotificationsQuery, notification_entry_matches_cursor_id,
-    notification_sort_key,
+    NotificationEntry, NotificationsQuery, default_grouped_notification_types,
+    notification_entry_matches_cursor_id, notification_sort_key, notification_v2_group_key,
 };
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
@@ -50,20 +50,13 @@ pub(crate) fn notifications_fetch_limit(query: &NotificationsQuery, limit: u32) 
     }
 }
 
-fn notification_group_key(entry: &NotificationEntry) -> &str {
-    entry
-        .value
-        .get("group_key")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(entry.id.as_str())
-}
-
 pub(crate) fn notification_group_entries<'a>(
     entries: &'a [NotificationEntry],
     group_key: &str,
 ) -> Vec<&'a NotificationEntry> {
+    let grouped_types = default_grouped_notification_types();
     entries
         .iter()
-        .filter(|entry| notification_group_key(entry) == group_key)
+        .filter(|entry| notification_v2_group_key(entry, &grouped_types) == group_key)
         .collect()
 }
