@@ -95,6 +95,45 @@ pub(crate) fn build_internal_cursor_link_for_url_with_min_id(
     Ok(format!("<{}>; rel=\"{}\"", url, rel))
 }
 
+/// Values of a Rails-style array query parameter: `key[]=a&key[]=b`, or a bare
+/// repeated `key=a&key=b`. `serde_urlencoded` cannot fill a `Vec` field, and a
+/// failed `Request::query` would drop every other parameter with it, so array
+/// fields are `#[serde(skip)]` and filled from here.
+pub(crate) fn query_array_param(url: &Url, key: &str) -> Option<Vec<String>> {
+    let bracketed = format!("{key}[]");
+    let values = url
+        .query_pairs()
+        .filter(|(name, _)| name == key || *name == bracketed)
+        .map(|(_, value)| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then_some(values)
+}
+
+/// Query booleans the way Rails casts them: blank is absent, `0` / `f` /
+/// `false` / `off` are false, anything else is true. Plain `serde_urlencoded`
+/// only accepts `true` / `false` and rejects the whole query otherwise.
+pub(crate) fn deserialize_query_bool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| rails_query_bool(&value)))
+}
+
+fn rails_query_bool(value: &str) -> Option<bool> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(!matches!(
+        value.to_ascii_lowercase().as_str(),
+        "0" | "f" | "false" | "off"
+    ))
+}
+
 pub(crate) fn parse_optional_bool(
     value: Option<&str>,
 ) -> std::result::Result<Option<bool>, String> {
@@ -162,3 +201,50 @@ pub(crate) fn parse_media_id_fields<const N: usize>(
 
 #[cfg(test)]
 mod unit_tests;
+
+#[cfg(test)]
+mod query_param_tests {
+    use super::{query_array_param, rails_query_bool};
+    use serde::Deserialize;
+
+    #[derive(Debug, Default, Deserialize)]
+    struct ProbeQuery {
+        limit: Option<u32>,
+        #[serde(default, deserialize_with = "super::deserialize_query_bool")]
+        only_media: Option<bool>,
+        #[serde(skip)]
+        types: Option<Vec<String>>,
+    }
+
+    fn parse(query: &str) -> ProbeQuery {
+        let url = url::Url::parse(&format!("https://example.com/?{query}")).unwrap();
+        let mut parsed: ProbeQuery =
+            ProbeQuery::deserialize(serde_urlencoded::Deserializer::new(url.query_pairs()))
+                .unwrap();
+        parsed.types = query_array_param(&url, "types");
+        parsed
+    }
+
+    #[test]
+    fn array_params_do_not_reset_the_rest_of_the_query() {
+        let query = parse("limit=5&types[]=mention&types[]=favourite");
+        assert_eq!(query.limit, Some(5));
+        assert_eq!(
+            query.types,
+            Some(vec!["mention".to_owned(), "favourite".to_owned()])
+        );
+        assert_eq!(parse("types=follow").types, Some(vec!["follow".to_owned()]));
+        assert_eq!(parse("limit=1").types, None);
+    }
+
+    #[test]
+    fn query_bools_follow_rails_casting() {
+        assert_eq!(parse("only_media=1").only_media, Some(true));
+        assert_eq!(parse("only_media=true").only_media, Some(true));
+        assert_eq!(parse("only_media=0").only_media, Some(false));
+        assert_eq!(parse("only_media=off").only_media, Some(false));
+        assert_eq!(parse("only_media=").only_media, None);
+        assert_eq!(parse("limit=2").only_media, None);
+        assert_eq!(rails_query_bool("F"), Some(false));
+    }
+}

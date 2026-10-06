@@ -23,9 +23,21 @@ pub(crate) struct SearchV2Query {
     pub(crate) q: String,
     #[serde(rename = "type")]
     pub(crate) search_type: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) resolve: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) following: Option<bool>,
     pub(crate) account_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     #[serde(rename = "exclude_unreviewed")]
     pub(crate) _exclude_unreviewed: Option<bool>,
     #[serde(rename = "max_id")]

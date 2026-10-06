@@ -22,7 +22,15 @@ pub(crate) struct AccountSearchQuery {
     pub(crate) q: String,
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) resolve: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) following: Option<bool>,
 }
 
@@ -30,6 +38,10 @@ pub(crate) struct AccountSearchQuery {
 pub(crate) struct DirectoryQuery {
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) local: Option<bool>,
     pub(crate) order: Option<String>,
 }

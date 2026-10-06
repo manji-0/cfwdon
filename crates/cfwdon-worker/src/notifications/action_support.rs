@@ -1,5 +1,6 @@
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::{D1RequestSession, open_bound_request_session};
+use crate::request_utils::query_array_param;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use worker::{Error, Request, Result, RouteContext};
@@ -8,9 +9,9 @@ use worker::{Error, Request, Result, RouteContext};
 pub(crate) struct NotificationsQuery {
     pub(crate) limit: Option<u32>,
     pub(crate) account_id: Option<String>,
-    #[serde(rename = "types[]")]
+    #[serde(skip)]
     pub(crate) types: Option<Vec<String>>,
-    #[serde(rename = "exclude_types[]")]
+    #[serde(skip)]
     pub(crate) exclude_types: Option<Vec<String>>,
     #[serde(rename = "max_id")]
     pub(crate) max_id: Option<String>,
@@ -20,6 +21,14 @@ pub(crate) struct NotificationsQuery {
     pub(crate) min_id: Option<String>,
     #[serde(skip)]
     pub(crate) min_created_at: Option<String>,
+}
+
+pub(crate) fn parse_notifications_query(req: &Request) -> Result<NotificationsQuery> {
+    let url = req.url()?;
+    let mut query: NotificationsQuery = req.query().unwrap_or_default();
+    query.types = query_array_param(&url, "types");
+    query.exclude_types = query_array_param(&url, "exclude_types");
+    Ok(query)
 }
 
 pub(crate) struct AuthenticatedNotificationContext {
@@ -69,7 +78,7 @@ pub(crate) async fn resolve_notification_list_route_context(
     let Some(auth) = resolve_authenticated_notification_context(req, ctx).await? else {
         return Ok(None);
     };
-    let query: NotificationsQuery = req.query().unwrap_or_default();
+    let query = parse_notifications_query(req)?;
     let limit = query.limit.unwrap_or(default_limit).clamp(1, max_limit);
     Ok(Some(NotificationListRouteContext { auth, query, limit }))
 }

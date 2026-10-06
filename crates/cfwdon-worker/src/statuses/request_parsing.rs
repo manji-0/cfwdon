@@ -60,6 +60,10 @@ pub(crate) struct CreateStatusPollRequest {
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct DeleteStatusQuery {
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) delete_media: Option<bool>,
 }
 
@@ -90,9 +94,25 @@ pub(crate) struct AccountStatusesQuery {
     pub(crate) since_id: Option<String>,
     #[serde(rename = "min_id")]
     pub(crate) min_id: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) only_media: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) exclude_replies: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) exclude_reblogs: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) pinned: Option<bool>,
     pub(crate) tagged: Option<String>,
 }
