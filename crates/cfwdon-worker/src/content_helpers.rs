@@ -1,5 +1,4 @@
 use crate::identity::{instance_base_url, instance_host};
-use crate::responses::MastodonTagHistoryEntry;
 use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalStatus};
@@ -240,10 +239,6 @@ mod tests {
         assert_eq!(sanitize_remote_http_url(Some("javascript:alert(1)")), None);
         assert_eq!(sanitize_remote_http_url(Some("")), None);
     }
-}
-
-pub(crate) fn tag_history_stub() -> Vec<MastodonTagHistoryEntry> {
-    Vec::new()
 }
 
 #[cfg(test)]

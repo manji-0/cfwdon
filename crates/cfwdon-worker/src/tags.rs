@@ -1,4 +1,4 @@
-use crate::db_utils::d1_results;
+use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::response::MastodonTagResponse;
 use crate::responses::MastodonTagHistoryEntry;
 use crate::search::normalize_search_match_text;
@@ -10,7 +10,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use crate::content_helpers::{
-    extract_hashtags_from_html, extract_hashtags_from_text, tag_history_stub, tag_rest_id, tag_url,
+    extract_hashtags_from_html, extract_hashtags_from_text, tag_rest_id, tag_url,
 };
 use crate::search::search_text_match_rank;
 use crate::statuses::{list_local_public_timeline_statuses, list_remote_public_timeline_statuses};
@@ -171,12 +171,11 @@ pub(crate) async fn search_tags_for_v2(
         merged.insert(tag, metrics);
     }
 
-    Ok(
-        paginate_tag_search_matches(&needle, merged.into_iter().collect(), limit, offset)
-            .into_iter()
-            .map(|(tag, metrics)| build_tag_response_with_metrics(config, &tag, metrics))
-            .collect(),
-    )
+    let tags = paginate_tag_search_matches(&needle, merged.into_iter().collect(), limit, offset)
+        .into_iter()
+        .map(|(tag, _)| tag)
+        .collect();
+    build_tag_responses(db, config, tags).await
 }
 
 async fn search_indexed_tags_for_v2(
@@ -409,51 +408,134 @@ pub(crate) async fn build_tag_response(
     tag: &str,
 ) -> Result<MastodonTagResponse> {
     let tag = normalize_hashtag(tag);
-    Ok(build_tag_response_with_metrics(
+    let mut history = load_tag_daily_history(db, std::slice::from_ref(&tag)).await?;
+    Ok(build_tag_response_with_history(
         config,
         &tag,
-        load_tag_search_metrics(db, &tag).await?,
+        history.remove(&tag).unwrap_or_default(),
     ))
 }
 
-fn build_tag_response_with_metrics(
+fn build_tag_response_with_history(
     config: &AppConfig,
     tag: &str,
-    metrics: TagSearchMetrics,
+    daily: HashMap<String, (u64, u64)>,
 ) -> MastodonTagResponse {
     MastodonTagResponse {
         id: tag_rest_id(tag),
         name: tag.to_owned(),
         url: tag_url(config, tag),
-        history: if metrics.statuses_count == 0 {
-            tag_history_stub()
-        } else {
-            vec![MastodonTagHistoryEntry {
-                day: js_sys::Date::new_0()
-                    .to_iso_string()
-                    .as_string()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(10)
-                    .collect(),
-                uses: metrics.statuses_count.to_string(),
-                accounts: metrics.accounts_count.to_string(),
-            }]
-        },
+        history: tag_history_entries(now_unix_timestamp(), &daily),
         following: None,
         featuring: None,
     }
 }
 
-pub(crate) async fn load_tag_search_metrics(
+/// Days of history Mastodon reports for a tag.
+const TAG_HISTORY_DAYS: i64 = 7;
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// Mastodon's tag history: one entry per UTC day for the last week, newest
+/// first, with `day` as the day's start in UNIX seconds and zero-filled gaps.
+/// `daily` maps `YYYY-MM-DD` to (uses, accounts).
+fn tag_history_entries(
+    now: i64,
+    daily: &HashMap<String, (u64, u64)>,
+) -> Vec<MastodonTagHistoryEntry> {
+    let today = now.div_euclid(SECONDS_PER_DAY) * SECONDS_PER_DAY;
+    (0..TAG_HISTORY_DAYS)
+        .map(|offset| {
+            let day_start = today - offset * SECONDS_PER_DAY;
+            let date = time::OffsetDateTime::from_unix_timestamp(day_start)
+                .map(|value| value.date().to_string())
+                .unwrap_or_default();
+            let (uses, accounts) = daily.get(&date).copied().unwrap_or_default();
+            MastodonTagHistoryEntry {
+                day: day_start.to_string(),
+                uses: uses.to_string(),
+                accounts: accounts.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Per-day public uses and distinct authors of each tag over the last week,
+/// in one query for the whole page of tags.
+async fn load_tag_daily_history(
     db: &D1Database,
-    tag: &str,
-) -> Result<TagSearchMetrics> {
-    let scanned = load_scanned_tag_search_metrics(db, tag).await?;
-    if scanned.statuses_count > 0 {
-        return Ok(scanned);
+    tags: &[String],
+) -> Result<HashMap<String, HashMap<String, (u64, u64)>>> {
+    if tags.is_empty() {
+        return Ok(HashMap::new());
     }
-    load_indexed_tag_search_metrics(db, tag).await
+    #[derive(Deserialize)]
+    struct DailyRow {
+        tag: String,
+        day: String,
+        uses: u64,
+        accounts: u64,
+    }
+    let cutoff = time::OffsetDateTime::from_unix_timestamp(
+        now_unix_timestamp() - (TAG_HISTORY_DAYS - 1) * SECONDS_PER_DAY,
+    )
+    .map(|value| value.date().to_string())
+    .unwrap_or_default();
+    let tags_json = json_string_array(tags);
+    let bindings = [
+        D1Type::Text(tags_json.as_str()),
+        D1Type::Text(cutoff.as_str()),
+    ];
+    let in_tags = sql_in_json_each(1);
+    let result = db
+        .prepare(format!(
+            "SELECT tag, day, SUM(uses) AS uses, SUM(accounts) AS accounts
+             FROM (
+                 SELECT h.tag AS tag, substr(h.created_at, 1, 10) AS day,
+                        COUNT(*) AS uses, COUNT(DISTINCT h.account_id) AS accounts
+                 FROM status_hashtags h
+                 CROSS JOIN statuses s ON s.id = h.status_id
+                 WHERE h.tag {in_tags}
+                   AND h.created_at >= ?2
+                   AND s.visibility = 'public'
+                 GROUP BY h.tag, day
+                 UNION ALL
+                 SELECT h.tag AS tag, substr(h.published_at, 1, 10) AS day,
+                        COUNT(*) AS uses, COUNT(DISTINCT h.actor_uri) AS accounts
+                 FROM remote_status_hashtags h
+                 CROSS JOIN remote_statuses rs ON rs.id = h.status_id
+                 WHERE h.tag {in_tags}
+                   AND h.published_at >= ?2
+                   AND rs.visibility = 'public'
+                 GROUP BY h.tag, day
+             )
+             GROUP BY tag, day"
+        ))
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+    let mut history = HashMap::<String, HashMap<String, (u64, u64)>>::new();
+    for row in d1_results::<DailyRow>(&result)? {
+        history
+            .entry(row.tag)
+            .or_default()
+            .insert(row.day, (row.uses, row.accounts));
+    }
+    Ok(history)
+}
+
+async fn build_tag_responses(
+    db: &D1Database,
+    config: &AppConfig,
+    tags: Vec<String>,
+) -> Result<Vec<MastodonTagResponse>> {
+    let mut history = load_tag_daily_history(db, &tags).await?;
+    Ok(tags
+        .into_iter()
+        .map(|tag| {
+            let daily = history.remove(&tag).unwrap_or_default();
+            build_tag_response_with_history(config, &tag, daily)
+        })
+        .collect())
 }
 
 async fn load_scanned_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
@@ -469,38 +551,6 @@ async fn load_scanned_tag_search_metrics(db: &D1Database, tag: &str) -> Result<T
             (None, None) => None,
         },
     })
-}
-
-async fn load_indexed_tag_search_metrics(db: &D1Database, tag: &str) -> Result<TagSearchMetrics> {
-    let tag = normalize_hashtag(tag);
-    let bindings = [D1Type::Text(tag.as_str())];
-    Ok(db
-        .prepare(
-            "SELECT COALESCE(SUM(statuses_count), 0) AS statuses_count,
-                    COALESCE(SUM(accounts_count), 0) AS accounts_count,
-                    MAX(last_status_at) AS last_status_at
-             FROM (
-                 SELECT COUNT(*) AS statuses_count,
-                        COUNT(DISTINCT h.account_id) AS accounts_count,
-                        MAX(substr(h.created_at, 1, 10)) AS last_status_at
-                 FROM status_hashtags h
-                 JOIN statuses s ON s.id = h.status_id
-                 WHERE s.visibility = 'public'
-                   AND h.tag = ?1
-                 UNION ALL
-                 SELECT COUNT(*) AS statuses_count,
-                        COUNT(DISTINCT h.actor_uri) AS accounts_count,
-                        MAX(substr(h.published_at, 1, 10)) AS last_status_at
-                 FROM remote_status_hashtags h
-                 JOIN remote_statuses rs ON rs.id = h.status_id
-                 WHERE rs.visibility = 'public'
-                   AND h.tag = ?1
-             )",
-        )
-        .bind_refs(bindings.iter())?
-        .first::<TagSearchMetrics>(None)
-        .await?
-        .unwrap_or_default())
 }
 
 const TRENDING_TAGS_WINDOW_DAYS: i64 = 3;
@@ -592,13 +642,14 @@ pub(crate) async fn trending_tags_documents(
     let fetch_limit = offset
         .saturating_add(limit)
         .clamp(limit, TRENDING_TAGS_CACHE_SIZE);
-    let metrics = list_trending_tag_metrics(db, fetch_limit).await?;
-    Ok(metrics
+    let tags = list_trending_tag_metrics(db, fetch_limit)
+        .await?
         .into_iter()
         .skip(offset as usize)
         .take(limit as usize)
-        .map(|(tag, metrics)| build_tag_response_with_metrics(config, &tag, metrics))
-        .collect())
+        .map(|(tag, _)| tag)
+        .collect();
+    build_tag_responses(db, config, tags).await
 }
 
 pub(crate) async fn refresh_trending_tags_cache(db: &D1Database, config: &AppConfig) -> Result<()> {
@@ -671,3 +722,29 @@ mod trending_tags_tests {
 
 #[cfg(test)]
 mod unit_tests;
+
+#[cfg(test)]
+mod history_tests {
+    use super::tag_history_entries;
+    use std::collections::HashMap;
+
+    #[test]
+    fn tag_history_lists_seven_zero_filled_days_newest_first() {
+        // 2026-10-06T12:00:00Z
+        let now = 1_791_288_000;
+        let daily = HashMap::from([
+            ("2026-10-06".to_owned(), (3, 2)),
+            ("2026-10-04".to_owned(), (1, 1)),
+        ]);
+        let history = tag_history_entries(now, &daily);
+        assert_eq!(history.len(), 7);
+        assert_eq!(history[0].day, "1791244800");
+        assert_eq!(
+            (history[0].uses.as_str(), history[0].accounts.as_str()),
+            ("3", "2")
+        );
+        assert_eq!(history[1].uses, "0");
+        assert_eq!(history[2].uses, "1");
+        assert_eq!(history[6].day, (1_791_244_800 - 6 * 86_400).to_string());
+    }
+}
