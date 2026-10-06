@@ -1,24 +1,12 @@
 use super::{
-    build_local_action_status_response, build_remote_status_response,
+    SavedStatusesPage, build_local_action_status_response, build_remote_status_response,
     build_saved_status_collection_response, delete_bookmark_by_target_uri,
     list_bookmarks_for_account, local_status_target_uri,
     resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
     resolve_visible_action_status, upsert_bookmark_local_status, upsert_bookmark_remote_status,
 };
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
-use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};
-
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct BookmarksQuery {
-    pub(crate) limit: Option<u32>,
-    #[serde(rename = "max_id")]
-    pub(crate) _max_id: Option<String>,
-    #[serde(rename = "since_id")]
-    pub(crate) _since_id: Option<String>,
-    #[serde(rename = "min_id")]
-    pub(crate) _min_id: Option<String>,
-}
 
 pub(crate) async fn bookmark_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
@@ -122,21 +110,23 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
 }
 
 pub(crate) async fn bookmarks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let query: BookmarksQuery = req.query().unwrap_or_default();
-    let limit = query.limit.unwrap_or(20).clamp(1, 40);
+    let page = match SavedStatusesPage::from_request(&req) {
+        Ok(page) => page,
+        Err(error) => return Response::error(error.to_string(), 400),
+    };
     let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
         return Response::error("Auth0 authentication required", 401);
     };
 
-    let bookmark_entries =
-        list_bookmarks_for_account(&auth.db, auth.viewer.id(), limit.saturating_mul(3)).await?;
+    let bookmark_entries = list_bookmarks_for_account(&auth.db, auth.viewer.id(), page).await?;
     build_saved_status_collection_response(
         &auth.db,
         &auth.config,
         &auth.viewer,
+        &req,
+        page,
         &bookmark_entries,
-        limit,
-        |entry| &entry.created_at,
+        |entry| entry.cursor_id,
         |entry| entry.status_id.as_deref(),
         |entry| entry.remote_status_id.as_deref(),
     )

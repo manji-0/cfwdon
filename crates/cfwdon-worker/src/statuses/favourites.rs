@@ -1,5 +1,5 @@
 use super::{
-    build_local_action_status_response, build_remote_status_response,
+    SavedStatusesPage, build_local_action_status_response, build_remote_status_response,
     build_saved_status_collection_response, delete_favourite_by_target_uri,
     find_favourite_activity_by_target_uri, list_favourites_for_account, local_status_target_uri,
     resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
@@ -9,19 +9,7 @@ use crate::activitypub::{build_like_activity, build_undo_like_activity};
 use crate::delivery::queue_remote_actor_activity;
 use crate::response_cache::invalidate_status_api_cache;
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
-use serde::Deserialize;
 use worker::{Request, Response, Result, RouteContext};
-
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct FavouritesQuery {
-    pub(crate) limit: Option<u32>,
-    #[serde(rename = "max_id")]
-    pub(crate) _max_id: Option<String>,
-    #[serde(rename = "since_id")]
-    pub(crate) _since_id: Option<String>,
-    #[serde(rename = "min_id")]
-    pub(crate) _min_id: Option<String>,
-}
 
 pub(crate) async fn favourite_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let action = match resolve_authenticated_status_action_context(&req, &ctx).await? {
@@ -188,21 +176,23 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
 }
 
 pub(crate) async fn favourites_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let query: FavouritesQuery = req.query().unwrap_or_default();
-    let limit = query.limit.unwrap_or(20).clamp(1, 40);
+    let page = match SavedStatusesPage::from_request(&req) {
+        Ok(page) => page,
+        Err(error) => return Response::error(error.to_string(), 400),
+    };
     let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
         return Response::error("Auth0 authentication required", 401);
     };
 
-    let favourite_entries =
-        list_favourites_for_account(&auth.db, auth.viewer.id(), limit.saturating_mul(3)).await?;
+    let favourite_entries = list_favourites_for_account(&auth.db, auth.viewer.id(), page).await?;
     build_saved_status_collection_response(
         &auth.db,
         &auth.config,
         &auth.viewer,
+        &req,
+        page,
         &favourite_entries,
-        limit,
-        |entry| &entry.created_at,
+        |entry| entry.cursor_id,
         |entry| entry.status_id.as_deref(),
         |entry| entry.remote_status_id.as_deref(),
     )

@@ -216,21 +216,22 @@ pub(crate) async fn build_local_action_status_response(
 
 pub(crate) async fn build_saved_status_collection_response<
     T,
-    FCreatedAt,
+    FCursorId,
     FStatusId,
     FRemoteStatusId,
 >(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
+    req: &Request,
+    page: super::SavedStatusesPage,
     entries: &[T],
-    limit: u32,
-    created_at: FCreatedAt,
+    cursor_id: FCursorId,
     status_id: FStatusId,
     remote_status_id: FRemoteStatusId,
 ) -> Result<Response>
 where
-    FCreatedAt: Fn(&T) -> &str,
+    FCursorId: Fn(&T) -> i64,
     FStatusId: Fn(&T) -> Option<&str>,
     FRemoteStatusId: Fn(&T) -> Option<&str>,
 {
@@ -274,11 +275,27 @@ where
         } else {
             continue;
         };
-        ordered.push((created_at(entry).to_owned(), item));
+        ordered.push((cursor_id(entry), item));
     }
-    ordered.sort_by(|left, right| right.0.cmp(&left.0));
-    ordered.truncate(limit as usize);
+    // Entries arrive newest first. A forward (`min_id`) page keeps the entries
+    // closest to the cursor, i.e. the oldest ones.
+    let limit = page.limit as usize;
+    if page.walks_forward() && ordered.len() > limit {
+        ordered.drain(..ordered.len() - limit);
+    }
+    ordered.truncate(limit);
+    let link = super::saved_statuses_link_header(
+        &req.url()?,
+        page.limit,
+        ordered.first().map(|(cursor, _)| *cursor),
+        ordered.last().map(|(cursor, _)| *cursor),
+    )?;
     let items = ordered.into_iter().map(|(_, item)| item).collect();
 
-    Response::from_json(&render_status_items(db, config, Some(viewer), items).await?)
+    let mut response =
+        Response::from_json(&render_status_items(db, config, Some(viewer), items).await?)?;
+    if let Some(link) = link {
+        response.headers_mut().set("Link", &link)?;
+    }
+    Ok(response)
 }

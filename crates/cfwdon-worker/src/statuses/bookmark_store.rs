@@ -1,6 +1,5 @@
 use super::{D1Database, local_status_target_uri};
 use crate::app_cache::{invalidate_account_capabilities, load_account_capabilities};
-use crate::db_utils::d1_results;
 use cfwdon_domain::{LocalStatus, RemoteStatus};
 use serde::Deserialize;
 use worker::Result;
@@ -8,9 +7,9 @@ use worker::d1::D1Type;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct BookmarkEntryRow {
+    pub(crate) cursor_id: i64,
     pub(crate) status_id: Option<String>,
     pub(crate) remote_status_id: Option<String>,
-    pub(crate) created_at: String,
 }
 
 pub(crate) async fn upsert_bookmark_local_status(
@@ -179,20 +178,7 @@ async fn is_bookmark_target_for_account(
 pub(crate) async fn list_bookmarks_for_account(
     db: &D1Database,
     account_id: &str,
-    limit: u32,
+    page: super::SavedStatusesPage,
 ) -> Result<Vec<BookmarkEntryRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-    let result = db
-        .prepare(
-            "SELECT status_id, remote_status_id, created_at
-             FROM bookmarks
-             WHERE account_id = ?1
-             ORDER BY created_at DESC
-             LIMIT ?2",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-
-    d1_results::<BookmarkEntryRow>(&result)
+    super::list_saved_status_rows(db, "bookmarks", account_id, page).await
 }

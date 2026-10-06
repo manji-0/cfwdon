@@ -10,9 +10,9 @@ use worker::d1::D1Type;
 use worker::{Env, Result};
 #[derive(Debug, Deserialize)]
 pub(crate) struct FavouriteEntryRow {
+    pub(crate) cursor_id: i64,
     pub(crate) status_id: Option<String>,
     pub(crate) remote_status_id: Option<String>,
-    pub(crate) created_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,22 +197,9 @@ pub(crate) async fn is_remote_status_favourited_by(
 pub(crate) async fn list_favourites_for_account(
     db: &D1Database,
     account_id: &str,
-    limit: u32,
+    page: super::SavedStatusesPage,
 ) -> Result<Vec<FavouriteEntryRow>> {
-    let bindings = [D1Type::Text(account_id), D1Type::Integer(limit as i32)];
-    let result = db
-        .prepare(
-            "SELECT status_id, remote_status_id, created_at
-             FROM favourites
-             WHERE account_id = ?1
-             ORDER BY created_at DESC
-             LIMIT ?2",
-        )
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-
-    d1_results::<FavouriteEntryRow>(&result)
+    super::list_saved_status_rows(db, "favourites", account_id, page).await
 }
 
 pub(crate) async fn find_favourite_activity_by_target_uri(
