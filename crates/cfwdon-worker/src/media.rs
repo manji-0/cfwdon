@@ -49,17 +49,17 @@ pub(crate) async fn create_media_attachment(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
+    let db = bind_request_d1(&ctx, &config)?;
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Auth0 authentication required", 401),
+    };
     let draft = match parse_media_upload(&mut req).await {
         Ok(draft) => draft,
         Err(message) => return Response::error(message, 422),
     };
 
-    let db = bind_request_d1(&ctx, &config)?;
     let bucket = ctx.bucket(&config.media_binding)?;
-    let account = match find_authenticated_local_account(&req, &db, &config).await? {
-        Some(account) => account,
-        None => return Response::error("Auth0 authentication required", 401),
-    };
     let media = store_media_attachment(&db, &bucket, &account, &draft).await?;
 
     Response::from_json(&MastodonMediaAttachmentResponse::from_row(&media, &config))
@@ -118,7 +118,10 @@ pub(crate) async fn media_content_response(ctx: RouteContext<()>) -> Result<Resp
     Ok(response)
 }
 
-pub(crate) async fn media_metadata_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn media_metadata_response(
+    req: Request,
+    ctx: RouteContext<()>,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let media_id = ctx
         .param("id")
@@ -127,8 +130,13 @@ pub(crate) async fn media_metadata_response(ctx: RouteContext<()>) -> Result<Res
         .ok_or_else(|| Error::RustError("missing media id route parameter".to_owned()))?;
 
     let db = bind_request_d1(&ctx, &config)?;
-    let Some(media) = find_media_attachment_by_id(&db, &media_id).await? else {
-        return Response::error("media not found", 404);
+    let account = match find_authenticated_local_account(&req, &db, &config).await? {
+        Some(account) => account,
+        None => return Response::error("Auth0 authentication required", 401),
+    };
+    let media = match find_media_attachment_by_id(&db, &media_id).await? {
+        Some(media) if media.account_id == account.id() => media,
+        _ => return Response::error("media not found", 404),
     };
 
     Response::from_json(&MastodonMediaAttachmentResponse::from_row(&media, &config))

@@ -18,8 +18,8 @@ pub(crate) fn add_media_routes(router: Router<'static, ()>) -> Router<'static, (
         .post_async("/api/v2/media", |req, ctx| async move {
             create_media_attachment(req, ctx).await
         })
-        .get_async("/api/v1/media/:id", |_req, ctx| async move {
-            media_metadata_response(ctx).await
+        .get_async("/api/v1/media/:id", |req, ctx| async move {
+            media_metadata_response(req, ctx).await
         })
         .delete_async("/api/v1/media/:id", |req, ctx| async move {
             delete_media_attachment(req, ctx).await
