@@ -99,15 +99,27 @@ fn instance_statuses_configuration() -> serde_json::Value {
     })
 }
 
-fn instance_thumbnail_document(config: &AppConfig) -> Option<serde_json::Value> {
-    let thumbnail_url = config.instance_thumbnail_url.as_deref()?;
-    Some(serde_json::json!({
+/// Mastodon always sends `source_url`; fall back to this project's repository.
+const DEFAULT_SOURCE_URL: &str = "https://github.com/manji-0/cfwdon";
+
+/// The configured thumbnail, or the bundled app icon: Mastodon's instance
+/// entity always carries a thumbnail URL, so clients treat it as required.
+fn instance_thumbnail_url(config: &AppConfig) -> String {
+    config
+        .instance_thumbnail_url
+        .clone()
+        .unwrap_or_else(|| format!("{}/app/icons/icon-512.png", instance_base_url(config)))
+}
+
+fn instance_thumbnail_document(config: &AppConfig) -> serde_json::Value {
+    let thumbnail_url = instance_thumbnail_url(config);
+    serde_json::json!({
         "url": thumbnail_url,
         "versions": {
             "@1x": thumbnail_url,
             "@2x": thumbnail_url,
         },
-    }))
+    })
 }
 
 fn instance_icon_document(config: &AppConfig) -> serde_json::Value {
@@ -209,7 +221,7 @@ pub(crate) fn build_instance_v1_document(
             "status_count": status_count,
             "domain_count": domain_count,
         },
-        "thumbnail": config.instance_thumbnail_url,
+        "thumbnail": instance_thumbnail_url(config),
         "languages": configured_instance_languages(config),
         "registrations": instance_open_registrations(),
         "approval_required": false,
@@ -271,13 +283,11 @@ pub(crate) fn build_instance_v2_document(
         serde_json::json!(Vec::<serde_json::Value>::new()),
     );
 
-    if let Some(source_url) = config.source_url.as_deref() {
-        response.insert("source_url".to_owned(), serde_json::json!(source_url));
-    }
-
-    if let Some(thumbnail) = instance_thumbnail_document(config) {
-        response.insert("thumbnail".to_owned(), thumbnail);
-    }
+    response.insert(
+        "source_url".to_owned(),
+        serde_json::json!(config.source_url.as_deref().unwrap_or(DEFAULT_SOURCE_URL)),
+    );
+    response.insert("thumbnail".to_owned(), instance_thumbnail_document(config));
 
     response.insert("contact".to_owned(), instance_v2_contact_document(config));
 
