@@ -4,6 +4,7 @@ use crate::custom_emojis::{
     preload_remote_status_federated_emojis,
 };
 use crate::db_utils::d1_results;
+use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
 use crate::media::{
@@ -18,10 +19,11 @@ use crate::responses::MastodonStatusResponse;
 use crate::statuses::{
     BoostTargetPreload, LocalStatusViewerStatePreload, MentionAccountsPreload,
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
-    build_local_status_response_with_timeline_preloads,
+    StoredMentionsTable, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, load_in_reply_to_account_ids,
     preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
     preload_remote_status_viewer_state, preload_status_applications, preload_status_quote_counts,
+    preload_stored_status_mentions,
 };
 use crate::store::media::MediaAttachmentRow;
 use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
@@ -51,6 +53,7 @@ pub(crate) struct NotificationStatusPreloads {
     pub(crate) mentions: MentionAccountsPreload,
     pub(crate) boost_targets: BoostTargetPreload,
     pub(crate) muted_notification_actor_uris: HashSet<String>,
+    pub(crate) filter_matcher: AccountFilterMatcher,
 }
 
 impl NotificationStatusPreloads {
@@ -90,7 +93,7 @@ impl NotificationStatusPreloads {
             account,
             self.in_reply_to_account_ids.get(&status.id).cloned(),
             media,
-            None,
+            Some(&self.filter_matcher),
             Some(&self.counts),
             Some(&self.quote_counts),
             Some(&self.local_polls),
@@ -117,7 +120,7 @@ impl NotificationStatusPreloads {
             Some(viewer),
             status,
             actor,
-            None,
+            Some(&self.filter_matcher),
             Some(&self.counts),
             Some(&self.quote_counts),
             Some(&self.remote_viewer_state),
@@ -164,6 +167,7 @@ fn empty_notification_status_preloads(config: &AppConfig) -> NotificationStatusP
         mentions: MentionAccountsPreload::default(),
         boost_targets: BoostTargetPreload::default(),
         muted_notification_actor_uris: HashSet::new(),
+        filter_matcher: AccountFilterMatcher::default(),
     }
 }
 
@@ -420,11 +424,23 @@ pub(crate) async fn preload_notification_statuses(
         &entity_preloads.local_accounts_by_id,
     );
 
-    let (quote_counts, remote_viewer_state, muted_notification_actor_uris) = futures_util::try_join!(
+    let (
+        quote_counts,
+        remote_viewer_state,
+        muted_notification_actor_uris,
+        filter_matcher,
+        stored_local_mentions,
+        stored_remote_mentions,
+    ) = futures_util::try_join!(
         preload_status_quote_counts(db, &quote_uris),
         preload_remote_status_viewer_state(db, viewer.id(), &remote_status_refs),
         preload_notification_mutes(db, viewer.id(), &notification_actor_uris),
+        load_account_filter_matcher(db, viewer.id()),
+        preload_stored_status_mentions(db, StoredMentionsTable::Local, &plan.local_status_ids),
+        preload_stored_status_mentions(db, StoredMentionsTable::Remote, &plan.remote_status_ids),
     )?;
+    let mut mentions = entity_preloads.mentions;
+    mentions.add_stored_mentions(stored_local_mentions, stored_remote_mentions);
 
     Ok(NotificationStatusPreloads {
         local_accounts_by_id: entity_preloads.local_accounts_by_id,
@@ -442,9 +458,10 @@ pub(crate) async fn preload_notification_statuses(
         remote_edit_updated_at: entity_preloads.remote_edit_updated_at,
         remote_federated_emojis: entity_preloads.remote_federated_emojis,
         applications: entity_preloads.applications,
-        mentions: entity_preloads.mentions,
+        mentions,
         boost_targets: entity_preloads.boost_targets,
         muted_notification_actor_uris,
+        filter_matcher,
     })
 }
 
@@ -568,6 +585,7 @@ mod tests {
             mentions: MentionAccountsPreload::default(),
             boost_targets: BoostTargetPreload::default(),
             muted_notification_actor_uris: HashSet::new(),
+            filter_matcher: AccountFilterMatcher::default(),
         }
     }
 
