@@ -30,7 +30,8 @@ export const StatusHistoryPage = () => {
         setError(mastodonErrorMessage(result.error));
         return;
       }
-      setEdits(result.value);
+      // Mastodon lists revisions oldest first; show the latest at the top.
+      setEdits([...result.value].reverse());
     });
     return () => {
       active = false;
