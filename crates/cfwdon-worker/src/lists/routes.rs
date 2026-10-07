@@ -2,7 +2,7 @@ use super::{
     add_accounts_to_list, create_list_row, delete_list_row, list_document, list_id_from_context,
     list_membership_refs, list_row_by_id, list_rows_for_account, parse_list_accounts_request,
     parse_list_request, remove_accounts_from_list, requested_account_membership_variants,
-    resolve_list_member_document, update_list_row,
+    resolve_list_member_documents, update_list_row,
 };
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
@@ -148,14 +148,12 @@ pub(crate) async fn list_accounts_response(
         .query_pairs()
         .find(|(key, _)| key == "max_id")
         .map(|(_, value)| value.into_owned());
-    let mut documents = Vec::new();
-    for row in list_membership_refs(&db, &list_id).await? {
-        if let Some(document) =
-            resolve_list_member_document(&db, &config, &row.target_account_ref).await?
-        {
-            documents.push(document);
-        }
-    }
+    let refs = list_membership_refs(&db, &list_id)
+        .await?
+        .into_iter()
+        .map(|row| row.target_account_ref)
+        .collect::<Vec<_>>();
+    let mut documents = resolve_list_member_documents(&db, &config, &refs).await?;
     if let Some(max_id) = max_id {
         documents.retain(|document| {
             document

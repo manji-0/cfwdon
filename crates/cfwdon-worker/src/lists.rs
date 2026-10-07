@@ -1,4 +1,4 @@
-use crate::accounts::load_account_stats;
+use crate::accounts::{find_accounts_by_ids, load_account_stats, load_account_stats_map};
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::db_utils::d1_results;
 use crate::id_utils::generate_entity_id;
@@ -7,6 +7,7 @@ use crate::remote::{AccountReference, resolve_account_reference};
 use crate::responses::MastodonAccountResponse;
 use crate::store::remote::{
     RemoteActorRow, find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
+    find_remote_actors_by_actor_uris,
 };
 use crate::timelines::TimelinePaginationQuery;
 use crate::tracked_d1::D1Database;
@@ -437,6 +438,42 @@ async fn remove_accounts_from_list(
         .await?;
     }
     Ok(())
+}
+
+/// Member documents in `account_refs` order. Local ids and stored actor URIs
+/// load in batches; other refs (handles) resolve one at a time.
+pub(crate) async fn resolve_list_member_documents(
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    account_refs: &[String],
+) -> Result<Vec<serde_json::Value>> {
+    let (accounts_by_id, stats_by_id, actors_by_uri) = futures_util::try_join!(
+        find_accounts_by_ids(db, account_refs),
+        load_account_stats_map(db, account_refs),
+        find_remote_actors_by_actor_uris(db, account_refs),
+    )?;
+    let default_stats = Default::default();
+    let mut documents = Vec::with_capacity(account_refs.len());
+    for account_ref in account_refs {
+        let response = if let Some(account) = accounts_by_id.get(account_ref) {
+            Some(MastodonAccountResponse::from_account_with_stats(
+                account,
+                config,
+                stats_by_id.get(account_ref).unwrap_or(&default_stats),
+            ))
+        } else {
+            actors_by_uri
+                .get(account_ref)
+                .map(MastodonAccountResponse::from_remote_actor)
+        };
+        if let Some(response) = response {
+            documents.push(serde_json::to_value(response)?);
+        } else if let Some(document) = resolve_list_member_document(db, config, account_ref).await?
+        {
+            documents.push(document);
+        }
+    }
+    Ok(documents)
 }
 
 async fn resolve_list_member_document(
