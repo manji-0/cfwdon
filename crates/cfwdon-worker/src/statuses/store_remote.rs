@@ -453,13 +453,26 @@ fn public_remote_statuses_by_actor_uri_sql<'a>(
     (sql, bindings)
 }
 
-pub(crate) async fn list_direct_remote_replies_by_uri(
+/// Direct replies to any of `object_uris`, oldest first.
+pub(crate) async fn list_direct_remote_replies_by_uris(
     db: &D1Database,
-    object_uri: &str,
+    object_uris: &[String],
 ) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
-    let sql = direct_remote_replies_by_uri_sql();
-    query_remote_statuses_with_actor(db, &sql, &direct_remote_replies_by_uri_bindings(object_uri))
-        .await
+    if object_uris.is_empty() {
+        return Ok(Vec::new());
+    }
+    let uris = json_string_array(object_uris);
+    let sql = format!(
+        "SELECT
+            {REMOTE_STATUS_WITH_ACTOR_SELECT}
+         FROM remote_statuses rs
+         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
+         WHERE rs.in_reply_to_uri {}
+         ORDER BY rs.published_at ASC",
+        sql_in_json_each(1)
+    );
+    query_remote_statuses_with_actor(db, &sql, &[D1Type::Text(&uris)]).await
 }
 
 pub(crate) async fn list_remote_direct_statuses_mentioning_viewer(
@@ -497,22 +510,6 @@ fn remote_direct_statuses_mentioning_viewer_sql<'a>(
          LIMIT ?{limit_slot}"
     );
     (sql, bindings)
-}
-
-fn direct_remote_replies_by_uri_bindings(object_uri: &str) -> [D1Type<'_>; 1] {
-    [D1Type::Text(object_uri)]
-}
-
-fn direct_remote_replies_by_uri_sql() -> String {
-    format!(
-        "SELECT
-            {REMOTE_STATUS_WITH_ACTOR_SELECT}
-         FROM remote_statuses rs
-         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
-         WHERE rs.in_reply_to_uri = ?1
-         ORDER BY rs.published_at ASC"
-    )
 }
 
 async fn query_remote_statuses_with_actor(
@@ -846,17 +843,6 @@ mod tests {
         assert!(matches!(bindings[1], D1Type::Text("max")));
         assert!(matches!(bindings[2], D1Type::Text("min")));
         assert!(matches!(bindings[3], D1Type::Integer(20)));
-    }
-
-    #[test]
-    fn direct_remote_replies_by_uri_sql_uses_reply_slot_and_ascending_order() {
-        let sql = direct_remote_replies_by_uri_sql();
-
-        assert!(sql.contains("JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri"));
-        assert!(sql.contains("WHERE rs.in_reply_to_uri = ?1"));
-        assert!(sql.contains("ORDER BY rs.published_at ASC"));
-        assert!(sql.contains("rs.edited_at"));
-        assert!(sql.contains("rs.in_reply_to_id"));
     }
 
     #[test]

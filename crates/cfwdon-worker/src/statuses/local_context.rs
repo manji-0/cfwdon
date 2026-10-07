@@ -1,9 +1,9 @@
 use super::{
-    LocalAccount, can_view_local_status, find_status_by_id, list_direct_local_replies,
-    list_direct_remote_replies_by_uri,
+    LocalAccount, can_view_local_status, list_direct_local_replies_to_ids,
+    list_direct_remote_replies_by_uris, list_local_reply_chain,
 };
+use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::is_public_activitypub_visibility;
-use crate::auth::find_account_by_id;
 use crate::identity::actor_url;
 use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
@@ -13,7 +13,7 @@ use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalStatus;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use worker::Result;
 fn local_context_object_uri(
     config: &AppConfig,
@@ -53,8 +53,18 @@ struct RemoteContextQueueNode {
     depth: usize,
 }
 
-/// A descendant with the timestamp it is ordered by.
-type ContextDescendant = (String, StatusRenderItem);
+/// How far up a reply chain the ancestor query follows; ancestors are trimmed
+/// further for the response.
+const MAX_CONTEXT_ANCESTOR_DEPTH: u32 = 256;
+
+fn unique_account_ids(statuses: &[LocalStatus]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    statuses
+        .iter()
+        .map(|status| status.account_id.clone())
+        .filter(|account_id| seen.insert(account_id.clone()))
+        .collect()
+}
 
 /// Render ancestors and descendants in one batched pass.
 pub(super) async fn render_context_response(
@@ -84,24 +94,22 @@ pub(crate) async fn build_local_status_context(
 ) -> Result<MastodonContextResponse> {
     let is_authenticated = viewer.is_some();
     let mut ancestors = Vec::new();
-    let mut current = root.in_reply_to_id.clone();
-    let mut seen_local_ids = HashSet::new();
-
-    while let Some(status_id) = current {
-        if !seen_local_ids.insert(status_id.clone()) {
-            break;
+    if let Some(parent_id) = root.in_reply_to_id.as_deref() {
+        let chain = list_local_reply_chain(db, parent_id, MAX_CONTEXT_ANCESTOR_DEPTH).await?;
+        let owners = find_accounts_by_ids(db, &unique_account_ids(&chain)).await?;
+        let mut seen_local_ids = HashSet::new();
+        for status in chain {
+            if !seen_local_ids.insert(status.id.clone()) {
+                break;
+            }
+            let Some(owner) = owners.get(&status.account_id) else {
+                break;
+            };
+            if !can_view_local_status(db, &status, viewer, owner).await? {
+                break;
+            }
+            ancestors.push(StatusRenderItem::Local(status));
         }
-        let Some(status) = find_status_by_id(db, &status_id).await? else {
-            break;
-        };
-        let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
-            break;
-        };
-        if !can_view_local_status(db, &status, viewer, &owner).await? {
-            break;
-        }
-        current = status.in_reply_to_id.clone();
-        ancestors.push(StatusRenderItem::Local(status));
     }
     ancestors.reverse();
     let ancestors = trim_context_ancestors(ancestors, is_authenticated);
@@ -113,6 +121,8 @@ pub(crate) async fn build_local_status_context(
     render_context_response(db, config, viewer, ancestors, descendants).await
 }
 
+/// Walks the reply tree a level at a time: each level's local and remote
+/// replies are one query each, whatever the number of nodes.
 async fn collect_descendants_for_local_root(
     db: &D1Database,
     config: &AppConfig,
@@ -122,50 +132,96 @@ async fn collect_descendants_for_local_root(
 ) -> Result<Vec<StatusRenderItem>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
     let mut descendants = Vec::new();
-    let mut queued_local_nodes = vec![LocalContextQueueNode {
+    let mut local_level = vec![LocalContextQueueNode {
         status_id: root.id.clone(),
         object_uri: root_uri.to_owned(),
         depth: 0,
     }];
-    let mut queued_remote_uris = Vec::new();
+    let mut remote_level = Vec::<RemoteContextQueueNode>::new();
     let mut seen_local_ids = HashSet::from([root.id.clone()]);
     let mut seen_remote_ids = HashSet::new();
 
-    while let Some(node) = queued_local_nodes.pop() {
-        append_local_child_descendants(
-            db,
-            config,
-            viewer,
-            &node,
-            max_depth,
-            &mut seen_local_ids,
-            &mut queued_local_nodes,
-            &mut descendants,
-        )
-        .await?;
-        append_remote_child_descendants(
-            db,
-            &node.object_uri,
-            node.depth,
-            max_depth,
-            &mut seen_remote_ids,
-            &mut queued_remote_uris,
-            &mut descendants,
-        )
-        .await?;
-    }
+    while !local_level.is_empty() || !remote_level.is_empty() {
+        let local_parent_depths = local_level
+            .iter()
+            .map(|node| (node.status_id.clone(), node.depth))
+            .collect::<HashMap<_, _>>();
+        let uri_parent_depths = local_level
+            .iter()
+            .map(|node| (node.object_uri.clone(), node.depth))
+            .chain(
+                remote_level
+                    .iter()
+                    .map(|node| (node.object_uri.clone(), node.depth)),
+            )
+            .collect::<HashMap<_, _>>();
+        let local_parent_ids = local_parent_depths.keys().cloned().collect::<Vec<_>>();
+        let parent_uris = uri_parent_depths.keys().cloned().collect::<Vec<_>>();
+        let (local_replies, remote_replies) = futures_util::try_join!(
+            list_direct_local_replies_to_ids(db, &local_parent_ids),
+            list_direct_remote_replies_by_uris(db, &parent_uris),
+        )?;
+        let owners = find_accounts_by_ids(db, &unique_account_ids(&local_replies)).await?;
 
-    while let Some(node) = queued_remote_uris.pop() {
-        append_remote_child_descendants(
-            db,
-            &node.object_uri,
-            node.depth,
-            max_depth,
-            &mut seen_remote_ids,
-            &mut queued_remote_uris,
-            &mut descendants,
-        )
-        .await?;
+        let mut next_local_level = Vec::new();
+        for status in local_replies {
+            let Some(parent_depth) = status
+                .in_reply_to_id
+                .as_deref()
+                .and_then(|parent_id| local_parent_depths.get(parent_id))
+            else {
+                continue;
+            };
+            if !seen_local_ids.insert(status.id.clone()) {
+                continue;
+            }
+            let Some(child_depth) = next_context_child_depth(max_depth, *parent_depth) else {
+                continue;
+            };
+            let Some(owner) = owners.get(&status.account_id) else {
+                continue;
+            };
+            if !can_view_local_status(db, &status, viewer, owner).await? {
+                continue;
+            }
+            next_local_level.push(LocalContextQueueNode {
+                status_id: status.id.clone(),
+                object_uri: local_context_object_uri(config, owner, &status),
+                depth: child_depth,
+            });
+            descendants.push((status.created_at.clone(), StatusRenderItem::Local(status)));
+        }
+
+        let mut next_remote_level = Vec::new();
+        for (status, actor) in remote_replies {
+            let Some(parent_depth) = status
+                .in_reply_to_uri
+                .as_deref()
+                .and_then(|parent_uri| uri_parent_depths.get(parent_uri))
+            else {
+                continue;
+            };
+            if !seen_remote_ids.insert(status.id.clone()) {
+                continue;
+            }
+            let Some(child_depth) = next_context_child_depth(max_depth, *parent_depth) else {
+                continue;
+            };
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+                continue;
+            }
+            next_remote_level.push(RemoteContextQueueNode {
+                object_uri: status.object_uri.clone(),
+                depth: child_depth,
+            });
+            descendants.push((
+                status.published_at.clone(),
+                StatusRenderItem::Remote { status, actor },
+            ));
+        }
+
+        local_level = next_local_level;
+        remote_level = next_remote_level;
     }
 
     descendants.sort_by(|left, right| left.0.cmp(&right.0));
@@ -173,72 +229,6 @@ async fn collect_descendants_for_local_root(
         descendants.into_iter().map(|(_, status)| status).collect(),
         viewer.is_some(),
     ))
-}
-
-async fn append_local_child_descendants(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: Option<&LocalAccount>,
-    node: &LocalContextQueueNode,
-    max_depth: Option<usize>,
-    seen_local_ids: &mut HashSet<String>,
-    queued_local_nodes: &mut Vec<LocalContextQueueNode>,
-    descendants: &mut Vec<ContextDescendant>,
-) -> Result<()> {
-    for status in list_direct_local_replies(db, &node.status_id).await? {
-        if !seen_local_ids.insert(status.id.clone()) {
-            continue;
-        }
-        let Some(child_depth) = next_context_child_depth(max_depth, node.depth) else {
-            continue;
-        };
-        let Some(owner) = find_account_by_id(db, &status.account_id).await? else {
-            continue;
-        };
-        if !can_view_local_status(db, &status, viewer, &owner).await? {
-            continue;
-        }
-        queued_local_nodes.push(LocalContextQueueNode {
-            status_id: status.id.clone(),
-            object_uri: local_context_object_uri(config, &owner, &status),
-            depth: child_depth,
-        });
-        descendants.push((status.created_at.clone(), StatusRenderItem::Local(status)));
-    }
-
-    Ok(())
-}
-
-async fn append_remote_child_descendants(
-    db: &D1Database,
-    object_uri: &str,
-    depth: usize,
-    max_depth: Option<usize>,
-    seen_remote_ids: &mut HashSet<String>,
-    queued_remote_uris: &mut Vec<RemoteContextQueueNode>,
-    descendants: &mut Vec<ContextDescendant>,
-) -> Result<()> {
-    for (status, actor) in list_direct_remote_replies_by_uri(db, object_uri).await? {
-        if !seen_remote_ids.insert(status.id.clone()) {
-            continue;
-        }
-        let Some(child_depth) = next_context_child_depth(max_depth, depth) else {
-            continue;
-        };
-        if !is_public_activitypub_visibility(status.visibility.as_str()) {
-            continue;
-        }
-        queued_remote_uris.push(RemoteContextQueueNode {
-            object_uri: status.object_uri.clone(),
-            depth: child_depth,
-        });
-        descendants.push((
-            status.published_at.clone(),
-            StatusRenderItem::Remote { status, actor },
-        ));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

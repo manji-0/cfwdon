@@ -119,6 +119,30 @@ pub(crate) async fn finish_context_async_refresh(
     upsert_async_refresh(db, &id, "finished", Some(result_count)).await
 }
 
+/// Whether a refresh of `status_id`'s context started or finished within the
+/// last `seconds`, so a new one would refetch what it just fetched.
+pub(crate) async fn context_async_refresh_is_recent(
+    db: &D1Database,
+    status_id: &str,
+    seconds: u32,
+) -> Result<bool> {
+    let id = context_async_refresh_id(status_id);
+    let window = format!("-{seconds} seconds");
+    let bindings = [D1Type::Text(&id), D1Type::Text(&window)];
+    Ok(db
+        .prepare(
+            "SELECT 1 AS present
+             FROM async_refreshes
+             WHERE id = ?1
+               AND updated_at > datetime('now', ?2)
+             LIMIT 1",
+        )
+        .bind_refs(bindings.iter())?
+        .first::<serde_json::Value>(None)
+        .await?
+        .is_some())
+}
+
 pub(crate) async fn find_async_refresh_state(
     db: &D1Database,
     id: &str,

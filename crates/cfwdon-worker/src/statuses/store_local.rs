@@ -379,22 +379,58 @@ fn public_account_statuses_sql<'a>(
     (sql, bindings)
 }
 
-pub(crate) async fn list_direct_local_replies(
+const LOCAL_REPLY_COLUMNS: &str = "id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at";
+
+/// Direct replies to any of `status_ids`, oldest first.
+pub(crate) async fn list_direct_local_replies_to_ids(
     db: &D1Database,
-    status_id: &str,
+    status_ids: &[String],
 ) -> Result<Vec<LocalStatus>> {
-    let status_id = D1Type::Text(status_id);
+    if status_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = json_string_array(status_ids);
     let result = db
-        .prepare(
-            "SELECT id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at
+        .prepare(format!(
+            "SELECT {LOCAL_REPLY_COLUMNS}
              FROM statuses
-             WHERE in_reply_to_id = ?1
+             WHERE in_reply_to_id {}
              ORDER BY created_at ASC",
-        )
-        .bind_refs(&status_id)?
+            sql_in_json_each(1)
+        ))
+        .bind_refs(&D1Type::Text(&ids))?
         .all()
         .await?;
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
+}
 
+/// The local statuses `status_id` replies to, nearest first, following
+/// `in_reply_to_id` for at most `max_depth` steps. Starts at `status_id`.
+pub(crate) async fn list_local_reply_chain(
+    db: &D1Database,
+    status_id: &str,
+    max_depth: u32,
+) -> Result<Vec<LocalStatus>> {
+    let bindings = [D1Type::Text(status_id), D1Type::Integer(max_depth as i32)];
+    let result = db
+        .prepare(format!(
+            "WITH RECURSIVE chain(id, depth) AS (
+                 SELECT ?1, 1
+                 UNION ALL
+                 SELECT s.in_reply_to_id, chain.depth + 1
+                 FROM statuses s
+                 JOIN chain ON s.id = chain.id
+                 WHERE s.in_reply_to_id IS NOT NULL
+                   AND chain.depth < ?2
+             )
+             SELECT {LOCAL_REPLY_COLUMNS}
+             FROM chain
+             JOIN statuses ON statuses.id = chain.id
+             ORDER BY chain.depth ASC"
+        ))
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
     d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 

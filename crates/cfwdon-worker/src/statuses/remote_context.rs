@@ -1,12 +1,12 @@
 use super::local_context::render_context_response;
 use super::{
-    LocalAccount, find_status_by_ap_id, find_status_by_id, list_direct_remote_replies_by_uri,
+    LocalAccount, find_status_by_ap_id, find_status_by_id, list_direct_remote_replies_by_uris,
 };
 use crate::activitypub::{
     extract_remote_note_object, is_public_activitypub_visibility,
     visibility_from_activitypub_object,
 };
-use crate::async_refreshes::finish_context_async_refresh;
+use crate::async_refreshes::{context_async_refresh_is_recent, finish_context_async_refresh};
 use crate::auth::find_account_by_id;
 use crate::background_jobs::{
     JOB_REMOTE_CONTEXT_FETCH, remote_context_fetch_payload, soft_enqueue_background_job,
@@ -26,13 +26,14 @@ use crate::timelines::StatusRenderItem;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::RemoteStatus;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use worker::Result;
 const REMOTE_CONTEXT_REPLY_PAGE_FETCH_LIMIT: usize = 8;
 const REMOTE_CONTEXT_REPLY_ITEM_FETCH_LIMIT: usize = 128;
 /// Deferred hydration stops starting new reply fetches after this long, so it
 /// finishes (and marks the async refresh finished) inside `wait_until`.
 const REMOTE_CONTEXT_HYDRATION_BUDGET_MS: f64 = 20_000.0;
+const REMOTE_CONTEXT_REFRESH_INTERVAL_SECS: u32 = 10 * 60;
 
 struct RemoteContextDescendantQueueNode {
     object_uri: String,
@@ -72,7 +73,12 @@ pub(crate) async fn build_remote_status_context(
     )
     .await?;
 
-    if is_authenticated {
+    // Crawling the remote reply tree is up to 128 fetches; a context viewed
+    // again soon after (or polled through the refresh header) reuses it.
+    let refreshing = is_authenticated
+        && !context_async_refresh_is_recent(db, &root.id, REMOTE_CONTEXT_REFRESH_INTERVAL_SECS)
+            .await?;
+    if refreshing {
         let (db, config, root, root_actor) = (
             db.detached(),
             config.clone(),
@@ -94,7 +100,7 @@ pub(crate) async fn build_remote_status_context(
             let _ = finish_context_async_refresh(&db, &root.id, fetched).await;
         });
     }
-    Ok((context, is_authenticated))
+    Ok((context, refreshing))
 }
 
 async fn collect_ancestors_for_remote_root(
@@ -170,29 +176,55 @@ async fn collect_ancestors_for_remote_root(
     Ok(ancestors)
 }
 
+/// Walks remote replies a level at a time, one query per level.
 async fn collect_descendants_for_remote_root(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
     root: &RemoteStatus,
 ) -> Result<Vec<StatusRenderItem>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
-    let mut descendants = Vec::new();
-    let mut queued_uris = vec![RemoteContextDescendantQueueNode {
+    let mut descendants = Vec::<RemoteContextDescendant>::new();
+    let mut level = vec![RemoteContextDescendantQueueNode {
         object_uri: root.object_uri.clone(),
         depth: 0,
     }];
     let mut seen_remote_ids = HashSet::from([root.id.clone()]);
 
-    while let Some(node) = queued_uris.pop() {
-        append_remote_context_child_descendants(
-            db,
-            &node,
-            max_depth,
-            &mut seen_remote_ids,
-            &mut queued_uris,
-            &mut descendants,
-        )
-        .await?;
+    while !level.is_empty() {
+        let parent_depths = level
+            .iter()
+            .map(|node| (node.object_uri.clone(), node.depth))
+            .collect::<HashMap<_, _>>();
+        let parent_uris = parent_depths.keys().cloned().collect::<Vec<_>>();
+        let mut next_level = Vec::new();
+        for (status, actor) in list_direct_remote_replies_by_uris(db, &parent_uris).await? {
+            let Some(parent_depth) = status
+                .in_reply_to_uri
+                .as_deref()
+                .and_then(|parent_uri| parent_depths.get(parent_uri))
+            else {
+                continue;
+            };
+            if !seen_remote_ids.insert(status.id.clone()) {
+                continue;
+            }
+            let Some(child_depth) = next_remote_context_child_depth(max_depth, *parent_depth)
+            else {
+                continue;
+            };
+            if !is_public_activitypub_visibility(status.visibility.as_str()) {
+                continue;
+            }
+            next_level.push(RemoteContextDescendantQueueNode {
+                object_uri: status.object_uri.clone(),
+                depth: child_depth,
+            });
+            descendants.push((
+                status.published_at.clone(),
+                StatusRenderItem::Remote { status, actor },
+            ));
+        }
+        level = next_level;
     }
 
     descendants.sort_by(|left, right| left.0.cmp(&right.0));
@@ -200,37 +232,6 @@ async fn collect_descendants_for_remote_root(
         descendants.into_iter().map(|(_, status)| status).collect(),
         viewer.is_some(),
     ))
-}
-
-async fn append_remote_context_child_descendants(
-    db: &D1Database,
-    node: &RemoteContextDescendantQueueNode,
-    max_depth: Option<usize>,
-    seen_remote_ids: &mut HashSet<String>,
-    queued_uris: &mut Vec<RemoteContextDescendantQueueNode>,
-    descendants: &mut Vec<RemoteContextDescendant>,
-) -> Result<()> {
-    for (status, actor) in list_direct_remote_replies_by_uri(db, &node.object_uri).await? {
-        if !seen_remote_ids.insert(status.id.clone()) {
-            continue;
-        }
-        let Some(child_depth) = next_remote_context_child_depth(max_depth, node.depth) else {
-            continue;
-        };
-        if !is_public_activitypub_visibility(status.visibility.as_str()) {
-            continue;
-        }
-        queued_uris.push(RemoteContextDescendantQueueNode {
-            object_uri: status.object_uri.clone(),
-            depth: child_depth,
-        });
-        descendants.push((
-            status.published_at.clone(),
-            StatusRenderItem::Remote { status, actor },
-        ));
-    }
-
-    Ok(())
 }
 
 #[derive(Clone, Debug)]
