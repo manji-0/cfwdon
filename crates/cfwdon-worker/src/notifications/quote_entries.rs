@@ -1,123 +1,45 @@
 use super::{
-    NotificationsQuery, build_status_notification_entry,
+    NotificationCandidate, NotificationsQuery, build_status_notification_entry,
     list_local_quote_notifications_for_account, list_quoted_update_notifications_for_account,
     list_remote_quote_notifications_for_account, notification_time_window,
     notification_timestamp_sort_token, preload_notification_statuses,
 };
-use crate::identity::{actor_url, remote_account_rest_id};
+use crate::identity::remote_account_rest_id;
 use crate::notifications::{
     NotificationEntry, QuotedUpdateNotificationRow, notification_account_matches_filter,
     notification_type_allowed,
 };
 use crate::responses::MastodonAccountResponse;
-use crate::statuses::can_view_local_status;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
 use worker::Result;
-pub(crate) async fn collect_quote_notification_entries(
-    entries: &mut Vec<NotificationEntry>,
+pub(crate) async fn collect_quote_notification_candidates(
+    candidates: &mut Vec<NotificationCandidate>,
     db: &D1Database,
-    config: &AppConfig,
+    _config: &AppConfig,
     viewer: &LocalAccount,
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
-    let window = notification_time_window(query);
     if !notification_type_allowed(query, "quote") {
         return Ok(());
     }
-
+    let window = notification_time_window(query);
     let (local_quotes, remote_quotes) = futures_util::try_join!(
         list_local_quote_notifications_for_account(db, viewer.id(), per_type_limit, &window),
         list_remote_quote_notifications_for_account(db, viewer.id(), per_type_limit, &window),
     )?;
-    let preloads =
-        preload_notification_statuses(db, config, viewer, &local_quotes, &remote_quotes, &[], &[])
-            .await?;
-    let preloads_ref = &preloads;
-
-    let mut local_candidates = Vec::new();
-    for quote in local_quotes {
-        let Some(actor) = preloads.local_accounts_by_id.get(&quote.account_id) else {
-            continue;
-        };
-        if !can_view_local_status(db, &quote, Some(viewer), actor).await?
-            || preloads.is_notification_muted(&actor_url(config, actor.username()))
-            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
-        {
-            continue;
-        }
-        local_candidates.push((quote, actor.clone()));
-    }
-
-    let local_entries = futures_util::future::try_join_all(local_candidates.into_iter().map(
-        |(quote, actor)| async move {
-            let status_response = preloads_ref
-                .build_local_status_response(
-                    db,
-                    config,
-                    viewer,
-                    &quote,
-                    &actor,
-                    preloads_ref.local_media(&quote.id),
-                )
-                .await?;
-            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
-                format!("quote-local-{}-{}", actor.id(), quote.id),
-                "quote",
-                quote.created_at,
-                MastodonAccountResponse::from_account(&actor, config),
-                status_response,
-            ))
-        },
-    ))
-    .await?;
-    entries.extend(local_entries);
-
-    let mut remote_candidates = Vec::new();
-    for quote in remote_quotes {
-        let Some(actor) = preloads.remote_actors_by_uri.get(&quote.actor_uri) else {
-            continue;
-        };
-        if preloads.is_notification_muted(&actor.actor_uri) {
-            continue;
-        }
-        let remote_id = remote_account_rest_id(&actor.actor_uri);
-        if !notification_account_matches_filter(
-            query.account_id.as_deref(),
-            &remote_id,
-            Some(&actor.actor_uri),
-        ) {
-            continue;
-        }
-        remote_candidates.push((quote, actor, remote_id));
-    }
-
-    let remote_entries = futures_util::future::try_join_all(remote_candidates.into_iter().map(
-        |(quote, actor, remote_id)| async move {
-            let status_response = preloads_ref
-                .build_remote_status_response(
-                    db,
-                    config,
-                    viewer,
-                    &quote,
-                    actor,
-                    preloads_ref.remote_media(&quote.id),
-                )
-                .await?;
-            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
-                format!("quote-remote-{}-{}", remote_id, quote.id),
-                "quote",
-                quote.published_at,
-                MastodonAccountResponse::from_remote_actor(actor),
-                status_response,
-            ))
-        },
-    ))
-    .await?;
-    entries.extend(remote_entries);
-
+    candidates.extend(
+        local_quotes
+            .into_iter()
+            .map(|status| NotificationCandidate::authored_local_status("quote", status)),
+    );
+    candidates.extend(
+        remote_quotes
+            .into_iter()
+            .map(|status| NotificationCandidate::authored_remote_status("quote", status)),
+    );
     Ok(())
 }
 

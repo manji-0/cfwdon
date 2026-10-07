@@ -1,15 +1,14 @@
 use super::{
-    NotificationsQuery, RemoteStatusNotificationRow, list_local_status_notifications_for_account,
-    list_remote_status_notifications_for_account, notification_time_window,
+    NotificationCandidate, NotificationsQuery, RemoteStatusNotificationRow,
+    list_local_status_notifications_for_account, list_remote_status_notifications_for_account,
+    notification_time_window,
 };
-use crate::identity::{actor_url, remote_account_rest_id};
 use crate::notifications::{
-    MastodonNotificationResponse, NotificationEntry, notification_account_matches_filter,
-    notification_type_allowed, push_notification_entry,
+    MastodonNotificationResponse, NotificationEntry, notification_type_allowed,
+    push_notification_entry,
 };
 use crate::remote::remote_status_from_record;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
-use crate::statuses::can_view_local_status;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, RemoteStatus, RemoteStatusRecord};
@@ -70,126 +69,34 @@ pub(crate) fn build_status_notification_entry(
         .expect("status notification entry is pushed before it is returned")
 }
 
-pub(crate) async fn collect_status_notification_entries(
-    entries: &mut Vec<NotificationEntry>,
+pub(crate) async fn collect_status_notification_candidates(
+    candidates: &mut Vec<NotificationCandidate>,
     db: &D1Database,
-    config: &AppConfig,
+    _config: &AppConfig,
     viewer: &LocalAccount,
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
-    let window = notification_time_window(query);
     if !notification_type_allowed(query, "status") {
         return Ok(());
     }
-
+    let window = notification_time_window(query);
     let (local_statuses, remote_status_rows) = futures_util::try_join!(
         list_local_status_notifications_for_account(db, viewer.id(), per_type_limit, &window),
         list_remote_status_notifications_for_account(db, viewer.id(), per_type_limit, &window),
     )?;
-    let remote_statuses = remote_status_rows
-        .iter()
-        .filter_map(remote_status_notification_row)
-        .collect::<Vec<_>>();
-    let preloads = preload_notification_statuses(
-        db,
-        config,
-        viewer,
-        &local_statuses,
-        &remote_statuses,
-        &[],
-        &[],
-    )
-    .await?;
-    let preloads_ref = &preloads;
-
-    let mut local_candidates = Vec::new();
-    for status in local_statuses {
-        let Some(actor) = preloads.local_accounts_by_id.get(&status.account_id) else {
-            continue;
-        };
-        if !can_view_local_status(db, &status, Some(viewer), actor).await?
-            || preloads.is_notification_muted(&actor_url(config, actor.username()))
-            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
-        {
-            continue;
-        }
-        local_candidates.push((status, actor.clone()));
-    }
-
-    let local_entries = futures_util::future::try_join_all(local_candidates.into_iter().map(
-        |(status, actor)| async move {
-            let status_response = preloads_ref
-                .build_local_status_response(
-                    db,
-                    config,
-                    viewer,
-                    &status,
-                    &actor,
-                    preloads_ref.local_media(&status.id),
-                )
-                .await?;
-            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
-                format!("status-local-{}-{}", actor.id(), status.id),
-                "status",
-                status.created_at,
-                MastodonAccountResponse::from_account(&actor, config),
-                status_response,
-            ))
-        },
-    ))
-    .await?;
-    entries.extend(local_entries);
-
-    let mut remote_candidates = Vec::new();
-    for raw_status in remote_status_rows {
-        if raw_status.visibility == "direct" {
-            continue;
-        }
-        let Some(status) = remote_status_notification_row(&raw_status) else {
-            continue;
-        };
-        let Some(actor) = preloads.remote_actors_by_uri.get(&status.actor_uri) else {
-            continue;
-        };
-        if preloads.is_notification_muted(&actor.actor_uri) {
-            continue;
-        }
-        let remote_id = remote_account_rest_id(&actor.actor_uri);
-        if !notification_account_matches_filter(
-            query.account_id.as_deref(),
-            &remote_id,
-            Some(&actor.actor_uri),
-        ) {
-            continue;
-        }
-        remote_candidates.push((raw_status.published_at, status, actor, remote_id));
-    }
-
-    let remote_entries = futures_util::future::try_join_all(remote_candidates.into_iter().map(
-        |(created_at, status, actor, remote_id)| async move {
-            let status_response = preloads_ref
-                .build_remote_status_response(
-                    db,
-                    config,
-                    viewer,
-                    &status,
-                    actor,
-                    preloads_ref.remote_media(&status.id),
-                )
-                .await?;
-            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
-                format!("status-remote-{}-{}", remote_id, status.id),
-                "status",
-                created_at,
-                MastodonAccountResponse::from_remote_actor(actor),
-                status_response,
-            ))
-        },
-    ))
-    .await?;
-    entries.extend(remote_entries);
-
+    candidates.extend(
+        local_statuses
+            .into_iter()
+            .map(|status| NotificationCandidate::authored_local_status("status", status)),
+    );
+    candidates.extend(
+        remote_status_rows
+            .iter()
+            .filter(|row| row.visibility != "direct")
+            .filter_map(remote_status_notification_row)
+            .map(|status| NotificationCandidate::authored_remote_status("status", status)),
+    );
     Ok(())
 }
 

@@ -2,9 +2,9 @@ use super::{
     NotificationCandidate, NotificationsQuery, collect_admin_report_notifications_entries,
     collect_admin_sign_up_notifications_entries, collect_favourite_notification_candidates,
     collect_follow_notification_candidates, collect_follow_request_notification_candidates,
-    collect_mention_notification_entries, collect_poll_notification_entries,
-    collect_quote_notification_entries, collect_quoted_update_notification_entries,
-    collect_reblog_notification_candidates, collect_status_notification_entries,
+    collect_mention_notification_candidates, collect_poll_notification_entries,
+    collect_quote_notification_candidates, collect_quoted_update_notification_entries,
+    collect_reblog_notification_candidates, collect_status_notification_candidates,
     collect_update_notification_entries,
 };
 use crate::collections_alpha::collect_collection_notification_entries;
@@ -103,16 +103,16 @@ pub(crate) async fn collect_notifications(
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_mention_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_mention_notification_candidates,
             db,
             config,
             viewer,
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_quote_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_quote_notification_candidates,
             db,
             config,
             viewer,
@@ -135,8 +135,8 @@ pub(crate) async fn collect_notifications(
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_status_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_status_notification_candidates,
             db,
             config,
             viewer,
