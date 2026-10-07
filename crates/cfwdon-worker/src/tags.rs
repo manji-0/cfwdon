@@ -390,14 +390,14 @@ pub(crate) async fn replace_remote_status_hashtags(
         .into_iter()
         .collect::<HashSet<_>>();
 
+    let mut statements = Vec::new();
     for tag in existing.difference(&next) {
         let bindings = [D1Type::Text(status_id), D1Type::Text(tag.as_str())];
-        db.prepare("DELETE FROM remote_status_hashtags WHERE status_id = ?1 AND tag = ?2")
-            .bind_refs(bindings.iter())?
-            .run()
-            .await?;
+        statements.push(
+            db.prepare("DELETE FROM remote_status_hashtags WHERE status_id = ?1 AND tag = ?2")
+                .bind_refs(bindings.iter())?,
+        );
     }
-
     for tag in next.difference(&existing) {
         let bindings = [
             D1Type::Text(status_id),
@@ -405,15 +405,18 @@ pub(crate) async fn replace_remote_status_hashtags(
             D1Type::Text(actor_uri),
             D1Type::Text(published_at),
         ];
-        db.prepare(
-            "INSERT OR IGNORE INTO remote_status_hashtags (status_id, tag, actor_uri, published_at)
-             VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        statements.push(
+            db.prepare(
+                "INSERT OR IGNORE INTO remote_status_hashtags (status_id, tag, actor_uri, published_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
 
+    if !statements.is_empty() {
+        db.batch(statements).await?;
+    }
     Ok(())
 }
 

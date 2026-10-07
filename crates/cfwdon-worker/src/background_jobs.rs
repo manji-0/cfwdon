@@ -32,7 +32,9 @@ pub(crate) struct BackgroundJobReclaimReport {
     pub failed: u32,
 }
 
-pub(crate) async fn enqueue_background_job(
+/// Soft-enqueue: if a pending job for the same type+payload already exists,
+/// skip insertion to avoid duplicate work. One statement checks and inserts.
+pub(crate) async fn soft_enqueue_background_job(
     db: &D1Database,
     job_type: &str,
     payload_json: &str,
@@ -50,40 +52,18 @@ pub(crate) async fn enqueue_background_job(
     db.prepare(
         "INSERT OR IGNORE INTO background_jobs
          (id, job_type, payload_json, status, attempts, next_run_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5)",
+         SELECT ?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5
+         WHERE NOT EXISTS (
+             SELECT 1
+             FROM background_jobs
+             WHERE job_type = ?2
+               AND payload_json = ?3
+               AND status IN ('pending', 'running')
+         )",
     )
     .bind_refs(bindings.iter())?
     .run()
     .await?;
-    Ok(())
-}
-
-/// Soft-enqueue: if a pending job for the same type+payload already exists,
-/// skip insertion to avoid duplicate work.
-pub(crate) async fn soft_enqueue_background_job(
-    db: &D1Database,
-    job_type: &str,
-    payload_json: &str,
-    next_run_at: &str,
-) -> Result<()> {
-    let bindings_check = [D1Type::Text(job_type), D1Type::Text(payload_json)];
-    let already_pending = db
-        .prepare(
-            "SELECT 1 AS found
-             FROM background_jobs
-             WHERE job_type = ?1
-               AND payload_json = ?2
-               AND status IN ('pending', 'running')
-             LIMIT 1",
-        )
-        .bind_refs(bindings_check.iter())?
-        .first::<serde_json::Value>(None)
-        .await?
-        .is_some();
-
-    if !already_pending {
-        enqueue_background_job(db, job_type, payload_json, next_run_at).await?;
-    }
     Ok(())
 }
 

@@ -181,15 +181,15 @@ pub(crate) async fn replace_remote_status_attachments(
     status_id: &str,
     attachments: &[RemoteStatusAttachmentRow],
 ) -> Result<()> {
+    // One batch: the old set is replaced atomically and in one round trip.
     let status_id_binding = D1Type::Text(status_id);
-    db.prepare(
-        "DELETE FROM remote_status_attachments
-         WHERE status_id = ?1",
-    )
-    .bind_refs(&status_id_binding)?
-    .run()
-    .await?;
-
+    let mut statements = vec![
+        db.prepare(
+            "DELETE FROM remote_status_attachments
+             WHERE status_id = ?1",
+        )
+        .bind_refs(&status_id_binding)?,
+    ];
     for attachment in attachments {
         let bindings = [
             D1Type::Text(attachment.id.as_str()),
@@ -216,8 +216,9 @@ pub(crate) async fn replace_remote_status_attachments(
                 .map_or(D1Type::Null, |value| D1Type::Integer(value as i32)),
             D1Type::Text(attachment.created_at.as_str()),
         ];
-        db.prepare(
-            "INSERT INTO remote_status_attachments (
+        statements.push(
+            db.prepare(
+                "INSERT INTO remote_status_attachments (
                 id,
                 status_id,
                 remote_url,
@@ -231,11 +232,11 @@ pub(crate) async fn replace_remote_status_attachments(
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
             )",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
+    db.batch(statements).await?;
 
     Ok(())
 }

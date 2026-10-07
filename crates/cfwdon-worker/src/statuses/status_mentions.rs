@@ -5,7 +5,7 @@ use super::response_mentions::{
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::identity::{actor_url, remote_account_rest_id};
-use crate::store::remote::find_remote_actor_by_actor_uri;
+use crate::store::remote::find_remote_actors_by_actor_uris;
 use cfwdon_core::AppConfig;
 use std::collections::{HashMap, HashSet};
 use worker::{Result, d1::D1Type};
@@ -130,10 +130,33 @@ async fn extract_ap_mention_rows(
         return Ok(None);
     }
 
+    // Resolve every href in two batched lookups instead of one or two per mention.
+    let local_actor_base = format!("{}/users/", config.instance_domain);
+    let local_actor_base_https = format!("https://{}/users/", config.instance_domain);
+    let local_username_for = |href: &str| {
+        if href.starts_with(&local_actor_base) || href.starts_with(&local_actor_base_https) {
+            href.rsplit('/').next().map(str::to_ascii_lowercase)
+        } else {
+            None
+        }
+    };
+    let hrefs = mention_entries
+        .iter()
+        .map(|(href, _)| href.clone())
+        .collect::<Vec<_>>();
+    let local_usernames = mention_entries
+        .iter()
+        .filter_map(|(href, _)| local_username_for(href))
+        .collect::<Vec<_>>();
+    let (actors_by_uri, local_accounts) = futures_util::try_join!(
+        find_remote_actors_by_actor_uris(db, &hrefs),
+        load_mention_local_accounts(db, &local_usernames),
+    )?;
+
     let mut rows: Vec<MentionRow> = Vec::new();
     for (href, name) in &mention_entries {
         // Try exact actor_uri match first.
-        if let Some(actor) = find_remote_actor_by_actor_uri(db, href).await? {
+        if let Some(actor) = actors_by_uri.get(href) {
             let acct = format!("{}@{}", actor.username, actor.domain);
             rows.push(MentionRow {
                 mention_key: acct.to_ascii_lowercase(),
@@ -149,33 +172,19 @@ async fn extract_ap_mention_rows(
             continue;
         }
 
-        // Detect if this is a local actor URL and resolve by username.
-        let local_actor_base = format!("{}/users/", config.instance_domain);
-        let local_actor_base_https = format!("https://{}/users/", config.instance_domain);
-        let maybe_username =
-            if href.starts_with(&local_actor_base) || href.starts_with(&local_actor_base_https) {
-                href.rsplit('/').next().map(str::to_owned)
-            } else {
-                None
-            };
-
-        if let Some(username) = maybe_username {
-            let usernames = vec![username.to_ascii_lowercase()];
-            if let Some(account) = load_mention_local_accounts(db, &usernames)
-                .await?
-                .into_values()
-                .next()
-            {
-                rows.push(MentionRow {
-                    mention_key: account.acct().to_ascii_lowercase(),
-                    account_id: Some(account.id().to_owned()),
-                    actor_uri: None,
-                    username: account.username().to_owned(),
-                    acct: account.acct().to_owned(),
-                    url: actor_url(config, account.username()),
-                });
-                continue;
-            }
+        // A local actor URL resolves by username.
+        if let Some(account) =
+            local_username_for(href).and_then(|username| local_accounts.get(&username))
+        {
+            rows.push(MentionRow {
+                mention_key: account.acct().to_ascii_lowercase(),
+                account_id: Some(account.id().to_owned()),
+                actor_uri: None,
+                username: account.username().to_owned(),
+                acct: account.acct().to_owned(),
+                url: actor_url(config, account.username()),
+            });
+            continue;
         }
 
         // Fall back: synthesize from href/name without DB lookup.
@@ -250,10 +259,10 @@ async fn replace_remote_status_mention_rows(
     rows: &[MentionRow],
 ) -> Result<()> {
     let status_binding = D1Type::Text(status_id);
-    db.prepare("DELETE FROM remote_status_mentions WHERE status_id = ?1")
-        .bind_refs(&status_binding)?
-        .run()
-        .await?;
+    let mut statements = vec![
+        db.prepare("DELETE FROM remote_status_mentions WHERE status_id = ?1")
+            .bind_refs(&status_binding)?,
+    ];
 
     for row in rows {
         let account_id_val: D1Type<'_> = match &row.account_id {
@@ -274,16 +283,17 @@ async fn replace_remote_status_mention_rows(
             D1Type::Text(&row.url),
             D1Type::Text(published_at),
         ];
-        db.prepare(
-            "INSERT OR REPLACE INTO remote_status_mentions
-             (status_id, mention_key, account_id, actor_uri, username, acct, url, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        statements.push(
+            db.prepare(
+                "INSERT OR REPLACE INTO remote_status_mentions
+                 (status_id, mention_key, account_id, actor_uri, username, acct, url, published_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
-
+    // One batch keeps the replace atomic as well as a single round trip.
+    db.batch(statements).await?;
     Ok(())
 }
 

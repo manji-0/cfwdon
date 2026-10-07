@@ -11,8 +11,10 @@ pub(crate) async fn upsert_remote_status_poll(
 ) -> Result<()> {
     let poll_id = format!("remote-{status_id}");
     let bindings = remote_status_poll_upsert_bindings(&poll_id, status_id, poll);
-    db.prepare(
-        "INSERT INTO remote_status_polls (
+    // The poll row and its options are replaced in one batch.
+    let mut statements = vec![
+        db.prepare(
+            "INSERT INTO remote_status_polls (
             id,
             status_id,
             multiple,
@@ -35,34 +37,34 @@ pub(crate) async fn upsert_remote_status_poll(
             votes_count = excluded.votes_count,
             expired = excluded.expired,
             updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?,
+    ];
 
     let delete_bindings = remote_status_poll_options_delete_bindings(&poll_id);
-    db.prepare(
-        "DELETE FROM remote_status_poll_options
-         WHERE poll_id = ?1",
-    )
-    .bind_refs(delete_bindings.iter())?
-    .run()
-    .await?;
+    statements.push(
+        db.prepare(
+            "DELETE FROM remote_status_poll_options
+             WHERE poll_id = ?1",
+        )
+        .bind_refs(delete_bindings.iter())?,
+    );
 
     for (position, option) in poll.options.iter().enumerate() {
         let bindings = remote_status_poll_option_insert_bindings(&poll_id, position, option);
-        db.prepare(
-            "INSERT INTO remote_status_poll_options (
-                poll_id,
-                position,
-                title,
-                votes_count
-            ) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind_refs(bindings.iter())?
-        .run()
-        .await?;
+        statements.push(
+            db.prepare(
+                "INSERT INTO remote_status_poll_options (
+                    poll_id,
+                    position,
+                    title,
+                    votes_count
+                ) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind_refs(bindings.iter())?,
+        );
     }
+    db.batch(statements).await?;
 
     let current_options = list_remote_status_poll_options(db, &poll_id).await?;
     prune_remote_poll_vote_rows(db, &poll_id, &current_options).await?;
