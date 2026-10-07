@@ -80,7 +80,7 @@ pub(crate) async fn collect_mention_notification_candidates(
     let window = notification_time_window(query);
     let (local_mentions, remote_mentions) = futures_util::try_join!(
         list_local_mention_notifications_for_account(db, viewer, config, per_type_limit, &window),
-        list_remote_mention_notifications_for_account(db, viewer, config, per_type_limit, &window),
+        list_remote_mention_notifications_for_account(db, viewer, per_type_limit, &window),
     )?;
     candidates.extend(
         local_mentions

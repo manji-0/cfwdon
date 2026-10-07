@@ -1,7 +1,6 @@
 use super::{NotificationTimeWindow, StoredTimestampFormat};
-use crate::content_helpers::{extract_mentions_from_text, strip_html_tags};
+use crate::content_helpers::extract_mentions_from_text;
 use crate::db_utils::d1_results;
-use crate::identity::instance_host;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
@@ -107,62 +106,33 @@ fn local_mention_row_targets_viewer(
         .any(|handle| handle.username == viewer.username())
 }
 
+/// Remote statuses that mention the viewer, from the mention rows written when
+/// each status was stored (`scripts/backfill_remote_status_mentions.mjs`
+/// fills them for statuses stored before those rows existed).
 pub(crate) async fn list_remote_mention_notifications_for_account(
     db: &D1Database,
     viewer: &LocalAccount,
-    config: &AppConfig,
     limit: u32,
     window: &NotificationTimeWindow,
 ) -> Result<Vec<RemoteMentionNotificationRow>> {
-    let pattern = format!(
-        "%@{}@{}%",
-        viewer.username().to_ascii_lowercase(),
-        instance_host(config)
-    );
     let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
-    let mut bindings = vec![
-        D1Type::Text(pattern.as_str()),
-        D1Type::Integer(limit as i32),
-    ];
+    let mut bindings = vec![D1Type::Text(viewer.id()), D1Type::Integer(limit as i32)];
     bindings.extend(bounds.bindings());
     let result = db
         .prepare(format!(
-            "SELECT id, actor_uri, object_uri, url, in_reply_to_uri, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, published_at
-             FROM remote_statuses
-             WHERE (lower(content_html) LIKE ?1
-                OR lower(spoiler_text) LIKE ?1){}
-             ORDER BY published_at DESC
+            "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
+             FROM remote_status_mentions m
+             CROSS JOIN remote_statuses rs ON rs.id = m.status_id
+             WHERE m.account_id = ?1{}
+             ORDER BY m.published_at DESC
              LIMIT ?2",
-            bounds.clause("published_at", 3)
+            bounds.clause("m.published_at", 3)
         ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
 
-    // The SQL LIKE is only a cheap prefilter; HTML parsing keeps mention matching exact.
-    let mut rows = Vec::new();
-    for row in d1_results::<RemoteMentionNotificationRow>(&result)? {
-        if remote_mention_row_targets_viewer(&row, viewer, config) {
-            rows.push(row);
-        }
-    }
-
-    Ok(rows)
-}
-
-fn remote_mention_row_targets_viewer(
-    row: &RemoteMentionNotificationRow,
-    viewer: &LocalAccount,
-    config: &AppConfig,
-) -> bool {
-    let text_content = if row.text_content.is_empty() {
-        strip_html_tags(&row.content_html)
-    } else {
-        row.text_content.clone()
-    };
-    extract_mentions_from_text(&text_content, config)
-        .into_iter()
-        .any(|handle| handle.username == viewer.username())
+    d1_results::<RemoteMentionNotificationRow>(&result)
 }
 
 #[cfg(test)]
@@ -203,33 +173,5 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".to_owned(),
         };
         assert!(local_mention_row_targets_viewer(&row, &viewer, &config));
-    }
-
-    #[test]
-    fn remote_mention_row_targets_viewer_strips_html() {
-        let viewer = test_viewer();
-        let config = test_config();
-        let row = RemoteMentionNotificationRow {
-            id: "rs1".to_owned(),
-            actor_uri: "https://remote.example/users/bob".to_owned(),
-            object_uri: "https://remote.example/statuses/1".to_owned(),
-            url: None,
-            in_reply_to_uri: None,
-            boost_of_uri: None,
-            quote_of_uri: None,
-            content_html: "<p>hello <a>@alice@example.com</a></p>".to_owned(),
-            text_content: "hello @alice@example.com".to_owned(),
-            spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
-            language: None,
-            quote_state: "accepted".to_owned(),
-            published_at: "2025-01-01T00:00:00Z".to_owned(),
-            edited_at: None,
-            card_json: None,
-            federated_emojis_json: "[]".to_owned(),
-            in_reply_to_id: None,
-        };
-        assert!(remote_mention_row_targets_viewer(&row, &viewer, &config));
     }
 }
