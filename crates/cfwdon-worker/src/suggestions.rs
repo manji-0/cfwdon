@@ -1,14 +1,47 @@
 use crate::accounts::{
-    DirectoryOrder, list_discoverable_accounts_with_sort_key, load_account_stats,
+    DirectoryOrder, list_discoverable_accounts_with_sort_key, load_account_stats_map,
 };
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
+use crate::db_utils::d1_results;
 use crate::identity::actor_url;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
-use crate::store::relationship::{find_follow_by_target, is_blocking_actor, is_muted_actor};
+use crate::store::relationship::list_active_muted_actor_uris_for_account;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
+use std::collections::HashSet;
+use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
+
+/// Actors the account follows (in any state) or blocks, which suggestions skip.
+async fn list_followed_or_blocked_actor_uris(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<HashSet<String>> {
+    #[derive(Deserialize)]
+    struct ActorUriRow {
+        target_actor_uri: String,
+    }
+    let result = db
+        .prepare(
+            "SELECT target_actor_uri
+             FROM follows
+             WHERE follower_account_id = ?1
+               AND target_actor_uri IS NOT NULL
+             UNION
+             SELECT target_actor_uri
+             FROM blocks
+             WHERE blocker_account_id = ?1",
+        )
+        .bind_refs(&D1Type::Text(account_id))?
+        .all()
+        .await?;
+    Ok(d1_results::<ActorUriRow>(&result)?
+        .into_iter()
+        .map(|row| row.target_actor_uri)
+        .collect())
+}
 
 #[derive(Debug, Default, Deserialize)]
 struct SuggestionsQuery {
@@ -27,30 +60,38 @@ async fn suggested_accounts(
         return Ok(None);
     };
 
-    let mut suggestions = Vec::new();
-    for (account, _sort_key) in
-        list_discoverable_accounts_with_sort_key(&db, 200, 0, DirectoryOrder::Active).await?
-    {
-        if account.id() == viewer.id() {
-            continue;
-        }
-        let target_actor_uri = actor_url(&config, account.username());
-        if find_follow_by_target(&db, viewer.id(), &target_actor_uri)
-            .await?
-            .is_some()
-            || is_blocking_actor(&db, viewer.id(), &target_actor_uri).await?
-            || is_muted_actor(&db, viewer.id(), &target_actor_uri).await?
-        {
-            continue;
-        }
-        let stats = load_account_stats(&db, account.id()).await?;
-        suggestions.push(MastodonAccountResponse::from_account_with_stats(
-            &account, &config, &stats,
-        ));
-        if suggestions.len() >= limit as usize {
-            break;
-        }
-    }
+    let (candidates, excluded_actor_uris, muted_actor_uris) = futures_util::try_join!(
+        list_discoverable_accounts_with_sort_key(&db, 200, 0, DirectoryOrder::Active),
+        list_followed_or_blocked_actor_uris(&db, viewer.id()),
+        list_active_muted_actor_uris_for_account(&db, viewer.id()),
+    )?;
+    let accounts = candidates
+        .into_iter()
+        .map(|(account, _sort_key)| account)
+        .filter(|account| {
+            let actor_uri = actor_url(&config, account.username());
+            account.id() != viewer.id()
+                && !excluded_actor_uris.contains(&actor_uri)
+                && !muted_actor_uris.contains(&actor_uri)
+        })
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let account_ids = accounts
+        .iter()
+        .map(|account| account.id().to_owned())
+        .collect::<Vec<_>>();
+    let stats_by_id = load_account_stats_map(&db, &account_ids).await?;
+    let default_stats = Default::default();
+    let suggestions = accounts
+        .iter()
+        .map(|account| {
+            MastodonAccountResponse::from_account_with_stats(
+                account,
+                &config,
+                stats_by_id.get(account.id()).unwrap_or(&default_stats),
+            )
+        })
+        .collect::<Vec<_>>();
 
     Ok(Some(suggestions))
 }
