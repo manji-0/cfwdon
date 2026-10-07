@@ -1,100 +1,34 @@
 use super::{
-    NotificationsQuery, build_status_notification_entry, list_poll_notifications_for_account,
-    notification_time_window, preload_notification_statuses,
+    NotificationCandidate, NotificationsQuery, list_poll_notifications_for_account,
+    notification_time_window, notification_type_allowed,
 };
-use crate::identity::actor_url;
-use crate::notifications::{
-    NotificationEntry, notification_account_matches_filter, notification_type_allowed,
-};
-use crate::responses::MastodonAccountResponse;
-use crate::statuses::{can_view_local_status, find_statuses_by_ids};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, LocalStatus};
-use std::collections::HashMap;
+use cfwdon_domain::LocalAccount;
 use worker::Result;
-pub(crate) async fn collect_poll_notification_entries(
-    entries: &mut Vec<NotificationEntry>,
+
+pub(crate) async fn collect_poll_notification_candidates(
+    candidates: &mut Vec<NotificationCandidate>,
     db: &D1Database,
-    config: &AppConfig,
+    _config: &AppConfig,
     viewer: &LocalAccount,
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<()> {
-    let window = notification_time_window(query);
     if !notification_type_allowed(query, "poll") {
         return Ok(());
     }
-
+    let window = notification_time_window(query);
     let polls =
         list_poll_notifications_for_account(db, viewer.id(), per_type_limit, &window).await?;
-    let status_ids = polls
-        .iter()
-        .map(|poll| poll.status_id.clone())
-        .collect::<Vec<_>>();
-    let statuses_by_id = find_statuses_by_ids(db, &status_ids)
-        .await?
-        .into_iter()
-        .map(|status| (status.id.clone(), status))
-        .collect::<HashMap<String, LocalStatus>>();
-    let local_statuses = statuses_by_id.values().cloned().collect::<Vec<_>>();
-    let local_actor_ids = polls
-        .iter()
-        .map(|poll| poll.account_id.clone())
-        .collect::<Vec<_>>();
-    let preloads = preload_notification_statuses(
-        db,
-        config,
-        viewer,
-        &local_statuses,
-        &[],
-        &local_actor_ids,
-        &[],
-    )
-    .await?;
-    let preloads_ref = &preloads;
-
-    let mut candidates = Vec::new();
-    for poll in polls {
-        let Some(status) = statuses_by_id.get(&poll.status_id).cloned() else {
-            continue;
-        };
-        let Some(actor) = preloads.local_accounts_by_id.get(&poll.account_id) else {
-            continue;
-        };
-        if preloads.is_notification_muted(&actor_url(config, actor.username()))
-            || !notification_account_matches_filter(query.account_id.as_deref(), actor.id(), None)
-            || !can_view_local_status(db, &status, Some(viewer), actor).await?
-        {
-            continue;
-        }
-        candidates.push((poll.poll_id, poll.expires_at, status, actor.clone()));
-    }
-
-    let notification_entries = futures_util::future::try_join_all(candidates.into_iter().map(
-        |(poll_id, expires_at, status, actor)| async move {
-            let status_response = preloads_ref
-                .build_local_status_response(
-                    db,
-                    config,
-                    viewer,
-                    &status,
-                    &actor,
-                    preloads_ref.local_media(&status.id),
-                )
-                .await?;
-            let id = format!("poll-local-{}", poll_id);
-            Ok::<NotificationEntry, worker::Error>(build_status_notification_entry(
-                id,
-                "poll",
-                expires_at,
-                MastodonAccountResponse::from_account(&actor, config),
-                status_response,
-            ))
-        },
-    ))
-    .await?;
-    entries.extend(notification_entries);
-
+    candidates.extend(polls.into_iter().map(|poll| {
+        NotificationCandidate::authored_local_status_event(
+            "poll",
+            format!("poll-local-{}", poll.poll_id),
+            poll.account_id,
+            poll.status_id,
+            &poll.expires_at,
+        )
+    }));
     Ok(())
 }

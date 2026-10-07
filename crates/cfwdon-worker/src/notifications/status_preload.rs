@@ -3,7 +3,6 @@ use crate::custom_emojis::{
     RemoteStatusFederatedEmojisPreload, config_with_resolved_custom_emojis,
     preload_remote_status_federated_emojis,
 };
-use crate::db_utils::d1_results;
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::identity::actor_url;
 use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
@@ -32,12 +31,10 @@ use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
-use worker::{Result, d1::D1Type};
+use worker::Result;
 
 pub(crate) struct NotificationStatusPreloads {
-    pub(crate) local_accounts_by_id: HashMap<String, LocalAccount>,
     pub(crate) local_media_by_status_id: HashMap<String, Vec<MediaAttachmentRow>>,
-    pub(crate) remote_actors_by_uri: HashMap<String, RemoteActorRow>,
     pub(crate) remote_attachments_by_status_id: HashMap<String, Vec<RemoteStatusAttachmentRow>>,
     pub(crate) in_reply_to_account_ids: HashMap<String, String>,
     pub(crate) resolved_config: AppConfig,
@@ -52,15 +49,10 @@ pub(crate) struct NotificationStatusPreloads {
     pub(crate) applications: StatusApplicationPreload,
     pub(crate) mentions: MentionAccountsPreload,
     pub(crate) boost_targets: BoostTargetPreload,
-    pub(crate) muted_notification_actor_uris: HashSet<String>,
     pub(crate) filter_matcher: AccountFilterMatcher,
 }
 
 impl NotificationStatusPreloads {
-    pub(crate) fn is_notification_muted(&self, actor_uri: &str) -> bool {
-        self.muted_notification_actor_uris.contains(actor_uri)
-    }
-
     pub(crate) fn local_media(&self, status_id: &str) -> Vec<MediaAttachmentRow> {
         self.local_media_by_status_id
             .get(status_id)
@@ -149,9 +141,7 @@ struct NotificationPreloadPlan {
 
 fn empty_notification_status_preloads(config: &AppConfig) -> NotificationStatusPreloads {
     NotificationStatusPreloads {
-        local_accounts_by_id: HashMap::new(),
         local_media_by_status_id: HashMap::new(),
-        remote_actors_by_uri: HashMap::new(),
         remote_attachments_by_status_id: HashMap::new(),
         in_reply_to_account_ids: HashMap::new(),
         resolved_config: config.clone(),
@@ -166,7 +156,6 @@ fn empty_notification_status_preloads(config: &AppConfig) -> NotificationStatusP
         applications: StatusApplicationPreload::default(),
         mentions: MentionAccountsPreload::default(),
         boost_targets: BoostTargetPreload::default(),
-        muted_notification_actor_uris: HashSet::new(),
         filter_matcher: AccountFilterMatcher::default(),
     }
 }
@@ -174,8 +163,6 @@ fn empty_notification_status_preloads(config: &AppConfig) -> NotificationStatusP
 fn plan_notification_status_preloads(
     local_statuses: &[LocalStatus],
     remote_statuses: &[RemoteStatus],
-    additional_local_account_ids: &[String],
-    additional_remote_actor_uris: &[String],
 ) -> NotificationPreloadPlan {
     let local_status_ids = local_statuses
         .iter()
@@ -186,16 +173,14 @@ fn plan_notification_status_preloads(
         .map(|status| status.id.clone())
         .collect::<Vec<_>>();
 
-    let mut local_account_ids = local_statuses
+    let local_account_ids = local_statuses
         .iter()
         .map(|status| status.account_id.clone())
         .collect::<Vec<_>>();
-    local_account_ids.extend(additional_local_account_ids.iter().cloned());
-    let mut remote_actor_uris = remote_statuses
+    let remote_actor_uris = remote_statuses
         .iter()
         .map(|status| status.actor_uri.clone())
         .collect::<Vec<_>>();
-    remote_actor_uris.extend(additional_remote_actor_uris.iter().cloned());
 
     let mut mention_texts = local_statuses
         .iter()
@@ -337,59 +322,18 @@ fn collect_notification_quote_uris(
     quote_uris
 }
 
-fn collect_notification_actor_uris(
-    config: &AppConfig,
-    local_statuses: &[LocalStatus],
-    additional_local_account_ids: &[String],
-    remote_statuses: &[RemoteStatus],
-    additional_remote_actor_uris: &[String],
-    local_accounts_by_id: &HashMap<String, LocalAccount>,
-) -> Vec<String> {
-    let mut notification_actor_uris = Vec::new();
-    let mut seen_notification_actor_uris = HashSet::new();
-    for account_id in local_statuses
-        .iter()
-        .map(|status| status.account_id.as_str())
-        .chain(additional_local_account_ids.iter().map(String::as_str))
-    {
-        if let Some(account) = local_accounts_by_id.get(account_id) {
-            let uri = actor_url(config, account.username());
-            if seen_notification_actor_uris.insert(uri.clone()) {
-                notification_actor_uris.push(uri);
-            }
-        }
-    }
-    for actor_uri in remote_statuses
-        .iter()
-        .map(|status| status.actor_uri.as_str())
-        .chain(additional_remote_actor_uris.iter().map(String::as_str))
-    {
-        if seen_notification_actor_uris.insert(actor_uri.to_owned()) {
-            notification_actor_uris.push(actor_uri.to_owned());
-        }
-    }
-    notification_actor_uris
-}
-
 pub(crate) async fn preload_notification_statuses(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
     local_statuses: &[LocalStatus],
     remote_statuses: &[RemoteStatus],
-    additional_local_account_ids: &[String],
-    additional_remote_actor_uris: &[String],
 ) -> Result<NotificationStatusPreloads> {
     if local_statuses.is_empty() && remote_statuses.is_empty() {
         return Ok(empty_notification_status_preloads(config));
     }
 
-    let plan = plan_notification_status_preloads(
-        local_statuses,
-        remote_statuses,
-        additional_local_account_ids,
-        additional_remote_actor_uris,
-    );
+    let plan = plan_notification_status_preloads(local_statuses, remote_statuses);
     let entity_preloads = load_notification_entity_preloads(
         db,
         config,
@@ -415,26 +359,16 @@ pub(crate) async fn preload_notification_statuses(
         remote_statuses,
         &entity_preloads.local_accounts_by_id,
     );
-    let notification_actor_uris = collect_notification_actor_uris(
-        config,
-        local_statuses,
-        additional_local_account_ids,
-        remote_statuses,
-        additional_remote_actor_uris,
-        &entity_preloads.local_accounts_by_id,
-    );
 
     let (
         quote_counts,
         remote_viewer_state,
-        muted_notification_actor_uris,
         filter_matcher,
         stored_local_mentions,
         stored_remote_mentions,
     ) = futures_util::try_join!(
         preload_status_quote_counts(db, &quote_uris),
         preload_remote_status_viewer_state(db, viewer.id(), &remote_status_refs),
-        preload_notification_mutes(db, viewer.id(), &notification_actor_uris),
         load_account_filter_matcher(db, viewer.id()),
         preload_stored_status_mentions(db, StoredMentionsTable::Local, &plan.local_status_ids),
         preload_stored_status_mentions(db, StoredMentionsTable::Remote, &plan.remote_status_ids),
@@ -443,9 +377,7 @@ pub(crate) async fn preload_notification_statuses(
     mentions.add_stored_mentions(stored_local_mentions, stored_remote_mentions);
 
     Ok(NotificationStatusPreloads {
-        local_accounts_by_id: entity_preloads.local_accounts_by_id,
         local_media_by_status_id: entity_preloads.local_media_by_status_id,
-        remote_actors_by_uri: entity_preloads.remote_actors_by_uri,
         remote_attachments_by_status_id: entity_preloads.remote_attachments_by_status_id,
         in_reply_to_account_ids: entity_preloads.in_reply_to_account_ids,
         resolved_config: entity_preloads.resolved_config,
@@ -460,7 +392,6 @@ pub(crate) async fn preload_notification_statuses(
         applications: entity_preloads.applications,
         mentions,
         boost_targets: entity_preloads.boost_targets,
-        muted_notification_actor_uris,
         filter_matcher,
     })
 }
@@ -477,52 +408,6 @@ fn local_status_quote_count_uri(
             status.id
         )
     })
-}
-
-pub(crate) async fn preload_notification_mutes(
-    db: &D1Database,
-    account_id: &str,
-    actor_uris: &[String],
-) -> Result<HashSet<String>> {
-    let mut seen = HashSet::new();
-    let actor_uris = actor_uris
-        .iter()
-        .filter(|uri| seen.insert(uri.as_str()))
-        .collect::<Vec<_>>();
-    if actor_uris.is_empty() {
-        return Ok(HashSet::new());
-    }
-
-    let placeholders = (2..=(actor_uris.len() + 1))
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut bindings = Vec::with_capacity(actor_uris.len() + 1);
-    bindings.push(D1Type::Text(account_id));
-    bindings.extend(actor_uris.iter().map(|uri| D1Type::Text(uri.as_str())));
-
-    #[derive(Debug, serde::Deserialize)]
-    struct NotificationMuteActorRow {
-        target_actor_uri: String,
-    }
-
-    let select_sql = format!(
-        "SELECT target_actor_uri
-         FROM mutes
-         WHERE account_id = ?1
-           AND notifications != 0
-           AND target_actor_uri IN ({placeholders})
-           AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
-    );
-    let result = db
-        .prepare(&select_sql)
-        .bind_refs(bindings.iter())?
-        .all()
-        .await?;
-    Ok(d1_results::<NotificationMuteActorRow>(&result)?
-        .into_iter()
-        .map(|row| row.target_actor_uri)
-        .collect())
 }
 
 #[cfg(test)]
@@ -567,9 +452,7 @@ mod tests {
 
     fn empty_preloads() -> NotificationStatusPreloads {
         NotificationStatusPreloads {
-            local_accounts_by_id: HashMap::new(),
             local_media_by_status_id: HashMap::new(),
-            remote_actors_by_uri: HashMap::new(),
             remote_attachments_by_status_id: HashMap::new(),
             in_reply_to_account_ids: HashMap::new(),
             resolved_config: test_config(),
@@ -584,7 +467,6 @@ mod tests {
             applications: StatusApplicationPreload::default(),
             mentions: MentionAccountsPreload::default(),
             boost_targets: BoostTargetPreload::default(),
-            muted_notification_actor_uris: HashSet::new(),
             filter_matcher: AccountFilterMatcher::default(),
         }
     }
@@ -616,10 +498,9 @@ mod tests {
     }
 
     #[test]
-    fn notification_preloads_default_mute_and_media_accessors() {
+    fn notification_preloads_default_media_accessors() {
         let preloads = empty_preloads();
 
-        assert!(!preloads.is_notification_muted("https://remote.example/users/bob"));
         assert!(preloads.local_media("status-1").is_empty());
         assert!(preloads.remote_media("status-1").is_empty());
     }
@@ -627,9 +508,6 @@ mod tests {
     #[test]
     fn notification_preloads_accessors_return_stored_values() {
         let mut preloads = empty_preloads();
-        preloads
-            .muted_notification_actor_uris
-            .insert("https://remote.example/users/bob".to_owned());
         preloads.local_media_by_status_id.insert(
             "status-1".to_owned(),
             vec![MediaAttachmentRow {
@@ -647,8 +525,6 @@ mod tests {
             }],
         );
 
-        assert!(preloads.is_notification_muted("https://remote.example/users/bob"));
-        assert!(!preloads.is_notification_muted("https://remote.example/users/carol"));
         assert_eq!(preloads.local_media("status-1").len(), 1);
         assert_eq!(preloads.local_media("status-1")[0].id, "media-1");
         assert!(preloads.local_media("status-2").is_empty());

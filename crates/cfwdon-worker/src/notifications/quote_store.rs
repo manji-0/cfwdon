@@ -7,26 +7,10 @@ use cfwdon_domain::{LocalStatus, LocalStatusRecord, RemoteStatus, RemoteStatusRe
 use serde::Deserialize;
 use worker::Result;
 use worker::d1::D1Type;
+/// One of the viewer's statuses whose quoted remote status was edited.
 #[derive(Debug, Deserialize)]
 pub(crate) struct QuotedUpdateNotificationRow {
     pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) ap_id: Option<String>,
-    pub(crate) in_reply_to_id: Option<String>,
-    #[serde(default)]
-    pub(crate) in_reply_to_account_id: Option<String>,
-    pub(crate) boost_of_uri: Option<String>,
-    pub(crate) quote_of_uri: Option<String>,
-    pub(crate) content_html: String,
-    #[serde(rename = "text_content")]
-    pub(crate) text_content: String,
-    pub(crate) spoiler_text: String,
-    pub(crate) visibility: String,
-    pub(crate) sensitive: i32,
-    pub(crate) language: Option<String>,
-    #[serde(default = "crate::statuses::default_quote_state")]
-    pub(crate) quote_state: String,
-    pub(crate) created_at: String,
     pub(crate) remote_actor_uri: String,
     pub(crate) remote_updated_at: String,
 }
@@ -99,8 +83,7 @@ pub(crate) async fn list_quoted_update_notifications_for_account(
     bindings.extend(bounds.bindings());
     let result = db
         .prepare(format!(
-            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at,
-                    rs.actor_uri AS remote_actor_uri, rs.edited_at AS remote_updated_at
+            "SELECT s.id, rs.actor_uri AS remote_actor_uri, rs.edited_at AS remote_updated_at
              FROM statuses s
              JOIN remote_statuses rs
                ON rs.object_uri = s.quote_of_uri

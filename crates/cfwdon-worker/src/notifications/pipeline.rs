@@ -55,6 +55,8 @@ pub(crate) enum NotificationCandidateSource {
     Account,
     /// A status a local account wrote: a mention, a subscribed post, a quote.
     AuthoredLocalStatus(Box<LocalStatus>),
+    /// A local account's status loaded by id: an ended poll.
+    AuthoredLocalStatusById { status_id: String },
     /// A status a remote actor wrote.
     AuthoredRemoteStatus(Box<RemoteStatus>),
 }
@@ -149,6 +151,60 @@ impl NotificationCandidate {
             status_id: Some(status.id.clone()),
             actor: Some(actor),
             source: NotificationCandidateSource::AuthoredRemoteStatus(Box::new(status)),
+        }
+    }
+
+    /// An event on one of the viewer's statuses under a caller-built key,
+    /// such as a quoted post's edit.
+    pub(crate) fn viewer_status_event(
+        notification_type: &str,
+        id: String,
+        actor: NotificationActorRef,
+        status_id: String,
+        created_at: &str,
+    ) -> Self {
+        Self {
+            id,
+            created_at: timestamp_to_mastodon_iso8601(created_at),
+            notification_type: notification_type.to_owned(),
+            status_id: Some(status_id.clone()),
+            actor: Some(actor),
+            source: NotificationCandidateSource::ViewerStatusInteraction { status_id },
+        }
+    }
+
+    /// An event on a remote status under a caller-built key, such as an edit.
+    pub(crate) fn authored_remote_status_event(
+        notification_type: &str,
+        id: String,
+        created_at: &str,
+        status: RemoteStatus,
+    ) -> Self {
+        Self {
+            id,
+            created_at: timestamp_to_mastodon_iso8601(created_at),
+            notification_type: notification_type.to_owned(),
+            status_id: Some(status.id.clone()),
+            actor: Some(NotificationActorRef::Remote(status.actor_uri.clone())),
+            source: NotificationCandidateSource::AuthoredRemoteStatus(Box::new(status)),
+        }
+    }
+
+    /// An event on a local account's status, loaded by id when rendered.
+    pub(crate) fn authored_local_status_event(
+        notification_type: &str,
+        id: String,
+        author_account_id: String,
+        status_id: String,
+        created_at: &str,
+    ) -> Self {
+        Self {
+            id,
+            created_at: timestamp_to_mastodon_iso8601(created_at),
+            notification_type: notification_type.to_owned(),
+            status_id: Some(status_id.clone()),
+            actor: Some(NotificationActorRef::Local(author_account_id)),
+            source: NotificationCandidateSource::AuthoredLocalStatusById { status_id },
         }
     }
 
@@ -329,16 +385,17 @@ pub(crate) async fn hydrate_notification_candidates(
             .collect());
     }
 
-    let mut viewer_status_ids = Vec::new();
+    let mut status_ids_to_load = Vec::new();
     let mut seen_status_ids = HashSet::new();
     let mut authored_local_statuses = Vec::new();
     let mut authored_remote_statuses = Vec::new();
     for candidate in &candidates {
         match &candidate.source {
             NotificationCandidateSource::ViewerStatusInteraction { status_id }
+            | NotificationCandidateSource::AuthoredLocalStatusById { status_id }
                 if seen_status_ids.insert(status_id.as_str()) =>
             {
-                viewer_status_ids.push(status_id.clone());
+                status_ids_to_load.push(status_id.clone());
             }
             NotificationCandidateSource::AuthoredLocalStatus(status) => {
                 authored_local_statuses.push(status.as_ref().clone());
@@ -351,13 +408,13 @@ pub(crate) async fn hydrate_notification_candidates(
     }
     let local_account_ids = unique_local_actor_ids(candidates.iter());
     let remote_actor_uris = unique_remote_actor_uris(candidates.iter());
-    let (viewer_statuses, accounts_by_id, actors_by_uri) = futures_util::try_join!(
-        find_statuses_by_ids(db, &viewer_status_ids),
+    let (loaded_statuses, accounts_by_id, actors_by_uri) = futures_util::try_join!(
+        find_statuses_by_ids(db, &status_ids_to_load),
         find_accounts_by_ids(db, &local_account_ids),
         find_remote_actors_by_actor_uris(db, &remote_actor_uris),
     )?;
-    let mut local_statuses = viewer_statuses;
-    let viewer_statuses_by_id = local_statuses
+    let mut local_statuses = loaded_statuses;
+    let loaded_statuses_by_id = local_statuses
         .iter()
         .map(|status| (status.id.clone(), status.clone()))
         .collect::<HashMap<_, _>>();
@@ -368,8 +425,6 @@ pub(crate) async fn hydrate_notification_candidates(
         viewer,
         &local_statuses,
         &authored_remote_statuses,
-        &[],
-        &[],
     )
     .await?;
     let context = HydrationContext {
@@ -378,7 +433,7 @@ pub(crate) async fn hydrate_notification_candidates(
         viewer,
         accounts_by_id: &accounts_by_id,
         actors_by_uri: &actors_by_uri,
-        viewer_statuses_by_id: &viewer_statuses_by_id,
+        loaded_statuses_by_id: &loaded_statuses_by_id,
         preloads: &preloads,
     };
 
@@ -397,7 +452,7 @@ struct HydrationContext<'a> {
     viewer: &'a LocalAccount,
     accounts_by_id: &'a HashMap<String, LocalAccount>,
     actors_by_uri: &'a HashMap<String, RemoteActorRow>,
-    viewer_statuses_by_id: &'a HashMap<String, cfwdon_domain::LocalStatus>,
+    loaded_statuses_by_id: &'a HashMap<String, LocalStatus>,
     preloads: &'a super::status_preload::NotificationStatusPreloads,
 }
 
@@ -418,6 +473,43 @@ impl HydrationContext<'_> {
         }
     }
 
+    async fn render_authored_local_status(
+        &self,
+        id: String,
+        notification_type: &str,
+        created_at: String,
+        actor: Option<&NotificationActorRef>,
+        status: &LocalStatus,
+    ) -> Result<Option<NotificationEntry>> {
+        let Some(NotificationActorRef::Local(account_id)) = actor else {
+            return Ok(None);
+        };
+        let Some(author) = self.accounts_by_id.get(account_id) else {
+            return Ok(None);
+        };
+        if !can_view_local_status(self.db, status, Some(self.viewer), author).await? {
+            return Ok(None);
+        }
+        let status_response = self
+            .preloads
+            .build_local_status_response(
+                self.db,
+                self.config,
+                self.viewer,
+                status,
+                author,
+                self.preloads.local_media(&status.id),
+            )
+            .await?;
+        Ok(Some(build_status_notification_entry(
+            id,
+            notification_type,
+            created_at,
+            MastodonAccountResponse::from_account(author, self.config),
+            status_response,
+        )))
+    }
+
     async fn render(&self, candidate: NotificationCandidate) -> Result<Option<NotificationEntry>> {
         let NotificationCandidate {
             id,
@@ -432,7 +524,7 @@ impl HydrationContext<'_> {
             NotificationCandidateSource::ViewerStatusInteraction { status_id } => {
                 let (Some(account), Some(status)) = (
                     self.actor_account(actor.as_ref()),
-                    self.viewer_statuses_by_id.get(&status_id),
+                    self.loaded_statuses_by_id.get(&status_id),
                 ) else {
                     return Ok(None);
                 };
@@ -456,33 +548,27 @@ impl HydrationContext<'_> {
                 )))
             }
             NotificationCandidateSource::AuthoredLocalStatus(status) => {
-                let Some(NotificationActorRef::Local(account_id)) = actor.as_ref() else {
-                    return Ok(None);
-                };
-                let Some(author) = self.accounts_by_id.get(account_id) else {
-                    return Ok(None);
-                };
-                if !can_view_local_status(self.db, &status, Some(self.viewer), author).await? {
-                    return Ok(None);
-                }
-                let status_response = self
-                    .preloads
-                    .build_local_status_response(
-                        self.db,
-                        self.config,
-                        self.viewer,
-                        &status,
-                        author,
-                        self.preloads.local_media(&status.id),
-                    )
-                    .await?;
-                Ok(Some(build_status_notification_entry(
+                self.render_authored_local_status(
                     id,
                     &notification_type,
                     created_at,
-                    MastodonAccountResponse::from_account(author, self.config),
-                    status_response,
-                )))
+                    actor.as_ref(),
+                    &status,
+                )
+                .await
+            }
+            NotificationCandidateSource::AuthoredLocalStatusById { status_id } => {
+                let Some(status) = self.loaded_statuses_by_id.get(&status_id) else {
+                    return Ok(None);
+                };
+                self.render_authored_local_status(
+                    id,
+                    &notification_type,
+                    created_at,
+                    actor.as_ref(),
+                    status,
+                )
+                .await
             }
             NotificationCandidateSource::AuthoredRemoteStatus(status) => {
                 let Some(author) = self.actors_by_uri.get(&status.actor_uri) else {
