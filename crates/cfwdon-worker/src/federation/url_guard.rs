@@ -60,9 +60,8 @@ fn doh_cache_key(host: &str) -> String {
 fn l1_get(host: &str) -> Option<bool> {
     let now_ms = js_sys::Date::now();
     REMOTE_DNS_HOST_L1.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.retain(|_, (_, expires_at_ms)| *expires_at_ms > now_ms);
         cache
+            .borrow()
             .get(host)
             .filter(|(_, expires_at_ms)| *expires_at_ms > now_ms)
             .map(|(allowed, _)| *allowed)
@@ -70,11 +69,12 @@ fn l1_get(host: &str) -> Option<bool> {
 }
 
 fn l1_put(host: &str, allowed: bool) {
-    let expires_at_ms = js_sys::Date::now() + DOH_L1_TTL_MS;
+    let now_ms = js_sys::Date::now();
     REMOTE_DNS_HOST_L1.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(host.to_ascii_lowercase(), (allowed, expires_at_ms));
+        let mut cache = cache.borrow_mut();
+        // Expired entries are dropped on writes, not on every lookup.
+        cache.retain(|_, (_, expires_at_ms)| *expires_at_ms > now_ms);
+        cache.insert(host.to_ascii_lowercase(), (allowed, now_ms + DOH_L1_TTL_MS));
     });
 }
 

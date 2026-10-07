@@ -80,10 +80,16 @@ pub(crate) async fn load_remote_actor_social_counts_from_document_with_context(
     document: &serde_json::Value,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
 ) -> Result<RemoteActorSocialCounts> {
+    // Each count may fetch a collection page from the origin; fetch them together.
+    let (followers_count, following_count, statuses_count) = futures_util::join!(
+        remote_actor_collection_count(document, "followers", fetch_context),
+        remote_actor_collection_count(document, "following", fetch_context),
+        remote_actor_collection_count(document, "outbox", fetch_context),
+    );
     Ok(RemoteActorSocialCounts {
-        followers_count: remote_actor_collection_count(document, "followers", fetch_context).await,
-        following_count: remote_actor_collection_count(document, "following", fetch_context).await,
-        statuses_count: remote_actor_collection_count(document, "outbox", fetch_context).await,
+        followers_count,
+        following_count,
+        statuses_count,
     })
 }
 

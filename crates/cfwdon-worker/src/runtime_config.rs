@@ -1,6 +1,7 @@
 use crate::identity::{normalize_configured_instance_domain, parse_csv_list};
 use crate::policy_documents::policy_html_from_sources;
 use cfwdon_core::{AppConfig, BuildMetadata, TimelineAccessLevel, parse_custom_emojis_json};
+use std::cell::RefCell;
 use worker::{Env, RouteContext};
 
 #[derive(Debug, serde::Serialize)]
@@ -210,16 +211,34 @@ fn root_endpoint_list() -> Vec<&'static str> {
     ROOT_ENDPOINTS.to_vec()
 }
 
+thread_local! {
+    /// Vars and secrets are fixed for an isolate's lifetime (a deploy or a
+    /// secret change starts new isolates), so the config is read from the
+    /// environment once instead of about 33 lookups per call.
+    static ISOLATE_APP_CONFIG: RefCell<Option<AppConfig>> = const { RefCell::new(None) };
+}
+
+fn isolate_app_config(build: impl FnOnce() -> AppConfig) -> AppConfig {
+    if let Some(config) = ISOLATE_APP_CONFIG.with(|slot| slot.borrow().clone()) {
+        return config;
+    }
+    let config = build();
+    ISOLATE_APP_CONFIG.with(|slot| *slot.borrow_mut() = Some(config.clone()));
+    config
+}
+
 pub(crate) fn load_config<D>(ctx: &RouteContext<D>) -> AppConfig {
-    config_from_vars(|key| optional_var(ctx, key))
+    isolate_app_config(|| config_from_vars(|key| optional_var(ctx, key)))
 }
 
 pub(crate) fn load_config_from_env(env: &Env) -> AppConfig {
-    config_from_vars(|key| {
-        env.var(key)
-            .ok()
-            .map(|value| value.to_string())
-            .or_else(|| env.secret(key).ok().map(|value| value.to_string()))
+    isolate_app_config(|| {
+        config_from_vars(|key| {
+            env.var(key)
+                .ok()
+                .map(|value| value.to_string())
+                .or_else(|| env.secret(key).ok().map(|value| value.to_string()))
+        })
     })
 }
 
