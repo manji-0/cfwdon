@@ -412,53 +412,51 @@ async fn publish_remote_follower_home_create_events_soft(
         );
     }
 
-    let event_id = Some(remote_status.id.as_str());
-    for follower_id in fanout.account_ids {
-        let recipient = match find_account_by_id(db, &follower_id).await {
-            Ok(Some(recipient)) => recipient,
-            Ok(None) => continue,
-            Err(error) => {
-                console_error!(
-                    "failed to load follower {follower_id} for remote status stream fan-out: {error}"
-                );
-                continue;
-            }
-        };
-        let response = match build_remote_status_response(
-            db,
-            config,
-            Some(&recipient),
-            remote_status,
-            actor_row,
-        )
-        .await
-        {
+    let Some(payload) =
+        viewer_agnostic_remote_status_stream_payload(db, config, remote_status, actor_row).await
+    else {
+        return;
+    };
+    publish_user_stream_events_concurrently(
+        env,
+        binding,
+        &fanout.account_ids,
+        "update",
+        &payload,
+        Some(remote_status.id.as_str()),
+    )
+    .await;
+}
+
+/// One payload for every follower, as for local statuses: viewer-dependent
+/// fields stay unset so no account's state (filters, favourites, bookmarks)
+/// reaches another, and the status is rendered once instead of per follower.
+async fn viewer_agnostic_remote_status_stream_payload(
+    db: &D1Database,
+    config: &AppConfig,
+    remote_status: &RemoteStatus,
+    actor_row: &RemoteActorRow,
+) -> Option<String> {
+    let response =
+        match build_remote_status_response(db, config, None, remote_status, actor_row).await {
             Ok(response) => response,
             Err(error) => {
                 console_error!(
-                    "failed to build remote status stream payload for follower {follower_id}: {error}"
+                    "failed to build remote status stream payload for status {}: {error}",
+                    remote_status.id
                 );
-                continue;
+                return None;
             }
         };
-        let payload = match serde_json::to_string(&response) {
-            Ok(payload) => payload,
-            Err(error) => {
-                console_error!(
-                    "failed to serialize remote status stream payload for follower {follower_id}: {error}"
-                );
-                continue;
-            }
-        };
-        publish_user_stream_hub_event_soft(
-            env,
-            binding,
-            &follower_id,
-            "update",
-            &payload,
-            event_id,
-        )
-        .await;
+    match serde_json::to_string(&response) {
+        Ok(payload) => Some(payload),
+        Err(error) => {
+            console_error!(
+                "failed to serialize remote status stream payload for status {}: {error}",
+                remote_status.id
+            );
+            None
+        }
     }
 }
 
@@ -797,53 +795,20 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
         );
     }
 
-    for follower_id in fanout.account_ids {
-        let recipient = match find_account_by_id(db, &follower_id).await {
-            Ok(Some(recipient)) => recipient,
-            Ok(None) => continue,
-            Err(error) => {
-                console_error!(
-                    "failed to load follower {follower_id} for remote status stream fan-out: {error}"
-                );
-                continue;
-            }
-        };
-        let response = match build_remote_status_response(
-            db,
-            config,
-            Some(&recipient),
-            remote_status,
-            &actor_row,
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                console_error!(
-                    "failed to build remote status stream payload for follower {follower_id}: {error}"
-                );
-                continue;
-            }
-        };
-        let payload = match serde_json::to_string(&response) {
-            Ok(payload) => payload,
-            Err(error) => {
-                console_error!(
-                    "failed to serialize remote status stream payload for follower {follower_id}: {error}"
-                );
-                continue;
-            }
-        };
-        publish_user_stream_hub_event_soft(
-            env,
-            &config.stream_hub_binding,
-            &follower_id,
-            "status.update",
-            &payload,
-            Some(&remote_status.id),
-        )
-        .await;
-    }
+    let Some(payload) =
+        viewer_agnostic_remote_status_stream_payload(db, config, remote_status, &actor_row).await
+    else {
+        return;
+    };
+    publish_user_stream_events_concurrently(
+        env,
+        &config.stream_hub_binding,
+        &fanout.account_ids,
+        "status.update",
+        &payload,
+        Some(&remote_status.id),
+    )
+    .await;
 }
 
 pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
