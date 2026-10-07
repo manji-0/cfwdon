@@ -4,23 +4,55 @@
 //! are rendered, with one shared preload.
 
 use super::{
-    NotificationEntry, NotificationIdentity, NotificationsQuery, collect_notifications,
-    load_dismissed_notification_ids, load_notification_clear_marker, notification_api_numeric_id,
-    notification_entry_matches_cursor_id, notification_group_key_from_parts,
-    notification_timestamp_sort_token,
+    MastodonNotificationResponse, NotificationEntry, NotificationIdentity, NotificationsQuery,
+    build_status_notification_entry, collect_notifications, load_dismissed_notification_ids,
+    load_notification_clear_marker, notification_account_matches_filter,
+    notification_api_numeric_id, notification_entry_matches_cursor_id,
+    notification_group_key_from_parts, notification_timestamp_sort_token,
+    preload_notification_statuses, push_notification_entry,
 };
+use crate::accounts::find_accounts_by_ids;
+use crate::identity::{actor_url, remote_account_rest_id};
+use crate::responses::MastodonAccountResponse;
+use crate::statuses::find_statuses_by_ids;
+use crate::store::relationship::list_notification_muted_actor_uris_for_account;
+use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
+use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use worker::Result;
+
+/// Who caused a notification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NotificationActorRef {
+    /// A local account id.
+    Local(String),
+    /// A remote actor URI.
+    Remote(String),
+}
+
+impl NotificationActorRef {
+    /// The `local-<account id>` / `remote-<account id>` part of internal keys.
+    fn key_part(&self) -> String {
+        match self {
+            Self::Local(account_id) => format!("local-{account_id}"),
+            Self::Remote(actor_uri) => format!("remote-{}", remote_account_rest_id(actor_uri)),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) enum NotificationCandidateSource {
     /// Rendered by its collector already: admin and collection notifications,
     /// which are rare, and kinds not yet split into two phases.
     Ready(NotificationEntry),
+    /// A favourite or reblog of one of the viewer's statuses.
+    ViewerStatusInteraction { status_id: String },
+    /// A follow or follow request.
+    Account,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +65,9 @@ pub(crate) struct NotificationCandidate {
     pub(crate) notification_type: String,
     /// The status a favourite or reblog targets, for group keys.
     pub(crate) status_id: Option<String>,
+    /// Who caused it, for mutes and `account_id`; `None` for ready
+    /// candidates, whose collectors applied both.
+    pub(crate) actor: Option<NotificationActorRef>,
     pub(crate) source: NotificationCandidateSource,
 }
 
@@ -65,7 +100,42 @@ impl NotificationCandidate {
             created_at: entry.created_at.clone(),
             notification_type,
             status_id,
+            actor: None,
             source: NotificationCandidateSource::Ready(entry),
+        }
+    }
+
+    /// `favourite-local-<account>-<status>` and the like.
+    pub(crate) fn viewer_status_interaction(
+        notification_type: &str,
+        actor: NotificationActorRef,
+        status_id: String,
+        created_at: &str,
+    ) -> Self {
+        Self {
+            id: format!("{notification_type}-{}-{status_id}", actor.key_part()),
+            created_at: timestamp_to_mastodon_iso8601(created_at),
+            notification_type: notification_type.to_owned(),
+            status_id: Some(status_id.clone()),
+            actor: Some(actor),
+            source: NotificationCandidateSource::ViewerStatusInteraction { status_id },
+        }
+    }
+
+    /// `follow-local-<account>`, `follow-request-remote-<account>` and the like.
+    pub(crate) fn account(
+        notification_type: &str,
+        id_prefix: &str,
+        actor: NotificationActorRef,
+        created_at: &str,
+    ) -> Self {
+        Self {
+            id: format!("{id_prefix}-{}", actor.key_part()),
+            created_at: timestamp_to_mastodon_iso8601(created_at),
+            notification_type: notification_type.to_owned(),
+            status_id: None,
+            actor: Some(actor),
+            source: NotificationCandidateSource::Account,
         }
     }
 
@@ -89,18 +159,82 @@ pub(crate) async fn collect_notification_candidates(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<Vec<NotificationCandidate>> {
-    let (entries, dismissed_ids, cleared_at) = futures_util::try_join!(
+    let (mut candidates, dismissed_ids, cleared_at) = futures_util::try_join!(
         collect_notifications(db, config, viewer, query, per_type_limit),
         load_dismissed_notification_ids(db, viewer.id()),
         load_notification_clear_marker(db, viewer.id()),
     )?;
-    let mut candidates = entries
-        .into_iter()
-        .map(NotificationCandidate::ready)
-        .collect::<Vec<_>>();
     retain_undismissed_candidates(&mut candidates, &dismissed_ids, cleared_at.as_deref());
+    retain_candidates_from_unmuted_actors(db, config, viewer, query, &mut candidates).await?;
     sort_candidates_newest_first(&mut candidates);
     Ok(candidates)
+}
+
+/// Drops candidates from actors the viewer muted notifications from, from
+/// local accounts that no longer exist, and from anyone but `account_id`.
+async fn retain_candidates_from_unmuted_actors(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    query: &NotificationsQuery,
+    candidates: &mut Vec<NotificationCandidate>,
+) -> Result<()> {
+    if candidates.iter().all(|candidate| candidate.actor.is_none()) {
+        return Ok(());
+    }
+    let local_account_ids = unique_local_actor_ids(candidates.iter());
+    let (accounts_by_id, muted_actor_uris) = futures_util::try_join!(
+        find_accounts_by_ids(db, &local_account_ids),
+        list_notification_muted_actor_uris_for_account(db, viewer.id()),
+    )?;
+    candidates.retain(|candidate| match &candidate.actor {
+        None => true,
+        Some(NotificationActorRef::Local(account_id)) => {
+            accounts_by_id.get(account_id).is_some_and(|account| {
+                !muted_actor_uris.contains(&actor_url(config, account.username()))
+                    && notification_account_matches_filter(
+                        query.account_id.as_deref(),
+                        account.id(),
+                        None,
+                    )
+            })
+        }
+        Some(NotificationActorRef::Remote(actor_uri)) => {
+            !muted_actor_uris.contains(actor_uri)
+                && notification_account_matches_filter(
+                    query.account_id.as_deref(),
+                    &remote_account_rest_id(actor_uri),
+                    Some(actor_uri),
+                )
+        }
+    });
+    Ok(())
+}
+
+fn unique_local_actor_ids<'a>(
+    candidates: impl Iterator<Item = &'a NotificationCandidate>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    candidates
+        .filter_map(|candidate| match &candidate.actor {
+            Some(NotificationActorRef::Local(account_id)) => Some(account_id.clone()),
+            _ => None,
+        })
+        .filter(|account_id| seen.insert(account_id.clone()))
+        .collect()
+}
+
+fn unique_remote_actor_uris<'a>(
+    candidates: impl Iterator<Item = &'a NotificationCandidate>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    candidates
+        .filter_map(|candidate| match &candidate.actor {
+            Some(NotificationActorRef::Remote(actor_uri)) => Some(actor_uri.clone()),
+            _ => None,
+        })
+        .filter(|actor_uri| seen.insert(actor_uri.clone()))
+        .collect()
 }
 
 pub(crate) fn retain_undismissed_candidates<T: NotificationIdentity>(
@@ -147,20 +281,151 @@ pub(crate) fn notification_group_candidates(
         .collect()
 }
 
-/// Phase two: render `candidates` in order. Candidates whose rows have gone
-/// since phase one are dropped.
+/// Phase two: render `candidates` in order with one shared preload.
+/// Candidates whose rows have gone since phase one are dropped.
 pub(crate) async fn hydrate_notification_candidates(
-    _db: &D1Database,
-    _config: &AppConfig,
-    _viewer: &LocalAccount,
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
     candidates: Vec<NotificationCandidate>,
 ) -> Result<Vec<NotificationEntry>> {
-    Ok(candidates
+    if candidates.iter().all(|candidate| candidate.actor.is_none()) {
+        return Ok(candidates
+            .into_iter()
+            .filter_map(|candidate| match candidate.source {
+                NotificationCandidateSource::Ready(entry) => Some(entry),
+                _ => None,
+            })
+            .collect());
+    }
+
+    let mut viewer_status_ids = Vec::new();
+    let mut seen_status_ids = HashSet::new();
+    for candidate in &candidates {
+        if let NotificationCandidateSource::ViewerStatusInteraction { status_id } =
+            &candidate.source
+            && seen_status_ids.insert(status_id.as_str())
+        {
+            viewer_status_ids.push(status_id.clone());
+        }
+    }
+    let local_account_ids = unique_local_actor_ids(candidates.iter());
+    let remote_actor_uris = unique_remote_actor_uris(candidates.iter());
+    let (viewer_statuses, accounts_by_id, actors_by_uri) = futures_util::try_join!(
+        find_statuses_by_ids(db, &viewer_status_ids),
+        find_accounts_by_ids(db, &local_account_ids),
+        find_remote_actors_by_actor_uris(db, &remote_actor_uris),
+    )?;
+    let preloads =
+        preload_notification_statuses(db, config, viewer, &viewer_statuses, &[], &[], &[]).await?;
+    let viewer_statuses_by_id = viewer_statuses
         .into_iter()
-        .map(|candidate| match candidate.source {
-            NotificationCandidateSource::Ready(entry) => entry,
-        })
-        .collect())
+        .map(|status| (status.id.clone(), status))
+        .collect::<HashMap<_, _>>();
+    let context = HydrationContext {
+        db,
+        config,
+        viewer,
+        accounts_by_id: &accounts_by_id,
+        actors_by_uri: &actors_by_uri,
+        viewer_statuses_by_id: &viewer_statuses_by_id,
+        preloads: &preloads,
+    };
+
+    let rendered = futures_util::future::try_join_all(
+        candidates
+            .into_iter()
+            .map(|candidate| context.render(candidate)),
+    )
+    .await?;
+    Ok(rendered.into_iter().flatten().collect())
+}
+
+struct HydrationContext<'a> {
+    db: &'a D1Database,
+    config: &'a AppConfig,
+    viewer: &'a LocalAccount,
+    accounts_by_id: &'a HashMap<String, LocalAccount>,
+    actors_by_uri: &'a HashMap<String, RemoteActorRow>,
+    viewer_statuses_by_id: &'a HashMap<String, cfwdon_domain::LocalStatus>,
+    preloads: &'a super::status_preload::NotificationStatusPreloads,
+}
+
+impl HydrationContext<'_> {
+    fn actor_account(
+        &self,
+        actor: Option<&NotificationActorRef>,
+    ) -> Option<MastodonAccountResponse> {
+        match actor? {
+            NotificationActorRef::Local(account_id) => self
+                .accounts_by_id
+                .get(account_id)
+                .map(|account| MastodonAccountResponse::from_account(account, self.config)),
+            NotificationActorRef::Remote(actor_uri) => self
+                .actors_by_uri
+                .get(actor_uri)
+                .map(MastodonAccountResponse::from_remote_actor),
+        }
+    }
+
+    async fn render(&self, candidate: NotificationCandidate) -> Result<Option<NotificationEntry>> {
+        let NotificationCandidate {
+            id,
+            created_at,
+            notification_type,
+            actor,
+            source,
+            ..
+        } = candidate;
+        match source {
+            NotificationCandidateSource::Ready(entry) => Ok(Some(entry)),
+            NotificationCandidateSource::ViewerStatusInteraction { status_id } => {
+                let (Some(account), Some(status)) = (
+                    self.actor_account(actor.as_ref()),
+                    self.viewer_statuses_by_id.get(&status_id),
+                ) else {
+                    return Ok(None);
+                };
+                let status_response = self
+                    .preloads
+                    .build_local_status_response(
+                        self.db,
+                        self.config,
+                        self.viewer,
+                        status,
+                        self.viewer,
+                        self.preloads.local_media(&status.id),
+                    )
+                    .await?;
+                Ok(Some(build_status_notification_entry(
+                    id,
+                    &notification_type,
+                    created_at,
+                    account,
+                    status_response,
+                )))
+            }
+            NotificationCandidateSource::Account => {
+                let Some(account) = self.actor_account(actor.as_ref()) else {
+                    return Ok(None);
+                };
+                let mut entries = Vec::with_capacity(1);
+                push_notification_entry(
+                    &mut entries,
+                    MastodonNotificationResponse {
+                        group_key: id.clone(),
+                        id,
+                        notification_type,
+                        created_at,
+                        account,
+                        status: None,
+                        report: None,
+                    },
+                );
+                Ok(entries.pop())
+            }
+        }
+    }
 }
 
 /// Render one page from newest-first `candidates`: the newest `limit`, or
@@ -218,7 +483,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        fill_notification_page, retain_undismissed_candidates, sort_candidates_newest_first,
+        NotificationActorRef, NotificationCandidate, fill_notification_page,
+        retain_undismissed_candidates, sort_candidates_newest_first,
     };
     use crate::notifications::{NotificationEntry, notification_api_numeric_id};
     use futures_util::FutureExt;
@@ -248,6 +514,42 @@ mod tests {
 
     fn ids(entries: &[NotificationEntry]) -> Vec<&str> {
         entries.iter().map(|entry| entry.id.as_str()).collect()
+    }
+
+    #[test]
+    fn candidate_keys_match_the_keys_collectors_rendered_before() {
+        // Dismissals are stored under these keys, so they must not change.
+        let remote = "https://remote.example/users/alice";
+        let rest_id = crate::identity::remote_account_rest_id(remote);
+        let favourite = NotificationCandidate::viewer_status_interaction(
+            "favourite",
+            NotificationActorRef::Remote(remote.to_owned()),
+            "s1".to_owned(),
+            "2026-10-07 05:00:00",
+        );
+        assert_eq!(favourite.id, format!("favourite-remote-{rest_id}-s1"));
+        assert_eq!(favourite.created_at, "2026-10-07T05:00:00.000Z");
+        assert_eq!(favourite.status_id.as_deref(), Some("s1"));
+
+        let reblog = NotificationCandidate::viewer_status_interaction(
+            "reblog",
+            NotificationActorRef::Local("a1".to_owned()),
+            "s1".to_owned(),
+            "2026-10-07T05:00:00.000Z",
+        );
+        assert_eq!(reblog.id, "reblog-local-a1-s1");
+
+        let follow_request = NotificationCandidate::account(
+            "follow_request",
+            "follow-request",
+            NotificationActorRef::Remote(remote.to_owned()),
+            "2026-10-07 05:00:00",
+        );
+        assert_eq!(
+            follow_request.id,
+            format!("follow-request-remote-{rest_id}")
+        );
+        assert_eq!(follow_request.notification_type, "follow_request");
     }
 
     #[test]

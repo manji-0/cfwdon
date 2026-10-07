@@ -1,10 +1,10 @@
 use super::{
-    NotificationEntry, NotificationsQuery, collect_admin_report_notifications_entries,
-    collect_admin_sign_up_notifications_entries, collect_favourite_notification_entries,
-    collect_follow_notification_entries, collect_follow_request_notification_entries,
+    NotificationCandidate, NotificationsQuery, collect_admin_report_notifications_entries,
+    collect_admin_sign_up_notifications_entries, collect_favourite_notification_candidates,
+    collect_follow_notification_candidates, collect_follow_request_notification_candidates,
     collect_mention_notification_entries, collect_poll_notification_entries,
     collect_quote_notification_entries, collect_quoted_update_notification_entries,
-    collect_reblog_notification_entries, collect_status_notification_entries,
+    collect_reblog_notification_candidates, collect_status_notification_entries,
     collect_update_notification_entries,
 };
 use crate::collections_alpha::collect_collection_notification_entries;
@@ -12,12 +12,37 @@ use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
+/// A collector that still renders its own entries, wrapped as ready candidates.
 macro_rules! collect_notification_batch {
     ($collector:ident, $db:expr, $config:expr, $viewer:expr, $query:expr, $per_type_limit:expr) => {
         async {
             let mut entries = Vec::new();
             $collector(&mut entries, $db, $config, $viewer, $query, $per_type_limit).await?;
-            Ok::<Vec<NotificationEntry>, worker::Error>(entries)
+            Ok::<Vec<NotificationCandidate>, worker::Error>(
+                entries
+                    .into_iter()
+                    .map(NotificationCandidate::ready)
+                    .collect(),
+            )
+        }
+    };
+}
+
+/// A collector that returns candidates.
+macro_rules! collect_notification_candidate_batch {
+    ($collector:ident, $db:expr, $config:expr, $viewer:expr, $query:expr, $per_type_limit:expr) => {
+        async {
+            let mut candidates = Vec::new();
+            $collector(
+                &mut candidates,
+                $db,
+                $config,
+                $viewer,
+                $query,
+                $per_type_limit,
+            )
+            .await?;
+            Ok::<Vec<NotificationCandidate>, worker::Error>(candidates)
         }
     };
 }
@@ -28,7 +53,7 @@ pub(crate) async fn collect_notifications(
     viewer: &LocalAccount,
     query: &NotificationsQuery,
     per_type_limit: u32,
-) -> Result<Vec<NotificationEntry>> {
+) -> Result<Vec<NotificationCandidate>> {
     let batches = futures_util::try_join!(
         collect_notification_batch!(
             collect_admin_report_notifications_entries,
@@ -46,16 +71,16 @@ pub(crate) async fn collect_notifications(
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_follow_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_follow_notification_candidates,
             db,
             config,
             viewer,
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_follow_request_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_follow_request_notification_candidates,
             db,
             config,
             viewer,
@@ -70,8 +95,8 @@ pub(crate) async fn collect_notifications(
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_favourite_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_favourite_notification_candidates,
             db,
             config,
             viewer,
@@ -126,8 +151,8 @@ pub(crate) async fn collect_notifications(
             query,
             per_type_limit
         ),
-        collect_notification_batch!(
-            collect_reblog_notification_entries,
+        collect_notification_candidate_batch!(
+            collect_reblog_notification_candidates,
             db,
             config,
             viewer,
@@ -143,8 +168,8 @@ pub(crate) async fn collect_notifications(
 }
 
 fn merge_notification_batches<const N: usize>(
-    batches: [Vec<NotificationEntry>; N],
-) -> Vec<NotificationEntry> {
+    batches: [Vec<NotificationCandidate>; N],
+) -> Vec<NotificationCandidate> {
     let mut entries = Vec::new();
     for batch in batches {
         entries.extend(batch);
