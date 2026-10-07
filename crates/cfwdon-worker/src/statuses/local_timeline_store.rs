@@ -1,4 +1,4 @@
-use super::{D1Database, status_from_record, statuses_from_records};
+use super::{D1Database, statuses_from_records};
 use crate::db_utils::d1_results;
 use crate::tags::normalize_hashtag;
 use crate::timelines::{
@@ -179,51 +179,14 @@ pub(crate) async fn list_local_public_statuses_by_tags(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<LocalStatus>> {
-    let (mut rows, tags) =
-        list_local_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
-    if rows.len() >= limit as usize {
-        return Ok(rows);
-    }
-    let mut seen_ids = rows
-        .iter()
-        .map(|status| status.id.clone())
-        .collect::<HashSet<_>>();
-    for status in list_local_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await? {
-        if seen_ids.insert(status.id.clone()) {
-            rows.push(status);
-        }
-    }
-    rows.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| right.id.cmp(&left.id))
-    });
-    cursor.keep_page(&mut rows, limit as usize);
-    Ok(rows)
-}
-
-async fn list_local_public_statuses_by_tags_indexed(
-    db: &D1Database,
-    tags: &[String],
-    cursor: &ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<(Vec<LocalStatus>, Vec<String>)> {
     let tags = normalize_unique_tags(tags);
     if tags.is_empty() {
-        return Ok((Vec::new(), tags));
+        return Ok(Vec::new());
     }
 
     let (sql, bindings) = local_public_statuses_by_tags_indexed_sql(&tags, cursor, limit);
     let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    Ok((
-        d1_results::<LocalStatusRecord>(&result)?
-            .into_iter()
-            .map(status_from_record)
-            .collect::<Result<Vec<_>>>()?,
-        tags,
-    ))
+    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
 }
 
 fn normalize_unique_tags(tags: &[String]) -> Vec<String> {
@@ -262,55 +225,6 @@ fn local_public_statuses_by_tags_indexed_sql<'a>(
                FROM status_hashtags h
                WHERE h.tag IN ({tag_placeholders})
            ){cursor_predicates}
-         ORDER BY created_at {dir}, id {dir}
-         LIMIT ?{limit_slot}"
-    );
-    (sql, bindings)
-}
-
-async fn list_local_public_statuses_by_tags_legacy(
-    db: &D1Database,
-    tags: &[String],
-    cursor: &ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<Vec<LocalStatus>> {
-    let patterns = local_public_statuses_by_tags_legacy_patterns(tags);
-    let (sql, bindings) = local_public_statuses_by_tags_legacy_sql(&patterns, cursor, limit);
-    let result = db.prepare(&sql).bind_refs(bindings.iter())?.all().await?;
-
-    d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
-}
-
-fn local_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
-    tags.iter()
-        .map(|tag| format!("%#{}%", normalize_hashtag(tag)))
-        .collect()
-}
-
-fn local_public_statuses_by_tags_legacy_sql<'a>(
-    patterns: &'a [String],
-    cursor: &'a ResolvedTimelineCursor,
-    limit: u32,
-) -> (String, Vec<D1Type<'a>>) {
-    let dir = cursor.order_direction();
-    let match_clause = (1..=patterns.len())
-        .map(|index| format!("lower(text_content) LIKE ?{index}"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let mut bindings = patterns
-        .iter()
-        .map(|pattern| D1Type::Text(pattern.as_str()))
-        .collect::<Vec<_>>();
-    let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
-    bindings.push(D1Type::Integer(limit as i32));
-    let limit_slot = bindings.len();
-    let cursor_predicates =
-        seekable_resolved_timeline_cursor_predicates("created_at", "id", &slots);
-    let sql = format!(
-        "SELECT {LOCAL_STATUS_COLUMNS}
-         FROM statuses
-         WHERE visibility = 'public'
-           AND ({match_clause}){cursor_predicates}
          ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_slot}"
     );
@@ -566,40 +480,6 @@ mod tests {
         assert_eq!(bindings.len(), 2);
         assert!(!sql.contains("IS NULL"));
         assert!(sql.contains("LIMIT ?2"));
-    }
-
-    #[test]
-    fn local_public_statuses_by_tags_legacy_patterns_preserve_fallback_shape() {
-        let patterns = local_public_statuses_by_tags_legacy_patterns(&[
-            " Rust ".to_owned(),
-            "#Masto".to_owned(),
-            "  ".to_owned(),
-        ]);
-
-        assert_eq!(patterns, ["%#rust%", "%#masto%", "%#%"]);
-    }
-
-    #[test]
-    fn local_public_statuses_by_tags_legacy_sql_uses_pattern_and_cursor_slots() {
-        let mut cursor = empty_cursor();
-        cursor.max_timestamp = Some("2026-01-02T00:00:00Z".to_owned());
-        cursor.max_id = Some("status-max".to_owned());
-        cursor.min_timestamp = Some("2026-01-01T00:00:00Z".to_owned());
-        cursor.min_id = Some("status-min".to_owned());
-        let patterns = vec!["%#rust%".to_owned(), "%#masto%".to_owned()];
-
-        let (sql, bindings) = local_public_statuses_by_tags_legacy_sql(&patterns, &cursor, 13);
-
-        assert!(sql.contains("lower(text_content) LIKE ?1 OR lower(text_content) LIKE ?2"));
-        assert!(sql.contains("created_at <= ?3"));
-        assert!(sql.contains("id < ?4"));
-        assert!(sql.contains("created_at >= ?5"));
-        assert!(sql.contains("id > ?6"));
-        assert!(sql.contains("LIMIT ?7"));
-        assert!(!sql.contains("IS NULL"));
-        assert!(matches!(bindings[0], D1Type::Text("%#rust%")));
-        assert!(matches!(bindings[1], D1Type::Text("%#masto%")));
-        assert!(matches!(bindings[6], D1Type::Integer(13)));
     }
 
     #[test]

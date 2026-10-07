@@ -174,10 +174,6 @@ impl ResolvedTimelineCursor {
     pub(crate) fn order_direction(&self) -> &'static str {
         if self.forward { "ASC" } else { "DESC" }
     }
-
-    pub(crate) fn keep_page<T>(&self, rows: &mut Vec<T>, keep: usize) {
-        keep_timeline_page(rows, keep, self.forward);
-    }
 }
 
 /// Keep one page of newest-first `rows`: the newest `keep` rows, or for a

@@ -176,49 +176,13 @@ pub(crate) async fn list_remote_public_statuses_by_tags(
     cursor: &ResolvedTimelineCursor,
     limit: u32,
 ) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
-    let (mut rows, tags) =
-        list_remote_public_statuses_by_tags_indexed(db, tags, cursor, limit).await?;
-    if rows.len() >= limit as usize {
-        return Ok(rows);
-    }
-    let mut seen_ids = rows
-        .iter()
-        .map(|(status, _)| status.id.clone())
-        .collect::<HashSet<_>>();
-    for (status, actor) in
-        list_remote_public_statuses_by_tags_legacy(db, &tags, cursor, limit).await?
-    {
-        if seen_ids.insert(status.id.clone()) {
-            rows.push((status, actor));
-        }
-    }
-    rows.sort_by(|(left_status, _), (right_status, _)| {
-        right_status
-            .published_at
-            .cmp(&left_status.published_at)
-            .then_with(|| right_status.id.cmp(&left_status.id))
-    });
-    cursor.keep_page(&mut rows, limit as usize);
-    Ok(rows)
-}
-
-async fn list_remote_public_statuses_by_tags_indexed(
-    db: &D1Database,
-    tags: &[String],
-    cursor: &ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<(Vec<(RemoteStatus, RemoteActorRow)>, Vec<String>)> {
     let tags = normalized_unique_remote_status_tags(tags);
     if tags.is_empty() {
-        return Ok((Vec::new(), tags));
+        return Ok(Vec::new());
     }
 
     let (sql, bindings) = remote_public_statuses_by_tags_indexed_sql(&tags, cursor, limit);
-
-    Ok((
-        query_remote_statuses_with_actor(db, &sql, &bindings).await?,
-        tags,
-    ))
+    query_remote_statuses_with_actor(db, &sql, &bindings).await
 }
 
 fn normalized_unique_remote_status_tags(tags: &[String]) -> Vec<String> {
@@ -260,57 +224,6 @@ fn remote_public_statuses_by_tags_indexed_sql<'a>(
                FROM remote_status_hashtags h
                WHERE h.tag IN ({tag_placeholders})
            ){cursor_predicates}
-         ORDER BY rs.published_at {dir}, rs.id {dir}
-         LIMIT ?{limit_slot}"
-    );
-    (sql, bindings)
-}
-
-async fn list_remote_public_statuses_by_tags_legacy(
-    db: &D1Database,
-    tags: &[String],
-    cursor: &ResolvedTimelineCursor,
-    limit: u32,
-) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
-    let patterns = remote_public_statuses_by_tags_legacy_patterns(tags);
-    let (sql, bindings) = remote_public_statuses_by_tags_legacy_sql(&patterns, cursor, limit);
-
-    query_remote_statuses_with_actor(db, &sql, &bindings).await
-}
-
-fn remote_public_statuses_by_tags_legacy_patterns(tags: &[String]) -> Vec<String> {
-    tags.iter()
-        .map(|tag| format!("%#{}%", normalize_hashtag(tag)))
-        .collect()
-}
-
-fn remote_public_statuses_by_tags_legacy_sql<'a>(
-    patterns: &'a [String],
-    cursor: &'a ResolvedTimelineCursor,
-    limit: u32,
-) -> (String, Vec<D1Type<'a>>) {
-    let dir = cursor.order_direction();
-    let match_clause = (1..=patterns.len())
-        .map(|index| format!("lower(rs.content_html) LIKE ?{index}"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let mut bindings = patterns
-        .iter()
-        .map(|pattern| D1Type::Text(pattern.as_str()))
-        .collect::<Vec<_>>();
-    let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
-    bindings.push(D1Type::Integer(limit as i32));
-    let limit_slot = bindings.len();
-    let cursor_predicates =
-        seekable_resolved_timeline_cursor_predicates("rs.published_at", "rs.id", &slots);
-    let sql = format!(
-        "SELECT
-            {REMOTE_STATUS_WITH_ACTOR_SELECT}
-         FROM remote_statuses rs
-         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
-         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
-         WHERE rs.visibility = 'public'
-           AND ({match_clause}){cursor_predicates}
          ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
@@ -727,38 +640,6 @@ mod tests {
         assert!(sql.contains("LIMIT ?7"));
         assert!(!sql.contains("IS NULL"));
         assert!(matches!(bindings[6], D1Type::Integer(20)));
-    }
-
-    #[test]
-    fn remote_public_statuses_by_tags_legacy_patterns_preserve_fallback_shape() {
-        let patterns = remote_public_statuses_by_tags_legacy_patterns(&[
-            " Rust ".to_owned(),
-            "#Masto".to_owned(),
-            "  ".to_owned(),
-        ]);
-
-        assert_eq!(patterns, ["%#rust%", "%#masto%", "%#%"]);
-    }
-
-    #[test]
-    fn remote_public_statuses_by_tags_legacy_sql_uses_pattern_and_cursor_slots() {
-        let cursor = ResolvedTimelineCursor {
-            forward: false,
-            max_timestamp: Some("2026-01-02T00:00:00Z".to_owned()),
-            max_id: Some("status-max".to_owned()),
-            min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
-            min_id: Some("status-min".to_owned()),
-        };
-        let patterns = vec!["%#rust%".to_owned(), "%#masto%".to_owned()];
-
-        let (sql, bindings) = remote_public_statuses_by_tags_legacy_sql(&patterns, &cursor, 13);
-
-        assert!(sql.contains("lower(rs.content_html) LIKE ?1 OR lower(rs.content_html) LIKE ?2"));
-        assert!(sql.contains("rs.published_at <= ?3"));
-        assert!(sql.contains("rs.id < ?4"));
-        assert!(sql.contains("LIMIT ?7"));
-        assert!(!sql.contains("IS NULL"));
-        assert!(matches!(bindings[6], D1Type::Integer(13)));
     }
 
     #[test]
