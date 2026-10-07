@@ -17,6 +17,8 @@ use cfwdon_domain::LocalAccount;
 use std::collections::HashMap;
 use worker::Result;
 
+const FOLLOW_PAGE_LOAD_MARGIN: u32 = 8;
+
 /// A follow row before its account is loaded.
 struct FollowRow {
     cursor_id: i64,
@@ -29,8 +31,9 @@ enum FollowAccountRef {
     Remote(String),
 }
 
-/// The rows a collection page shows (plus one to tell whether another page
-/// follows), in the order `finalize_collection_response` sorts them.
+/// Rows a few past what a page shows, so accounts that fail to load do not
+/// shorten it, in the order `finalize_collection_response` sorts them; that
+/// cuts the page and tells whether another follows.
 fn page_follow_rows(
     mut rows: Vec<FollowRow>,
     limit: u32,
@@ -45,7 +48,7 @@ fn page_follow_rows(
             .cmp(&left.created_at)
             .then_with(|| right.cursor_id.cmp(&left.cursor_id))
     });
-    rows.truncate(limit.saturating_add(1) as usize);
+    rows.truncate(limit.saturating_add(1 + FOLLOW_PAGE_LOAD_MARGIN) as usize);
     rows
 }
 
