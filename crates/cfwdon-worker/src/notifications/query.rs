@@ -1,8 +1,7 @@
 use super::{
-    NotificationEntry, NotificationsQuery, default_grouped_notification_types,
-    is_legacy_notification_api_id, notification_api_numeric_id,
-    notification_entry_matches_cursor_id, notification_query_has_untimed_cursor,
-    notification_v2_group_key,
+    NotificationIdentity, NotificationsQuery, is_legacy_notification_api_id,
+    notification_api_numeric_id, notification_entry_matches_cursor_id,
+    notification_query_has_untimed_cursor,
 };
 
 fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
@@ -12,8 +11,8 @@ fn normalized_notification_cursor(value: Option<&str>) -> Option<&str> {
 /// API ids are time ordered, so a numeric cursor bounds the page even when its
 /// notification has dropped out of the loaded window. Internal keys from
 /// before API ids existed still resolve through the window.
-pub(crate) fn resolve_notification_cursor_key(
-    entries: &[NotificationEntry],
+pub(crate) fn resolve_notification_cursor_key<T: NotificationIdentity>(
+    entries: &[T],
     cursor_id: Option<&str>,
 ) -> Option<i64> {
     let cursor_id = normalized_notification_cursor(cursor_id)?;
@@ -28,10 +27,10 @@ pub(crate) fn resolve_notification_cursor_key(
         .map(notification_api_numeric_id)
 }
 
-pub(crate) fn filter_notification_entries_by_query(
-    entries: Vec<NotificationEntry>,
+pub(crate) fn filter_notification_entries_by_query<T: NotificationIdentity>(
+    entries: Vec<T>,
     query: &NotificationsQuery,
-) -> Vec<NotificationEntry> {
+) -> Vec<T> {
     let max_cursor = resolve_notification_cursor_key(&entries, query.max_id.as_deref());
     let min_cursor = resolve_notification_cursor_key(
         &entries,
@@ -64,23 +63,4 @@ pub(crate) fn notifications_fetch_limit(query: &NotificationsQuery, limit: u32) 
     } else {
         limit.saturating_mul(4)
     }
-}
-
-pub(crate) fn notification_group_entries<'a>(
-    entries: &'a [NotificationEntry],
-    group_key: &str,
-) -> Vec<&'a NotificationEntry> {
-    // `ungrouped-<id>` names one notification whatever `grouped_types[]` the
-    // listing used, so match it by id rather than by recomputed key.
-    if let Some(notification_id) = group_key.strip_prefix("ungrouped-") {
-        return entries
-            .iter()
-            .filter(|entry| notification_entry_matches_cursor_id(entry, notification_id))
-            .collect();
-    }
-    let grouped_types = default_grouped_notification_types();
-    entries
-        .iter()
-        .filter(|entry| notification_v2_group_key(entry, &grouped_types) == group_key)
-        .collect()
 }

@@ -1,21 +1,6 @@
-use super::{
-    NotificationEntry, NotificationsQuery, clear_notifications_for_account,
-    collect_visible_notifications, dismiss_notification_for_account,
-};
+use super::{clear_notifications_for_account, dismiss_notification_for_account};
 use crate::tracked_d1::D1Database;
-use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
 use worker::Result;
-pub(crate) async fn load_visible_notifications_for_account(
-    db: &D1Database,
-    config: &AppConfig,
-    viewer: &LocalAccount,
-    query: &NotificationsQuery,
-    per_type_limit: u32,
-) -> Result<Vec<NotificationEntry>> {
-    collect_visible_notifications(db, config, viewer, query, per_type_limit).await
-}
-
 pub(crate) async fn dismiss_account_notification(
     db: &D1Database,
     account_id: &str,

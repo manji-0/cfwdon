@@ -9,8 +9,8 @@ use crate::lists::{
 };
 use crate::media::{find_media_attachments_by_status_id, remote_status_has_media};
 use crate::notifications::{
-    NotificationsQuery, collect_visible_notifications, filter_notification_entries_by_query,
-    notification_api_numeric_id_string, notification_v1_value,
+    NotificationsQuery, collect_notification_candidates, filter_notification_entries_by_query,
+    hydrate_notification_page, notification_api_numeric_id_string, notification_v1_value,
 };
 use crate::statuses::{
     build_local_status_response, build_remote_status_response, is_local_status_thread_muted_by,
@@ -46,12 +46,18 @@ pub(super) async fn streaming_notification_batch(
         limit: Some(40),
         ..NotificationsQuery::default()
     };
-    let entries = collect_visible_notifications(db, config, viewer, &query, 160).await?;
-    let filtered = filter_notification_entries_by_query(entries, &query);
+    let candidates = collect_notification_candidates(db, config, viewer, &query, 160).await?;
+    let candidates = filter_notification_entries_by_query(candidates, &query);
     // API ids are time ordered, so the next poll's `since_id` bounds the
-    // query even after this notification leaves the loaded window.
-    let last_id = filtered.first().map(notification_api_numeric_id_string);
-    let last_created_at = filtered.first().map(|entry| entry.created_at.clone());
+    // query even after this notification leaves the loaded window. The
+    // cursor follows the newest candidate even if it no longer renders.
+    let last_id = candidates.first().map(notification_api_numeric_id_string);
+    let last_created_at = candidates
+        .first()
+        .map(|candidate| candidate.created_at.clone());
+    // Only the newest page is rendered; a poll runs every few seconds, and
+    // the initial poll emits nothing.
+    let filtered = hydrate_notification_page(db, config, viewer, candidates, 40, false).await?;
     let mut events = Vec::with_capacity(filtered.len());
 
     for entry in filtered.into_iter().rev() {

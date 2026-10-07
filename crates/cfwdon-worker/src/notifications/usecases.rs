@@ -1,16 +1,17 @@
 use super::{
-    NotificationEntry, NotificationsQuery, clear_account_notifications,
-    dismiss_account_notification, filter_notification_entries_by_query,
-    load_visible_notifications_for_account, notification_api_numeric_id,
-    notification_entry_matches_cursor_id, notification_group_entries, notifications_fetch_limit,
-    resolve_notification_cursor_key,
+    NotificationCandidate, NotificationEntry, NotificationIdentity, NotificationsQuery,
+    clear_account_notifications, collect_notification_candidates,
+    default_grouped_notification_types, dismiss_account_notification,
+    filter_notification_entries_by_query, hydrate_notification_candidates,
+    hydrate_notification_page, notification_api_numeric_id, notification_entry_matches_cursor_id,
+    notification_group_candidates, notifications_fetch_limit, resolve_notification_cursor_key,
 };
 use crate::markers::load_notifications_last_read_id;
-use crate::timelines::keep_timeline_page;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use worker::Result;
+
 pub(crate) async fn list_notifications_usecase(
     db: &D1Database,
     config: &AppConfig,
@@ -18,7 +19,7 @@ pub(crate) async fn list_notifications_usecase(
     query: &NotificationsQuery,
     limit: u32,
 ) -> Result<Vec<NotificationEntry>> {
-    let entries = load_visible_notifications_for_account(
+    let candidates = collect_notification_candidates(
         db,
         config,
         viewer,
@@ -26,7 +27,7 @@ pub(crate) async fn list_notifications_usecase(
         notifications_fetch_limit(query, limit),
     )
     .await?;
-    let mut entries = filter_notification_entries_by_query(entries, query);
+    let candidates = filter_notification_entries_by_query(candidates, query);
     // `min_id` asks for the page just after the cursor, i.e. the oldest
     // matches; `since_id` keeps the newest.
     let forward = query
@@ -34,8 +35,24 @@ pub(crate) async fn list_notifications_usecase(
         .as_deref()
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
-    keep_timeline_page(&mut entries, limit as usize, forward);
-    Ok(entries)
+    hydrate_notification_page(db, config, viewer, candidates, limit as usize, forward).await
+}
+
+async fn load_notification_group_candidates(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    query: &NotificationsQuery,
+    per_type_limit: u32,
+    group_key: &str,
+) -> Result<Vec<NotificationCandidate>> {
+    let candidates =
+        collect_notification_candidates(db, config, viewer, query, per_type_limit).await?;
+    Ok(notification_group_candidates(
+        candidates,
+        group_key,
+        &default_grouped_notification_types(),
+    ))
 }
 
 pub(crate) async fn list_notification_group_entries_usecase(
@@ -46,20 +63,18 @@ pub(crate) async fn list_notification_group_entries_usecase(
     per_type_limit: u32,
     group_key: &str,
 ) -> Result<Vec<NotificationEntry>> {
-    let entries =
-        load_visible_notifications_for_account(db, config, viewer, query, per_type_limit).await?;
-    Ok(notification_group_entries(&entries, group_key)
-        .into_iter()
-        .cloned()
-        .collect())
+    let candidates =
+        load_notification_group_candidates(db, config, viewer, query, per_type_limit, group_key)
+            .await?;
+    hydrate_notification_candidates(db, config, viewer, candidates).await
 }
 
-pub(crate) async fn load_notification_entry_usecase(
+async fn find_notification_candidate(
     db: &D1Database,
     config: &AppConfig,
     viewer: &LocalAccount,
     notification_id: &str,
-) -> Result<Option<NotificationEntry>> {
+) -> Result<Option<NotificationCandidate>> {
     // A snowflake id names its creation second; bounding both ends by it keeps
     // every source to that second. Untimed ids still scan the newest rows.
     let query = NotificationsQuery {
@@ -69,10 +84,28 @@ pub(crate) async fn load_notification_entry_usecase(
         ..NotificationsQuery::default()
     };
     Ok(
-        load_visible_notifications_for_account(db, config, viewer, &query, 200)
+        collect_notification_candidates(db, config, viewer, &query, 200)
             .await?
             .into_iter()
-            .find(|entry| notification_entry_matches_cursor_id(entry, notification_id)),
+            .find(|candidate| notification_entry_matches_cursor_id(candidate, notification_id)),
+    )
+}
+
+pub(crate) async fn load_notification_entry_usecase(
+    db: &D1Database,
+    config: &AppConfig,
+    viewer: &LocalAccount,
+    notification_id: &str,
+) -> Result<Option<NotificationEntry>> {
+    let Some(candidate) = find_notification_candidate(db, config, viewer, notification_id).await?
+    else {
+        return Ok(None);
+    };
+    Ok(
+        hydrate_notification_candidates(db, config, viewer, vec![candidate])
+            .await?
+            .into_iter()
+            .next(),
     )
 }
 
@@ -82,12 +115,12 @@ pub(crate) async fn dismiss_notification_entry_usecase(
     viewer: &LocalAccount,
     notification_id: &str,
 ) -> Result<bool> {
-    let Some(entry) = load_notification_entry_usecase(db, config, viewer, notification_id).await?
+    let Some(candidate) = find_notification_candidate(db, config, viewer, notification_id).await?
     else {
         return Ok(false);
     };
     // Dismissals are stored under the internal key the collectors filter on.
-    dismiss_account_notification(db, viewer.id(), &entry.id).await?;
+    dismiss_account_notification(db, viewer.id(), &candidate.id).await?;
     Ok(true)
 }
 
@@ -99,20 +132,14 @@ pub(crate) async fn dismiss_notification_group_usecase(
     per_type_limit: u32,
     group_key: &str,
 ) -> Result<bool> {
-    let entries = list_notification_group_entries_usecase(
-        db,
-        config,
-        viewer,
-        query,
-        per_type_limit,
-        group_key,
-    )
-    .await?;
-    if entries.is_empty() {
+    let candidates =
+        load_notification_group_candidates(db, config, viewer, query, per_type_limit, group_key)
+            .await?;
+    if candidates.is_empty() {
         return Ok(false);
     }
-    for entry in entries {
-        dismiss_account_notification(db, viewer.id(), &entry.id).await?;
+    for candidate in candidates {
+        dismiss_account_notification(db, viewer.id(), &candidate.id).await?;
     }
     Ok(true)
 }
@@ -124,6 +151,7 @@ pub(crate) async fn clear_notifications_usecase(
     clear_account_notifications(db, viewer.id()).await
 }
 
+/// Counted from candidates, so nothing is rendered.
 pub(crate) async fn unread_notifications_count_usecase(
     db: &D1Database,
     config: &AppConfig,
@@ -131,12 +159,12 @@ pub(crate) async fn unread_notifications_count_usecase(
     query: &NotificationsQuery,
     per_type_limit: u32,
 ) -> Result<usize> {
-    let (entries, last_read_id) = futures_util::try_join!(
-        load_visible_notifications_for_account(db, config, viewer, query, per_type_limit),
+    let (candidates, last_read_id) = futures_util::try_join!(
+        collect_notification_candidates(db, config, viewer, query, per_type_limit),
         load_notifications_last_read_id(db, viewer.id()),
     )?;
     Ok(count_unread_notification_entries(
-        &entries,
+        &candidates,
         last_read_id.as_deref(),
     ))
 }
@@ -144,8 +172,8 @@ pub(crate) async fn unread_notifications_count_usecase(
 /// Mastodon counts notifications newer than the notifications marker. A marker
 /// that is not in the loaded window is older than all of it, so the whole
 /// window is unread.
-pub(crate) fn count_unread_notification_entries(
-    entries: &[NotificationEntry],
+pub(crate) fn count_unread_notification_entries<T: NotificationIdentity>(
+    entries: &[T],
     last_read_id: Option<&str>,
 ) -> usize {
     let Some(last_read_id) = last_read_id else {

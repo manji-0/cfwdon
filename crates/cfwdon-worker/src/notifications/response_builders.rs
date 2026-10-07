@@ -21,9 +21,9 @@ fn notification_nested_id<'a>(entry: &'a NotificationEntry, key: &str) -> Option
         .and_then(serde_json::Value::as_str)
 }
 
-fn notification_unix_time(entry: &NotificationEntry) -> i64 {
+fn notification_unix_time(created_at: &str) -> i64 {
     time::OffsetDateTime::parse(
-        &timestamp_to_mastodon_iso8601(&entry.created_at),
+        &timestamp_to_mastodon_iso8601(created_at),
         &time::format_description::well_known::Rfc3339,
     )
     .map(|value| value.unix_timestamp())
@@ -37,13 +37,29 @@ pub(crate) fn notification_v2_group_key(
     entry: &NotificationEntry,
     grouped_types: &[String],
 ) -> String {
-    let notification_type = notification_str(entry, "type").unwrap_or_default();
+    notification_group_key_from_parts(
+        notification_str(entry, "type").unwrap_or_default(),
+        notification_nested_id(entry, "status"),
+        &entry.created_at,
+        notification_api_numeric_id(entry),
+        grouped_types,
+    )
+}
+
+pub(crate) fn notification_group_key_from_parts(
+    notification_type: &str,
+    status_id: Option<&str>,
+    created_at: &str,
+    api_id: i64,
+    grouped_types: &[String],
+) -> String {
     let prefix = if !grouped_types.iter().any(|value| value == notification_type) {
         None
     } else {
         match notification_type {
-            "favourite" | "reblog" => notification_nested_id(entry, "status")
-                .map(|status_id| format!("{notification_type}-{status_id}")),
+            "favourite" | "reblog" => {
+                status_id.map(|status_id| format!("{notification_type}-{status_id}"))
+            }
             "follow" | "admin.sign_up" => Some(notification_type.to_owned()),
             _ => None,
         }
@@ -51,9 +67,9 @@ pub(crate) fn notification_v2_group_key(
     match prefix {
         Some(prefix) => format!(
             "{prefix}-{}",
-            notification_unix_time(entry).div_euclid(NOTIFICATION_GROUP_SPAN_SECS)
+            notification_unix_time(created_at).div_euclid(NOTIFICATION_GROUP_SPAN_SECS)
         ),
-        None => format!("ungrouped-{}", notification_api_numeric_id(entry)),
+        None => format!("ungrouped-{api_id}"),
     }
 }
 
