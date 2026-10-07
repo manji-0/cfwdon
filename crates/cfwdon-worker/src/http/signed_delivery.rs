@@ -1,7 +1,8 @@
 use super::signatures::{ACTIVITYPUB_ACCEPT, ACTIVITYPUB_CONTENT_TYPE, signed_post_signing_string};
-use crate::auth::load_account_private_key_jwk;
 use crate::federation::{parse_http_url_parts, parse_remote_http_url, validate_remote_fetch_url};
-use crate::http::{now_http_date_string, sha256_http_digest, sign_http_signature};
+use crate::http::{
+    load_account_signing_key, now_http_date_string, sha256_http_digest, sign_http_signature,
+};
 use crate::identity::public_key_id;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -78,7 +79,7 @@ async fn build_signed_post_request(
     .map_err(|error| {
         SignedDeliveryFailure::retryable(format!("failed to build signing string: {error}"))
     })?;
-    let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
+    let signing_key = load_account_signing_key(db, config, account.id())
         .await
         .map_err(|error| {
             SignedDeliveryFailure::retryable(format!("failed to load signing key: {error}"))
@@ -86,7 +87,7 @@ async fn build_signed_post_request(
         .ok_or_else(|| {
             SignedDeliveryFailure::permanent("account private signing key is missing")
         })?;
-    let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes())
+    let signature = sign_http_signature(&signing_key, signing_string.as_bytes())
         .await
         .map_err(|error| {
             SignedDeliveryFailure::retryable(format!("failed to sign delivery request: {error}"))

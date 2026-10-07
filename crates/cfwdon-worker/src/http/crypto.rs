@@ -54,12 +54,16 @@ pub(crate) async fn sha256_http_digest(payload: &[u8]) -> Result<String> {
     Ok(format!("SHA-256={}", STANDARD.encode(bytes)))
 }
 
-pub(crate) async fn sign_http_signature(private_key_jwk: &str, payload: &[u8]) -> Result<String> {
+/// Imports an account's private JWK as a non-extractable signing key.
+pub(crate) async fn import_account_signing_key(private_key_jwk: &str) -> Result<CryptoKey> {
+    import_private_signing_key(&subtle_crypto()?, private_key_jwk).await
+}
+
+pub(crate) async fn sign_http_signature(key: &CryptoKey, payload: &[u8]) -> Result<String> {
     let subtle = subtle_crypto()?;
-    let key = import_private_signing_key(&subtle, private_key_jwk).await?;
     let signature = JsFuture::from(subtle.sign_with_object_and_u8_array(
         &Algorithm::new("RSASSA-PKCS1-v1_5").into(),
-        &key,
+        key,
         payload,
     )?)
     .await?;

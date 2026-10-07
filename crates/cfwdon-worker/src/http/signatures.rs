@@ -1,3 +1,4 @@
+use super::load_account_signing_key;
 use super::{
     build_signature_signing_string, build_signature_signing_string_from_parts,
     cached_remote_actor_matches_key, extract_activity_actor_uri, now_http_date_string,
@@ -6,7 +7,6 @@ use super::{
     validate_signed_host_header, verify_http_signature_bytes,
 };
 use crate::activitypub::activitypub_primary_type;
-use crate::auth::load_account_private_key_jwk;
 use crate::federation::{
     RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts,
     parse_remote_http_json_response, parse_remote_http_url, resolve_remote_redirect_location,
@@ -54,7 +54,7 @@ pub(crate) async fn fetch_signed_activitypub_document(
     account: &LocalAccount,
     url: &str,
 ) -> Result<serde_json::Value> {
-    let private_key_jwk = load_account_private_key_jwk(db, config, account.id())
+    let signing_key = load_account_signing_key(db, config, account.id())
         .await?
         .ok_or_else(|| Error::RustError("account private signing key is missing".to_owned()))?;
     let key_id = public_key_id(config, account.username());
@@ -65,7 +65,7 @@ pub(crate) async fn fetch_signed_activitypub_document(
         let (host, path_and_query) = parse_http_url_parts(current_url.as_str())?;
         let date = now_http_date_string()?;
         let signing_string = signed_get_signing_string(&path_and_query, &host, &date);
-        let signature = sign_http_signature(&private_key_jwk, signing_string.as_bytes()).await?;
+        let signature = sign_http_signature(&signing_key, signing_string.as_bytes()).await?;
 
         let headers = Headers::new();
         headers.set("Accept", ACTIVITYPUB_ACCEPT)?;
