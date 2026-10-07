@@ -96,6 +96,9 @@ async fn instance_summary_response_for_config(
 
 const INSTANCE_V1_PATH: &str = "/api/v1/instance";
 const INSTANCE_PEERS_PATH: &str = "/api/v1/instance/peers";
+const INSTANCE_V2_PATH: &str = "/api/v2/instance";
+/// The v2 document counts monthly active users, so it is cached briefly.
+const CACHE_TTL_INSTANCE_V2: u32 = 60;
 
 pub(crate) async fn instance_v2_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
@@ -120,14 +123,18 @@ async fn instance_v2_response_for_config(
     config: cfwdon_core::AppConfig,
     translation_enabled: bool,
 ) -> Result<Response> {
+    if let Some(response) = cached_instance_document(&config, INSTANCE_V2_PATH).await? {
+        return cache_public_response(response, CACHE_TTL_INSTANCE_V2);
+    }
     let (summary, active_month) = futures_util::try_join!(
         load_instance_summary(db, config.clone()),
         load_active_month_users(db),
     )?;
     let mut document = build_instance_v2_document(&summary, &config, active_month);
     set_instance_translation_enabled(&mut document, translation_enabled);
+    cache_instance_document(&config, INSTANCE_V2_PATH, &document, CACHE_TTL_INSTANCE_V2).await?;
 
-    cache_public_response(Response::from_json(&document)?, 60)
+    cache_public_response(Response::from_json(&document)?, CACHE_TTL_INSTANCE_V2)
 }
 
 pub(crate) async fn instance_peers_response(ctx: RouteContext<()>) -> Result<Response> {

@@ -3,7 +3,10 @@ use crate::db_session::bind_request_d1;
 use crate::delivery::list_follower_actor_uris;
 use crate::identity::actor_url;
 use crate::relationship::{list_following_actor_uris, list_local_follower_usernames};
-use crate::response_utils::{CACHE_TTL_FEDERATION, cache_public_json_response};
+use crate::response_cache::{cache_federation_document, cached_federation_document};
+use crate::response_utils::{
+    CACHE_TTL_FEDERATION, cache_public_json_response, cache_public_response,
+};
 use crate::runtime_config::load_config;
 use crate::statuses::{
     build_outbox_activities, count_public_outbox_statuses, list_public_outbox_statuses_page,
@@ -29,6 +32,10 @@ pub(crate) async fn followers_collection_response(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let req_url = req.url()?.to_string();
+    if let Some(response) = cached_federation_document(&req_url).await? {
+        return cache_public_response(response, CACHE_TTL_FEDERATION);
+    }
 
     let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
@@ -44,8 +51,10 @@ pub(crate) async fn followers_collection_response(
     }
     let collection_id = format!("{}/followers", actor_url(&config, account.username()));
     let cache_tag = format!("account-{username}");
+    let document = build_ordered_collection_document(&collection_id, &ordered_items, &query);
+    cache_federation_document(&req_url, &document, &cache_tag).await?;
     cache_public_json_response(
-        &build_ordered_collection_document(&collection_id, &ordered_items, &query),
+        &document,
         "application/activity+json",
         CACHE_TTL_FEDERATION,
         &[("Cache-Tag", &cache_tag)],
@@ -63,6 +72,10 @@ pub(crate) async fn following_collection_response(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let req_url = req.url()?.to_string();
+    if let Some(response) = cached_federation_document(&req_url).await? {
+        return cache_public_response(response, CACHE_TTL_FEDERATION);
+    }
 
     let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
@@ -72,8 +85,10 @@ pub(crate) async fn following_collection_response(
     let collection_id = format!("{}/following", actor_url(&config, account.username()));
 
     let cache_tag = format!("account-{username}");
+    let document = build_ordered_collection_document(&collection_id, &ordered_items, &query);
+    cache_federation_document(&req_url, &document, &cache_tag).await?;
     cache_public_json_response(
-        &build_ordered_collection_document(&collection_id, &ordered_items, &query),
+        &document,
         "application/activity+json",
         CACHE_TTL_FEDERATION,
         &[("Cache-Tag", &cache_tag)],
@@ -88,6 +103,10 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
+    let req_url = req.url()?.to_string();
+    if let Some(response) = cached_federation_document(&req_url).await? {
+        return cache_public_response(response, CACHE_TTL_FEDERATION);
+    }
 
     let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &username).await? else {
@@ -113,29 +132,33 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
             None
         };
 
+        let document = serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "type": "OrderedCollectionPage",
+            "id": format!("{outbox}?page=true&offset={offset}&limit={limit}"),
+            "partOf": outbox,
+            "next": next,
+            "orderedItems": ordered_items,
+        });
+        cache_federation_document(&req_url, &document, &cache_tag).await?;
         return cache_public_json_response(
-            &serde_json::json!({
-                "@context": "https://www.w3.org/ns/activitystreams",
-                "type": "OrderedCollectionPage",
-                "id": format!("{outbox}?page=true&offset={offset}&limit={limit}"),
-                "partOf": outbox,
-                "next": next,
-                "orderedItems": ordered_items,
-            }),
+            &document,
             "application/activity+json",
             CACHE_TTL_FEDERATION,
             &[("Cache-Tag", &cache_tag)],
         );
     }
 
+    let document = serde_json::json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "OrderedCollection",
+        "id": outbox,
+        "totalItems": total_items,
+        "first": format!("{outbox}?page=true&offset=0&limit={limit}"),
+    });
+    cache_federation_document(&req_url, &document, &cache_tag).await?;
     cache_public_json_response(
-        &serde_json::json!({
-            "@context": "https://www.w3.org/ns/activitystreams",
-            "type": "OrderedCollection",
-            "id": outbox,
-            "totalItems": total_items,
-            "first": format!("{outbox}?page=true&offset=0&limit={limit}"),
-        }),
+        &document,
         "application/activity+json",
         CACHE_TTL_FEDERATION,
         &[("Cache-Tag", &cache_tag)],

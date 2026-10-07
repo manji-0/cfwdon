@@ -3,6 +3,7 @@ use super::{
     build_nodeinfo_links_document,
 };
 use crate::db_session::bind_request_d1;
+use crate::response_cache::{cache_instance_document, cached_instance_document};
 use crate::response_utils::cache_public_response;
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::store::instance::{
@@ -41,27 +42,33 @@ pub(crate) async fn nodeinfo_response_from_env(env: &Env) -> Result<Response> {
     nodeinfo_response_for_config(&db, config).await
 }
 
+/// Nodeinfo aggregates count every local status, so documents are cached.
+const CACHE_TTL_NODEINFO: u32 = 300;
+
 async fn nodeinfo_response_for_config(
     db: &D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
-    let summary = load_instance_summary(db, config.clone()).await?;
-    let active_month = load_active_month_users(db).await?;
-    let active_halfyear = load_active_halfyear_users(db).await?;
-    let user_count = load_total_local_accounts(db).await?;
-    let status_count = load_total_local_statuses(db).await?;
-
-    cache_public_response(
-        Response::from_json(&build_nodeinfo_document_with_halfyear(
-            &summary,
-            &config,
-            user_count,
-            active_month,
-            active_halfyear,
-            status_count,
-        ))?,
-        300,
-    )
+    if let Some(response) = cached_instance_document(&config, "/nodeinfo/2.0").await? {
+        return cache_public_response(response, CACHE_TTL_NODEINFO);
+    }
+    let (summary, active_month, active_halfyear, user_count, status_count) = futures_util::try_join!(
+        load_instance_summary(db, config.clone()),
+        load_active_month_users(db),
+        load_active_halfyear_users(db),
+        load_total_local_accounts(db),
+        load_total_local_statuses(db),
+    )?;
+    let document = build_nodeinfo_document_with_halfyear(
+        &summary,
+        &config,
+        user_count,
+        active_month,
+        active_halfyear,
+        status_count,
+    );
+    cache_instance_document(&config, "/nodeinfo/2.0", &document, CACHE_TTL_NODEINFO).await?;
+    cache_public_response(Response::from_json(&document)?, CACHE_TTL_NODEINFO)
 }
 
 pub(crate) async fn nodeinfo_21_response(ctx: RouteContext<()>) -> Result<Response> {
@@ -80,21 +87,24 @@ async fn nodeinfo_21_response_for_config(
     db: &D1Database,
     config: super::AppConfig,
 ) -> Result<Response> {
-    let summary = load_instance_summary(db, config.clone()).await?;
-    let active_month = load_active_month_users(db).await?;
-    let active_halfyear = load_active_halfyear_users(db).await?;
-    let user_count = load_total_local_accounts(db).await?;
-    let status_count = load_total_local_statuses(db).await?;
-
-    cache_public_response(
-        Response::from_json(&build_nodeinfo_21_document(
-            &summary,
-            &config,
-            user_count,
-            active_month,
-            active_halfyear,
-            status_count,
-        ))?,
-        300,
-    )
+    if let Some(response) = cached_instance_document(&config, "/nodeinfo/2.1").await? {
+        return cache_public_response(response, CACHE_TTL_NODEINFO);
+    }
+    let (summary, active_month, active_halfyear, user_count, status_count) = futures_util::try_join!(
+        load_instance_summary(db, config.clone()),
+        load_active_month_users(db),
+        load_active_halfyear_users(db),
+        load_total_local_accounts(db),
+        load_total_local_statuses(db),
+    )?;
+    let document = build_nodeinfo_21_document(
+        &summary,
+        &config,
+        user_count,
+        active_month,
+        active_halfyear,
+        status_count,
+    );
+    cache_instance_document(&config, "/nodeinfo/2.1", &document, CACHE_TTL_NODEINFO).await?;
+    cache_public_response(Response::from_json(&document)?, CACHE_TTL_NODEINFO)
 }

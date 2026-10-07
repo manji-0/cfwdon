@@ -139,6 +139,27 @@ pub(crate) fn cache_anonymous_timeline_page(
     Ok(())
 }
 
+/// Viewer-independent ActivityPub documents (collections) keyed by request
+/// URL, query included. Remote servers poll these; the TTL bounds staleness.
+pub(crate) async fn cached_federation_document(req_url: &str) -> Result<Option<Response>> {
+    cache_get(req_url).await
+}
+
+pub(crate) async fn cache_federation_document(
+    req_url: &str,
+    value: &impl serde::Serialize,
+    cache_tag: &str,
+) -> Result<()> {
+    cache_put_json(
+        req_url,
+        value,
+        "application/activity+json",
+        CACHE_TTL_FEDERATION,
+        cache_tag,
+    )
+    .await
+}
+
 /// Viewer-independent instance documents (v1 summary, peers) keyed by path.
 pub(crate) async fn cached_instance_document(
     config: &cfwdon_core::AppConfig,
