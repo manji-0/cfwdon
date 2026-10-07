@@ -1,9 +1,8 @@
 use super::request_context::{
     ResolvedStatus, resolve_status_detail_base_context, resolve_status_reference,
 };
-use crate::accounts::load_account_stats;
+use crate::accounts::{find_accounts_by_ids, load_account_stats_map};
 use crate::activitypub::is_public_activitypub_visibility;
-use crate::auth::find_account_by_id;
 use crate::db_session::with_d1_bookmark;
 use crate::identity::remote_account_rest_id;
 use crate::responses::MastodonAccountResponse;
@@ -13,7 +12,9 @@ use crate::statuses::{
     list_local_reblog_account_ids_for_status, list_remote_favourite_actor_uris_for_status,
     list_remote_reblog_actor_uris_for_status,
 };
-use crate::store::remote::{find_remote_actor_by_actor_uri, load_remote_actor_status_summary};
+use crate::store::remote::{
+    RemoteActorStatusSummary, find_remote_actors_by_actor_uris, load_remote_actor_status_summaries,
+};
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use url::Url;
@@ -35,51 +36,38 @@ pub(super) async fn build_local_interaction_account_responses(
     config: &cfwdon_core::AppConfig,
     account_ids: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
-    let mut responses = Vec::new();
-
-    for account_id in account_ids {
-        let Some(account) = find_account_by_id(db, account_id).await? else {
-            continue;
-        };
-        let stats = load_account_stats(db, account.id()).await?;
-        responses.push(MastodonAccountResponse::from_account_with_stats(
-            &account, config, &stats,
-        ));
-    }
-
-    Ok(responses)
+    let (accounts_by_id, stats_by_id) = futures_util::try_join!(
+        find_accounts_by_ids(db, account_ids),
+        load_account_stats_map(db, account_ids),
+    )?;
+    let default_stats = Default::default();
+    Ok(account_ids
+        .iter()
+        .filter_map(|account_id| {
+            let account = accounts_by_id.get(account_id)?;
+            Some(MastodonAccountResponse::from_account_with_stats(
+                account,
+                config,
+                stats_by_id.get(account_id).unwrap_or(&default_stats),
+            ))
+        })
+        .collect())
 }
 
-pub(super) async fn build_remote_interaction_account_response(
-    db: &D1Database,
+/// An account for an actor never stored, built from its URI.
+fn placeholder_remote_interaction_account_response(
     actor_uri: &str,
-) -> Result<Option<MastodonAccountResponse>> {
-    let status_summary = load_remote_actor_status_summary(db, actor_uri).await?;
-
-    if let Some(actor) = find_remote_actor_by_actor_uri(db, actor_uri).await? {
-        let mut response = MastodonAccountResponse::from_remote_actor(&actor);
-        response.statuses_count = status_summary.statuses_count;
-        response.last_status_at = status_summary.last_status_at.clone();
-        return Ok(Some(response));
-    }
-
-    let parsed = match Url::parse(actor_uri) {
-        Ok(parsed) => parsed,
-        Err(_) => return Ok(None),
-    };
-    let Some(domain) = parsed.host_str().map(str::to_owned) else {
-        return Ok(None);
-    };
-    let Some(username) = parsed
+    status_summary: RemoteActorStatusSummary,
+) -> Option<MastodonAccountResponse> {
+    let parsed = Url::parse(actor_uri).ok()?;
+    let domain = parsed.host_str().map(str::to_owned)?;
+    let username = parsed
         .path_segments()
         .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         .map(|segment| segment.trim_start_matches('@').to_owned())
-        .filter(|segment| !segment.is_empty())
-    else {
-        return Ok(None);
-    };
+        .filter(|segment| !segment.is_empty())?;
 
-    Ok(Some(MastodonAccountResponse {
+    Some(MastodonAccountResponse {
         id: remote_account_rest_id(actor_uri),
         username: username.clone(),
         acct: format!("{username}@{domain}"),
@@ -118,22 +106,32 @@ pub(super) async fn build_remote_interaction_account_response(
         statuses_count: status_summary.statuses_count,
         source: None,
         role: None,
-    }))
+    })
 }
 
 pub(super) async fn build_remote_interaction_account_responses(
     db: &D1Database,
     actor_uris: &[String],
 ) -> Result<Vec<MastodonAccountResponse>> {
-    let mut responses = Vec::new();
-
-    for actor_uri in actor_uris {
-        if let Some(response) = build_remote_interaction_account_response(db, actor_uri).await? {
-            responses.push(response);
-        }
-    }
-
-    Ok(responses)
+    let (actors_by_uri, mut summaries_by_uri) = futures_util::try_join!(
+        find_remote_actors_by_actor_uris(db, actor_uris),
+        load_remote_actor_status_summaries(db, actor_uris),
+    )?;
+    Ok(actor_uris
+        .iter()
+        .filter_map(|actor_uri| {
+            let summary = summaries_by_uri.remove(actor_uri).unwrap_or_default();
+            match actors_by_uri.get(actor_uri) {
+                Some(actor) => {
+                    let mut response = MastodonAccountResponse::from_remote_actor(actor);
+                    response.statuses_count = summary.statuses_count;
+                    response.last_status_at = summary.last_status_at;
+                    Some(response)
+                }
+                None => placeholder_remote_interaction_account_response(actor_uri, summary),
+            }
+        })
+        .collect())
 }
 
 pub(super) async fn status_interaction_accounts_response(

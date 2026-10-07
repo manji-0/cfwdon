@@ -237,7 +237,7 @@ pub(crate) async fn find_remote_actor_by_profile_url_or_actor_uri(
     .await
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct RemoteActorStatusSummary {
     pub(crate) statuses_count: u64,
     pub(crate) last_status_at: Option<String>,

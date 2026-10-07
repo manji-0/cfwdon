@@ -93,10 +93,12 @@ async fn account_follow_collection_response(
     let entries = match resolve_requested_account_reference(&db, &config, &account_id).await? {
         Some(AccountReference::Local(account)) => match kind {
             AccountFollowCollectionKind::Followers => {
-                local_account_follower_entries(&db, &config, account.id()).await?
+                local_account_follower_entries(&db, &config, account.id(), limit, max_id, since_id)
+                    .await?
             }
             AccountFollowCollectionKind::Following => {
-                local_account_following_entries(&db, &config, account.id()).await?
+                local_account_following_entries(&db, &config, account.id(), limit, max_id, since_id)
+                    .await?
             }
         },
         Some(AccountReference::Remote(actor)) => match kind {
