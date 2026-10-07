@@ -187,6 +187,7 @@ pub(super) async fn streaming_batch_for_stream(
                 viewer,
                 state.since_id.as_deref(),
                 state.notification_min_created_at.as_deref(),
+                !state.initialized,
             )
             .await
         }

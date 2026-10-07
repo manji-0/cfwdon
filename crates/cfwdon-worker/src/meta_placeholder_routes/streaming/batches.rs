@@ -39,6 +39,7 @@ pub(super) async fn streaming_notification_batch(
     viewer: &cfwdon_domain::LocalAccount,
     since_id: Option<&str>,
     min_created_at: Option<&str>,
+    is_initial_poll: bool,
 ) -> Result<StreamingBatch> {
     let query = NotificationsQuery {
         since_id: since_id.map(str::to_owned),
@@ -55,9 +56,13 @@ pub(super) async fn streaming_notification_batch(
     let last_created_at = candidates
         .first()
         .map(|candidate| candidate.created_at.clone());
-    // Only the newest page is rendered; a poll runs every few seconds, and
-    // the initial poll emits nothing.
-    let filtered = hydrate_notification_page(db, config, viewer, candidates, 40, false).await?;
+    // The initial poll emits nothing, so it renders nothing;
+    // later polls render every candidate the collectors' window holds.
+    let filtered = if is_initial_poll {
+        Vec::new()
+    } else {
+        hydrate_notification_page(db, config, viewer, candidates, 160, false).await?
+    };
     let mut events = Vec::with_capacity(filtered.len());
 
     for entry in filtered.into_iter().rev() {
