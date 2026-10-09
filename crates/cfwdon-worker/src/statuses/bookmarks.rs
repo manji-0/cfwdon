@@ -5,6 +5,7 @@ use super::{
     resolve_authenticated_status_action_context, resolve_authenticated_status_viewer_context,
     resolve_visible_action_status, upsert_bookmark_local_status, upsert_bookmark_remote_status,
 };
+use crate::request_utils::empty_page_response;
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
 use worker::{Request, Response, Result, RouteContext};
 
@@ -110,12 +111,11 @@ pub(crate) async fn unbookmark_status(req: Request, ctx: RouteContext<()>) -> Re
 }
 
 pub(crate) async fn bookmarks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let page = match SavedStatusesPage::from_request(&req) {
-        Ok(page) => page,
-        Err(error) => return Response::error(error.to_string(), 400),
-    };
     let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
         return Response::error("Auth0 authentication required", 401);
+    };
+    let Some(page) = SavedStatusesPage::from_request(&req) else {
+        return empty_page_response();
     };
 
     let bookmark_entries = list_bookmarks_for_account(&auth.db, auth.viewer.id(), page).await?;

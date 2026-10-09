@@ -10,7 +10,9 @@ use crate::identity::{
 };
 use crate::inbox::upsert_follower_by_inbox;
 use crate::relationships::build_relationship_for_target;
-use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::request_utils::{
+    InternalPaginationIds, build_internal_cursor_link_header, empty_page_response,
+};
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::store::remote::{
@@ -801,8 +803,12 @@ pub(crate) async fn follow_requests_response(
     };
     let query: FollowRequestsQuery = req.query()?;
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
-    let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
-    let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
+    let Some(InternalPaginationIds {
+        max_id, since_id, ..
+    }) = InternalPaginationIds::parse(query.max_id.as_deref(), query.since_id.as_deref(), None)
+    else {
+        return empty_page_response();
+    };
 
     let mut requests = list_pending_follow_requests(&db, viewer.id()).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
@@ -923,9 +929,18 @@ pub(crate) async fn notification_requests_response(
     };
     let query: NotificationRequestsQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(40).clamp(1, 80);
-    let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
-    let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
-    let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
+    let Some(InternalPaginationIds {
+        max_id,
+        since_id,
+        min_id,
+    }) = InternalPaginationIds::parse(
+        query.max_id.as_deref(),
+        query.since_id.as_deref(),
+        query.min_id.as_deref(),
+    )
+    else {
+        return empty_page_response();
+    };
     let mut requests = list_pending_follow_requests(&db, viewer.id()).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));

@@ -3,9 +3,7 @@
 //! SQLite rowid of the `favourites` / `bookmarks` row plays that role here.
 
 use crate::db_utils::d1_results;
-use crate::request_utils::{
-    build_internal_cursor_link_for_url_with_min_id, parse_internal_pagination_id,
-};
+use crate::request_utils::{InternalPaginationIds, build_internal_cursor_link_for_url_with_min_id};
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -30,13 +28,23 @@ pub(crate) struct SavedStatusesPage {
 }
 
 impl SavedStatusesPage {
-    pub(crate) fn from_request(req: &Request) -> Result<Self> {
+    /// `None` when a cursor matches no row; see [`InternalPaginationIds::parse`].
+    pub(crate) fn from_request(req: &Request) -> Option<Self> {
         let query: SavedStatusesQuery = req.query().unwrap_or_default();
-        Ok(Self {
+        let InternalPaginationIds {
+            max_id,
+            since_id,
+            min_id,
+        } = InternalPaginationIds::parse(
+            query.max_id.as_deref(),
+            query.since_id.as_deref(),
+            query.min_id.as_deref(),
+        )?;
+        Some(Self {
             limit: query.limit.unwrap_or(20).clamp(1, 40),
-            max_id: parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?,
-            since_id: parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?,
-            min_id: parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?,
+            max_id,
+            since_id,
+            min_id,
         })
     }
 

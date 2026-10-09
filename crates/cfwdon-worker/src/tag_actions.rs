@@ -2,7 +2,9 @@ use crate::app_cache::invalidate_account_capabilities;
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
-use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::request_utils::{
+    InternalPaginationIds, build_internal_cursor_link_header, empty_page_response,
+};
 use crate::runtime_config::load_config;
 use crate::tags::{build_tag_response, normalize_hashtag};
 use crate::tracked_d1::D1Database;
@@ -263,9 +265,18 @@ pub(crate) async fn followed_tags_response(
 
     let query = req.query::<TagCollectionQuery>()?;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
-    let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
-    let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
+    let Some(InternalPaginationIds {
+        max_id,
+        since_id,
+        min_id,
+    }) = InternalPaginationIds::parse(
+        query.max_id.as_deref(),
+        query.since_id.as_deref(),
+        query.min_id.as_deref(),
+    )
+    else {
+        return empty_page_response();
+    };
 
     let account_id = D1Type::Text(account.id());
     let rows = db

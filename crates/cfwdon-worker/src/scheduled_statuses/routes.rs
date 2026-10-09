@@ -9,7 +9,7 @@ use crate::db_session::bind_request_d1;
 use crate::oauth_apps::find_oauth_app_id_by_bearer_token;
 use crate::oauth_store::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
 use crate::request_utils::{
-    build_internal_cursor_link_for_url_with_min_id, parse_internal_pagination_id,
+    InternalPaginationIds, build_internal_cursor_link_for_url_with_min_id, empty_page_response,
 };
 use crate::runtime_config::load_config;
 use crate::statuses::{normalize_scheduled_at, validate_scheduled_at_minimum_offset};
@@ -224,9 +224,18 @@ pub(crate) async fn scheduled_statuses_response(
     };
     let query: ScheduledStatusesQuery = req.query().unwrap_or_default();
     let limit = query.limit.unwrap_or(20).clamp(1, 40);
-    let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
-    let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
-    let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
+    let Some(InternalPaginationIds {
+        max_id,
+        since_id,
+        min_id,
+    }) = InternalPaginationIds::parse(
+        query.max_id.as_deref(),
+        query.since_id.as_deref(),
+        query.min_id.as_deref(),
+    )
+    else {
+        return empty_page_response();
+    };
     let mut statuses = list_scheduled_statuses_for_account(
         &db,
         access.viewer.id(),

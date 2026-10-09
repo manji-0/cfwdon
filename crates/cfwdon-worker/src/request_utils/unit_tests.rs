@@ -1,27 +1,42 @@
 use crate::request_utils::{
-    build_internal_cursor_link_for_url, build_internal_cursor_link_for_url_with_min_id,
-    parse_internal_pagination_id, parse_media_id_fields,
+    InternalPaginationIds, build_internal_cursor_link_for_url,
+    build_internal_cursor_link_for_url_with_min_id, parse_media_id_fields,
 };
 use url::Url;
 use worker::FormEntry;
 
-#[test]
-fn parse_internal_pagination_id_accepts_integer_cursor() {
-    assert_eq!(
-        parse_internal_pagination_id(Some("42"), "max_id").unwrap(),
-        Some(42)
-    );
-    assert_eq!(
-        parse_internal_pagination_id(Some(""), "max_id").unwrap(),
-        None
-    );
-    assert_eq!(parse_internal_pagination_id(None, "max_id").unwrap(), None);
+fn max_id(value: &str) -> Option<Option<i64>> {
+    InternalPaginationIds::parse(Some(value), None, None).map(|ids| ids.max_id)
 }
 
 #[test]
-fn parse_internal_pagination_id_rejects_invalid_cursor() {
-    let error = parse_internal_pagination_id(Some("abc"), "since_id").unwrap_err();
-    assert!(error.to_string().contains("since_id"));
+fn internal_pagination_ids_accept_integer_cursors() {
+    assert_eq!(max_id("42"), Some(Some(42)));
+    assert_eq!(max_id(" -7 "), Some(Some(-7)));
+    assert_eq!(max_id(""), Some(None));
+    assert_eq!(max_id("  "), Some(None));
+    assert_eq!(
+        InternalPaginationIds::parse(None, Some("3"), Some("5")),
+        Some(InternalPaginationIds {
+            max_id: None,
+            since_id: Some(3),
+            min_id: Some(5),
+        })
+    );
+}
+
+#[test]
+fn internal_pagination_ids_cast_like_rails_integers() {
+    assert_eq!(max_id("42abc"), Some(Some(42)));
+    assert_eq!(max_id("+8"), Some(Some(8)));
+    assert_eq!(max_id("abc"), None);
+    assert_eq!(
+        max_id("r_aHR0cHM6Ly9mZWRpYmlyZC5jb20vdXNlcnMvbWFuamkw"),
+        None
+    );
+    assert_eq!(max_id("--1"), None);
+    assert_eq!(max_id("99999999999999999999"), None);
+    assert_eq!(InternalPaginationIds::parse(None, None, Some("x")), None);
 }
 
 #[test]

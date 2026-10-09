@@ -1,4 +1,4 @@
-use crate::request_utils::{build_internal_cursor_link_header, parse_internal_pagination_id};
+use crate::request_utils::{InternalPaginationIds, build_internal_cursor_link_header};
 use crate::responses::MastodonAccountResponse;
 use worker::{Request, Response, Result};
 
@@ -20,15 +20,22 @@ pub(crate) struct AccountCollectionPage {
 }
 
 impl AccountCollectionPage {
+    /// `None` when a cursor matches no row; see [`InternalPaginationIds::parse`].
     pub(crate) fn from_query(
         query: &AccountCollectionQuery,
         default_limit: u32,
         max_limit: u32,
-    ) -> Result<Self> {
-        let max_id = parse_internal_pagination_id(query.max_id.as_deref(), "max_id")?;
-        let since_id = parse_internal_pagination_id(query.since_id.as_deref(), "since_id")?;
-        let min_id = parse_internal_pagination_id(query.min_id.as_deref(), "min_id")?;
-        Ok(Self {
+    ) -> Option<Self> {
+        let InternalPaginationIds {
+            max_id,
+            since_id,
+            min_id,
+        } = InternalPaginationIds::parse(
+            query.max_id.as_deref(),
+            query.since_id.as_deref(),
+            query.min_id.as_deref(),
+        )?;
+        Some(Self {
             limit: query.limit.unwrap_or(default_limit).clamp(1, max_limit),
             max_id,
             since_id: since_id.or(min_id),

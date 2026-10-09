@@ -4,6 +4,7 @@ use super::collections::{
 };
 use crate::auth::{find_account_by_id, find_authenticated_local_account};
 use crate::db_session::bind_request_d1;
+use crate::request_utils::empty_page_response;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::store::relationship::{list_blocks_for_account, list_mutes_for_account};
@@ -14,15 +15,18 @@ use worker::{Request, Response, Result, RouteContext};
 pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AccountCollectionQuery = req.query().unwrap_or_default();
-    let AccountCollectionPage {
-        limit,
-        max_id,
-        since_id,
-    } = AccountCollectionPage::from_query(&query, 20, 40)?;
     let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
+    };
+    let Some(AccountCollectionPage {
+        limit,
+        max_id,
+        since_id,
+    }) = AccountCollectionPage::from_query(&query, 20, 40)
+    else {
+        return empty_page_response();
     };
 
     let blocks = list_blocks_for_account(&db, viewer.id(), limit, max_id, since_id).await?;
@@ -43,15 +47,18 @@ pub(crate) async fn blocks_response(req: Request, ctx: RouteContext<()>) -> Resu
 pub(crate) async fn mutes_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AccountCollectionQuery = req.query().unwrap_or_default();
-    let AccountCollectionPage {
-        limit,
-        max_id,
-        since_id,
-    } = AccountCollectionPage::from_query(&query, 20, 40)?;
     let db = bind_request_d1(&ctx, &config)?;
     let viewer = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
+    };
+    let Some(AccountCollectionPage {
+        limit,
+        max_id,
+        since_id,
+    }) = AccountCollectionPage::from_query(&query, 20, 40)
+    else {
+        return empty_page_response();
     };
 
     let mutes = list_mutes_for_account(&db, viewer.id(), limit, max_id, since_id).await?;

@@ -7,6 +7,7 @@ use super::{
 };
 use crate::activitypub::{build_like_activity, build_undo_like_activity};
 use crate::delivery::queue_remote_actor_activity;
+use crate::request_utils::empty_page_response;
 use crate::response_cache::invalidate_status_api_cache;
 use crate::statuses::{AuthenticatedStatusActionContextResolution, ResolvedVisibleActionStatus};
 use worker::{Request, Response, Result, RouteContext};
@@ -176,12 +177,11 @@ pub(crate) async fn unfavourite_status(req: Request, ctx: RouteContext<()>) -> R
 }
 
 pub(crate) async fn favourites_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let page = match SavedStatusesPage::from_request(&req) {
-        Ok(page) => page,
-        Err(error) => return Response::error(error.to_string(), 400),
-    };
     let Some(auth) = resolve_authenticated_status_viewer_context(&req, &ctx).await? else {
         return Response::error("Auth0 authentication required", 401);
+    };
+    let Some(page) = SavedStatusesPage::from_request(&req) else {
+        return empty_page_response();
     };
 
     let favourite_entries = list_favourites_for_account(&auth.db, auth.viewer.id(), page).await?;

@@ -1,5 +1,5 @@
 use url::Url;
-use worker::{Error, FormData, FormEntry, Request, Result, RouteContext};
+use worker::{Error, FormData, FormEntry, Request, Response, Result, RouteContext};
 
 pub(crate) fn build_internal_cursor_link_header(
     req: &Request,
@@ -191,17 +191,60 @@ pub(crate) fn status_id_from_context(ctx: &RouteContext<()>) -> Result<String> {
         .ok_or_else(|| Error::RustError("missing status id route parameter".to_owned()))
 }
 
-pub(crate) fn parse_internal_pagination_id(
-    value: Option<&str>,
-    field: &str,
-) -> Result<Option<i64>> {
-    match value.map(str::trim).filter(|value| !value.is_empty()) {
-        None => Ok(None),
-        Some(value) => value
-            .parse::<i64>()
-            .map(Some)
-            .map_err(|_| Error::RustError(format!("{field} must be an integer cursor id"))),
+/// Mastodon's `max_id` / `since_id` / `min_id` paging cursors over an internal
+/// integer id, cast the way Rails casts a query value for an integer column.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InternalPaginationIds {
+    pub(crate) max_id: Option<i64>,
+    pub(crate) since_id: Option<i64>,
+    pub(crate) min_id: Option<i64>,
+}
+
+impl InternalPaginationIds {
+    /// `None` when a cursor is not numeric (an account id, say). Rails casts it
+    /// to NULL, the comparison matches no row, and Mastodon answers with an
+    /// empty page rather than an error; callers do the same with
+    /// [`empty_page_response`].
+    pub(crate) fn parse(
+        max_id: Option<&str>,
+        since_id: Option<&str>,
+        min_id: Option<&str>,
+    ) -> Option<Self> {
+        Some(Self {
+            max_id: cast_pagination_id(max_id)?,
+            since_id: cast_pagination_id(since_id)?,
+            min_id: cast_pagination_id(min_id)?,
+        })
     }
+}
+
+/// Rails' integer cast: blank is absent, a value opening with an optional sign
+/// and a digit reads up to its first non-digit (`"42abc"` is 42), and anything
+/// else, or a value past the column range, matches nothing (outer `None`).
+fn cast_pagination_id(value: Option<&str>) -> Option<Option<i64>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Some(None);
+    };
+    let unsigned = value.trim_start_matches(['+', '-']);
+    if value.len() - unsigned.len() > 1 {
+        return None;
+    }
+    let digits = unsigned
+        .find(|ch: char| !ch.is_ascii_digit())
+        .map_or(unsigned, |end| &unsigned[..end]);
+    if digits.is_empty() {
+        return None;
+    }
+    let sign_len = value.len() - unsigned.len();
+    value[..sign_len + digits.len()]
+        .parse::<i64>()
+        .ok()
+        .map(Some)
+}
+
+/// The empty page Mastodon returns when a paging cursor matches no row.
+pub(crate) fn empty_page_response() -> Result<Response> {
+    Response::from_json(&Vec::<serde_json::Value>::new())
 }
 
 pub(crate) fn parse_media_ids_from_form(form: &FormData) -> Option<Vec<String>> {

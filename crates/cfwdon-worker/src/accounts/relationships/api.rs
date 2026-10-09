@@ -12,6 +12,7 @@ use crate::db_session::bind_request_d1;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::relationships::build_relationship_for_target;
 use crate::remote::{AccountReference, resolve_account_reference};
+use crate::request_utils::empty_page_response;
 use crate::runtime_config::load_config;
 use worker::{Request, Response, Result, RouteContext};
 
@@ -77,11 +78,7 @@ async fn account_follow_collection_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AccountCollectionQuery = req.query().unwrap_or_default();
-    let AccountCollectionPage {
-        limit,
-        max_id,
-        since_id,
-    } = AccountCollectionPage::from_query(&query, 40, 80)?;
+    let page = AccountCollectionPage::from_query(&query, 40, 80);
     let account_id = ctx
         .param("id")
         .map(|value| value.trim().to_owned())
@@ -90,8 +87,21 @@ async fn account_follow_collection_response(
     let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
-    let entries = match resolve_requested_account_reference(&db, &config, &account_id).await? {
-        Some(AccountReference::Local(account)) => match kind {
+    let Some(reference) = resolve_requested_account_reference(&db, &config, &account_id).await?
+    else {
+        return Response::error("account not found", 404);
+    };
+    let Some(AccountCollectionPage {
+        limit,
+        max_id,
+        since_id,
+    }) = page
+    else {
+        return empty_page_response();
+    };
+
+    let entries = match reference {
+        AccountReference::Local(account) => match kind {
             AccountFollowCollectionKind::Followers => {
                 local_account_follower_entries(&db, &config, account.id(), limit, max_id, since_id)
                     .await?
@@ -101,7 +111,7 @@ async fn account_follow_collection_response(
                     .await?
             }
         },
-        Some(AccountReference::Remote(actor)) => match kind {
+        AccountReference::Remote(actor) => match kind {
             AccountFollowCollectionKind::Followers => {
                 remote_actor_follower_entries(
                     &db,
@@ -127,7 +137,6 @@ async fn account_follow_collection_response(
                 .await?
             }
         },
-        None => return Response::error("account not found", 404),
     };
 
     finalize_collection_response(&req, limit, max_id, since_id, entries)
