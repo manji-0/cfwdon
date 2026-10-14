@@ -7,6 +7,11 @@
 //! row and discarded everything above the cursor, making deep pages progressively
 //! slower. Emitting the bound only when it exists lets the index seek straight to
 //! it.
+//!
+//! The remote follow branch is the exception to a single ordered range. A join of
+//! every followed actor ordered by `published_at` reads each actor's whole history
+//! before `LIMIT`. That branch instead takes `limit` rows per actor, in index
+//! order, and the branch `ORDER BY` merges those slices.
 use crate::timelines::{
     ResolvedTimelineCursor, ResolvedTimelineCursorSlots, append_resolved_timeline_cursor_bindings,
     seekable_resolved_timeline_cursor_predicates,
@@ -17,9 +22,12 @@ use worker::d1::D1Type;
 struct CandidateBranch {
     source: &'static str,
     /// `FROM` and the branch's own `WHERE` conditions, cursor bounds excluded.
+    /// Unused when `per_actor_limit` is set.
     from_and_where: &'static str,
     timestamp_column: &'static str,
     id_column: &'static str,
+    /// Cap each followed actor, then let this branch merge those slices.
+    per_actor_limit: bool,
 }
 
 const LOCAL_OWN_STATUSES: CandidateBranch = CandidateBranch {
@@ -28,6 +36,7 @@ const LOCAL_OWN_STATUSES: CandidateBranch = CandidateBranch {
                     WHERE s.account_id = ?1",
     timestamp_column: "s.created_at",
     id_column: "s.id",
+    per_actor_limit: false,
 };
 
 const LOCAL_FOLLOWED_ACCOUNTS: CandidateBranch = CandidateBranch {
@@ -40,6 +49,7 @@ const LOCAL_FOLLOWED_ACCOUNTS: CandidateBranch = CandidateBranch {
                       AND s.visibility IN ('public', 'unlisted', 'private')",
     timestamp_column: "s.created_at",
     id_column: "s.id",
+    per_actor_limit: false,
 };
 
 const LOCAL_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
@@ -53,18 +63,15 @@ const LOCAL_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
                       AND s.visibility = 'public'",
     timestamp_column: "s.created_at",
     id_column: "s.id",
+    per_actor_limit: false,
 };
 
 const REMOTE_FOLLOWED_ACCOUNTS: CandidateBranch = CandidateBranch {
     source: "remote",
-    from_and_where: "FROM follows f
-                    JOIN remote_statuses rs
-                      ON rs.actor_uri = f.target_actor_uri
-                    WHERE f.follower_account_id = ?1
-                      AND f.state = 'accepted'
-                      AND rs.visibility IN ('public', 'unlisted', 'private')",
+    from_and_where: "",
     timestamp_column: "rs.published_at",
     id_column: "rs.id",
+    per_actor_limit: true,
 };
 
 const REMOTE_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
@@ -78,6 +85,7 @@ const REMOTE_FOLLOWED_TAGS: CandidateBranch = CandidateBranch {
                       AND rs.visibility = 'public'",
     timestamp_column: "rs.published_at",
     id_column: "rs.id",
+    per_actor_limit: false,
 };
 
 /// Which statuses a candidate query draws from.
@@ -154,11 +162,15 @@ fn branch_sql(
     limit_slot: usize,
     dir: &str,
 ) -> String {
+    if branch.per_actor_limit {
+        return per_actor_branch_sql(branch, slots, limit_slot, dir);
+    }
     let CandidateBranch {
         source,
         from_and_where,
         timestamp_column,
         id_column,
+        ..
     } = branch;
     let cursor_predicates =
         seekable_resolved_timeline_cursor_predicates(timestamp_column, id_column, slots);
@@ -168,6 +180,50 @@ fn branch_sql(
                 FROM (
                     SELECT '{source}' AS source, {id_column} AS status_id, {timestamp_column} AS timestamp
                     {from_and_where}{cursor_predicates}
+                    ORDER BY {timestamp_column} {dir}, {id_column} {dir}
+                    LIMIT ?{limit_slot}
+                )"
+    )
+}
+
+/// Newest `limit` rows of one followed actor, then the branch merges them.
+///
+/// Cursor bounds sit inside the per-actor scan. Applying them only after the
+/// per-actor `LIMIT` would drop a deep page down to whatever of those newest
+/// rows still passed the cursor. `idx_remote_statuses_actor_published` covers
+/// `(actor_uri, published_at, id)`, so this `ORDER BY` walks the index instead
+/// of sorting each actor's history.
+fn per_actor_branch_sql(
+    branch: &CandidateBranch,
+    slots: &CursorSlots,
+    limit_slot: usize,
+    dir: &str,
+) -> String {
+    let CandidateBranch {
+        source,
+        timestamp_column,
+        id_column,
+        ..
+    } = branch;
+    let cursor_predicates =
+        seekable_resolved_timeline_cursor_predicates("rs_actor.published_at", "rs_actor.id", slots);
+
+    format!(
+        "SELECT source, status_id, timestamp
+                FROM (
+                    SELECT '{source}' AS source, {id_column} AS status_id, {timestamp_column} AS timestamp
+                    FROM follows f
+                    JOIN remote_statuses rs
+                      ON rs.id IN (
+                        SELECT rs_actor.id
+                        FROM remote_statuses rs_actor
+                        WHERE rs_actor.actor_uri = f.target_actor_uri
+                          AND rs_actor.visibility IN ('public', 'unlisted', 'private'){cursor_predicates}
+                        ORDER BY rs_actor.published_at {dir}, rs_actor.id {dir}
+                        LIMIT ?{limit_slot}
+                      )
+                    WHERE f.follower_account_id = ?1
+                      AND f.state = 'accepted'
                     ORDER BY {timestamp_column} {dir}, {id_column} {dir}
                     LIMIT ?{limit_slot}
                 )"
@@ -264,9 +320,16 @@ mod tests {
         );
 
         assert_eq!(query.bindings.len(), 6);
-        assert!(query.sql.contains("rs.published_at <= ?2"));
-        assert!(query.sql.contains("rs.published_at >= ?4"));
-        assert!(query.sql.contains("(rs.published_at > ?4 OR rs.id > ?5)"));
+        // Bounds constrain each actor's slice. The merge orders `rs`, but it
+        // does not apply the cursor a second time.
+        assert!(query.sql.contains("rs_actor.published_at <= ?2"));
+        assert!(query.sql.contains("rs_actor.published_at >= ?4"));
+        assert!(
+            query
+                .sql
+                .contains("(rs_actor.published_at > ?4 OR rs_actor.id > ?5)")
+        );
+        assert!(!query.sql.contains("rs.published_at <= ?2"));
         assert!(query.sql.contains("LIMIT ?6"));
     }
 
@@ -337,5 +400,110 @@ mod tests {
 
         // Three branches plus the outer merge.
         assert_eq!(query.sql.matches("LIMIT ?2").count(), 4);
+    }
+
+    #[test]
+    fn remote_followed_branch_limits_each_actor_before_the_merge() {
+        let cursor = empty_cursor();
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Remote,
+            false,
+        );
+
+        let actor_order = query
+            .sql
+            .find("ORDER BY rs_actor.published_at DESC, rs_actor.id DESC")
+            .expect("per-actor order");
+        let actor_limit = query.sql[actor_order..]
+            .find("LIMIT ?2")
+            .expect("per-actor limit");
+        let merge_order = query
+            .sql
+            .find("ORDER BY rs.published_at DESC, rs.id DESC")
+            .expect("branch merge");
+        assert!(actor_order < merge_order);
+        assert!(actor_order + actor_limit < merge_order);
+        assert!(
+            query
+                .sql
+                .contains("rs_actor.actor_uri = f.target_actor_uri")
+        );
+        assert!(
+            query
+                .sql
+                .contains("rs_actor.visibility IN ('public', 'unlisted', 'private')")
+        );
+        assert!(query.sql.contains("f.state = 'accepted'"));
+        // Per-actor limit, branch merge, and the outer merge share ?2.
+        assert_eq!(query.sql.matches("LIMIT ?2").count(), 3);
+        assert!(!query.sql.contains("UNION"));
+    }
+
+    #[test]
+    fn remote_forward_page_orders_each_actor_ascending() {
+        let cursor = ResolvedTimelineCursor {
+            forward: true,
+            max_timestamp: None,
+            max_id: None,
+            min_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
+            min_id: Some("status-min".to_owned()),
+        };
+        let query = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Remote,
+            false,
+        );
+
+        assert!(
+            query
+                .sql
+                .contains("ORDER BY rs_actor.published_at ASC, rs_actor.id ASC")
+        );
+        assert!(query.sql.contains("rs_actor.published_at >= ?2"));
+        assert!(
+            query
+                .sql
+                .contains("(rs_actor.published_at > ?2 OR rs_actor.id > ?3)")
+        );
+        assert!(query.sql.contains("LIMIT ?4"));
+    }
+
+    #[test]
+    fn remote_tag_union_and_local_branches_stay_single_ranges() {
+        let cursor = empty_cursor();
+        let remote = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Remote,
+            true,
+        );
+        let local = home_timeline_candidate_query(
+            "viewer",
+            &cursor,
+            20,
+            HomeTimelineCandidateSource::Local,
+            true,
+        );
+
+        assert_eq!(remote.sql.matches("UNION").count(), 1);
+        assert!(remote.sql.contains("remote_status_hashtags"));
+        assert!(remote.sql.contains("ON rs.id = h.status_id"));
+        assert!(
+            remote
+                .sql
+                .contains("rs_actor.actor_uri = f.target_actor_uri")
+        );
+        // Per-actor limit, that branch's merge, the tag branch, and the outer merge.
+        assert_eq!(remote.sql.matches("LIMIT ?2").count(), 4);
+
+        assert!(!local.sql.contains("rs_actor"));
+        assert!(local.sql.contains("s.account_id = ?1"));
+        assert!(local.sql.contains("s.account_id = f.target_account_id"));
     }
 }

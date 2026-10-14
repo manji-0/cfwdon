@@ -36,6 +36,65 @@ def assert_seeks_alias(plan: str, label: str, alias: str) -> None:
         raise RuntimeError(f"{label}: expected a seek on `{alias}`, got:\n{plan}")
 
 
+def assert_remote_home_actor_slices(conn: sqlite3.Connection) -> None:
+    """Each followed actor is an ordered index walk, then the slices are merged.
+
+    The merge may sort. The per-actor scan must not: `id` has to be in
+    `idx_remote_statuses_actor_published`, or SQLite sorts that tie and the
+    `LIMIT` no longer stops on the index.
+    """
+    index_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'idx_remote_statuses_actor_published'"
+    ).fetchone()
+    if index_sql is None or "id DESC" not in index_sql[0]:
+        raise RuntimeError(
+            "idx_remote_statuses_actor_published must be "
+            f"(actor_uri, published_at DESC, id DESC), got {index_sql}"
+        )
+
+    sql = """
+        SELECT 'remote' AS source, rs.id AS status_id, rs.published_at AS timestamp
+        FROM follows f
+        JOIN remote_statuses rs
+          ON rs.id IN (
+            SELECT rs_actor.id
+            FROM remote_statuses rs_actor
+            WHERE rs_actor.actor_uri = f.target_actor_uri
+              AND rs_actor.visibility IN ('public', 'unlisted', 'private')
+              AND rs_actor.published_at <= ?
+              AND (rs_actor.published_at < ? OR rs_actor.id < ?)
+            ORDER BY rs_actor.published_at DESC, rs_actor.id DESC
+            LIMIT ?
+          )
+        WHERE f.follower_account_id = ?
+          AND f.state = 'accepted'
+        ORDER BY rs.published_at DESC, rs.id DESC
+        LIMIT ?
+    """
+    plan = plan_text(
+        conn,
+        sql,
+        (
+            "2026-01-15T12:00:00Z",
+            "2026-01-15T12:00:00Z",
+            "rs-50",
+            80,
+            "acct-1",
+            80,
+        ),
+    )
+    label = "home remote followed actors"
+    assert_uses_index(plan, label)
+    assert_seeks_alias(plan, label, "f")
+    assert_seeks_alias(plan, label, "rs_actor")
+    if "idx_remote_statuses_actor_published" not in plan:
+        raise RuntimeError(f"{label}: per-actor scan did not use the actor index:\n{plan}")
+    if "RIGHT PART OF ORDER BY" in plan:
+        raise RuntimeError(f"{label}: per-actor ORDER BY still sorts id ties:\n{plan}")
+    if "published_at<?" not in plan and "published_at<" not in plan:
+        raise RuntimeError(f"{label}: cursor bound was not an index range:\n{plan}")
+
+
 def assert_no_null_cursor_disjunction(_plan: str, sql: str, label: str) -> None:
     import re
 
@@ -386,6 +445,7 @@ def main() -> int:
                     for alias in seek_alias.split(","):
                         assert_seeks_alias(plan, label, alias)
                 assert_no_null_cursor_disjunction(plan, sql, label)
+            assert_remote_home_actor_slices(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1
