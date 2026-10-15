@@ -249,6 +249,7 @@ pub(crate) async fn upsert_remote_reblog_status(
     config: &AppConfig,
     remote_actor: &RemoteActorProfile,
     activity: &serde_json::Value,
+    env: Option<&Env>,
 ) -> Result<()> {
     let object_uri = activity
         .get("id")
@@ -261,12 +262,28 @@ pub(crate) async fn upsert_remote_reblog_status(
         .map_err(|error| Error::RustError(error.to_string()))?;
     let mut intent =
         build_remote_reblog_store_intent(remote_actor, activity, status_id, quote_resolution)?;
-    if let Some(previous) = find_remote_status_by_object_uri(db, object_uri).await? {
+    let previous = find_remote_status_by_object_uri(db, object_uri).await?;
+    let is_new = previous.is_none();
+    if let Some(previous) = previous {
         intent.quote_state =
             merged_quote_state_for_remote_upsert(previous.quote_state, intent.quote_state);
     }
 
-    upsert_remote_reblog_status_draft(db, &intent).await
+    upsert_remote_reblog_status_draft(db, &intent).await?;
+
+    // A re-delivered Announce is not a stream event. Only a live inbox
+    // delivery of a new one fans out to followers, like a status create.
+    if let Some(kind) = remote_status_notify_kind(env.is_some(), is_new, false) {
+        let _ = soft_enqueue_background_job(
+            db,
+            JOB_REMOTE_STATUS_NOTIFY,
+            &remote_status_notify_payload(intent.status_id.as_str(), &remote_actor.actor_uri, kind),
+            &now_iso_string()?,
+        )
+        .await;
+    }
+
+    Ok(())
 }
 
 async fn upsert_remote_reblog_status_draft(

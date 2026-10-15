@@ -112,8 +112,8 @@ pub(crate) async fn handle_inbox_announce(
     upsert_remote_actor(db, remote_actor).await?;
     // Timeline embedding needs the boosted Note; URI-only Announces previously
     // left an empty wrapper with reblog=null.
-    ensure_announce_boost_target(db, config, activity, object_uri, env).await?;
-    upsert_remote_reblog_status(db, config, remote_actor, activity).await?;
+    ensure_announce_boost_target(db, config, activity, object_uri).await?;
+    upsert_remote_reblog_status(db, config, remote_actor, activity, env).await?;
 
     if let Some(status) = find_local_status_by_object_uri(db, config, object_uri).await? {
         if status.account_id != account.id() {
@@ -155,7 +155,6 @@ async fn ensure_announce_boost_target(
     config: &AppConfig,
     activity: &serde_json::Value,
     object_uri: &str,
-    env: Option<&Env>,
 ) -> Result<()> {
     if find_local_status_by_object_uri(db, config, object_uri)
         .await?
@@ -171,7 +170,7 @@ async fn ensure_announce_boost_target(
     }
 
     if let Some(object) = extract_remote_note_object(activity)
-        && upsert_embedded_announce_target(db, config, object, env).await?
+        && upsert_embedded_announce_target(db, config, object).await?
     {
         return Ok(());
     }
@@ -203,7 +202,6 @@ async fn upsert_embedded_announce_target(
     db: &D1Database,
     config: &AppConfig,
     object: &serde_json::Value,
-    env: Option<&Env>,
 ) -> Result<bool> {
     let Some((_object_id, attributed_uri)) = acceptable_embedded_announce_target(object) else {
         return Ok(false);
@@ -220,7 +218,9 @@ async fn upsert_embedded_announce_target(
         }
     };
     upsert_remote_actor(db, &profile).await?;
-    upsert_remote_status(db, config, &profile, object, env).await?;
+    // Ingest detail of the Announce, not a standalone event: the wrapper below
+    // is what streams, so the bare original must not fan out as a create.
+    upsert_remote_status(db, config, &profile, object, None).await?;
     Ok(true)
 }
 
