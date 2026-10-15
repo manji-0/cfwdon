@@ -2,7 +2,7 @@ use crate::remote::adapters::{
     activity_pub_reblog_input_from_activity, activity_pub_status_input_from_object,
 };
 use crate::remote::store::RemoteActorProfile;
-use crate::time_html::now_iso_string;
+use crate::time_html::{normalize_rfc3339_millis_utc, now_iso_string};
 use cfwdon_domain::{
     RemoteQuoteResolution, StatusId, StoredRemoteReblogIntent, StoredRemoteStatusIntent,
 };
@@ -43,7 +43,7 @@ pub(super) fn build_remote_status_store_intent(
     let incoming = input
         .into_incoming()
         .map_err(|error| Error::RustError(error.to_string()))?;
-    Ok(incoming
+    let mut intent = incoming
         .into_store_intent(
             status_id,
             actor.actor_uri.clone(),
@@ -51,7 +51,14 @@ pub(super) fn build_remote_status_store_intent(
             serialize_remote_status_object_json(object)?,
             revision_at,
         )
-        .state)
+        .state;
+    // An object without `published` or `updated` would otherwise sort as the
+    // oldest row and break cursor resolution. Received time is the last resort,
+    // matching the reblog path.
+    if intent.published_at.is_empty() {
+        intent.published_at = received_at_timestamp()?;
+    }
+    Ok(intent)
 }
 
 pub(super) fn build_remote_reblog_store_intent(
@@ -73,9 +80,16 @@ pub(super) fn build_remote_reblog_store_intent(
         )
         .state;
     if intent.published_at.is_empty() {
-        intent.published_at = now_iso_string()?;
+        intent.published_at = received_at_timestamp()?;
     }
     Ok(intent)
+}
+
+/// Received-time fallback pinned to the same UTC millisecond shape as ingest.
+/// `now_iso_string` only emits that shape on wasm, so normalize it here too.
+fn received_at_timestamp() -> Result<String> {
+    let now = now_iso_string()?;
+    Ok(normalize_rfc3339_millis_utc(&now).unwrap_or(now))
 }
 
 #[cfg(test)]
@@ -207,7 +221,7 @@ mod tests {
         assert!(intent.sensitive);
         assert_eq!(intent.language.as_deref(), Some("ja"));
         assert_eq!(intent.quote_state, QuoteState::Accepted);
-        assert_eq!(intent.published_at, "2026-05-10T01:02:03Z");
+        assert_eq!(intent.published_at, "2026-05-10T01:02:03.000Z");
         assert_eq!(intent.revision_at, "revision-time");
         assert_eq!(intent.status_id.as_str(), "remote-status-id");
     }
@@ -254,7 +268,7 @@ mod tests {
         );
         assert_eq!(intent.visibility, Visibility::Public);
         assert_eq!(intent.quote_state, QuoteState::Accepted);
-        assert_eq!(intent.published_at, "2026-05-11T01:02:03Z");
+        assert_eq!(intent.published_at, "2026-05-11T01:02:03.000Z");
         assert!(intent.raw_object_json.contains("\"Announce\""));
     }
 
@@ -303,7 +317,7 @@ mod tests {
         .into_incoming()
         .expect("incoming status");
 
-        assert_eq!(incoming.published_at(), "2026-05-10T01:02:03Z");
+        assert_eq!(incoming.published_at(), "2026-05-10T01:02:03.000Z");
         assert_eq!(incoming.language().as_deref(), Some("ja"));
     }
 
@@ -316,6 +330,69 @@ mod tests {
         .into_incoming()
         .expect("incoming status");
 
-        assert_eq!(incoming.published_at(), "2026-05-10T04:05:06Z");
+        assert_eq!(incoming.published_at(), "2026-05-10T04:05:06.000Z");
+    }
+
+    #[test]
+    fn incoming_remote_status_normalizes_offset_timestamp() {
+        let input = activity_pub_status_input_from_object(&json!({
+            "id": "https://remote.example/statuses/1",
+            "published": "2026-05-10T09:02:03+09:00",
+        }));
+
+        assert_eq!(
+            input.published_at.as_deref(),
+            Some("2026-05-10T00:02:03.000Z")
+        );
+    }
+
+    #[test]
+    fn incoming_remote_status_keeps_unparseable_published() {
+        let input = activity_pub_status_input_from_object(&json!({
+            "id": "https://remote.example/statuses/1",
+            "published": "yesterday",
+        }));
+
+        assert_eq!(input.published_at.as_deref(), Some("yesterday"));
+    }
+
+    #[test]
+    fn incoming_remote_reblog_normalizes_offset_timestamp() {
+        let input = activity_pub_reblog_input_from_activity(&json!({
+            "id": "https://remote.example/users/alice/activities/announce/1",
+            "type": "Announce",
+            "object": "https://remote.example/users/bob/statuses/9",
+            "published": "2026-05-10T09:02:03+09:00",
+        }));
+
+        assert_eq!(
+            input.published_at.as_deref(),
+            Some("2026-05-10T00:02:03.000Z")
+        );
+    }
+
+    #[test]
+    fn build_remote_status_store_intent_fills_missing_published_at() {
+        use cfwdon_domain::{RemoteQuoteResolution, StatusId};
+
+        let actor = remote_actor_profile_fixture();
+        let object = json!({
+            "id": "https://remote.example/users/alice/statuses/1",
+            "type": "Note",
+            "content": "<p>hello</p>",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        });
+
+        let intent = build_remote_status_store_intent(
+            &actor,
+            &object,
+            StatusId::new("remote-status-id").expect("status id"),
+            RemoteQuoteResolution::without_quote(),
+            "revision-time".to_owned(),
+        )
+        .expect("store intent");
+
+        assert_eq!(intent.published_at.len(), 24);
+        assert!(intent.published_at.ends_with('Z'));
     }
 }

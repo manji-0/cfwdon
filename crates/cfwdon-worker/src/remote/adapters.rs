@@ -2,7 +2,7 @@ use crate::activitypub::activity_object_id;
 use crate::content_helpers::{
     sanitize_remote_http_url, sanitize_remote_plain_text, sanitize_remote_status_html,
 };
-use crate::time_html::render_status_html;
+use crate::time_html::{normalize_rfc3339_millis_utc, render_status_html};
 use cfwdon_domain::{ActivityPubReblogInput, ActivityPubStatusInput};
 use serde_json::Value;
 
@@ -38,11 +38,11 @@ pub(crate) fn activity_pub_status_input_from_object(object: &Value) -> ActivityP
         published_at: object
             .get("published")
             .and_then(Value::as_str)
-            .map(str::to_owned),
+            .map(normalized_remote_timestamp),
         updated_at: object
             .get("updated")
             .and_then(Value::as_str)
-            .map(str::to_owned),
+            .map(normalized_remote_timestamp),
     }
 }
 
@@ -73,12 +73,20 @@ pub(crate) fn activity_pub_reblog_input_from_activity(activity: &Value) -> Activ
         published_at: activity
             .get("published")
             .and_then(Value::as_str)
-            .map(str::to_owned),
+            .map(normalized_remote_timestamp),
         updated_at: activity
             .get("updated")
             .and_then(Value::as_str)
-            .map(str::to_owned),
+            .map(normalized_remote_timestamp),
     }
+}
+
+/// Persist remote timestamps in one UTC millisecond shape so the timeline's
+/// lexicographic `(published_at, id)` ordering matches chronological order.
+/// Unparseable values are kept as-is; dropping them would lose the only
+/// time hint the object carries.
+fn normalized_remote_timestamp(value: &str) -> String {
+    normalize_rfc3339_millis_utc(value).unwrap_or_else(|| value.trim().to_owned())
 }
 
 pub(crate) fn remote_status_content_html(object: &Value) -> String {

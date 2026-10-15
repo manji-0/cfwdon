@@ -1,4 +1,4 @@
-use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 use worker::{Error, Result};
 
 pub(crate) fn now_iso_string() -> Result<String> {
@@ -70,6 +70,28 @@ pub(crate) fn activitypub_datetime_string(value: &str) -> String {
     }
 
     trimmed.to_owned()
+}
+
+/// Normalize an RFC3339 timestamp into one fixed-precision UTC shape.
+///
+/// Timeline ordering and cursor predicates compare persisted timestamps as
+/// strings, so `2026-01-01T09:00:17+09:00`, `2026-01-01T00:00:17Z` and
+/// `2026-01-01T00:00:17.5Z` must all collapse to the same UTC, millisecond
+/// form. Returns `None` when the value is not RFC3339 so the caller can keep
+/// the original instead of dropping it.
+pub(crate) fn normalize_rfc3339_millis_utc(value: &str) -> Option<String> {
+    let parsed = OffsetDateTime::parse(value.trim(), &Rfc3339).ok()?;
+    let utc = parsed.to_offset(UtcOffset::UTC);
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        utc.year(),
+        utc.month() as u8,
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+        utc.millisecond(),
+    ))
 }
 
 pub(crate) fn is_iso_timestamp_in_past(value: &str) -> Result<bool> {
@@ -144,7 +166,7 @@ pub(crate) fn timestamp_to_mastodon_account_created_at(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::activitypub_datetime_string;
+    use super::{activitypub_datetime_string, normalize_rfc3339_millis_utc};
     use crate::time_html::timestamp_to_mastodon_iso8601;
 
     #[test]
@@ -179,6 +201,53 @@ mod tests {
         assert_eq!(
             timestamp_to_mastodon_iso8601("2026-05-09T13:40:48.000Z"),
             "2026-05-09T13:40:48.000Z"
+        );
+    }
+
+    #[test]
+    fn normalize_rfc3339_millis_utc_pins_one_shape() {
+        assert_eq!(
+            normalize_rfc3339_millis_utc("2026-01-01T09:00:17+09:00").as_deref(),
+            Some("2026-01-01T00:00:17.000Z")
+        );
+        assert_eq!(
+            normalize_rfc3339_millis_utc("2026-01-01T00:00:16Z").as_deref(),
+            Some("2026-01-01T00:00:16.000Z")
+        );
+        assert_eq!(
+            normalize_rfc3339_millis_utc("2026-01-01T00:00:16.5Z").as_deref(),
+            Some("2026-01-01T00:00:16.500Z")
+        );
+        assert_eq!(
+            normalize_rfc3339_millis_utc("2026-01-01T00:00:16.123456Z").as_deref(),
+            Some("2026-01-01T00:00:16.123Z")
+        );
+        assert_eq!(normalize_rfc3339_millis_utc("not a timestamp"), None);
+        assert_eq!(normalize_rfc3339_millis_utc(""), None);
+    }
+
+    #[test]
+    fn normalized_timestamps_sort_chronologically_by_string() {
+        let raw = [
+            "2026-01-01T09:00:17+09:00",
+            "2026-01-01T00:00:16Z",
+            "2026-01-01T00:00:16.5Z",
+            "2025-12-31T23:59:59Z",
+        ];
+        let mut normalized = raw
+            .iter()
+            .filter_map(|value| normalize_rfc3339_millis_utc(value))
+            .collect::<Vec<_>>();
+        normalized.sort();
+
+        assert_eq!(
+            normalized,
+            vec![
+                "2025-12-31T23:59:59.000Z",
+                "2026-01-01T00:00:16.000Z",
+                "2026-01-01T00:00:16.500Z",
+                "2026-01-01T00:00:17.000Z",
+            ]
         );
     }
 }
