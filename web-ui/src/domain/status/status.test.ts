@@ -13,10 +13,10 @@ const account: AccountRef = {
 
 const booster: AccountRef = { ...account, id: "2", username: "bob", acct: "bob", displayName: "Bob" };
 
-const original = (id: string, favourited = false) =>
+const original = (id: string, favourited = false, createdAt = "2026-08-13T00:00:00.000Z") =>
   Status.original({
     id,
-    createdAt: "2026-08-13T00:00:00.000Z",
+    createdAt,
     content: `<p>${id}</p>`,
     spoilerText: "",
     sensitive: false,
@@ -44,6 +44,33 @@ describe("Status.prependUnique", () => {
     const existing = original("s1");
     const list = [existing];
     expect(Status.prependUnique(list, original("s1"))).toBe(list);
+  });
+});
+
+describe("Status.insertOrdered", () => {
+  it("prepends a status newer than everything listed", () => {
+    const older = original("s1", false, "2026-08-13T00:00:00.000Z");
+    const incoming = original("s2", false, "2026-08-13T01:00:00.000Z");
+    expect(Status.insertOrdered([older], incoming)).toEqual([incoming, older]);
+  });
+
+  it("drops a backfilled status into its chronological place", () => {
+    const newest = original("s1", false, "2026-08-13T02:00:00.000Z");
+    const oldest = original("s3", false, "2026-08-13T00:00:00.000Z");
+    const incoming = original("s2", false, "2026-08-13T01:00:00.000Z");
+    expect(Status.insertOrdered([newest, oldest], incoming)).toEqual([newest, incoming, oldest]);
+  });
+
+  it("appends a status older than everything listed", () => {
+    const newer = original("s1", false, "2026-08-13T02:00:00.000Z");
+    const incoming = original("s2", false, "2026-08-13T00:00:00.000Z");
+    expect(Status.insertOrdered([newer], incoming)).toEqual([newer, incoming]);
+  });
+
+  it("returns the same array when the id is already present", () => {
+    const existing = original("s1");
+    const list = [existing];
+    expect(Status.insertOrdered(list, original("s1"))).toBe(list);
   });
 });
 

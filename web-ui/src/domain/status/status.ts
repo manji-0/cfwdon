@@ -147,6 +147,22 @@ export const Status = {
   prependUnique: (statuses: ReadonlyArray<Status>, incoming: Status): ReadonlyArray<Status> =>
     Status.containsId(statuses, incoming.id) ? statuses : [incoming, ...statuses],
 
+  /**
+   * Insert a status that is not already listed, keeping newest-first order by
+   * `createdAt`. A live event lands on top; a late or backfilled one drops into
+   * its chronological place instead of jumping above newer statuses.
+   */
+  insertOrdered: (statuses: ReadonlyArray<Status>, incoming: Status): ReadonlyArray<Status> => {
+    if (Status.containsId(statuses, incoming.id)) {
+      return statuses;
+    }
+    const index = statuses.findIndex((item) => item.createdAt <= incoming.createdAt);
+    if (index === -1) {
+      return [...statuses, incoming];
+    }
+    return [...statuses.slice(0, index), incoming, ...statuses.slice(index)];
+  },
+
   appendUnique: (
     statuses: ReadonlyArray<Status>,
     incoming: ReadonlyArray<Status>,

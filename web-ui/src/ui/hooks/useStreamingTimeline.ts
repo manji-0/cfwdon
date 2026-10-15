@@ -11,7 +11,7 @@ export const applyStreamingTimelineEvent = (
 ): ReadonlyArray<Status> => {
   switch (event.kind) {
     case "Update":
-      return Status.prependUnique(current, event.status);
+      return Status.insertOrdered(current, event.status);
     case "Delete":
       return Status.removeById(current, event.statusId);
     case "Notification":
