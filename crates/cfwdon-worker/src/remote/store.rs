@@ -133,7 +133,6 @@ pub(crate) async fn upsert_remote_status(
     object: &serde_json::Value,
     env: Option<&Env>,
 ) -> Result<()> {
-    let _env = env;
     let object_uri = object
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -204,16 +203,13 @@ pub(crate) async fn upsert_remote_status(
         .await;
     }
 
-    let notification_kind = if previous.is_none() {
-        Some("create")
-    } else if previous
-        .as_ref()
-        .is_some_and(|value| value.raw_object_json != intent.raw_object_json)
-    {
-        Some("update")
-    } else {
-        None
-    };
+    let notification_kind = remote_status_notify_kind(
+        env.is_some(),
+        previous.is_none(),
+        previous
+            .as_ref()
+            .is_some_and(|value| value.raw_object_json != intent.raw_object_json),
+    );
     if let Some(kind) = notification_kind {
         let _ = soft_enqueue_background_job(
             db,
@@ -225,6 +221,27 @@ pub(crate) async fn upsert_remote_status(
     }
 
     Ok(())
+}
+
+/// The notification/stream kind for an ingest, or `None` when nothing runs.
+///
+/// Only a status that arrived through a live inbound delivery (`env` is
+/// provided) is a stream event. Backfills -- profile outbox hydration,
+/// thread-context fetch, link resolution, poll refresh -- pass `None` and must
+/// not push hours-old posts onto followers' home streams or send mention
+/// notifications for them.
+fn remote_status_notify_kind(
+    is_live_ingest: bool,
+    is_new: bool,
+    content_changed: bool,
+) -> Option<&'static str> {
+    if !is_live_ingest {
+        return None;
+    }
+    if is_new {
+        return Some("create");
+    }
+    content_changed.then_some("update")
 }
 
 pub(crate) async fn upsert_remote_reblog_status(
@@ -262,4 +279,22 @@ async fn upsert_remote_reblog_status_draft(
         .run()
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_status_notify_kind;
+
+    #[test]
+    fn backfill_ingest_never_dispatches_stream_or_notification() {
+        assert_eq!(remote_status_notify_kind(false, true, false), None);
+        assert_eq!(remote_status_notify_kind(false, false, true), None);
+    }
+
+    #[test]
+    fn live_ingest_dispatches_create_then_update_only_on_change() {
+        assert_eq!(remote_status_notify_kind(true, true, false), Some("create"));
+        assert_eq!(remote_status_notify_kind(true, false, true), Some("update"));
+        assert_eq!(remote_status_notify_kind(true, false, false), None);
+    }
 }
