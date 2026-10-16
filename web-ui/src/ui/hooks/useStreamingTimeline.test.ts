@@ -3,11 +3,15 @@ import { Status } from "@/domain/status/status";
 import { Visibility } from "@/domain/status/visibility";
 import { applyStreamingTimelineEvent } from "@/ui/hooks/useStreamingTimeline";
 
-const status = (id: string, createdAt = "2026-08-13T00:00:00.000Z") =>
+const status = (
+  id: string,
+  createdAt = "2026-08-13T00:00:00.000Z",
+  content = `<p>${id}</p>`,
+) =>
   Status.original({
     id,
     createdAt,
-    content: `<p>${id}</p>`,
+    content,
     spoilerText: "",
     sensitive: false,
     visibility: Visibility.public(),
@@ -67,5 +71,28 @@ describe("applyStreamingTimelineEvent", () => {
     });
 
     expect(next.map((item) => item.id)).toEqual(["s1", "s2", "s3"]);
+  });
+
+  it("replaces an existing status in place on status.update", () => {
+    const existing = status("s1");
+    const edited = status("s1", "2026-08-13T00:00:00.000Z", "<p>edited</p>");
+
+    const next = applyStreamingTimelineEvent([existing], {
+      kind: "StatusUpdate",
+      status: edited,
+    });
+
+    expect(next).toHaveLength(1);
+    expect(Status.displayBody(next[0]).content).toBe("<p>edited</p>");
+  });
+
+  it("ignores a status.update for a status that is not listed", () => {
+    const existing = status("s1");
+    const next = applyStreamingTimelineEvent([existing], {
+      kind: "StatusUpdate",
+      status: status("s2"),
+    });
+
+    expect(next).toEqual([existing]);
   });
 });

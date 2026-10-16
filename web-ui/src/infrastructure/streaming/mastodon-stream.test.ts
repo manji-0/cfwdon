@@ -59,6 +59,20 @@ describe("parseStreamingPayload", () => {
     });
   });
 
+  it("parses status.update events into statuses", () => {
+    const event = parseStreamingPayload("status.update", JSON.stringify(sampleStatus));
+    expect(event?.kind).toBe("StatusUpdate");
+    if (event?.kind === "StatusUpdate") {
+      expect(event.status.id).toBe("status-1");
+    }
+  });
+
+  it("parses notifications_merged events", () => {
+    expect(parseStreamingPayload("notifications_merged", "")).toEqual({
+      kind: "NotificationsMerged",
+    });
+  });
+
   it("parses notification events", () => {
     const event = parseStreamingPayload("notification", JSON.stringify(sampleNotification));
     expect(event?.kind).toBe("Notification");
@@ -103,6 +117,20 @@ describe("parseStreamingWebSocketMessage", () => {
     );
     expect(event?.kind).toBe("Update");
     if (event?.kind === "Update") {
+      expect(event.status.id).toBe("status-1");
+    }
+  });
+
+  it("parses a status.update fanout frame", () => {
+    const event = parseStreamingWebSocketMessage(
+      JSON.stringify({
+        stream: ["user"],
+        event: "status.update",
+        payload: JSON.stringify(sampleStatus),
+      }),
+    );
+    expect(event?.kind).toBe("StatusUpdate");
+    if (event?.kind === "StatusUpdate") {
       expect(event.status.id).toBe("status-1");
     }
   });

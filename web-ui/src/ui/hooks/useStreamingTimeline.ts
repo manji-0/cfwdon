@@ -12,10 +12,13 @@ export const applyStreamingTimelineEvent = (
   switch (event.kind) {
     case "Update":
       return Status.insertOrdered(current, event.status);
+    case "StatusUpdate":
+      return Status.replaceInList(current, event.status);
     case "Delete":
       return Status.removeById(current, event.statusId);
     case "Notification":
     case "Conversation":
+    case "NotificationsMerged":
       return current;
   }
 };
@@ -30,7 +33,11 @@ export const useStreamingTimeline = (
       return undefined;
     }
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "Notification" || event.kind === "Conversation") {
+      if (
+        event.kind === "Notification" ||
+        event.kind === "Conversation" ||
+        event.kind === "NotificationsMerged"
+      ) {
         return;
       }
       onStatusesChange((current) => applyStreamingTimelineEvent(current, event));

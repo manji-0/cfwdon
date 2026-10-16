@@ -209,6 +209,22 @@ describe("ViewCache", () => {
     expect(state.notifications).toEqual(CachedView.present(notificationsSnapshot([])));
   });
 
+  it("patches an edited status from a status.update stream event", () => {
+    let state = ViewCache.writeHome(ViewCache.empty(), homeSnapshot([status("s1", false)]));
+
+    state = ViewCache.applyStreamEvent(state, {
+      kind: "StatusUpdate",
+      status: status("s1", true),
+    });
+
+    const home = state.home;
+    expect(home.kind).toBe("Present");
+    if (home.kind === "Present") {
+      expect(home.value.statuses).toHaveLength(1);
+      expect(Status.displayBody(home.value.statuses[0]).favourited).toBe(true);
+    }
+  });
+
   it("does not invent snapshots from stream events before the first fetch", () => {
     const next = ViewCache.applyStreamEvent(ViewCache.empty(), {
       kind: "Update",

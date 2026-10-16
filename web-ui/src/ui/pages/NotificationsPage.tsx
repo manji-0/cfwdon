@@ -61,8 +61,6 @@ export const NotificationsPage = () => {
     return result.value;
   });
 
-  useStreamingNotifications(!loading && filter === "all", setNotifications);
-
   const persist = useCallback(
     (next: ReadonlyArray<Notification>, fetchedAt: number) => {
       if (fetchedAt === 0 || filter !== "all") {
@@ -106,6 +104,8 @@ export const NotificationsPage = () => {
     });
   }, [loadNotifications]);
   useForegroundCatchUp(catchUpNotifications);
+
+  useStreamingNotifications(!loading && filter === "all", setNotifications, catchUpNotifications);
 
   useEffect(() => {
     const snapshot = cache.getNotifications();

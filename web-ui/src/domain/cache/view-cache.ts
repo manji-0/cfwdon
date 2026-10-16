@@ -25,6 +25,7 @@ export type ViewCacheState = Readonly<{
 
 export type ViewCacheStreamEvent =
   | { readonly kind: "Update"; readonly status: Status }
+  | { readonly kind: "StatusUpdate"; readonly status: Status }
   | { readonly kind: "Delete"; readonly statusId: string }
   | { readonly kind: "Notification"; readonly notification: Notification };
 
@@ -166,6 +167,8 @@ export const ViewCache = {
               notifications: ViewCache.applyNotification(state.notifications, event.notification),
             };
         }
+      case "StatusUpdate":
+        return ViewCache.patchStatus(state, event.status);
       case "Delete":
         return removeStatus(state, event.statusId);
     }

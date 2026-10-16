@@ -69,7 +69,7 @@ export const ViewCacheProvider = ({ children }: Readonly<{ children: ReactNode }
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "Conversation") {
+      if (event.kind === "Conversation" || event.kind === "NotificationsMerged") {
         return;
       }
       setState((current) => ViewCache.applyStreamEvent(current, event));

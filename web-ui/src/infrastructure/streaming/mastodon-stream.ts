@@ -18,9 +18,11 @@ export type StreamingSubscription = {
 
 export type StreamingUserEvent =
   | { readonly kind: "Update"; readonly status: Status }
+  | { readonly kind: "StatusUpdate"; readonly status: Status }
   | { readonly kind: "Delete"; readonly statusId: string }
   | { readonly kind: "Notification"; readonly notification: Notification }
-  | { readonly kind: "Conversation"; readonly conversation: Conversation };
+  | { readonly kind: "Conversation"; readonly conversation: Conversation }
+  | { readonly kind: "NotificationsMerged" };
 
 /**
  * Mastodon WS event shape from Stream Hub DO / worker poll fallback:
@@ -79,6 +81,19 @@ export const parseStreamingPayload = (
     } catch {
       return null;
     }
+  }
+
+  if (eventName === "status.update") {
+    try {
+      const status = parseStatus(JSON.parse(data) as unknown);
+      return isArkError(status) ? null : { kind: "StatusUpdate", status };
+    } catch {
+      return null;
+    }
+  }
+
+  if (eventName === "notifications_merged") {
+    return { kind: "NotificationsMerged" };
   }
 
   return null;

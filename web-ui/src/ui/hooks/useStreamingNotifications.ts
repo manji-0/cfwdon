@@ -24,17 +24,22 @@ export const useStreamingNotifications = (
   onNotificationsChange: (
     updater: (current: ReadonlyArray<Notification>) => ReadonlyArray<Notification>,
   ) => void,
+  onNotificationsMerged?: () => void,
 ) => {
   useEffect(() => {
     if (!enabled) {
       return undefined;
     }
     const subscription = StreamingUser.subscribe((event) => {
+      if (event.kind === "NotificationsMerged") {
+        onNotificationsMerged?.();
+        return;
+      }
       if (event.kind !== "Notification") {
         return;
       }
       onNotificationsChange((current) => applyStreamingNotificationEvent(current, event));
     });
     return () => subscription.close();
-  }, [enabled, onNotificationsChange]);
+  }, [enabled, onNotificationsChange, onNotificationsMerged]);
 };

@@ -33,7 +33,7 @@ export const UnreadNotificationsProvider = ({ children }: Readonly<{ children: R
 
   useEffect(() => {
     const subscription = StreamingUser.subscribe((event) => {
-      if (event.kind === "Notification") {
+      if (event.kind === "Notification" || event.kind === "NotificationsMerged") {
         refreshUnreadCount();
       }
     });
