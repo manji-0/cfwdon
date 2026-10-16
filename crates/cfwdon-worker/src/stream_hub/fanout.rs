@@ -30,7 +30,7 @@ pub(crate) fn stream_hub_fanout_message(
         "stream": stream_hub_stream_labels(stream_name, tag, list),
         "event": event,
     });
-    if event != "filters_changed" {
+    if !matches!(event, "filters_changed" | "notifications_merged") {
         message["payload"] = serde_json::Value::String(payload.to_owned());
     }
     serde_json::to_string(&message).map_err(|error| {
@@ -70,6 +70,16 @@ mod tests {
         let parsed = serde_json::from_str::<serde_json::Value>(&message).unwrap();
         assert_eq!(parsed["stream"], serde_json::json!(["user"]));
         assert_eq!(parsed["event"], "filters_changed");
+        assert!(parsed.get("payload").is_none());
+    }
+
+    #[test]
+    fn stream_hub_fanout_message_omits_payload_for_notifications_merged() {
+        let message =
+            stream_hub_fanout_message("user", None, None, "notifications_merged", "").unwrap();
+        let parsed = serde_json::from_str::<serde_json::Value>(&message).unwrap();
+        assert_eq!(parsed["stream"], serde_json::json!(["user"]));
+        assert_eq!(parsed["event"], "notifications_merged");
         assert!(parsed.get("payload").is_none());
     }
 

@@ -19,6 +19,7 @@ use crate::store::remote::{
     find_remote_actor_by_actor_uri, find_remote_actor_by_username_domain,
     load_remote_actor_status_summary,
 };
+use crate::stream_hub::publish_user_stream_hub_event_soft;
 use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -1012,6 +1013,25 @@ pub(crate) async fn notification_requests_merged_response(
     }
 }
 
+/// Tell the accepting account's `user` stream that accepted notification
+/// requests finished merging so clients can refresh the notifications list.
+/// Mastodon emits `notifications_merged` (4.3.0) and omits the payload.
+async fn publish_notifications_merged(
+    ctx: &RouteContext<()>,
+    config: &AppConfig,
+    account_id: &str,
+) {
+    publish_user_stream_hub_event_soft(
+        &ctx.env,
+        &config.stream_hub_binding,
+        account_id,
+        "notifications_merged",
+        "",
+        None,
+    )
+    .await;
+}
+
 pub(crate) async fn accept_notification_requests_response(
     req: &mut Request,
     ctx: RouteContext<()>,
@@ -1022,12 +1042,17 @@ pub(crate) async fn accept_notification_requests_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
     let ids = parse_notification_request_ids(req).await?;
+    let mut accepted_any = false;
     for request_id in ids {
         if let Some(request) =
             resolve_pending_follow_request(&db, &config, viewer.id(), &request_id).await?
         {
             let _ = authorize_pending_follow_request(&db, &config, &viewer, &request).await?;
+            accepted_any = true;
         }
+    }
+    if accepted_any {
+        publish_notifications_merged(&ctx, &config, viewer.id()).await;
     }
     Response::from_json(&serde_json::json!({}))
 }
@@ -1074,6 +1099,7 @@ pub(crate) async fn accept_notification_request_response(
         return Response::error("notification request not found", 404);
     };
     let _ = authorize_pending_follow_request(&db, &config, &viewer, &request).await?;
+    publish_notifications_merged(&ctx, &config, viewer.id()).await;
     Response::from_json(&serde_json::json!({}))
 }
 

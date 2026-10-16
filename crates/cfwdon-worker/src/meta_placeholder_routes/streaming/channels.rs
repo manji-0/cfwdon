@@ -48,8 +48,13 @@ pub(super) fn normalize_streaming_path_channel(value: &str) -> Option<String> {
     normalize_streaming_channel(Some(&path.replace('/', ":")))
 }
 
+/// Every Mastodon streaming channel requires a user token.
+///
+/// Upstream Mastodon 4.2.0 removed anonymous streaming access
+/// (mastodon/mastodon#23989), so public and hashtag channels are no longer
+/// readable without one.
 pub(crate) fn streaming_channel_requires_auth(stream: &str) -> bool {
-    matches!(stream, "user" | "user:notification" | "list" | "direct")
+    streaming_channel_supports_live_events(stream)
 }
 
 pub(crate) fn validate_streaming_channel_request(

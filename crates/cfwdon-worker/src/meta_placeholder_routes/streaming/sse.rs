@@ -85,6 +85,11 @@ pub(super) fn stream_hub_websocket_text_to_sse_bytes(
     if event_name == "filters_changed" {
         return Some(sse_named_event_bytes(event_name, "undefined"));
     }
+    // Push-only, id-less event; pass it through so repeated merges are not
+    // deduped against the shared catch-up cursor.
+    if event_name == "notifications_merged" {
+        return Some(sse_named_event_bytes(event_name, ""));
+    }
 
     let data = value
         .get("payload")
@@ -492,6 +497,25 @@ mod tests {
         assert_eq!(
             stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
             Some(b"event: filters_changed\ndata: undefined\n\n".to_vec())
+        );
+    }
+
+    #[test]
+    fn stream_hub_websocket_text_to_sse_bytes_passes_notifications_merged() {
+        let mut state = StreamingLoopState::new();
+        let message = serde_json::json!({
+            "stream": ["user"],
+            "event": "notifications_merged",
+        });
+
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: notifications_merged\ndata: \n\n".to_vec())
+        );
+        // Repeated merges must keep arriving.
+        assert_eq!(
+            stream_hub_websocket_text_to_sse_bytes(&message.to_string(), &mut state),
+            Some(b"event: notifications_merged\ndata: \n\n".to_vec())
         );
     }
 

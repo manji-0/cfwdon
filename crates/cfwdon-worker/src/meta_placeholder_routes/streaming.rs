@@ -25,6 +25,12 @@ pub(crate) use channels::{
 
 const STREAMING_POLL_INTERVAL_SECS: u64 = 3;
 
+/// `GET /api/v1/streaming/health` is Mastodon's public streaming liveness
+/// probe, answered with the plain text `OK` (added upstream in 2.5.0).
+pub(crate) fn is_streaming_health_path(extra_path: Option<&str>) -> bool {
+    extra_path.is_some_and(|path| path.eq_ignore_ascii_case("health"))
+}
+
 pub(crate) async fn streaming_placeholder_response(
     req: Request,
     ctx: RouteContext<()>,
@@ -45,6 +51,11 @@ pub(crate) async fn streaming_placeholder_response(
         .param("any")
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
+    // Mastodon's streaming liveness probe is public and returns plain `OK`;
+    // it must not fall through to channel validation (which would 400 it).
+    if is_streaming_health_path(extra_path) {
+        return Response::ok("OK");
+    }
     let initial_stream = if wants_websocket && query.stream.is_none() && extra_path.is_none() {
         None
     } else {
@@ -64,6 +75,7 @@ pub(crate) async fn streaming_placeholder_response(
         &req,
         &db,
         &config,
+        initial_stream.as_deref(),
         query.access_token.as_deref(),
         websocket_protocol_token.as_deref(),
     )
@@ -73,11 +85,13 @@ pub(crate) async fn streaming_placeholder_response(
         StreamingAuthOutcome::Viewer(viewer) => viewer,
     };
 
-    if initial_stream
-        .as_deref()
-        .is_some_and(streaming_channel_requires_auth)
-        && authenticated.is_none()
-    {
+    // Mastodon 4.2.0 requires a user token for every streaming channel, and a
+    // blank WebSocket (opened to subscribe afterwards) counts too.
+    let requires_authenticated_viewer = wants_websocket
+        || initial_stream
+            .as_deref()
+            .is_some_and(streaming_channel_requires_auth);
+    if requires_authenticated_viewer && authenticated.is_none() {
         return invalid_access_token_response();
     }
 

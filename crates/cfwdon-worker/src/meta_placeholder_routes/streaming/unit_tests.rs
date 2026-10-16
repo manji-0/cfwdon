@@ -1,5 +1,5 @@
 use crate::meta_placeholder_routes::streaming::{
-    StreamingChannelValidationError, streaming_channel_requires_auth,
+    StreamingChannelValidationError, is_streaming_health_path, streaming_channel_requires_auth,
     validate_streaming_channel_request,
 };
 
@@ -31,17 +31,36 @@ fn validate_streaming_channel_request_rejects_unknown_or_incomplete_channels() {
         StreamingChannelValidationError::MissingList
     );
     assert_eq!(
-        validate_streaming_channel_request(Some("public"), None, None, Some("health")).unwrap_err(),
+        validate_streaming_channel_request(Some("public"), None, None, Some("bogus")).unwrap_err(),
         StreamingChannelValidationError::UnknownChannelRequested
     );
 }
 
 #[test]
-fn streaming_channel_requires_auth_matches_user_scoped_streams() {
-    assert!(streaming_channel_requires_auth("user"));
-    assert!(streaming_channel_requires_auth("user:notification"));
-    assert!(streaming_channel_requires_auth("list"));
-    assert!(streaming_channel_requires_auth("direct"));
-    assert!(!streaming_channel_requires_auth("public"));
-    assert!(!streaming_channel_requires_auth("hashtag"));
+fn streaming_health_path_is_detected_case_insensitively() {
+    assert!(is_streaming_health_path(Some("health")));
+    assert!(is_streaming_health_path(Some("Health")));
+    assert!(!is_streaming_health_path(Some("user")));
+    assert!(!is_streaming_health_path(None));
+}
+
+#[test]
+fn streaming_channel_requires_auth_for_every_mastodon_channel() {
+    for stream in [
+        "user",
+        "user:notification",
+        "list",
+        "direct",
+        "public",
+        "public:media",
+        "public:local",
+        "public:local:media",
+        "public:remote",
+        "public:remote:media",
+        "hashtag",
+        "hashtag:local",
+    ] {
+        assert!(streaming_channel_requires_auth(stream), "{stream}");
+    }
+    assert!(!streaming_channel_requires_auth("unknown"));
 }

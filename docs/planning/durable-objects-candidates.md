@@ -31,11 +31,13 @@ Do **not** use a single global DO. Shard by a natural atom (`user:{id}`, `hashta
 <!-- derived-from ../../crates/cfwdon-worker/src/meta_placeholder_routes.rs -->
 <!-- derived-from #phase-a--streaming-hub-spike-highest-value--implemented -->
 
-`GET /api/v1/streaming` accepts SSE and WebSocket upgrades. Channel validation and auth exist for:
+`GET /api/v1/streaming` accepts SSE and WebSocket upgrades. Channel validation exists for:
 
 - Public: `public`, `public:media`, `public:local`, `public:local:media`, `public:remote`, `public:remote:media`
 - Hashtag: `hashtag`, `hashtag:local` (require `tag`)
 - Authenticated: `user`, `user:notification`, `list` (require `list`), `direct`
+
+Every channel requires a user token. Mastodon 4.2.0 removed anonymous streaming access (mastodon/mastodon#23989), so `Public` and `Hashtag` are validated channel names rather than anonymously readable ones; a blank WebSocket (opened to `subscribe` later) also requires a token. Open-channel hubs still fan public/hashtag events out to each authenticated subscriber's session hub.
 
 **Status:** every channel above is now served by the `StreamHub` Durable Object (see [Phase A](#phase-a--streaming-hub-spike-highest-value--implemented) and [Phase B](#phase-b--channel-coverage--implemented)). The **D1 poll every 3 seconds** described below (`STREAMING_POLL_INTERVAL_SECS`) is the *pre-DO* design and now only runs as the fallback when the hub is unavailable, plus the 30s catch-up backup inside hub-backed SSE. The rest of this section records why the poll loop was replaced. Each poll connection:
 
@@ -62,7 +64,7 @@ That design is workable for small instances, but it scaled poorly:
 | Atom | `idFromName` example | Subscribers |
 | --- | --- | --- |
 | Session hub: `user`, `user:notification`, `direct`, `list` plus filter/announcement side effects | `user:{account_id}` | That account's clients |
-| Public channel | `public`, `public:local`, … | Many anonymous clients |
+| Public channel | `public`, `public:local`, … | Authenticated clients, reached via session-hub forwarding |
 | Hashtag | `hashtag:{normalized_tag}` | Tag watchers |
 
 **Flow.**
@@ -262,7 +264,7 @@ Architecture docs already ask whether delivery should move further onto Queues. 
 1. Public and hashtag hubs are proxied and published for local and remote status create/delete (remote uses public/remote hubs, not local-only); `list` and `direct` are served by the account session hub.
 2. Delete / edit / filter / announcement-reaction publishers wired from mutation paths. Local edits publish `status.update` to the same channels as create.
 3. SSE consumes StreamHub live events with D1 catch-up backup.
-4. Public-channel sharding: **deferred.** A hash-sharded variant was spiked and pulled back out — a single public hub is nowhere near the ~500–1000 msgs/sec where sharding starts to pay, and with authenticated clients on session hubs the shards would only ever hold anonymous sockets. Revisit when a public hub is measured near that ceiling.
+4. Public-channel sharding: **deferred.** A hash-sharded variant was spiked and pulled back out — a single public hub is nowhere near the ~500–1000 msgs/sec where sharding starts to pay, and with authenticated clients on session hubs a public hub only relays to session-hub forwarders instead of holding subscriber sockets. Revisit when a public hub is measured near that ceiling.
 5. Open-channel forwarding: authenticated clients always connect to their session hub. When such a socket subscribes to `public*` / `hashtag*`, the session hub registers itself on the open channel's unsharded hub (`POST /forward/register`), which relays matching events to it. Registrations are dropped lazily when a relay reports zero subscribers or fails, so disconnects need no explicit unregister.
 
 ### Phase C — Inbox host admission + schedule (optional)

@@ -19,8 +19,8 @@ Options:
   --stream NAME           Mastodon stream name. Default: public
   --tag TAG               Tag for hashtag streams.
   --list ID               List ID for list streams.
-  --token TOKEN           OAuth bearer token. Also sent as WS protocol.
-  --access-token TOKEN    Send token as access_token query param.
+  --token TOKEN           OAuth user token (required). Also sent as WS protocol.
+  --access-token TOKEN    Send token as access_token query param instead of --token.
   --ws-subscribe          Send Mastodon multiplex subscribe JSON after WS open.
   --header NAME:VALUE     Extra request header. Repeatable for SSE only.
   --duration SECONDS      Total probe duration. Default: 60
@@ -30,7 +30,7 @@ Options:
   --help                  Show this help.
 
 Examples:
-  node scripts/streaming_client.mjs --base-url http://127.0.0.1:8787 --stream public --duration 30
+  node scripts/streaming_client.mjs --base-url http://127.0.0.1:8787 --stream public --token "$TOKEN" --duration 30
   node scripts/streaming_client.mjs --base-url https://example.com --transport ws --token "$TOKEN" --stream user
 `;
 }
@@ -110,6 +110,11 @@ function parseArgs(argv) {
   }
   if (options.reconnectDelayMs < 0) {
     throw new Error("--reconnect-delay must be zero or greater");
+  }
+  if (!options.token && !options.accessToken) {
+    throw new Error(
+      "A user token is required; pass --token or --access-token (Mastodon 4.2+ has no anonymous streaming)",
+    );
   }
 
   return options;

@@ -83,7 +83,7 @@ pub(super) fn streaming_websocket_event_message(
         ),
         "event": event.event,
     });
-    if event.event != "filters_changed" {
+    if !matches!(event.event, "filters_changed" | "notifications_merged") {
         payload["payload"] = serde_json::Value::String(event.data.clone());
     }
     serde_json::to_string(&payload).map_err(|error| {
@@ -498,6 +498,24 @@ mod tests {
 
         assert_eq!(value["stream"], serde_json::json!(["user"]));
         assert_eq!(value["event"], "filters_changed");
+        assert!(value.get("payload").is_none());
+    }
+
+    #[test]
+    fn streaming_websocket_notifications_merged_omits_payload() {
+        let subscription = StreamingWebSocketSubscription::new("user".to_owned(), None, None);
+        let event = StreamingEvent {
+            created_at: "2025-01-01T00:00:00Z".to_owned(),
+            id: "notifications-merged".to_owned(),
+            event: "notifications_merged",
+            data: String::new(),
+        };
+
+        let message = streaming_websocket_event_message(&subscription, &event).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&message).unwrap();
+
+        assert_eq!(value["stream"], serde_json::json!(["user"]));
+        assert_eq!(value["event"], "notifications_merged");
         assert!(value.get("payload").is_none());
     }
 
