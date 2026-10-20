@@ -19,7 +19,7 @@ DEF = r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|type|trait|cons
 
 for it in range(15):
     out = subprocess.run(
-        ["devbox", "run", "--", "cargo", "check", "-p", "cfwdon-worker", "--all-targets", "--message-format=json"],
+        ["cargo", "check", "-p", "cfwdon-worker", "--all-targets", "--message-format=json"],
         cwd=root, capture_output=True, text=True,
     ).stdout
     missing = set()

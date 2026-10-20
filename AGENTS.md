@@ -33,25 +33,27 @@ Fall back to `rg` only when the graph does not cover the question.
 
 Run commands from the repository root.
 
+The toolchain comes from the Nix flake dev shell (`flake.nix`); tasks are `just` recipes (`justfile`). Enter the shell with `nix develop`, or prefix one-shot commands with `nix develop -c`.
+
 ```sh
-devbox shell
-devbox run fmt
-devbox run check
-devbox run test
-devbox run ci
-devbox run worker:dev
+nix develop
+just fmt
+just check
+just test
+just ci
+just worker-dev
 ```
 
-`devbox run ci` is the minimum validation gate before handing back implementation work.
+`just ci` is the minimum validation gate before handing back implementation work.
 
 ## Cloud Agent Environment
 
 Cloud Agent VMs are provisioned by [`.cursor/environment.json`](.cursor/environment.json):
 
-- [`.cursor/install.sh`](.cursor/install.sh) installs devbox + Nix (if missing), syncs the pinned devbox packages, and warms the Rust toolchain and build caches.
-- [`.cursor/start.sh`](.cursor/start.sh) starts the `nix-daemon` on every boot. It runs on each boot because these VMs have no systemd to supervise multi-user Nix, and every `devbox run ...` call needs the daemon socket.
+- [`.cursor/install.sh`](.cursor/install.sh) installs Nix (if missing), realises the flake dev shell, and warms the Rust build caches.
+- [`.cursor/start.sh`](.cursor/start.sh) starts the `nix-daemon` on every boot. It runs on each boot because these VMs have no systemd to supervise multi-user Nix, and every `nix develop ...` call needs the daemon socket.
 
-If a `devbox` command fails with a Nix daemon socket or permission error, run `bash .cursor/start.sh` to bring the daemon back up.
+If a `nix` command fails with a Nix daemon socket or permission error, run `bash .cursor/start.sh` to bring the daemon back up.
 
 ## Setup And Deployment Docs
 

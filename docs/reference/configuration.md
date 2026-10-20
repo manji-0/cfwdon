@@ -200,5 +200,5 @@ Keep machine-specific deployment copies in an ignored local file such as `wrangl
 Run a dry-run before deployment.
 
 ```sh
-devbox run ci
+nix develop -c just ci
 ```

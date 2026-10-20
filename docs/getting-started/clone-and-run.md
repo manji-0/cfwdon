@@ -5,6 +5,8 @@ This guide is for someone starting from a fresh clone who wants to bring up a `c
 ## Repository Bootstrap
 <!-- constrained-by ./development.md -->
 
+Install Nix with flakes enabled (`experimental-features = nix-command flakes`) first. `direnv` is optional; the repository `.envrc` contains `use flake`.
+
 1. Clone the repository and enter it.
 
    ```sh
@@ -15,16 +17,18 @@ This guide is for someone starting from a fresh clone who wants to bring up a `c
 2. Start the pinned toolchain shell.
 
    ```sh
-   devbox shell
+   nix develop
    ```
 
 3. Run the local validation gate.
 
    ```sh
-   devbox run ci
+   just ci
    ```
 
-The first `devbox shell` may install Rust, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, and related build tools.
+   Outside the dev shell, run it as `nix develop -c just ci`.
+
+The first `nix develop` downloads (or builds) the Rust toolchain with `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `just`, and related build tools.
 
 ## Local Worker Smoke Test
 <!-- constrained-by ./development.md#local-worker -->
@@ -32,7 +36,7 @@ The first `devbox shell` may install Rust, `wasm32-unknown-unknown`, `wrangler`,
 Run the Worker locally with:
 
 ```sh
-devbox run worker:dev
+just worker-dev
 ```
 
 This builds `web-ui`, applies pending local D1 migrations, and starts `wrangler dev` (a `--instance` or `--remote` run skips the local migration step; see [Development Workflow](development.md#local-worker)). Public, unauthenticated routes are the easiest first smoke test. Routes that need D1, R2, Auth0 tokens, or secrets require the configuration described below.
@@ -99,7 +103,7 @@ Apply the checked-in D1 migrations before a real deploy:
 wrangler d1 migrations apply DB --remote
 ```
 
-`devbox run worker:dev` already applies pending local migrations before it starts. Run `wrangler d1 migrations apply DB --local` yourself only when you start `wrangler dev` another way.
+`just worker-dev` already applies pending local migrations before it starts. Run `wrangler d1 migrations apply DB --local` yourself only when you start `wrangler dev` another way.
 
 After migrating a deployed database, run the secret backfill described in [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md#provisioning-steps) if it already holds accounts or OAuth tokens.
 
@@ -110,28 +114,22 @@ After migrating a deployed database, run the secret backfill described in [Cloud
 Before deploying:
 
 ```sh
-devbox run ci
+just ci
 ```
 
-`devbox run ci` builds `web-ui` but not `admin-ui`. Build `admin-ui` too, or the deploy ships the placeholder page at `/admin`:
+`just ci` builds `web-ui` but not `admin-ui`. Build `admin-ui` too, or the deploy ships the placeholder page at `/admin`:
 
 ```sh
 (cd admin-ui && npm install && npm run build)
 ```
 
-Then deploy from `devbox shell` (or after `eval "$(devbox shellenv)"`):
+Then deploy from inside `nix develop`:
 
 ```sh
 wrangler deploy
 ```
 
-`scripts/build_worker.mjs` pins repo rustup `wasm32-unknown-unknown` rustc. If PATH rustc is still a host or Nix compiler without wasm32:
-
-```sh
-node scripts/with_wasm_rustc.mjs wrangler deploy
-```
-
-On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
+or as a one-shot with `nix develop -c wrangler deploy`. `scripts/build_worker.mjs` checks that the `rustc` on `PATH` has `wasm32-unknown-unknown` and fails with a hint to use `nix develop` when it does not.
 
 After deployment, verify that public instance endpoints return your configured domain, media URLs use `MEDIA_PUBLIC_BASE_URL`, protected routes accept Auth0-issued access tokens, and browser login returns through `/oauth/auth0/callback`.
 
@@ -141,10 +139,10 @@ After deployment, verify that public instance endpoints return your configured d
 Use these commands during normal development:
 
 ```sh
-devbox run fmt
-devbox run check
-devbox run test
-devbox run ci
+just fmt
+just check
+just test
+just ci
 ```
 
 When route behavior changes, regenerate the Mastodon compatibility docs:
@@ -157,16 +155,16 @@ python3 scripts/generate_mastodon_api_compat.py
 <!-- derived-from ../reference/configuration.md -->
 
 - `wrangler deploy --dry-run` fails with binding errors: confirm `wrangler.toml` has `[[d1_databases]]` binding `DB`, `[[r2_buckets]]` binding `MEDIA`, `[[kv_namespaces]]` bindings `REMOTE_DNS_CACHE` and `APP_CACHE` with real ids, and the `[[queues.producers]]` / `[[durable_objects.bindings]]` entries from the template.
-- `/app` or `/admin` shows the fallback placeholder page (Japanese text saying the assets have not been built): build the matching UI (`web-ui` or `admin-ui`) before `wrangler deploy`. `worker:dev` rebuilds only `web-ui`.
+- `/app` or `/admin` shows the fallback placeholder page (Japanese text saying the assets have not been built): build the matching UI (`web-ui` or `admin-ui`) before `wrangler deploy`. `just worker-dev` rebuilds only `web-ui`.
 - Protected API routes reject requests: confirm the request sends `Authorization: Bearer <Auth0 access token>`, and that `AUTH0_DOMAIN` plus `AUTH0_AUDIENCE` match the token `iss` and `aud` claims.
 - Browser login does not return from Auth0: confirm the Auth0 application allows `https://<INSTANCE_DOMAIN>/oauth/auth0/callback`.
 - Media URLs point at the wrong host: set `MEDIA_PUBLIC_BASE_URL` to the public R2 custom domain.
-- `wasm-bindgen` version errors: leave and re-enter `devbox shell`; the init hook installs the pinned `wasm-bindgen-cli` version.
-- `wrangler` / `worker-build` fail with a missing `wasm32-unknown-unknown` target: a host or Nix `rustc` is ahead of repo rustup. Use `devbox shell` then `wrangler deploy`, or `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler`.
+- `wasm-bindgen` version errors: the `wasm-bindgen-cli` package in `flake.nix` must match the `wasm-bindgen` version in `Cargo.lock`; re-enter `nix develop` after updating either.
+- `wrangler` / `worker-build` fail with a missing `wasm32-unknown-unknown` target or `rustc is not on PATH`: you are outside the dev shell. Run `nix develop` then `wrangler deploy`, or `nix develop -c wrangler deploy`.
 
 ## Summary
 <!-- derived-from #repository-bootstrap -->
 <!-- derived-from #cloudflare-resource-template -->
 <!-- derived-from #deploy -->
 
-A fresh clone should be able to enter `devbox shell`, run `devbox run ci`, copy `wrangler.toml.example`, create the D1, R2, KV, and queue resources, apply migrations, and deploy with `wrangler deploy`.
+A fresh clone should be able to enter `nix develop`, run `just ci`, copy `wrangler.toml.example`, create the D1, R2, KV, and queue resources, apply migrations, and deploy with `wrangler deploy`.

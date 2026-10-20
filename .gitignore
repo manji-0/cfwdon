@@ -9,7 +9,7 @@
 /web-ui/dist
 /assets/app/
 /assets/admin/
-/.devbox
+/result
 /.direnv
 /.dev.vars
 /wrangler.local.toml

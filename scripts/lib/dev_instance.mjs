@@ -64,10 +64,10 @@ export function parseDevArgs(argv) {
 
 export function workerDevUsage() {
   return `Usage:
-  devbox run worker:dev
-  devbox run worker:dev -- --remote
-  devbox run worker:dev -- --instance fedi.manji.app
-  devbox run worker:dev -- --instance https://fedi.manji.app --remote
+  just worker-dev
+  just worker-dev --remote
+  just worker-dev --instance fedi.manji.app
+  just worker-dev --instance https://fedi.manji.app --remote
 
 Options:
   --instance <domain-or-url>  Override INSTANCE_DOMAIN (and related Auth0 vars)
@@ -80,8 +80,8 @@ The Worker compile uses worker-build --dev. wrangler deploy stays --release.
 
 export function webUiDevUsage() {
   return `Usage:
-  devbox run web-ui:dev
-  devbox run web-ui:dev -- --instance https://fedi.manji.app
+  just web-ui-dev
+  just web-ui-dev --instance https://fedi.manji.app
 
 Options:
   --instance <domain-or-url>  Proxy API/auth routes to this origin

@@ -1,6 +1,6 @@
 # nixbuild.net Setup
 
-[nixbuild.net](https://nixbuild.net/) offloads Nix builds in CI and locally. In this repository it targets **devbox package installation** (for example `wrangler` when the GitHub Actions Nix store cache misses). It does **not** speed up `cargo test`, `cargo clippy`, or `wrangler deploy --dry-run` Rust builds — those stay on `rust-cache` and the runner.
+[nixbuild.net](https://nixbuild.net/) offloads Nix builds in CI and locally. In this repository it targets **Nix builds of the flake dev-shell packages** (for example `wrangler` on a `cache.nixos.org` miss). It does **not** speed up `cargo test`, `cargo clippy`, or `wrangler deploy --dry-run` Rust builds — those stay on `rust-cache` and the runner.
 
 For the CI workflow shape, see [Development Workflow](../getting-started/development.md).
 
@@ -54,15 +54,15 @@ Copy the token (shown once). Create a GitHub repository secret:
 - **Name:** `NIXBUILD_TOKEN`
 - **Value:** the token string from `tokens create`
 
-The workflow in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) uses this secret. When it is unset (for example on forks), CI falls back to the previous behaviour: devbox installs its own Nix and builds on the runner.
+The workflow in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) uses this secret. Nix itself is always installed (`nixbuild/nix-quick-install-action`); the secret only adds the nixbuild.net configuration step. When it is unset (for example on forks), dev-shell packages that miss the binary cache are built on the runner.
 
 After the next CI run with the secret set, check the **Configure nixbuild.net** step summary for CPU time used.
 
 ## 3. Local: SSH and Nix Configuration
 
-Local setup is optional. It lets your machine reuse build results from CI (and vice versa) when devbox triggers a Linux Nix build.
+Local setup is optional. It lets your machine reuse build results from CI (and vice versa) when `nix develop` triggers a Linux Nix build.
 
-nixbuild.net runs **Linux** builds (`x86_64-linux`, `aarch64-linux`). On macOS, devbox usually installs `aarch64-darwin` packages from `cache.nixos.org` without remote builders; local nixbuild is still useful if you want shared artifacts with CI or run Linux-targeted Nix work.
+nixbuild.net runs **Linux** builds (`x86_64-linux`, `aarch64-linux`). On macOS, `nix develop` usually fetches `aarch64-darwin` packages from `cache.nixos.org` without remote builders; local nixbuild is still useful if you want shared artifacts with CI or run Linux-targeted Nix work.
 
 ### SSH client (`~/.ssh/config`)
 
@@ -102,7 +102,7 @@ If you use a system-wide Nix install with `/etc/nix/nix.conf`, put the same line
 
 ### Smoke test
 
-From a machine with Nix available (inside `devbox shell` is fine):
+From a machine with Nix available (inside `nix develop` is fine):
 
 ```sh
 nix-build \
@@ -113,9 +113,9 @@ nix-build \
 
 You should see output containing `building '...' on 'ssh-ng://eu.nixbuild.net'...` or a substituter fetch from nixbuild.net.
 
-### devbox
+### Nix dev shell
 
-No `devbox.json` changes are required. After the SSH and Nix settings above, `devbox install` and `devbox shell` use the same remote builder configuration as plain Nix.
+No `flake.nix` changes are required. After the SSH and Nix settings above, `nix develop` uses the same remote builder configuration as any other Nix command.
 
 ## Cost and Monitoring
 
@@ -123,7 +123,7 @@ No `devbox.json` changes are required. After the SSH and Nix settings above, `de
 - **Paid:** about €0.12 per CPU hour after the free quota ([pricing](https://nixbuild.net/#pricing)).
 - **Monitor usage:** `ssh eu.nixbuild.net shell`, then `usage`.
 
-Typical devbox CI installs only spend noticeable CPU time when packages such as `wrangler` are built from source (Nix store cache miss). Warm runs that only copy from `cache.nixos.org` or nixbuild substituters use little or no build time.
+Typical CI dev-shell setups only spend noticeable CPU time when packages such as `wrangler` are built from source (Nix store cache miss). Warm runs that only copy from `cache.nixos.org` or nixbuild substituters use little or no build time.
 
 ## Troubleshooting
 
@@ -139,4 +139,5 @@ Typical devbox CI installs only spend noticeable CPU time when packages such as 
 - [nixbuild.net Getting Started](https://docs.nixbuild.net/getting-started/)
 - [Remote builds (builders vs remote store)](https://docs.nixbuild.net/remote-builds/)
 - [nixbuild-action](https://github.com/nixbuild/nixbuild-action)
-- [devbox-install-action](https://github.com/jetify-com/devbox-install-action)
+- [nix-quick-install-action](https://github.com/nixbuild/nix-quick-install-action)
+- [nix-develop action](https://github.com/nicknovitski/nix-develop)

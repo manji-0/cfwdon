@@ -127,7 +127,7 @@ Covered shapes (all green under `cargo test -p cfwdon-worker misskey_`):
 - `EmojiReact` does not resolve a Like-style inbox target username
 
 Matrix rows above that cite these fixtures are code-backed, not speculative.
-Refresh by running worker unit tests (`devbox run test` / crate tests) after parser or inbox changes.
+Refresh by running worker unit tests (`just test` / crate tests) after parser or inbox changes.
 
 ## Residual Live Tests
 
@@ -146,7 +146,7 @@ The shortlist below is what remains after fixture/code evidence filled the matri
 9. Optional: confirm Misskey accepts cfwdon outbound quote triple fields
 
 When a Misskey instance is available (local Docker or disposable test host), run the
-numbered items against `devbox run worker:dev`, then move matching matrix rows from
+numbered items against `just worker-dev`, then move matching matrix rows from
 `unverified` / live-residual notes to observed pass/fail with HTTP status evidence.
 
 ## Summary

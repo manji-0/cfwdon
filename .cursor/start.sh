@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Cloud Agent start phase for cfwdon.
 #
-# cfwdon's toolchain is provisioned with devbox, which uses multi-user Nix.
-# Multi-user Nix relies on the nix-daemon, but Cloud Agent VMs have no systemd
-# to supervise it, so the daemon socket never comes up on its own. Every
-# `devbox run ...` invocation needs a *live* daemon, so we start it here on each
-# boot.
+# cfwdon's toolchain is provisioned by the Nix flake dev shell, which uses
+# multi-user Nix. Multi-user Nix relies on the nix-daemon, but Cloud Agent VMs
+# have no systemd to supervise it, so the daemon socket never comes up on its
+# own. Every `nix develop ...` invocation needs a *live* daemon, so we start it
+# here on each boot.
 #
 # Important: when a VM boots from a prebuilt environment snapshot, the daemon
 # socket file lingers on disk from when the snapshot was taken, but no daemon

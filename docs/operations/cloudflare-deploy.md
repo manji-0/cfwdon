@@ -114,7 +114,7 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
    Set `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` in the shell running the backfill to the same secret value configured in Cloudflare, then hash existing OAuth tokens and move account private keys into encrypted storage.
 
    ```sh
-   ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY=... devbox run -- node scripts/backfill_security_secrets.mjs --database DB --remote
+   ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY=... nix develop -c node scripts/backfill_security_secrets.mjs --database DB --remote
    ```
 
    Use `--dry-run` first if you want to inspect the generated SQL.
@@ -122,7 +122,7 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
 12. Run the full local gate.
 
     ```sh
-    devbox run ci
+    nix develop -c just ci
     ```
 
 13. Build the UI bundles so deploy does not upload the fallback HTML shells.
@@ -137,13 +137,13 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
 14. Deploy the Worker.
 <!-- derived-from ../getting-started/development.md#wrangler-rustc-path -->
 
-    From `devbox shell`, or after `eval "$(devbox shellenv)"`:
+    From `nix develop` (or run `nix develop -c wrangler deploy`):
 
     ```sh
     wrangler deploy
     ```
 
-    The Worker `[build]` command pins repo rustup `wasm32-unknown-unknown` rustc and uses `worker-build --release` (wasm-opt). Local `wrangler dev` (`devbox run worker:dev`, or `WRANGLER_DEV=1`) is the only path that switches to `--dev`. If PATH rustc still lacks that target, wrap with `node scripts/with_wasm_rustc.mjs wrangler deploy`. On macOS do not use `devbox run -- wrangler deploy` (unsigned Xcode git).
+    The Worker `[build]` command checks that the `rustc` on PATH has the `wasm32-unknown-unknown` target (the Nix dev shell toolchain does) and uses `worker-build --release` (wasm-opt). Local `wrangler dev` (`just worker-dev`, or `WRANGLER_DEV=1`) is the only path that switches to `--dev`. Outside the dev shell the build fails early and points at `nix develop`.
 
     A deploy restarts Stream Hub Durable Objects and closes hibernating WebSockets.
     Clients reconnect; this is expected and is logged as
@@ -173,7 +173,7 @@ If the actor IoContext is already aborted when the event is delivered, the runti
 
 ## Verification Gates
 
-- `devbox run ci`
+- `nix develop -c just ci`
 - `wrangler.toml` contains active `[[d1_databases]]`, `[[r2_buckets]]`, `[[kv_namespaces]]` (`REMOTE_DNS_CACHE`, `APP_CACHE`), `[[queues.producers]]` / `[[queues.consumers]]`, `[[durable_objects.bindings]]` with its `[[migrations]]` entry, `[triggers] crons`, and `[assets]`
 - production vars do not contain placeholder values from the sample `wrangler.toml`
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, `APP_CACHE`, and `STREAM_HUB`

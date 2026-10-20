@@ -89,7 +89,7 @@ http://127.0.0.1:8787/oauth/auth0/callback
 http://localhost:8787/oauth/auth0/callback
 ```
 
-Also add the matching logout and web-origin URLs (`http://127.0.0.1:8787`, `http://localhost:8787`). When developing the SPA with `devbox run web-ui:dev`, allow the same paths on port `5173`.
+Also add the matching logout and web-origin URLs (`http://127.0.0.1:8787`, `http://localhost:8787`). When developing the SPA with `just web-ui-dev`, allow the same paths on port `5173`.
 
 You can reuse the production Auth0 application or create a separate local-only application and set `AUTH0_CLIENT_ID` in `.dev.vars` (see `.dev.vars.example`).
 

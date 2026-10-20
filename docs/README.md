@@ -30,7 +30,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 - [Cloudflare Access Configuration Guide](operations/cloudflare-access-configuration.md)
   Cloudflare Access edge gating, policy scope, service tokens, and Auth0 coexistence notes.
 - [nixbuild.net Setup](operations/nixbuild-net.md)
-  Offloading devbox/Nix package builds in CI and locally.
+  Offloading Nix dev shell package builds in CI and locally.
 - [ActivityPub → X Mirror](../workers/ap-x-mirror/README.md)
   Optional misc Worker that mirrors allowlisted ActivityPub notes to a fixed X account.
 

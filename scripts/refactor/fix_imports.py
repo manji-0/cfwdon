@@ -20,7 +20,7 @@ STD_PREFIX = ("std::", "core::", "alloc::")
 
 
 def run_check():
-    cmd = ["devbox", "run", "--", "cargo", "check", "-p", "cfwdon-worker", "--message-format=json"]
+    cmd = ["cargo", "check", "-p", "cfwdon-worker", "--message-format=json"]
     if target:
         cmd += ["--target", target, "--lib"]
     else:

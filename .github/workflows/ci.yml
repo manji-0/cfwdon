@@ -64,26 +64,13 @@ jobs:
     name: server
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      RUSTUP_HOME: ${{ github.workspace }}/.devbox/.rustup
-      CARGO_HOME: ${{ github.workspace }}/.devbox/.cargo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Rust toolchain
-        uses: actions/cache@v4
-        with:
-          path: .devbox/.rustup
-          # Include devbox.lock so rustup package changes bust a stale/partial
-          # toolchain cache that rustup still lists as installed.
-          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v3
-          restore-keys: |
-            rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'devbox.lock') }}-v3
-
-      # When NIXBUILD_TOKEN is set, install Nix once and offload devbox's Nix
-      # builds (for example wrangler) to nixbuild.net instead of compiling on
-      # the GitHub runner. See docs/operations/nixbuild-net.md.
+      # When NIXBUILD_TOKEN is set, offload Nix builds for the dev shell (for
+      # example wrangler on a cache.nixos.org miss) to nixbuild.net instead of
+      # compiling on the GitHub runner. See docs/operations/nixbuild-net.md.
       # GitHub Actions does not allow secrets in `if:` expressions, so detect the
       # token in a prior step and branch on that output instead.
       - name: Detect nixbuild token
@@ -98,7 +85,6 @@ jobs:
           fi
 
       - name: Install Nix
-        if: steps.nixbuild.outputs.enabled == 'true'
         uses: nixbuild/nix-quick-install-action@v35
 
       - name: Configure nixbuild.net
@@ -108,25 +94,17 @@ jobs:
           nixbuild_token: ${{ secrets.NIXBUILD_TOKEN }}
           generate_summary_for: job
 
-      - name: Install devbox
-        uses: jetify-com/devbox-install-action@v0.15.0
-        with:
-          project-path: .
-          enable-cache: false
-          devbox-version: "0.17.5"
-          refresh-cli: false
-          skip-nix-installation: ${{ steps.nixbuild.outputs.enabled }}
+      # Load the flake dev shell (Rust toolchain from rust-toolchain.toml,
+      # wrangler, worker-build, wasm-bindgen-cli, just, ...) into later steps.
+      - name: Enter Nix dev shell
+        uses: nicknovitski/nix-develop@v1
 
-      # Install/repair the rustup toolchain inside devbox before rust-cache
-      # probes rustc on the runner PATH (which shares RUSTUP_HOME).
-      - name: Ensure Rust toolchain
-        run: devbox run -- sh -c 'cargo --version && rustc --version'
-
-      - name: Expose Rust on PATH
+      - name: Show toolchain
         run: |
-          echo "${GITHUB_WORKSPACE}/.devbox/nix/profile/default/bin" >> "$GITHUB_PATH"
-          export PATH="${GITHUB_WORKSPACE}/.devbox/nix/profile/default/bin:${PATH}"
           rustc -vV
+          cargo --version
+          wrangler --version
+          worker-build --version
 
       # Keep shared-key ci-server-v2. Do not restore the poison prefix
       # v0-rust-ci-server-Linux-x64-e96c609d.
@@ -140,15 +118,15 @@ jobs:
             . -> target
 
       - name: Run server CI
-        run: devbox run ci:server
+        run: just ci-server
 
-      # wasm clippy stays in ci:server (PRs included). worker-build --release
+      # wasm clippy stays in ci-server (PRs included). worker-build --release
       # dry-run is ~3 min and only needs to catch wrangler.toml / wasm-opt
       # breakage on main, or on-demand via workflow_dispatch. Do not run
       # wrangler deploy --dry-run on pull_request.
       - name: Wrangler dry-run
         if: github.event_name != 'pull_request'
-        run: devbox run ci:wrangler-dry-run
+        run: just ci-wrangler-dry-run
 
   ci:
     name: ci

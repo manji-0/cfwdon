@@ -28,115 +28,55 @@ function defaultRun(command, args, env) {
   });
 }
 
-function rustupFailMessage(detail) {
+function toolchainFailMessage(detail) {
   return [
     `cfwdon: ${detail}`,
-    "Install the repo rustup toolchain with `devbox shell` (wasm32-unknown-unknown).",
-    "Then run `wrangler deploy` from that shell, or `eval \"$(devbox shellenv)\"` followed by wrangler.",
-    "On macOS do not use `devbox run -- wrangler` — that wraps git and hits the Xcode license.",
+    "Enter the Nix dev shell first: `nix develop` (or direnv with `use flake`).",
+    "Then run `wrangler deploy` from that shell, or `nix develop -c wrangler deploy`.",
   ].join("\n");
 }
 
-function requireStatus(result, label) {
-  if (result.error) {
-    throw new Error(rustupFailMessage(`${label} failed: ${result.error.message}`));
+function resolveTool(name, override, env) {
+  if (override && existsSync(override)) {
+    return override;
   }
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? "").trim();
-    throw new Error(
-      rustupFailMessage(`${label} failed${stderr ? `: ${stderr}` : ""}`),
-    );
-  }
-  return (result.stdout ?? "").trim();
-}
-
-export function resolveRustupBin(repoRoot, env = process.env) {
-  if (env.RUSTUP && existsSync(env.RUSTUP)) {
-    return env.RUSTUP;
-  }
-  const fromPath = whichOnPath("rustup", env.PATH);
+  const fromPath = whichOnPath(name, env.PATH);
   if (fromPath) {
     return fromPath;
   }
-  const fromDevbox = path.join(
-    repoRoot,
-    ".devbox",
-    "nix",
-    "profile",
-    "default",
-    "bin",
-    "rustup",
-  );
-  if (existsSync(fromDevbox)) {
-    return fromDevbox;
-  }
-  throw new Error(rustupFailMessage("rustup is not on PATH"));
+  throw new Error(toolchainFailMessage(`${name} is not on PATH`));
 }
 
 /**
- * Build an env overlay so wrangler / worker-build use the repo rustup
- * toolchain that has wasm32-unknown-unknown, not a host or Nix rustc.
+ * Build an env overlay so wrangler / worker-build use a rustc that has
+ * wasm32-unknown-unknown (the Nix dev shell toolchain), and fail early with
+ * a clear message when the rustc on PATH lacks that target.
  */
 export function wasmRustcEnv({
   repoRoot,
   env = process.env,
   run = defaultRun,
+  exists = existsSync,
 } = {}) {
   if (!repoRoot) {
     throw new Error("cfwdon: wasmRustcEnv requires repoRoot");
   }
 
-  const rustupHome = path.join(repoRoot, ".devbox", ".rustup");
-  const cargoHome = path.join(repoRoot, ".devbox", ".cargo");
-  const toolchain = env.RUSTUP_TOOLCHAIN || "stable";
-  const rustupEnv = {
-    ...env,
-    RUSTUP_HOME: rustupHome,
-    CARGO_HOME: cargoHome,
-    RUSTUP_TOOLCHAIN: toolchain,
-  };
+  const rustc = resolveTool("rustc", env.RUSTC, env);
+  const cargo = resolveTool("cargo", env.CARGO, env);
 
-  const rustupBin = resolveRustupBin(repoRoot, rustupEnv);
-  const rustc = requireStatus(
-    run(rustupBin, ["which", "--toolchain", toolchain, "rustc"], rustupEnv),
-    "rustup which rustc",
-  );
-  const cargo = requireStatus(
-    run(rustupBin, ["which", "--toolchain", toolchain, "cargo"], rustupEnv),
-    "rustup which cargo",
-  );
-  const installedTargets = requireStatus(
-    run(
-      rustupBin,
-      ["target", "list", "--installed", "--toolchain", toolchain],
-      rustupEnv,
-    ),
-    "rustup target list",
-  );
-  const hasWasm = installedTargets
-    .split(/\r?\n/)
-    .some((line) => line.trim() === WASM_TARGET);
-  if (!hasWasm) {
-    throw new Error(
-      rustupFailMessage(
-        `${rustc} has no ${WASM_TARGET} target (RUSTUP_HOME=${rustupHome})`,
-      ),
-    );
+  const result = run(rustc, ["--print", "target-libdir", "--target", WASM_TARGET], env);
+  if (result.error) {
+    throw new Error(toolchainFailMessage(`${rustc} failed: ${result.error.message}`));
+  }
+  const libdir = (result.stdout ?? "").trim();
+  if (result.status !== 0 || !libdir || !exists(libdir)) {
+    throw new Error(toolchainFailMessage(`${rustc} has no ${WASM_TARGET} target`));
   }
 
-  const rustcDir = path.dirname(rustc);
-  const cargoDir = path.dirname(cargo);
-  const cargoBin = path.join(cargoHome, "bin");
-  const prepend = [rustcDir, cargoDir, cargoBin].filter((dir, index, dirs) => {
-    return dirs.indexOf(dir) === index;
-  });
-  const nextPath = [...prepend, ...pathEntries(env.PATH)].join(path.delimiter);
-
   return {
-    ...rustupEnv,
-    PATH: nextPath,
+    ...env,
     RUSTC: rustc,
     CARGO: cargo,
-    RUSTUP: rustupBin,
   };
 }

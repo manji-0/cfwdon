@@ -1,95 +1,100 @@
 # Development Workflow
 
-`cfwdon` pins its Rust workspace and Cloudflare Worker tooling through `devbox`. Run commands from the repository root unless a command says otherwise.
+`cfwdon` pins its Rust workspace and Cloudflare Worker tooling through a Nix flake (`flake.nix` + `flake.lock`). Run commands from the repository root unless a command says otherwise.
 
 For a fresh clone and first deploy path, see [Clone And Run](clone-and-run.md).
 
 ## Prerequisites
 
-- `devbox`
+- Nix with flakes enabled (`experimental-features = nix-command flakes` in `nix.conf`)
+- Optional: `direnv`; the repository `.envrc` contains `use flake`, so the dev shell loads on `cd`
 - `wrangler` authentication when working with Cloudflare Workers, D1, or R2
 - Git for repository history
 
-`devbox.json` provides:
+The flake's `devShells.default` provides:
 
-- Rust stable toolchain
-- `wasm32-unknown-unknown` target
-- `rustfmt`
+- Rust stable toolchain from `rust-toolchain.toml` (via `oxalica/rust-overlay`), including `rustfmt`, `clippy`, and the `wasm32-unknown-unknown` target; `flake.lock` pins the exact release (update with `nix flake update`)
 - `wrangler`
 - `worker-build`
-- `wasm-bindgen-cli`
+- `wasm-bindgen-cli` (`wasm-bindgen-cli_0_2_129`; must match the `wasm-bindgen` version in `Cargo.lock`)
 - `binaryen`
-- `jq`
+- `cargo-generate`
+- `just` (task runner; recipes live in `justfile`)
+- `jq`, `python3`, `pkg-config`, and `openssl`
 - Node.js 24 and `pnpm` (for `web-ui`, `admin-ui`, and the `scripts/*.mjs` helpers)
+
+Enter the shell once with `nix develop`, or run a single recipe with `nix develop -c just <recipe>`. The commands below assume you are inside the dev shell.
 
 ## Common Commands
 <!-- constrained-by ../../.github/workflows/ci.yml -->
 
 ```sh
-devbox shell
+nix develop
 ```
 
 ```sh
-devbox run fmt
+just fmt
 ```
 
 ```sh
-devbox run fmt:check
+just fmt-check
 ```
 
 ```sh
-devbox run clippy
+just clippy
 ```
 
 ```sh
-devbox run check
+just check
 ```
 
 ```sh
-devbox run test
+just test
 ```
 
 ```sh
-devbox run ci
+just ci
 ```
 
-`devbox run ci` runs the full local gate (web UI, server, and the wrangler dry-run). Split targets are also available:
+`just ci` runs the full local gate (web UI, server, and the wrangler dry-run). Split targets are also available:
 
 ```sh
-devbox run ci:web-ui
-devbox run ci:server
-devbox run ci:wrangler-dry-run
+just ci-web-ui
+just ci-server
+just ci-wrangler-dry-run
 ```
 
 GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The aggregate `CI / ci` job still reports overall success.
 
-| Event | `web-ui` | `server` (`ci:server`) | `wrangler deploy --dry-run` |
+| Event | `web-ui` | `server` (`ci-server`) | `wrangler deploy --dry-run` |
 | --- | --- | --- | --- |
 | Pull request to `main` | yes | yes | no |
 | Push to `main` | yes | yes | yes |
 | `workflow_dispatch` | yes | yes | yes |
 
-`ci:server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the devbox `ci:web-ui` task omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
+In GitHub Actions the `server` job installs Nix (`nixbuild/nix-quick-install-action`), configures [nixbuild.net](../operations/nixbuild-net.md) when the `NIXBUILD_TOKEN` secret is set, loads the flake dev shell into later steps (`nicknovitski/nix-develop`), and then runs `just ci-server` and, outside pull requests, `just ci-wrangler-dry-run`.
+
+`ci-server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the `just ci-web-ui` recipe omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
 
 Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
 
 **Required status check:** require the aggregator **`CI / ci`** (workflow `CI`, job `ci`) in branch protection or a ruleset. This repository workflow cannot set that. Do not require a check named Wrangler dry-run; that is a step of `server`, not a job. Do not require `web-ui` and `server` separately unless skipped jobs are also treated as passing.
 
-`devbox run ci` currently runs:
+`just ci` currently runs:
 
-- `ci:web-ui`: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, and `pnpm run build` in `web-ui`
-- `ci:server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py`
-- `ci:wrangler-dry-run`: `WRANGLER_LOG=error wrangler deploy --dry-run`
+- `ci-web-ui`: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, and `pnpm run build` in `web-ui`
+- `ci-server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py`
+- `ci-wrangler-dry-run`: `WRANGLER_LOG=error wrangler deploy --dry-run`
 
 `admin-ui` has no CI job or tests; `npm run check` there runs `svelte-check` if you change it.
 
-`devbox run check` remains a local wasm `cargo check`. CI does not run it before wasm clippy.
+`just check` remains a local wasm `cargo check`. CI does not run it before wasm clippy.
 
-Use `devbox run ci` as the minimum local gate before sending a change. GitHub PR CI does not run the wrangler dry-run; run `devbox run ci:wrangler-dry-run` locally if the Worker build command or `wrangler.toml` changed.
+Use `just ci` as the minimum local gate before sending a change. GitHub PR CI does not run the wrangler dry-run; run `just ci-wrangler-dry-run` locally if the Worker build command or `wrangler.toml` changed.
 
 ## Worker Module Layers
 
-`crates/cfwdon-worker` has no crate-root glob re-exports: every module imports what it uses from the module that owns it, so `use crate::…` lines are the dependency graph. Keep it that way; `scripts/check_module_layers.py` (part of `ci:server`) fails on `use crate::*` or a glob re-export in `lib.rs`.
+`crates/cfwdon-worker` has no crate-root glob re-exports: every module imports what it uses from the module that owns it, so `use crate::…` lines are the dependency graph. Keep it that way; `scripts/check_module_layers.py` (part of `ci-server`) fails on `use crate::*` or a glob re-export in `lib.rs`.
 
 Top-level modules fall into three layers:
 
@@ -108,25 +113,21 @@ python3 scripts/check_module_layers.py
 ## Wrangler rustc PATH
 <!-- constrained-by ./clone-and-run.md#deploy -->
 
-`wrangler` and `worker-build` spawn `rustc` from `PATH`. A host or Nix `rustc` without `wasm32-unknown-unknown` will fail the Worker compile even when repo rustup has the target.
+`wrangler` and `worker-build` spawn `rustc` from `PATH`. The Rust toolchain comes from the Nix dev shell, which includes the `wasm32-unknown-unknown` target.
 
-`scripts/build_worker.mjs` (the `[build]` command in `wrangler.toml`) and `devbox run worker:dev` pin `RUSTC` / `PATH` to the repo rustup toolchain under `.devbox/.rustup`. `devbox shell` also exports `RUSTC` and `CARGO` from `rustup which`.
+`scripts/build_worker.mjs` (the `[build]` command in `wrangler.toml`) and `just worker-dev` check that the `rustc` on `PATH` has `wasm32-unknown-unknown` and pin `RUSTC` / `CARGO` to that toolchain (`scripts/lib/wasm_rustc_env.mjs`). Outside the dev shell they fail early and tell you to use `nix develop`.
 
-Deploy from `devbox shell`, or after `eval "$(devbox shellenv)"`:
+Deploy from inside `nix develop` (or a direnv-loaded shell):
 
 ```sh
 wrangler deploy
 ```
 
-Build and test through `devbox run -- cargo …` rather than a host or Nix `cargo`. Two different toolchains writing the same `target/` never share fingerprints, so each switch rebuilds the workspace and leaves another copy of incremental state behind (tens of GB on this crate).
-
-If `PATH` rustc is still the host compiler, wrap the command:
+or as a one-shot:
 
 ```sh
-node scripts/with_wasm_rustc.mjs wrangler deploy
+nix develop -c wrangler deploy
 ```
-
-On macOS do **not** use `devbox run -- wrangler deploy`. That wraps `git` and hits the unsigned Xcode license. `devbox run worker:dev` is fine: it runs Node, not a `devbox run -- wrangler` git wrapper.
 
 ## Model Checking
 <!-- constrained-by ../../crates/cfwdon-models/src/quote.rs -->
@@ -173,18 +174,18 @@ Refinement mappings in [`docs/reference/model-refinement.md`](../reference/model
 cargo test -p cfwdon-models
 ```
 
-`devbox run test` and `devbox run ci` already run `cargo test --workspace`, so model checks are part of the normal gate.
+`just test` and `just ci` already run `cargo test --workspace`, so model checks are part of the normal gate.
 
 ## Local Worker
 <!-- constrained-by ../reference/configuration.md -->
 
 ```sh
-devbox run worker:dev
+just worker-dev
 ```
 
-This rebuilds `web-ui/dist` (skip with `-- --skip-web-ui-build`), applies pending local D1 migrations, and starts `wrangler dev`. The migration step is skipped when you pass `--instance` or `--remote`. `admin-ui` is not rebuilt; build it with `(cd admin-ui && npm install && npm run build)` when you need it. The Worker build (`scripts/build_worker.mjs`) copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
+This rebuilds `web-ui/dist` (skip with `--skip-web-ui-build`; recipe arguments pass straight through, no `--` needed), applies pending local D1 migrations, and starts `wrangler dev`. The migration step is skipped when you pass `--instance` or `--remote`. `admin-ui` is not rebuilt; build it with `(cd admin-ui && npm install && npm run build)` when you need it. The Worker build (`scripts/build_worker.mjs`) copies `web-ui/dist` to `assets/app` and `admin-ui/dist` to `assets/admin`, or fallback HTML when a dist directory is missing.
 
-Local `wrangler dev` uses `worker-build --dev` (no wasm-opt) via `WRANGLER_DEV=1` / `WORKER_BUILD_PROFILE=dev`. `wrangler deploy` and CI `wrangler deploy --dry-run` stay on `worker-build --release`. Force a release wasm under `wrangler dev` with `WORKER_BUILD_PROFILE=release`. Bare `wrangler dev` (not `devbox run worker:dev`) needs the same env:
+Local `wrangler dev` uses `worker-build --dev` (no wasm-opt) via `WRANGLER_DEV=1` / `WORKER_BUILD_PROFILE=dev`. `wrangler deploy` and CI `wrangler deploy --dry-run` stay on `worker-build --release`. Force a release wasm under `wrangler dev` with `WORKER_BUILD_PROFILE=release`. Bare `wrangler dev` (not `just worker-dev`) needs the same env:
 
 ```sh
 WRANGLER_DEV=1 wrangler dev
@@ -194,10 +195,10 @@ WRANGLER_DEV=1 wrangler dev
 
 ```sh
 # Local worker code + local D1, but Mastodon instance metadata uses this domain.
-devbox run worker:dev -- --instance fedi.manji.app
+just worker-dev --instance fedi.manji.app
 
 # Local worker code against remote Cloudflare bindings (D1/KV/R2) for that deployment.
-devbox run worker:dev -- --instance fedi.manji.app --remote
+just worker-dev --instance fedi.manji.app --remote
 ```
 
 `--instance` accepts a bare domain (`fedi.manji.app`) or full URL (`https://fedi.manji.app`).
@@ -206,14 +207,14 @@ It overrides `INSTANCE_DOMAIN` and the matching Auth0 audience/email-claim vars 
 ### Web UI hot reload against an instance
 
 ```sh
-# Proxy API/auth routes to the local worker on :8787 (run worker:dev in another terminal).
-devbox run web-ui:dev
+# Proxy API/auth routes to the local worker on :8787 (run `just worker-dev` in another terminal).
+just web-ui-dev
 
 # Proxy API/auth routes to a remote instance (read-only/public flows; Auth0 callback stays remote).
-devbox run web-ui:dev -- --instance https://fedi.manji.app
+just web-ui-dev --instance https://fedi.manji.app
 ```
 
-`web-ui:dev` runs Vite on port `5173` with `/app/` hot reload. API routes under `/api`, `/oauth`, `/app/login`, and `/app/logout` are proxied to the configured origin.
+`just web-ui-dev` runs Vite on port `5173` with `/app/` hot reload. API routes under `/api`, `/oauth`, `/app/login`, and `/app/logout` are proxied to the configured origin.
 
 ### Auth0 on localhost
 
@@ -226,9 +227,9 @@ Add the following to the Auth0 application (same app as production, or a separat
 | Allowed Logout URLs | `http://127.0.0.1:8787`, `http://localhost:8787` |
 | Allowed Web Origins / CORS | same as logout URLs |
 
-When using `web-ui:dev` against the local worker, also allow port `5173` with the same paths.
+When using `just web-ui-dev` against the local worker, also allow port `5173` with the same paths.
 
-`devbox run worker:dev` (without `--instance` or `--remote`) and `devbox run web-ui:dev` against a local origin print this checklist on startup. See also [Auth0 Configuration Guide](../operations/auth0-configuration.md#local-development).
+`just worker-dev` (without `--instance` or `--remote`) and `just web-ui-dev` against a local origin print this checklist on startup. See also [Auth0 Configuration Guide](../operations/auth0-configuration.md#local-development).
 
 Routes that require D1, R2, or secrets need local or remote bindings configured according to the [Configuration Reference](../reference/configuration.md) and [Cloudflare Deploy Checklist](../operations/cloudflare-deploy.md).
 

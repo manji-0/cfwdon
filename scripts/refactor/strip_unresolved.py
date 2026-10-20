@@ -45,7 +45,7 @@ for p in glob.glob(os.path.join(src, "**/*.rs"), recursive=True):
     defs.update(DEF_RE.findall(s))
     defs.update(re.findall(r"macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)", s))
 
-cmd = ["devbox", "run", "--", "cargo", "check", "-p", "cfwdon-worker", "--message-format=json"]
+cmd = ["cargo", "check", "-p", "cfwdon-worker", "--message-format=json"]
 cmd += ["--target", target, "--lib"] if target else ["--all-targets"]
 out = subprocess.run(cmd, cwd=root, capture_output=True, text=True).stdout
 

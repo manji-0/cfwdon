@@ -26,7 +26,7 @@ For the detailed route inventory, see [Mastodon API Compatibility](docs/mastodon
 | --- | --- |
 | Stateright models | **16** models covering quote policy, quote approval, registration, status drafts, inbox replay, outbound delivery, follow requests, ActivityPub visibility, OAuth access provision, and federation request/DNS policy |
 | Refinement mapping | **16 / 16** executable checks link model actions to worker handlers and domain steps |
-| CI gate | `devbox run ci` runs `cargo test --workspace`, which includes `verify_models()` |
+| CI gate | `just ci` runs `cargo test --workspace`, which includes `verify_models()` |
 
 `verify_models()` runs Stateright `always` / `sometimes` property checks and `refinement::verify_refinements()`. Refinement treats the worker as a restricted implementation: handlers may refuse transitions the model still explores, but allowed steps must match domain effects.
 
@@ -38,24 +38,24 @@ For the full catalog and worked examples, see [Model Refinement Mapping](docs/re
 
 ## Requirements
 
-- `devbox`
+- [Nix](https://nixos.org/download/) with flakes enabled (`experimental-features = nix-command flakes`)
 - Cloudflare account access for Workers, D1, R2, KV, and Queues operations
 - `wrangler` authentication for deploys and remote resource changes
 
-The development shell installs the Rust toolchain, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `binaryen`, Node.js, `pnpm`, and supporting tools declared in [devbox.json](devbox.json).
+The development shell installs the Rust toolchain, `wasm32-unknown-unknown`, `wrangler`, `worker-build`, `wasm-bindgen-cli`, `binaryen`, Node.js, `pnpm`, and supporting tools declared in [flake.nix](flake.nix). Tasks are [just](https://just.systems/) recipes in the [justfile](justfile).
 
 ## Quick Start
 <!-- derived-from ./docs/getting-started/clone-and-run.md -->
 
 ```sh
-devbox shell
-devbox run ci
+nix develop
+just ci
 ```
 
 To run the Worker locally:
 
 ```sh
-devbox run worker:dev
+just worker-dev
 ```
 
 Local routes that depend on D1, R2, or Auth0 need matching local or remote bindings. Start with [Clone And Run](docs/getting-started/clone-and-run.md), then use [Development Workflow](docs/getting-started/development.md) for the day-to-day loop and [Configuration Reference](docs/reference/configuration.md) for runtime values.
@@ -92,7 +92,7 @@ Regenerate them when route handlers are added, removed, or intentionally diverge
 Before opening a change, run:
 
 ```sh
-devbox run ci
+nix develop -c just ci
 ```
 
 Use conventional commit messages for commits. For documentation changes, keep hand-written docs under `docs/getting-started`, `docs/reference`, `docs/operations`, `docs/architecture`, or `docs/planning`; keep generated compatibility output under `docs/mastodon-api-compat`.

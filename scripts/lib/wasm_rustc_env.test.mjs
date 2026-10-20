@@ -4,34 +4,21 @@ import path from "node:path";
 import { wasmRustcEnv, whichOnPath } from "./wasm_rustc_env.mjs";
 
 const repoRoot = "/tmp/cfwdon-repo";
-const toolchainBin = path.join(
-  repoRoot,
-  ".devbox",
-  ".rustup",
-  "toolchains",
-  "stable-x86_64-unknown-linux-gnu",
-  "bin",
-);
-const rustc = path.join(toolchainBin, "rustc");
-const cargo = path.join(toolchainBin, "cargo");
+const wasmLibdir = "/nix/store/rust/lib/rustlib/wasm32-unknown-unknown/lib";
 
 function fakeRun(command, args) {
-  const joined = args.join(" ");
-  if (joined === "which --toolchain stable rustc") {
-    return { status: 0, stdout: `${rustc}\n`, stderr: "", error: null };
+  if (args.join(" ") === "--print target-libdir --target wasm32-unknown-unknown") {
+    return { status: 0, stdout: `${wasmLibdir}\n`, stderr: "", error: null };
   }
-  if (joined === "which --toolchain stable cargo") {
-    return { status: 0, stdout: `${cargo}\n`, stderr: "", error: null };
-  }
-  if (joined === "target list --installed --toolchain stable") {
-    return {
-      status: 0,
-      stdout: "x86_64-unknown-linux-gnu\nwasm32-unknown-unknown\n",
-      stderr: "",
-      error: null,
-    };
-  }
-  return { status: 1, stdout: "", stderr: `unexpected ${command} ${joined}`, error: null };
+  return { status: 1, stdout: "", stderr: `unexpected ${command}`, error: null };
+}
+
+function baseEnv() {
+  return {
+    PATH: "/usr/bin:/bin",
+    RUSTC: process.execPath,
+    CARGO: process.execPath,
+  };
 }
 
 test("whichOnPath finds the first existing binary", () => {
@@ -40,75 +27,39 @@ test("whichOnPath finds the first existing binary", () => {
   assert.ok(found.endsWith(`${path.sep}node`));
 });
 
-test("wasmRustcEnv prepends repo rustup rustc ahead of host cargo", () => {
-  const hostCargo = "/usr/local/cargo/bin";
+test("wasmRustcEnv pins RUSTC and CARGO when rustc has wasm32", () => {
   const env = wasmRustcEnv({
     repoRoot,
-    env: {
-      PATH: `${hostCargo}:/usr/bin:/bin`,
-      RUSTUP: process.execPath,
-    },
+    env: baseEnv(),
     run: fakeRun,
+    exists: (dir) => dir === wasmLibdir,
   });
-
-  const entries = env.PATH.split(path.delimiter);
-  assert.equal(entries[0], toolchainBin);
-  assert.ok(entries.includes(hostCargo));
-  assert.ok(entries.includes("/usr/bin"));
-  assert.equal(env.RUSTC, rustc);
-  assert.equal(env.CARGO, cargo);
-  assert.equal(env.RUSTUP_HOME, path.join(repoRoot, ".devbox", ".rustup"));
-  assert.equal(env.CARGO_HOME, path.join(repoRoot, ".devbox", ".cargo"));
-  assert.notEqual(env.RUSTUP_HOME, "/usr/local/rustup");
+  assert.equal(env.RUSTC, process.execPath);
+  assert.equal(env.CARGO, process.execPath);
+  assert.equal(env.PATH, "/usr/bin:/bin");
 });
 
-test("wasmRustcEnv keeps host git on PATH", () => {
-  const env = wasmRustcEnv({
-    repoRoot,
-    env: {
-      PATH: "/usr/bin:/bin",
-      RUSTUP: process.execPath,
-    },
-    run: fakeRun,
-  });
-  assert.ok(env.PATH.split(path.delimiter).includes("/usr/bin"));
-});
-
-test("wasmRustcEnv rejects a toolchain without wasm32", () => {
+test("wasmRustcEnv rejects a rustc without the wasm32 target", () => {
   assert.throws(
     () =>
       wasmRustcEnv({
         repoRoot,
-        env: { PATH: "/usr/bin", RUSTUP: process.execPath },
-        run: (command, args) => {
-          if (args.join(" ").startsWith("target list")) {
-            return {
-              status: 0,
-              stdout: "x86_64-unknown-linux-gnu\n",
-              stderr: "",
-              error: null,
-            };
-          }
-          return fakeRun(command, args);
-        },
+        env: baseEnv(),
+        run: fakeRun,
+        exists: () => false,
       }),
     /wasm32-unknown-unknown/,
   );
 });
 
-test("wasmRustcEnv tells macOS operators not to wrap git via devbox run", () => {
+test("wasmRustcEnv points operators at the Nix dev shell", () => {
   assert.throws(
     () =>
       wasmRustcEnv({
         repoRoot,
-        env: { PATH: "/usr/bin", RUSTUP: process.execPath },
-        run: () => ({
-          status: 1,
-          stdout: "",
-          stderr: "no rustc",
-          error: null,
-        }),
+        env: baseEnv(),
+        run: () => ({ status: 1, stdout: "", stderr: "no rustc", error: null }),
       }),
-    /do not use `devbox run -- wrangler`/,
+    /nix develop/,
   );
 });
