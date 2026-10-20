@@ -245,7 +245,17 @@ pub(crate) fn oauth_access_token_has_any_scope_json(scopes_json: &str, scopes: &
 }
 
 pub(crate) fn oauth_bearer_token_hash(token: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(token.as_bytes()))
+    format!("sha256:{}", sha256_hex(token.as_bytes()))
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    use std::fmt::Write as _;
+    Sha256::digest(input)
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 pub(crate) async fn find_oauth_access_token_with_account_by_token_hash(

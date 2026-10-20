@@ -10,5 +10,10 @@ publish = false
 cfwdon-domain.workspace = true
 stateright.workspace = true
 
+# stateright pulls getrandom 0.3 (via ahash/rand); enable its JS backend so
+# `cargo check --workspace --target wasm32-unknown-unknown` keeps building.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [lints]
 workspace = true

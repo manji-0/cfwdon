@@ -15,7 +15,7 @@ use crate::statuses::{
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
-use time::format_description::parse as parse_format_description;
+use time::format_description::parse_borrowed;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, OffsetDateTime};
 use worker::Result;
@@ -208,7 +208,7 @@ fn normalize_status_search_timestamp(value: &str) -> Option<String> {
         return timestamp.format(&Rfc3339).ok();
     }
 
-    let format = parse_format_description("[year]-[month]-[day]").ok()?;
+    let format = parse_borrowed::<1>("[year]-[month]-[day]").ok()?;
     let date = Date::parse(&value, &format).ok()?;
     date.with_hms(0, 0, 0)
         .ok()?
@@ -229,7 +229,7 @@ fn next_day_status_search_timestamp(value: &str) -> Option<String> {
         return timestamp.format(&Rfc3339).ok();
     }
 
-    let format = parse_format_description("[year]-[month]-[day]").ok()?;
+    let format = parse_borrowed::<1>("[year]-[month]-[day]").ok()?;
     let date = Date::parse(&value, &format).ok()? + Duration::days(1);
     date.with_hms(0, 0, 0)
         .ok()?

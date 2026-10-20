@@ -82,7 +82,7 @@ pub(crate) fn parse_signature_header(header: &str) -> Result<ParsedSignatureHead
 }
 
 fn parse_date_with_format(value: &str, format: &str) -> Option<f64> {
-    let description = time::format_description::parse(format).ok()?;
+    let description = time::format_description::parse_borrowed::<1>(format).ok()?;
     let parsed = PrimitiveDateTime::parse(value, &description).ok()?;
     Some(parsed.assume_utc().unix_timestamp_nanos() as f64 / 1_000_000.0)
 }

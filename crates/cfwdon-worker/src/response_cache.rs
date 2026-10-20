@@ -262,10 +262,20 @@ fn account_api_cache_key(config: &cfwdon_core::AppConfig, account_id: &str) -> S
 
 fn remote_account_api_cache_key(config: &cfwdon_core::AppConfig, actor_uri: &str) -> String {
     format!(
-        "{}/cfwdon-cache/remote-accounts/{:x}",
+        "{}/cfwdon-cache/remote-accounts/{}",
         instance_base_url(config),
-        Sha256::digest(actor_uri.as_bytes())
+        sha256_hex(actor_uri.as_bytes())
     )
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    use std::fmt::Write as _;
+    Sha256::digest(input)
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 fn actor_json_cache_key(config: &cfwdon_core::AppConfig, username: &str) -> String {
