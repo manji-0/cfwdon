@@ -209,6 +209,17 @@ describe("ViewCache", () => {
     expect(state.notifications).toEqual(CachedView.present(notificationsSnapshot([])));
   });
 
+  it("drops a late streamed status into its chronological place", () => {
+    const newer = { ...status("new"), createdAt: "2026-08-13T12:00:00.000Z" };
+    const older = { ...status("old"), createdAt: "2026-08-13T00:00:00.000Z" };
+    const late = { ...status("late"), createdAt: "2026-08-12T18:00:00.000Z" };
+    let state = ViewCache.writeHome(ViewCache.empty(), homeSnapshot([newer, older]));
+
+    state = ViewCache.applyStreamEvent(state, { kind: "Update", status: late });
+
+    expect(state.home).toEqual(CachedView.present(homeSnapshot([newer, older, late])));
+  });
+
   it("patches an edited status from a status.update stream event", () => {
     let state = ViewCache.writeHome(ViewCache.empty(), homeSnapshot([status("s1", false)]));
 

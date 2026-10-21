@@ -129,7 +129,7 @@ export const ViewCache = {
     home: PresentView<TimelineSnapshot>,
     status: Status,
   ): PresentView<TimelineSnapshot> => {
-    const statuses = Status.prependUnique(home.value.statuses, status);
+    const statuses = Status.insertOrdered(home.value.statuses, status);
     return Object.is(statuses, home.value.statuses)
       ? home
       : CachedView.present({ ...home.value, statuses });
