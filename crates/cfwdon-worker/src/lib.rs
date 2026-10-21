@@ -212,7 +212,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
                 Ok(_) => {}
                 Err(error) => console_error!("background job stale reclaim failed: {error}"),
             }
-            if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 16).await {
+            if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 48).await {
                 console_error!("background job processing failed: {error}");
             }
             match reclaim_stale_inbox_activities(&db, 50).await {

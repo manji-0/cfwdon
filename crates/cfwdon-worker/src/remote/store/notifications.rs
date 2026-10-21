@@ -9,9 +9,25 @@ use crate::stream_hub_publish::{
     publish_remote_status_create_stream_fanout_soft,
     publish_remote_status_update_user_stream_fanout_soft,
 };
+use crate::time_html::now_unix_timestamp;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use worker::{Env, Result};
+
+/// How old a newly ingested remote status may be and still stream as a live
+/// `update` event, like Mastodon's `Status::REAL_TIME_WINDOW`. A delivery that
+/// arrives late (remote retry, our own job backlog) is stored and notified but
+/// not pushed onto timelines, where clients would show it as new.
+const REALTIME_STREAM_WINDOW_SECS: i64 = 6 * 60 * 60;
+
+/// Whether `published_at` is recent enough to stream. An unparsable value
+/// streams rather than silently dropping a live post.
+fn within_realtime_stream_window(published_at: &str, now_unix: i64) -> bool {
+    OffsetDateTime::parse(published_at.trim(), &Rfc3339).map_or(true, |published| {
+        now_unix - published.unix_timestamp() <= REALTIME_STREAM_WINDOW_SECS
+    })
+}
 
 pub(crate) fn remote_status_notify_payload(status_id: &str, actor_uri: &str, kind: &str) -> String {
     serde_json::json!({
@@ -52,7 +68,10 @@ pub(crate) async fn dispatch_remote_status_notifications(
                 env, db, config, &actor, &status,
             )
             .await;
-            publish_remote_status_create_stream_fanout_soft(env, db, config, &actor, &status).await;
+            if within_realtime_stream_window(&status.published_at, now_unix_timestamp()) {
+                publish_remote_status_create_stream_fanout_soft(env, db, config, &actor, &status)
+                    .await;
+            }
         }
         "update" => {
             let _ = send_remote_status_update_notifications(
@@ -78,4 +97,38 @@ pub(crate) async fn dispatch_remote_status_notifications(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PUBLISHED: &str = "2026-10-20T13:47:41.472Z";
+    const PUBLISHED_UNIX: i64 = 1_792_504_061;
+
+    #[test]
+    fn fresh_status_streams() {
+        assert!(within_realtime_stream_window(
+            PUBLISHED,
+            PUBLISHED_UNIX + 60
+        ));
+        assert!(within_realtime_stream_window(
+            PUBLISHED,
+            PUBLISHED_UNIX + REALTIME_STREAM_WINDOW_SECS
+        ));
+    }
+
+    #[test]
+    fn late_status_does_not_stream() {
+        // The job backlog delivered these ~15 hours late.
+        assert!(!within_realtime_stream_window(
+            PUBLISHED,
+            PUBLISHED_UNIX + 15 * 60 * 60
+        ));
+    }
+
+    #[test]
+    fn unparsable_published_at_streams() {
+        assert!(within_realtime_stream_window("not a date", PUBLISHED_UNIX));
+    }
 }

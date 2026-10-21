@@ -1,4 +1,5 @@
-use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
+use crate::db_utils::d1_results;
+use crate::deferred::defer;
 use crate::id_utils::generate_entity_id;
 use crate::media::find_remote_status_attachments_by_status_id;
 use crate::remote::{
@@ -13,7 +14,7 @@ use crate::time_html::{add_seconds_to_iso_string, now_iso_string};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use serde::Deserialize;
-use worker::{Env, Error, Result, d1::D1Type};
+use worker::{Env, Error, Result, console_error, d1::D1Type};
 
 pub(crate) const JOB_CARD_UNFURL: &str = "card_unfurl";
 pub(crate) const JOB_RESOLVE_IN_REPLY_TO: &str = "resolve_in_reply_to";
@@ -170,93 +171,173 @@ pub(crate) async fn process_due_background_jobs(
     let now = now_iso_string()?;
     let limit_val = i32::try_from(limit).unwrap_or(i32::MAX);
 
-    // Claim pending jobs.
+    // Claim pending jobs in one statement so a concurrent immediate run
+    // (`run_pending_background_job_now`) cannot take the same row.
     let claim_bindings = [D1Type::Text(&now), D1Type::Integer(limit_val)];
-    let job_ids_result = db
+    let claimed = db
         .prepare(
-            "SELECT id, job_type, payload_json, attempts
-             FROM background_jobs
-             WHERE status = 'pending'
-               AND next_run_at <= ?1
-             ORDER BY next_run_at ASC
-             LIMIT ?2",
+            "UPDATE background_jobs
+             SET status = 'running', updated_at = ?1
+             WHERE id IN (
+                 SELECT id
+                 FROM background_jobs
+                 WHERE status = 'pending'
+                   AND next_run_at <= ?1
+                 ORDER BY next_run_at ASC
+                 LIMIT ?2
+             )
+               AND status = 'pending'
+             RETURNING id, job_type, payload_json, attempts",
         )
         .bind_refs(claim_bindings.iter())?
         .all()
         .await?;
 
-    let jobs = d1_results::<BackgroundJobRow>(&job_ids_result)?;
+    let jobs = d1_results::<BackgroundJobRow>(&claimed)?;
     if jobs.is_empty() {
         return Ok(0);
     }
 
-    let ids_json = json_string_array(&jobs.iter().map(|j| j.id.as_str()).collect::<Vec<_>>());
-    let ids_binding = D1Type::Text(&ids_json);
-    db.prepare(format!(
-        "UPDATE background_jobs SET status = 'running', updated_at = ?1
-         WHERE id {}",
-        sql_in_json_each(2)
-    ))
-    .bind_refs(&[D1Type::Text(&now), ids_binding])?
-    .run()
-    .await?;
-
     let mut processed = 0u32;
     for job in jobs {
-        let result = handle_job(db, config, env, &job.job_type, &job.payload_json).await;
-        match result {
-            Ok(()) => {
-                let finish_bindings = [D1Type::Text(&job.id), D1Type::Text(&now)];
-                let _ = db
-                    .prepare(
-                        "UPDATE background_jobs
-                         SET status = 'completed', updated_at = ?2
-                         WHERE id = ?1",
-                    )
-                    .bind_refs(finish_bindings.iter())?
-                    .run()
-                    .await;
-                processed += 1;
-            }
-            Err(err) => {
-                let next_attempts = job.attempts + 1;
-                let (new_status, next_run_at) = if next_attempts >= MAX_ATTEMPTS {
-                    ("failed".to_owned(), now.clone())
-                } else {
-                    let backoff_secs = BASE_BACKOFF_SECS * (1i64 << next_attempts.min(6));
-                    let backoff_secs_u64 =
-                        u64::try_from(backoff_secs).unwrap_or(BASE_BACKOFF_SECS as u64);
-                    let next =
-                        add_seconds_to_iso_string(&now, backoff_secs_u64).unwrap_or(now.clone());
-                    ("pending".to_owned(), next)
-                };
-                let error_msg = err.to_string();
-                let retry_bindings = [
-                    D1Type::Text(&new_status),
-                    D1Type::Integer(next_attempts),
-                    D1Type::Text(&next_run_at),
-                    D1Type::Text(&error_msg),
-                    D1Type::Text(&now),
-                    D1Type::Text(&job.id),
-                ];
-                let _ = db
-                    .prepare(
-                        "UPDATE background_jobs
-                         SET status = ?1,
-                             attempts = ?2,
-                             next_run_at = ?3,
-                             last_error = ?4,
-                             updated_at = ?5
-                         WHERE id = ?6",
-                    )
-                    .bind_refs(retry_bindings.iter())?
-                    .run()
-                    .await;
-            }
+        if run_claimed_background_job(db, config, env, &job, &now).await? {
+            processed += 1;
         }
     }
 
     Ok(processed)
+}
+
+/// Run one job already marked `running` and record its outcome: `completed`
+/// on success, otherwise a backoff retry or `failed` at [`MAX_ATTEMPTS`].
+/// Returns whether the job succeeded.
+async fn run_claimed_background_job(
+    db: &D1Database,
+    config: &AppConfig,
+    env: Option<&Env>,
+    job: &BackgroundJobRow,
+    now: &str,
+) -> Result<bool> {
+    let now = now.to_owned();
+    let result = handle_job(db, config, env, &job.job_type, &job.payload_json).await;
+    let succeeded = result.is_ok();
+    match result {
+        Ok(()) => {
+            let finish_bindings = [D1Type::Text(&job.id), D1Type::Text(&now)];
+            let _ = db
+                .prepare(
+                    "UPDATE background_jobs
+                     SET status = 'completed', updated_at = ?2
+                     WHERE id = ?1",
+                )
+                .bind_refs(finish_bindings.iter())?
+                .run()
+                .await;
+        }
+        Err(err) => {
+            let next_attempts = job.attempts + 1;
+            let (new_status, next_run_at) = if next_attempts >= MAX_ATTEMPTS {
+                ("failed".to_owned(), now.clone())
+            } else {
+                let backoff_secs = BASE_BACKOFF_SECS * (1i64 << next_attempts.min(6));
+                let backoff_secs_u64 =
+                    u64::try_from(backoff_secs).unwrap_or(BASE_BACKOFF_SECS as u64);
+                let next = add_seconds_to_iso_string(&now, backoff_secs_u64).unwrap_or(now.clone());
+                ("pending".to_owned(), next)
+            };
+            let error_msg = err.to_string();
+            let retry_bindings = [
+                D1Type::Text(&new_status),
+                D1Type::Integer(next_attempts),
+                D1Type::Text(&next_run_at),
+                D1Type::Text(&error_msg),
+                D1Type::Text(&now),
+                D1Type::Text(&job.id),
+            ];
+            let _ = db
+                .prepare(
+                    "UPDATE background_jobs
+                     SET status = ?1,
+                         attempts = ?2,
+                         next_run_at = ?3,
+                         last_error = ?4,
+                         updated_at = ?5
+                     WHERE id = ?6",
+                )
+                .bind_refs(retry_bindings.iter())?
+                .run()
+                .await;
+        }
+    }
+    Ok(succeeded)
+}
+
+/// [`soft_enqueue_background_job`] due now, then run that job after the
+/// response instead of waiting for the hourly cron. The job row stays the
+/// fallback: if the deferred run is cancelled or fails, cron retries it.
+pub(crate) async fn enqueue_and_run_background_job_soon(
+    db: &D1Database,
+    config: &AppConfig,
+    env: &Env,
+    job_type: &str,
+    payload_json: &str,
+) -> Result<()> {
+    soft_enqueue_background_job(db, job_type, payload_json, &now_iso_string()?).await?;
+    let db = db.detached();
+    let config = config.clone();
+    let env = env.clone();
+    let job_type = job_type.to_owned();
+    let payload_json = payload_json.to_owned();
+    defer(async move {
+        if let Err(error) =
+            run_pending_background_job_now(&db, &config, &env, &job_type, &payload_json).await
+        {
+            console_error!("immediate background job run failed ({job_type}): {error}");
+        }
+    });
+    Ok(())
+}
+
+/// Claim the pending job for `job_type` + `payload_json` and run it. The claim
+/// is one conditional UPDATE, so a cron batch that already took the row (or a
+/// concurrent run) leaves nothing to claim here.
+async fn run_pending_background_job_now(
+    db: &D1Database,
+    config: &AppConfig,
+    env: &Env,
+    job_type: &str,
+    payload_json: &str,
+) -> Result<()> {
+    let now = now_iso_string()?;
+    let bindings = [
+        D1Type::Text(job_type),
+        D1Type::Text(payload_json),
+        D1Type::Text(&now),
+    ];
+    let claimed = db
+        .prepare(
+            "UPDATE background_jobs
+             SET status = 'running', updated_at = ?3
+             WHERE id = (
+                 SELECT id
+                 FROM background_jobs
+                 WHERE job_type = ?1
+                   AND payload_json = ?2
+                   AND status = 'pending'
+                   AND next_run_at <= ?3
+                 ORDER BY next_run_at ASC
+                 LIMIT 1
+             )
+               AND status = 'pending'
+             RETURNING id, job_type, payload_json, attempts",
+        )
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+    for job in d1_results::<BackgroundJobRow>(&claimed)? {
+        run_claimed_background_job(db, config, Some(env), &job, &now).await?;
+    }
+    Ok(())
 }
 
 async fn handle_job(

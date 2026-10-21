@@ -12,7 +12,7 @@ mod upsert_sql;
 use crate::activitypub::quote_target_uri_from_object;
 use crate::background_jobs::{
     JOB_CARD_UNFURL, JOB_REMOTE_STATUS_NOTIFY, JOB_RESOLVE_IN_REPLY_TO, card_unfurl_payload,
-    resolve_in_reply_to_payload, soft_enqueue_background_job,
+    enqueue_and_run_background_job_soon, resolve_in_reply_to_payload, soft_enqueue_background_job,
 };
 use crate::custom_emojis::extract_federated_emojis_from_activitypub_object;
 use crate::federation::RemoteActorProfile;
@@ -210,12 +210,13 @@ pub(crate) async fn upsert_remote_status(
             .as_ref()
             .is_some_and(|value| value.raw_object_json != intent.raw_object_json),
     );
-    if let Some(kind) = notification_kind {
-        let _ = soft_enqueue_background_job(
+    if let (Some(kind), Some(env)) = (notification_kind, env) {
+        let _ = enqueue_and_run_background_job_soon(
             db,
+            config,
+            env,
             JOB_REMOTE_STATUS_NOTIFY,
             &remote_status_notify_payload(&status.id, &actor.actor_uri, kind),
-            &intent.revision_at,
         )
         .await;
     }
@@ -273,12 +274,14 @@ pub(crate) async fn upsert_remote_reblog_status(
 
     // A re-delivered Announce is not a stream event. Only a live inbox
     // delivery of a new one fans out to followers, like a status create.
-    if let Some(kind) = remote_status_notify_kind(env.is_some(), is_new, false) {
-        let _ = soft_enqueue_background_job(
+    if let (Some(kind), Some(env)) = (remote_status_notify_kind(env.is_some(), is_new, false), env)
+    {
+        let _ = enqueue_and_run_background_job_soon(
             db,
+            config,
+            env,
             JOB_REMOTE_STATUS_NOTIFY,
             &remote_status_notify_payload(intent.status_id.as_str(), &remote_actor.actor_uri, kind),
-            &now_iso_string()?,
         )
         .await;
     }
