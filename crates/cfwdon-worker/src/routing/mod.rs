@@ -25,7 +25,8 @@ mod timelines;
 pub(crate) use dispatch::dispatch_route;
 pub(crate) use http::{
     HttpRequestContext, ensure_missing_content_type, error_response_with_plain_content_type,
-    mastodon_json_error_response, should_apply_auth0_web_session_cookies,
+    get_request_for_head, mastodon_json_error_response, serves_head_as_get,
+    should_apply_auth0_web_session_cookies, without_body,
 };
 
 #[cfg(test)]

@@ -10,8 +10,8 @@ use crate::federation::install_remote_dns_cache;
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
     HttpRequestContext, dispatch_route, ensure_missing_content_type,
-    error_response_with_plain_content_type, mastodon_json_error_response,
-    should_apply_auth0_web_session_cookies,
+    error_response_with_plain_content_type, get_request_for_head, mastodon_json_error_response,
+    serves_head_as_get, should_apply_auth0_web_session_cookies, without_body,
 };
 use crate::runtime_config::load_config_from_env;
 use worker::{Env, Request, Response, Result, console_error};
@@ -32,7 +32,13 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let kick_env = env.clone();
     let method = request_context.method().to_owned();
     let path = request_context.path().to_owned();
-    let response = match dispatch_route(req, env, &method, &path).await {
+    let head_as_get = serves_head_as_get(&method, &path);
+    let (req, dispatch_method) = if head_as_get {
+        (get_request_for_head(&req)?, "GET")
+    } else {
+        (req, method.as_str())
+    };
+    let response = match dispatch_route(req, env, dispatch_method, &path).await {
         Ok(response) => {
             // Durable Object / ASSETS / Cache API responses are immutable.
             let mut response = if response.status_code() == 401
@@ -68,8 +74,11 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
 
     let (response, error_message) =
         mastodon_json_error_response(request_context.path(), response).await?;
-    request_context.finish_response_with_error(
-        ensure_missing_content_type(response)?,
-        error_message.as_deref(),
-    )
+    let response = ensure_missing_content_type(response)?;
+    let response = if head_as_get {
+        without_body(response)?
+    } else {
+        response
+    };
+    request_context.finish_response_with_error(response, error_message.as_deref())
 }

@@ -5,7 +5,26 @@ use crate::d1_metrics::{
 use crate::observability::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
 };
-use worker::{Env, Request, Response, Result};
+use worker::{Env, Method, Request, RequestInit, Response, Result};
+
+/// Mastodon API routes register GET only, so HEAD would 405. Rails answers
+/// HEAD by running the GET action and dropping the body; do the same.
+pub(crate) fn serves_head_as_get(method: &str, path: &str) -> bool {
+    method == "HEAD" && path.starts_with("/api/")
+}
+
+pub(crate) fn get_request_for_head(req: &Request) -> Result<Request> {
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get)
+        .with_headers(req.headers().clone());
+    Request::new_with_init(req.url()?.as_str(), &init)
+}
+
+pub(crate) fn without_body(response: Response) -> Result<Response> {
+    Ok(Response::empty()?
+        .with_status(response.status_code())
+        .with_headers(response.headers().clone()))
+}
 
 pub(crate) struct HttpRequestContext {
     started_at_ms: f64,
@@ -310,8 +329,18 @@ mod tests {
     use super::{
         PLAIN_TEXT_CONTENT_TYPE, is_cors_enabled_path, is_logged_api_path, is_mastodon_api_error,
         is_websocket_upgrade, is_websocket_upgrade_header, missing_content_type_fallback,
-        sanitize_log_value, should_apply_auth0_web_session_cookies, should_apply_cors_headers,
+        sanitize_log_value, serves_head_as_get, should_apply_auth0_web_session_cookies,
+        should_apply_cors_headers,
     };
+
+    #[test]
+    fn head_on_mastodon_api_routes_is_served_as_get() {
+        assert!(serves_head_as_get("HEAD", "/api/v1/instance"));
+        assert!(serves_head_as_get("HEAD", "/api/v1/timelines/public"));
+        assert!(!serves_head_as_get("GET", "/api/v1/instance"));
+        assert!(!serves_head_as_get("HEAD", "/users/alice"));
+        assert!(!serves_head_as_get("HEAD", "/"));
+    }
 
     #[test]
     fn logged_api_path_scope_matches_browser_and_discovery_surfaces() {
