@@ -87,6 +87,23 @@ jobs:
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@v35
 
+      # Cache the Nix store so the dev shell closure (Rust toolchain, wrangler,
+      # worker-build, ...) is not re-downloaded on every run. The key follows
+      # the flake inputs; older caches are purged when a new key is saved. No
+      # GC runs before saving, so the unrooted dev shell paths stay cached.
+      # Pull requests only restore: saving or purging there could evict the
+      # main-branch cache that every other run starts from.
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ github.event_name != 'pull_request' }}
+          purge: ${{ github.event_name != 'pull_request' }}
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
       - name: Configure nixbuild.net
         if: steps.nixbuild.outputs.enabled == 'true'
         uses: nixbuild/nixbuild-action@v25

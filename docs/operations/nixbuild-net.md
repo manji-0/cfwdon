@@ -141,3 +141,4 @@ Typical CI dev-shell setups only spend noticeable CPU time when packages such as
 - [nixbuild-action](https://github.com/nixbuild/nixbuild-action)
 - [nix-quick-install-action](https://github.com/nixbuild/nix-quick-install-action)
 - [nix-develop action](https://github.com/nicknovitski/nix-develop)
+- [cache-nix-action](https://github.com/nix-community/cache-nix-action)
