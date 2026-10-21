@@ -113,6 +113,11 @@ pub(crate) struct AccountStatusesQuery {
         default,
         deserialize_with = "crate::request_utils::deserialize_query_bool"
     )]
+    pub(crate) exclude_direct: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::request_utils::deserialize_query_bool"
+    )]
     pub(crate) pinned: Option<bool>,
     pub(crate) tagged: Option<String>,
 }

@@ -1,6 +1,6 @@
 use crate::content_helpers::status_contains_tag;
 use crate::store::media::MediaAttachmentRow;
-use cfwdon_domain::{LocalStatus, RemoteStatus};
+use cfwdon_domain::{LocalStatus, RemoteStatus, Visibility};
 
 use crate::statuses::AccountStatusVisibilityScope;
 
@@ -38,6 +38,19 @@ pub(crate) fn account_statuses_page_walks_forward(query: &AccountStatusesQuery) 
         .is_some_and(|value| !value.is_empty())
 }
 
+/// `exclude_direct` (Mastodon API version 8) narrows the owner's `All` scope
+/// in SQL so paging stays correct; the other scopes never include direct.
+fn exclude_direct_visibility_scope(
+    query: &AccountStatusesQuery,
+    visibility: AccountStatusVisibilityScope,
+) -> AccountStatusVisibilityScope {
+    if query.exclude_direct.unwrap_or(false) && visibility == AccountStatusVisibilityScope::All {
+        AccountStatusVisibilityScope::PublicUnlistedPrivate
+    } else {
+        visibility
+    }
+}
+
 pub(crate) fn account_status_list_options<'a>(
     query: &'a AccountStatusesQuery,
     min_id: Option<&'a str>,
@@ -49,7 +62,7 @@ pub(crate) fn account_status_list_options<'a>(
         min_id,
         forward: account_statuses_page_walks_forward(query),
         limit,
-        visibility,
+        visibility: exclude_direct_visibility_scope(query, visibility),
         only_media: query.only_media.unwrap_or(false),
         exclude_replies: query.exclude_replies.unwrap_or(false),
         exclude_reblogs: query.exclude_reblogs.unwrap_or(false),
@@ -70,6 +83,9 @@ pub(crate) fn local_status_matches_account_filters(
         return false;
     }
     if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+        return false;
+    }
+    if query.exclude_direct.unwrap_or(false) && status.visibility == Visibility::Direct {
         return false;
     }
     if query.exclude_replies.unwrap_or(false)
@@ -97,6 +113,9 @@ pub(crate) fn remote_status_matches_account_filters(
         return false;
     }
     if query.exclude_reblogs.unwrap_or(false) && status.boost_of_uri.is_some() {
+        return false;
+    }
+    if query.exclude_direct.unwrap_or(false) && status.visibility == Visibility::Direct {
         return false;
     }
     if query.exclude_replies.unwrap_or(false) && status.in_reply_to_uri.is_some() {
@@ -299,5 +318,71 @@ mod tests {
         assert!(options.exclude_replies);
         assert!(options.exclude_reblogs);
         assert_eq!(options.tagged, Some("rust"));
+    }
+
+    #[test]
+    fn exclude_direct_narrows_owner_scope_only() {
+        let query = AccountStatusesQuery {
+            exclude_direct: Some(true),
+            ..Default::default()
+        };
+
+        let owner =
+            account_status_list_options(&query, None, 20, AccountStatusVisibilityScope::All);
+        assert_eq!(
+            owner.visibility,
+            AccountStatusVisibilityScope::PublicUnlistedPrivate
+        );
+        let public =
+            account_status_list_options(&query, None, 20, AccountStatusVisibilityScope::Public);
+        assert_eq!(public.visibility, AccountStatusVisibilityScope::Public);
+        let default_query = AccountStatusesQuery::default();
+        let unfiltered = account_status_list_options(
+            &default_query,
+            None,
+            20,
+            AccountStatusVisibilityScope::All,
+        );
+        assert_eq!(unfiltered.visibility, AccountStatusVisibilityScope::All);
+    }
+
+    #[test]
+    fn exclude_direct_filters_direct_statuses() {
+        let query = AccountStatusesQuery {
+            exclude_direct: Some(true),
+            ..Default::default()
+        };
+        let mut status = status_row();
+        let mut remote = remote_status_row();
+        assert!(local_status_matches_account_filters(
+            &status,
+            "account-1",
+            &query,
+            &[],
+            None
+        ));
+        assert!(remote_status_matches_account_filters(
+            &remote, &query, false
+        ));
+
+        status.visibility = Visibility::Direct;
+        remote.visibility = Visibility::Direct;
+        assert!(!local_status_matches_account_filters(
+            &status,
+            "account-1",
+            &query,
+            &[],
+            None
+        ));
+        assert!(!remote_status_matches_account_filters(
+            &remote, &query, false
+        ));
+        assert!(local_status_matches_account_filters(
+            &status,
+            "account-1",
+            &AccountStatusesQuery::default(),
+            &[],
+            None
+        ));
     }
 }
