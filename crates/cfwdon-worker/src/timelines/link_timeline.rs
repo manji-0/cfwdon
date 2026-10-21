@@ -16,7 +16,7 @@ use crate::statuses::{
     list_remote_public_statuses_by_link,
 };
 use std::collections::HashSet;
-use worker::{Error, Request, Response, Result, RouteContext};
+use worker::{Request, Response, Result, RouteContext};
 
 pub(crate) async fn link_timeline_response(
     req: Request,
@@ -24,12 +24,14 @@ pub(crate) async fn link_timeline_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: LinkTimelineQuery = req.query().unwrap_or_default();
-    let target_url = query
+    let Some(target_url) = query
         .url
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::RustError("missing url query parameter".to_owned()))?;
+    else {
+        return Response::error("Record not found", 404);
+    };
     let target_urls = derive_link_timeline_match_urls(target_url);
     let pagination = query.pagination();
     let limit = timeline_limit(&pagination);

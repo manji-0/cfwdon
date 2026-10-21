@@ -10,7 +10,16 @@ use worker::{Request, Response, ResponseBody, Result, RouteContext};
 
 #[derive(Debug, serde::Deserialize)]
 struct AuthorizeInteractionQuery {
-    uri: String,
+    #[serde(default)]
+    uri: Option<String>,
+}
+
+impl AuthorizeInteractionQuery {
+    fn uri(self) -> Option<String> {
+        self.uri
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
 }
 
 pub(crate) async fn authorize_interaction_response(
@@ -19,14 +28,17 @@ pub(crate) async fn authorize_interaction_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let query: AuthorizeInteractionQuery = req.query()?;
+    let Some(uri) = query.uri() else {
+        return Response::error("remote interaction target not found", 404);
+    };
     let db = bind_request_d1(&ctx, &config)?;
-    let account = match resolve_search_account(&db, &config, &query.uri).await? {
+    let account = match resolve_search_account(&db, &config, &uri).await? {
         Some(account) => account,
         None => return Response::error("remote interaction target not found", 404),
     };
 
     html_response(&authorize_interaction_document(
-        &query.uri,
+        &uri,
         &account.display_name,
         &account.acct,
         &account.url,
@@ -38,7 +50,9 @@ pub(crate) async fn authorize_interaction_submit_response(
     ctx: RouteContext<()>,
 ) -> Result<Response> {
     let config = load_config(&ctx);
-    let uri = authorize_interaction_uri(&mut req).await?;
+    let Some(uri) = authorize_interaction_uri(&mut req).await? else {
+        return Response::error("remote interaction target not found", 404);
+    };
     let db = bind_request_d1(&ctx, &config)?;
     let follower = match find_authenticated_local_account(&req, &db, &config).await? {
         Some(account) => account,
@@ -87,7 +101,7 @@ pub(crate) async fn authorize_interaction_submit_response(
     ))
 }
 
-async fn authorize_interaction_uri(req: &mut Request) -> Result<String> {
+async fn authorize_interaction_uri(req: &mut Request) -> Result<Option<String>> {
     let content_type = req
         .headers()
         .get("Content-Type")?
@@ -99,15 +113,14 @@ async fn authorize_interaction_uri(req: &mut Request) -> Result<String> {
         let form = req.form_data().await.map_err(|error| {
             worker::Error::RustError(format!("invalid authorize interaction form: {error}"))
         })?;
-        return form
+        return Ok(form
             .get_field("uri")
             .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| worker::Error::RustError("uri is required".to_owned()));
+            .filter(|value| !value.is_empty()));
     }
 
     let query: AuthorizeInteractionQuery = req.query()?;
-    Ok(query.uri)
+    Ok(query.uri())
 }
 
 pub(crate) fn authorize_interaction_document(

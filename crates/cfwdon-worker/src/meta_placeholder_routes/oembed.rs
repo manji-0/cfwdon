@@ -11,7 +11,8 @@ use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, Deserialize)]
 struct OembedQuery {
-    url: String,
+    #[serde(default)]
+    url: Option<String>,
     maxwidth: Option<u32>,
     maxheight: Option<u32>,
     format: Option<String>,
@@ -105,7 +106,17 @@ fn build_oembed_document(
 
 pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
-    let query: OembedQuery = req.query()?;
+    let Ok(query) = req.query::<OembedQuery>() else {
+        return Response::error("Bad Request", 400);
+    };
+    let Some(url) = query
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Response::error("Record not found", 404);
+    };
     match resolve_oembed_format(query.format.as_deref()) {
         OembedFormatDecision::Json => {}
         OembedFormatDecision::UnsupportedXml => {
@@ -116,7 +127,7 @@ pub(crate) async fn oembed_response(req: Request, ctx: RouteContext<()>) -> Resu
         }
     }
     let db = bind_request_d1(&ctx, &config)?;
-    let Some(status) = find_local_status_by_object_uri(&db, &config, &query.url).await? else {
+    let Some(status) = find_local_status_by_object_uri(&db, &config, url).await? else {
         return Response::error("Record not found", 404);
     };
     if !is_public_activitypub_visibility(status.visibility.as_str()) {

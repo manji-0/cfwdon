@@ -69,7 +69,8 @@ struct AccountProfileSettings {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AccountLookupQuery {
-    acct: String,
+    #[serde(default)]
+    acct: Option<String>,
 }
 
 enum ProfileMediaField {
@@ -233,9 +234,16 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let query: AccountLookupQuery = req.query()?;
+    let Some(acct) = query
+        .acct
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Response::error("Record not found", 404);
+    };
     // A known remote actor is served from the response cache without the
     // WebFinger + actor round trips to its origin.
-    if let Ok(handle) = parse_lookup_handle(&query.acct, &config)
+    if let Ok(handle) = parse_lookup_handle(&acct, &config)
         && !handle.is_local_to(&config.instance_domain)
         && let Some(domain) = handle.domain.as_deref()
         && let Some(actor) =
@@ -245,8 +253,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     {
         return Ok(response);
     }
-    match resolve_lookup_account_with_fetch_state(&db, &config, &query.acct, viewer.as_ref()).await
-    {
+    match resolve_lookup_account_with_fetch_state(&db, &config, &acct, viewer.as_ref()).await {
         Ok((account, fetched_actor_uri)) => {
             if let Some(actor_uri) = fetched_actor_uri {
                 cache_remote_account_api_response(&config, &actor_uri, &account).await?;
@@ -256,7 +263,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
         Err(error) => {
             log_json_event(serde_json::json!({
                 "event": "account_lookup_failed",
-                "acct": query.acct,
+                "acct": acct,
                 "error": error.to_string(),
             }));
             Response::error("Record not found", 404)

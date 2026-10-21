@@ -21,6 +21,12 @@ fn is_get_or_head(method: &str) -> bool {
     matches!(method, "GET" | "HEAD")
 }
 
+// `/api/v1/accounts//followers` still matches `:id` routes with an empty
+// param, which handlers report as a 500. Mastodon answers these with 404.
+fn has_empty_path_segment(path: &str) -> bool {
+    path.contains("//")
+}
+
 pub(crate) async fn dispatch_route(
     req: Request,
     env: Env,
@@ -65,6 +71,10 @@ pub(crate) async fn dispatch_route(
         return cache_public_response(response, CACHE_TTL_HEALTH);
     }
 
+    if has_empty_path_segment(path) {
+        return Response::error("Not Found", 404);
+    }
+
     if let Some(response) = dispatch_exact_without_router(method, path, &env).await? {
         return Ok(response);
     }
@@ -105,7 +115,7 @@ fn web_ui_router() -> Router<'static, ()> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_get_or_head;
+    use super::{has_empty_path_segment, is_get_or_head};
 
     #[test]
     fn origin_probes_allow_get_and_head() {
@@ -114,5 +124,15 @@ mod tests {
         assert!(!is_get_or_head("POST"));
         assert!(!is_get_or_head("OPTIONS"));
         assert!(!is_get_or_head("PUT"));
+    }
+
+    #[test]
+    fn empty_path_segments_are_detected() {
+        assert!(has_empty_path_segment("/api/v1/accounts//followers"));
+        assert!(has_empty_path_segment("/api/v1/accounts//following"));
+        assert!(has_empty_path_segment("//"));
+        assert!(!has_empty_path_segment("/"));
+        assert!(!has_empty_path_segment("/api/v1/accounts/1/followers"));
+        assert!(!has_empty_path_segment("/api/v1/timelines/home/"));
     }
 }
