@@ -27,7 +27,7 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
    wrangler d1 create cfwdon --location=apac
    ```
 
-   Location hints are regional only. `apac` placed this instance's first database in Singapore (`SIN`); creating without a hint from Japan placed the current one in Osaka (`KIX`). Confirm with a remote query's `meta.served_by_colo`, then pair it with the nearest cloud region in `[placement] region` in [`wrangler.toml`](../../wrangler.toml) (`aws:ap-northeast-3` for `KIX`, `aws:ap-southeast-1` for `SIN`). See [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
+   Location hints are regional only. `apac` placed this instance's first database in Singapore (`SIN`); creating without a hint from Japan placed the next one in Osaka (`KIX`). Repeating create-without-hint landed `KIX` three times and Tokyo (`NRT`) once in four tries; the current database is that `NRT` one. Confirm with a remote query's `meta.served_by_colo`, then pair it with the nearest cloud region in `[placement] region` in [`wrangler.toml`](../../wrangler.toml) (`aws:ap-northeast-1` for `NRT`, `aws:ap-northeast-3` for `KIX`, `aws:ap-southeast-1` for `SIN`). See [Worker And D1 Placement](../reference/configuration.md#worker-and-d1-placement).
 
 2. Create the R2 bucket.
 
@@ -152,12 +152,12 @@ The `STREAM_HUB` Durable Object (class `StreamHub`), the `ASSETS` static assets 
 ## Moving The Database
 <!-- derived-from #provisioning-steps -->
 
-D1 cannot change location, so moving means a new database and a copy. With about 12 MB this took under four minutes of downtime.
+D1 cannot change location, so moving means a new database and a copy. With about 12 MB this took under four minutes of downtime; the 23 MB move from `KIX` to `NRT` took about four and a half.
 
 1. Create the new database and confirm `served_by_colo` with `SELECT 1`.
 2. Deploy with `wrangler deploy --var CFWDON_MAINTENANCE:1`. HTTP answers 503 with `Retry-After`, and cron and queue invocations do no D1 work, so nothing writes to the old database. Avoid the `:17` cron minute.
 3. `wrangler d1 export DB --remote --output export.sql`.
-4. `python3 scripts/split_d1_export.py export.sql parts/`, then run each part in order with `wrangler d1 execute <new-name> --remote --file parts/<part> --yes`. Importing the whole dump at once fails with `D1_RESET_DO`, and its row order trips foreign keys.
+4. `python3 scripts/split_d1_export.py export.sql parts/`, then run each part in order with `wrangler d1 execute <new-name> --remote --file parts/<part> --yes`. Importing the whole dump at once fails with `D1_RESET_DO`, and its row order trips foreign keys. A single row over D1's 100 KB statement limit fails its part with `SQLITE_TOOBIG`; if it is a cache row (`public_endpoint_cache`), drop that line, re-run the part with `INSERT OR IGNORE` in case it applied partially, and let the cache rebuild.
 5. Compare `COUNT(*)` for every table against the dump (D1 rejects long `UNION ALL` chains; use one `SELECT` of scalar subqueries per batch of tables).
 6. Point `database_name` / `database_id` and `[placement] region` at the new database and `wrangler deploy` without the variable.
 7. Re-enable read replication on the new database in the dashboard if it was on, and keep the old database until the move is settled.
@@ -179,7 +179,7 @@ If the actor IoContext is already aborted when the event is delivered, the runti
 - `crates/cfwdon-core/src/config.rs` defaults match the binding names `DB`, `MEDIA`, `REMOTE_DNS_CACHE`, `APP_CACHE`, and `STREAM_HUB`
 - `wrangler.toml` `[assets] binding` is `ASSETS`
 - `crates/cfwdon-worker/src/runtime_config.rs` loads the expected instance and media environment variables
-- `wrangler.toml` `[placement] region` matches the D1 primary colo from `served_by_colo` (this instance: `SIN` → `aws:ap-southeast-1`)
+- `wrangler.toml` `[placement] region` matches the D1 primary colo from `served_by_colo` (this instance: `NRT` → `aws:ap-northeast-1`)
 - `migrations/` contains the schema required by the Worker code
 
 ## Current Caveat
