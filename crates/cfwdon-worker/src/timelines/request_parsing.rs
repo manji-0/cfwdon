@@ -1,3 +1,4 @@
+use crate::observability::log_json_event;
 use crate::remote::find_remote_status_by_id;
 use crate::statuses::find_status_by_id;
 use crate::tags::normalize_hashtag;
@@ -399,6 +400,24 @@ async fn resolve_timeline_cursor_timestamp(
         return Ok(None);
     };
 
+    if let Some(timestamp) = find_cursor_status_timestamp(db, cursor_id).await? {
+        return Ok(Some(timestamp));
+    }
+    // Streaming pushes statuses right after the primary write, so a client can
+    // page from an id the read replica has not replicated yet.
+    let Some(primary) = db.primary_fallback() else {
+        return Ok(None);
+    };
+    let timestamp = find_cursor_status_timestamp(&primary, cursor_id).await?;
+    log_json_event(serde_json::json!({
+        "event": "timeline_cursor_replica_miss",
+        "cursor_id": cursor_id,
+        "resolved_on_primary": timestamp.is_some(),
+    }));
+    Ok(timestamp)
+}
+
+async fn find_cursor_status_timestamp(db: &D1Database, cursor_id: &str) -> Result<Option<String>> {
     if let Some(status) = find_status_by_id(db, cursor_id).await? {
         return Ok(Some(status.created_at));
     }

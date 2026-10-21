@@ -64,21 +64,38 @@ impl D1PreparedStatement {
 }
 
 #[derive(Debug)]
-pub(crate) struct D1Database(InnerD1Database);
+pub(crate) struct D1Database(InnerD1Database, Option<InnerD1Database>);
 
 impl D1Database {
     pub(crate) fn new(inner: InnerD1Database) -> Self {
-        Self(inner)
+        Self(inner, None)
     }
 
-    pub(crate) fn from_unchecked_js(value: impl Into<wasm_bindgen::JsValue>) -> Self {
-        Self(InnerD1Database::unchecked_from_js(value.into()))
+    /// A session view that can fall back to `primary` for reads a lagging
+    /// replica cannot answer yet (see [`Self::primary_fallback`]).
+    pub(crate) fn session_with_primary(
+        session: impl Into<wasm_bindgen::JsValue>,
+        primary: InnerD1Database,
+    ) -> Self {
+        Self(
+            InnerD1Database::unchecked_from_js(session.into()),
+            Some(primary),
+        )
     }
 
     /// Another handle to the same binding or session, for work that outlives
     /// the borrowing handler (see `deferred`).
     pub(crate) fn detached(&self) -> Self {
-        Self::from_unchecked_js(AsRef::<wasm_bindgen::JsValue>::as_ref(&self.0).clone())
+        Self(
+            clone_d1_binding(&self.0),
+            self.1.as_ref().map(clone_d1_binding),
+        )
+    }
+
+    /// The primary binding behind a replica-capable session handle, or `None`
+    /// when this handle already talks to the primary.
+    pub(crate) fn primary_fallback(&self) -> Option<Self> {
+        self.1.as_ref().map(clone_d1_binding).map(Self::new)
     }
 
     #[allow(dead_code)]
@@ -114,6 +131,11 @@ impl D1Database {
     ) -> Result<worker::D1DatabaseSession> {
         self.0.with_session(constraint_or_bookmark)
     }
+}
+
+/// `worker::D1Database` is not `Clone`; share the underlying JS binding instead.
+pub(crate) fn clone_d1_binding(binding: &InnerD1Database) -> InnerD1Database {
+    InnerD1Database::unchecked_from_js(AsRef::<wasm_bindgen::JsValue>::as_ref(binding).clone())
 }
 
 fn record_d1_result(result: &D1Result, identity: Option<&D1QueryIdentity>) {

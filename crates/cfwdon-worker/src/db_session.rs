@@ -6,7 +6,7 @@
 //! `D1Database` prepare/batch surface used throughout the worker. Do not call `dump`, `exec`,
 //! or `with_session` on handles returned by [`D1RequestSession::db_handle`].
 
-use crate::tracked_d1::D1Database;
+use crate::tracked_d1::{D1Database, clone_d1_binding};
 use cfwdon_core::AppConfig;
 use worker::{
     D1Database as InnerD1Database, D1DatabaseSession, Method, Request, Response, Result,
@@ -19,12 +19,16 @@ pub(crate) const D1_BOOKMARK_HEADER: &str = "x-d1-bookmark";
 /// Request-scoped D1 session with a prepare/batch-compatible database view.
 pub(crate) struct D1RequestSession {
     session: D1DatabaseSession,
+    primary: InnerD1Database,
 }
 
 impl D1RequestSession {
     /// Owned prepare/batch handle that shares the same JS session object.
     pub(crate) fn db_handle(&self) -> D1Database {
-        D1Database::from_unchecked_js(self.session.as_ref().clone())
+        D1Database::session_with_primary(
+            self.session.as_ref().clone(),
+            clone_d1_binding(&self.primary),
+        )
     }
 
     /// Latest bookmark observed by this session, if any query has run.
@@ -51,7 +55,10 @@ pub(crate) fn open_request_session(
 ) -> Result<D1RequestSession> {
     let anchor = session_anchor_for_request(req)?;
     let session = db.with_session(anchor.as_deref())?;
-    Ok(D1RequestSession { session })
+    Ok(D1RequestSession {
+        session,
+        primary: clone_d1_binding(db),
+    })
 }
 
 /// Bind `DB`, open a request session, and return both the session and a db handle.
