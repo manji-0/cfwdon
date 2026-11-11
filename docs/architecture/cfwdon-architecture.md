@@ -105,6 +105,12 @@ ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, 
 
 Failed deliveries follow Mastodon's retry policy (`cfwdon_domain::delivery`). A 2xx is delivered. A 4xx other than 401, 408 and 429, or a 501, fails the row at once. Anything else is retried with Sidekiq's backoff (`count^4 + 15` seconds plus jitter) for up to 17 attempts, about two days. On a 429 or 503 the remote's `Retry-After` (delta-seconds or HTTP-date) replaces the backoff when it is longer, capped at 12 hours.
 
+### Instance Actor
+
+The instance actor is Mastodon's representative `Application` at `/actor`. Its `preferredUsername` is the instance domain, and WebFinger resolves `acct:<domain>@<domain>` to it. Its key pair is generated on first use and stored in the one-row `instance_actor_keys` table. The private key is encrypted with `ACCOUNT_PRIVATE_KEY_ENCRYPTION_KEY` when that secret is set. `/actor/inbox` is handled as the shared inbox, and `/actor/outbox` is always empty.
+
+Every signed ActivityPub GET is signed as the instance actor (`keyId` `/actor#main-key`), whether a background job or a user request triggered it. No local user's key signs a fetch, so a remote that blocked one user still answers, and the remote does not learn which user caused the fetch. Outbound deliveries are still signed by the account that sent the activity.
+
 ### Inbox Claims
 
 Personal and shared inbox deliveries claim the activity id in `inbox_activities` before they apply it. The claim is one D1 batch, so one transaction: it drops a claim older than 15 minutes, inserts a fresh claim if none is held, and reads the row it collided with. The claim has three outcomes (`cfwdon_domain::InboxClaim`):

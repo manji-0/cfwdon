@@ -2,12 +2,13 @@ use crate::auth::find_account_by_username;
 use crate::db_session::bind_request_d1;
 use crate::identity::{
     account_profile_page_url, actor_url, authorize_interaction_object_template,
-    authorize_interaction_subscribe_template, instance_host, parse_webfinger_resource,
-    share_create_template,
+    authorize_interaction_subscribe_template, instance_actor_url, instance_base_url, instance_host,
+    parse_webfinger_resource, share_create_template,
 };
 use crate::response::media_object_url;
 use crate::response_utils::{CACHE_TTL_STATIC_METADATA, cache_public_json_response};
 use crate::runtime_config::load_config;
+use cfwdon_core::AppConfig;
 use worker::{Request, Response, Result, RouteContext};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -104,6 +105,14 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
     if !handle.is_local_to(&config.instance_domain) {
         return Response::error("resource not found", 404);
     }
+    if names_instance_actor(&handle.username, &config) {
+        return cache_public_json_response(
+            &instance_actor_webfinger(&config, &query.rels),
+            "application/jrd+json",
+            CACHE_TTL_STATIC_METADATA,
+            &[],
+        );
+    }
 
     let db = bind_request_d1(&ctx, &config)?;
     let Some(account) = find_account_by_username(&db, &handle.username).await? else {
@@ -144,6 +153,25 @@ pub(crate) async fn webfinger_response(req: Request, ctx: RouteContext<()>) -> R
         CACHE_TTL_STATIC_METADATA,
         &[],
     )
+}
+
+/// As Mastodon: `acct:<domain>@<domain>` names the instance actor.
+fn names_instance_actor(username: &str, config: &AppConfig) -> bool {
+    username.eq_ignore_ascii_case(&instance_host(config))
+}
+
+fn instance_actor_webfinger(config: &AppConfig, rels: &[String]) -> WebFingerResponse {
+    let host = instance_host(config);
+    let actor = instance_actor_url(config);
+    let links = vec![
+        WebFingerLink::profile_page_link(instance_base_url(config)),
+        WebFingerLink::self_link(actor.clone()),
+    ];
+    WebFingerResponse {
+        subject: format!("acct:{host}@{host}"),
+        aliases: vec![actor],
+        links: filter_webfinger_links(links, rels),
+    }
 }
 
 /// Parse WebFinger query pairs per RFC 7033 §4.1.
@@ -237,6 +265,32 @@ mod tests {
                 .iter()
                 .any(|alias| alias.as_str() == Some("https://example.com/@alice"))
         );
+    }
+
+    #[test]
+    fn webfinger_resolves_domain_at_domain_to_the_instance_actor() {
+        let config = cfwdon_core::AppConfig::new("example.com", "cfwdon", "test instance");
+        let handle =
+            crate::identity::parse_webfinger_resource("acct:example.com@example.com").unwrap();
+        assert!(handle.is_local_to(&config.instance_domain));
+        assert!(names_instance_actor(&handle.username, &config));
+        assert!(!names_instance_actor("alice", &config));
+
+        let value = serde_json::to_value(instance_actor_webfinger(&config, &[])).unwrap();
+        assert_eq!(value["subject"], "acct:example.com@example.com");
+        assert_eq!(value["aliases"][0], "https://example.com/actor");
+        let self_link = value["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|link| link["rel"] == "self")
+            .unwrap();
+        assert_eq!(self_link["href"], "https://example.com/actor");
+        assert_eq!(self_link["type"], "application/activity+json");
+
+        let only_self =
+            serde_json::to_value(instance_actor_webfinger(&config, &["self".to_owned()])).unwrap();
+        assert_eq!(only_self["links"].as_array().unwrap().len(), 1);
     }
 
     #[test]

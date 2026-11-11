@@ -292,6 +292,16 @@ pub(crate) fn public_key_id(config: &AppConfig, username: &str) -> String {
     format!("{}#main-key", actor_url(config, username))
 }
 
+/// Mastodon's instance actor (`/actor`), the `Application` that signs fetches
+/// the server makes on its own behalf.
+pub(crate) fn instance_actor_url(config: &AppConfig) -> String {
+    format!("{}/actor", instance_base_url(config))
+}
+
+pub(crate) fn instance_actor_key_id(config: &AppConfig) -> String {
+    format!("{}#main-key", instance_actor_url(config))
+}
+
 pub(crate) fn shared_inbox_url(config: &AppConfig) -> String {
     format!("{}/inbox", instance_base_url(config))
 }
