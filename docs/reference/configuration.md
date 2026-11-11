@@ -16,10 +16,11 @@ For a safe starting point, copy [`wrangler.toml.example`](../../wrangler.toml.ex
 | `REMOTE_DNS_CACHE` | KV namespace | Yes | Caches remote hostname DoH SSRF validation results for ActivityPub fetches. |
 | `APP_CACHE` | KV namespace | Yes | Caches short-lived app data: account capability bits (skip empty D1 probes), public endpoint payloads (`public_timeline`, `instance_activity`), and trend lists. |
 | `STREAM_HUB` | Durable Object | Yes | `StreamHub` binding for Mastodon streaming fan-out. |
+| `RATE_LIMIT_COUNTER` | Durable Object | Recommended | `RateLimitCounter` binding holding the [rate limit](#rate-limits) counters. Without it nothing is counted. The binding name is a constant in `crates/cfwdon-worker/src/rate_limit.rs`. |
 | `OUTBOX_PROCESS_QUEUE` | Queue producer and consumer | Yes | Queue `cfwdon-outbox-process` drains pending outbound ActivityPub deliveries. The Worker enqueues a kick after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending. The binding name is a constant in `crates/cfwdon-worker/src/delivery.rs`, not an `AppConfig` field. |
 | `ASSETS` | Workers static assets | Yes | Staged `web-ui` and `admin-ui` files under `/app` and `/admin`. Configured by `[assets]` in `wrangler.toml`, not by `AppConfig`. |
 
-If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync. The `StreamHub` class needs the `[[migrations]]` entry shown in `wrangler.toml.example`. The static assets binding name is `ASSETS` in `wrangler.toml` and `crates/cfwdon-worker/src/ui_assets.rs`.
+If a D1, R2, KV, or Durable Object binding name changes, keep `wrangler.toml`, `cfwdon_core::AppConfig` defaults, and Worker runtime code in sync. The `StreamHub` and `RateLimitCounter` classes need the `[[migrations]]` entries (`v1`, `v2`) shown in `wrangler.toml.example`. The static assets binding name is `ASSETS` in `wrangler.toml` and `crates/cfwdon-worker/src/ui_assets.rs`.
 
 Do not set `[assets] not_found_handling` to `single-page-application`. Unmatched `/app` routes fall through to the Worker so ActivityPub and Mastodon API paths are not captured as HTML.
 
@@ -147,6 +148,45 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
 | `CFWDON_API_REQUEST_LOG` | Optional | enabled | Set to `0`, `false`, `off`, or `no` to stop per-request API log lines. |
+
+## Rate Limits
+<!-- derived-from ../../wrangler.toml.example -->
+
+The Worker throttles requests as Mastodon's Rack::Attack and its per-account `RateLimiter` do. The policy (which buckets a request counts against, the defaults, the fixed windows) is `cfwdon_domain::rate_limit`. `crates/cfwdon-worker/src/rate_limit.rs` enforces it in `router::handle_fetch`, after the CORS preflight answer and before any route, so a 429 still carries the CORS headers a browser client needs.
+
+**Buckets and defaults.** Every window is fixed and aligned to the epoch, as Rack::Attack's are (a 5-minute window ends on a multiple of 300 seconds).
+
+| Bucket | Counted per | Requests | Default (Mastodon) |
+| --- | --- | --- | --- |
+| `api_ip` | client address | `/api/*` without a credential that authenticates | 300 / 5 min (`throttle_unauthenticated_api`) |
+| `api_token` | OAuth token or session | `/api/*` with a valid credential (an app token counts here only) | 300 / 5 min (`throttle_per_token_api`) |
+| `api_account` | account | `/api/*` with any of the account's credentials | 1500 / 5 min (`throttle_authenticated_api`) |
+| `media` | account | `POST /api/v1/media`, `POST /api/v2/media` | 30 / 30 min (`throttle_api_media`, `RateLimiter` `media`) |
+| `statuses` | account | `POST /api/v1/statuses` (scheduled ones too) | 300 / 3 h (`RateLimiter` `statuses`) |
+| `reblogs` | account | `POST /api/v1/statuses/:id/reblog` | 300 / 3 h (`RateLimiter` `reblogs`) |
+| `follows` | account | `POST /api/v1/accounts/:id/follow` | 400 / 24 h (`RateLimiter` `follows`) |
+| `reports` | account | `POST /api/v1/reports` | 400 / 24 h (`RateLimiter` `reports`) |
+| `sign_in` | client address | `GET`/`POST /oauth/authorize`, `GET /oauth/auth0/callback` (where Auth0 sign-ins create accounts) | 25 / 5 min (`throttle_login_attempts/ip`) |
+| `app_registration` | client address | `POST /api/v1/apps` | 5 / 10 min (app registrations per address) |
+| `oauth_token` | client address | `POST /oauth/token` | 25 / 5 min (no Mastodon throttle; as login attempts) |
+| `federation_fetch` | client address | `GET`/`HEAD` of `/.well-known/*`, `/nodeinfo/*`, `/users/*` | 1500 / 5 min (Mastodon has none) |
+| `inbox_ip` | client address | `POST /inbox`, `/users/:username/inbox`, before the body is read | 1500 / 5 min (Mastodon has none) |
+| `inbox_domain` | sending server | the same deliveries, once their HTTP signature verified | 3000 / 5 min (Mastodon has none) |
+
+An authenticated API request counts against its credential and its account, not its address, as in Mastodon. A credential is an OAuth bearer token, the Auth0 JWT header, or the Auth0 session cookie; one that does not authenticate counts as its address. Staff are not exempt (Mastodon does not exempt them either). The action families count attempts, where Mastodon's `RateLimiter` counts the statuses, boosts, follows and reports actually created. The streaming endpoint (`/api/v1/streaming`), the Web UI, media, the `/internal/*` routes, and cron and queue work are not counted. `inbox_domain` keys on the host of the actor whose key verified, after the signature check, so a forged or unsigned delivery naming another server cannot spend that server's budget; `inbox_ip` in front of it bounds what a flood of forged deliveries costs.
+
+**Responses.** A request over a limit gets `429` with Mastodon's body, `{"error":"Too many requests"}`, `Retry-After` (seconds to the end of the window) and `X-RateLimit-Limit`, `X-RateLimit-Remaining` (`0`) and `X-RateLimit-Reset` (an ISO 8601 time). Every `/api/*` response that was counted carries the same three headers for the counter with the least left, as Mastodon's API does, and CORS exposes them to browser clients. Remote servers retry a 429 inbox delivery later.
+
+**Client address.** Only `CF-Connecting-IP`, which Cloudflare sets on every request it forwards and overwrites when a client sends its own; `X-Forwarded-For` is not read. Without it (local `wrangler dev`, tests) no address-keyed bucket applies. IPv6 addresses count per `/64` (Mastodon's `throttleable_remote_ip`), since one host routinely holds a whole `/64`.
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `RATE_LIMITS_ENABLED` | Optional | enabled | Set to `0`, `false`, `off`, or `no` to turn every limit off. |
+| `RATE_LIMITS` | Optional | Mastodon's defaults | JSON object of overrides by bucket name, each `{"limit": n, "period": seconds}` or `false` to lift that bucket, for example `{"api_ip": {"limit": 600, "period": 300}, "inbox_domain": false}`. Buckets not named keep the defaults. A value that is not JSON, names an unknown bucket, or has a malformed rule is ignored as a whole: the defaults apply and the Worker logs a warning. |
+
+**Storage.** Each subject (an address, an account, an app token, a sending server) is one instance of the `RateLimitCounter` Durable Object (`RATE_LIMIT_COUNTER`, migration tag `v2`), so no instance is shared by unrelated clients. It holds that subject's counters in memory and in its storage. A request costs one Durable Object call per subject it counts against (one for most requests) and no D1 write. An authenticated API request also needs to know whose credential it carries: each isolate looks that up once a minute per credential (one D1 read) and remembers it. An alarm at the end of the last window deletes the instance's storage. Each isolate also remembers a counter it saw over its limit until that window ends and refuses without asking the Durable Object, so a flood from one client costs one call per window per isolate. If the Durable Object cannot be reached the request goes through (fail open) and the Worker logs the error.
+
+The Workers Rate Limiting binding was not used: it offers only 10- and 60-second periods, fixes each limit in `wrangler.toml` at deploy time, counts per Cloudflare location, and reports no remaining count for `X-RateLimit-Remaining`. Workers KV is eventually consistent and takes one write per key per second; D1 would be a write per request. For volumetric floods, put a Cloudflare WAF rate-limiting rule in front of the Worker as an outer layer; it drops traffic before it reaches the Worker.
 
 ## Push Notification Vars
 

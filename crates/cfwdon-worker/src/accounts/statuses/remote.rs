@@ -179,7 +179,7 @@ async fn load_remote_account_status_page(
         && !query.only_media.unwrap_or(false)
     {
         let (refreshed_actor, counts) =
-            refresh_remote_status_actor(db, config, viewer, actor, true, Some(limit)).await?;
+            refresh_remote_status_actor(db, config, actor, true, Some(limit)).await?;
         actor = refreshed_actor;
         actor_social_counts = counts;
         statuses = list_remote_statuses_by_actor_uri(
@@ -191,8 +191,7 @@ async fn load_remote_account_status_page(
     }
     let transient_statuses = if !is_following_remote_actor && !wants_html {
         let (statuses, counts) =
-            load_transient_remote_actor_statuses(db, config, viewer, &actor, query, min_id, limit)
-                .await?;
+            load_transient_remote_actor_statuses(db, config, &actor, query, min_id, limit).await?;
         actor_social_counts = counts;
         statuses
     } else {
@@ -203,7 +202,7 @@ async fn load_remote_account_status_page(
         && !statuses.is_empty()
         && !remote_actor_social_counts_are_fresh(actor.social_counts_updated_at.as_deref())
     {
-        let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+        let fetch_context = RemoteCollectionFetchContext::public(config, db);
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
             Ok(fetched) => {
@@ -417,12 +416,11 @@ async fn remote_account_statuses_json_response(
 async fn refresh_remote_status_actor(
     db: &D1Database,
     config: &AppConfig,
-    viewer: Option<&LocalAccount>,
     actor: RemoteActorRow,
     include_social_counts: bool,
     status_fetch_limit: Option<u32>,
 ) -> Result<(RemoteActorRow, Option<RemoteActorSocialCounts>)> {
-    let fetch_context = RemoteCollectionFetchContext::authorized(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::authorized(config, db);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
@@ -543,7 +541,6 @@ async fn hydrate_remote_actor_statuses_from_outbox(
 async fn load_transient_remote_actor_statuses(
     db: &D1Database,
     config: &AppConfig,
-    viewer: Option<&LocalAccount>,
     actor: &RemoteActorRow,
     query: &AccountStatusesQuery,
     min_id: Option<&str>,
@@ -556,7 +553,7 @@ async fn load_transient_remote_actor_statuses(
     if query.pinned.unwrap_or(false) {
         return Ok((Vec::new(), None));
     }
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {

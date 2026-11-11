@@ -20,12 +20,14 @@ use worker::{Error, Request, Response, Result, RouteContext};
 
 mod collections;
 mod host_meta;
+mod instance_actor;
 mod profile_html;
 mod remote_follow;
 mod webfinger;
 
 pub(crate) use collections::*;
 pub(crate) use host_meta::*;
+pub(crate) use instance_actor::{instance_actor_outbox_response, instance_actor_response};
 pub(in crate::discovery) use profile_html::{profile_html_document, profile_html_response};
 pub(crate) use remote_follow::*;
 pub(crate) use webfinger::*;

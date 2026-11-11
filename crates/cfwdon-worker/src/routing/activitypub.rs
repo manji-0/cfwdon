@@ -2,8 +2,8 @@ use crate::accounts::account_statuses_by_username_response;
 use crate::delivery::process_outbox_deliveries;
 use crate::discovery::{
     actor_response, followers_collection_response, following_collection_response,
-    host_meta_json_response, host_meta_response, outbox_response, remote_follow_response,
-    webfinger_response,
+    host_meta_json_response, host_meta_response, instance_actor_outbox_response,
+    instance_actor_response, outbox_response, remote_follow_response, webfinger_response,
 };
 use crate::featured_tags::{featured_collection_response, featured_tags_collection_response};
 use crate::inbox::{inbox_response, shared_inbox_response};
@@ -52,6 +52,22 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
         })
         .head_async("/nodeinfo/2.1", |_req, _ctx| async move {
             static_head_response(JSON_CONTENT_TYPE)
+        })
+        .get_async("/actor", |_req, ctx| async move {
+            instance_actor_response(ctx).await
+        })
+        .head_async("/actor", |_req, _ctx| async move {
+            static_head_response(ACTIVITYPUB_CONTENT_TYPE)
+        })
+        .get("/actor/outbox", |_req, ctx| {
+            instance_actor_outbox_response(ctx)
+        })
+        .head_async("/actor/outbox", |_req, _ctx| async move {
+            static_head_response(ACTIVITYPUB_CONTENT_TYPE)
+        })
+        // Mastodon handles the instance actor's inbox as the shared inbox.
+        .post_async("/actor/inbox", |req, ctx| async move {
+            shared_inbox_response(req, ctx).await
         })
         .get_async("/users/:username", |req, ctx| async move {
             actor_response(req, ctx).await

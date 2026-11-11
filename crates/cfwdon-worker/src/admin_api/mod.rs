@@ -1,15 +1,21 @@
 use crate::admin_ui::{admin_ui_response, is_admin_ui_path};
 use dashboard::admin_dashboard_response;
 use deliveries::{admin_deliveries_response, admin_retry_delivery_response};
-use domain_blocks::{
-    admin_domain_blocks_create_response, admin_domain_blocks_delete_response,
+pub(crate) use domain_blocks::{
+    admin_domain_block_create_response, admin_domain_block_delete_response,
+    admin_domain_block_show_response, admin_domain_block_update_response,
     admin_domain_blocks_list_response,
 };
+use domain_blocks::{admin_domain_blocks_create_response, admin_domain_blocks_delete_response};
 use emojis::{
     admin_emojis_create_response, admin_emojis_delete_response, admin_emojis_list_response,
     admin_emojis_update_response,
 };
 use inbox::{admin_inbox_activities_response, admin_reclaim_inbox_activities_response};
+pub(crate) use ip_blocks::{
+    admin_ip_block_create_response, admin_ip_block_delete_response, admin_ip_block_show_response,
+    admin_ip_block_update_response, admin_ip_blocks_list_response,
+};
 use jobs::{
     admin_background_jobs_response, admin_reclaim_background_jobs_response,
     admin_retry_background_job_response,
@@ -139,7 +145,9 @@ mod domain_blocks;
 mod emojis;
 mod guard;
 mod inbox;
+mod ip_blocks;
 mod jobs;
+mod mastodon_admin;
 mod moderation;
 mod relays;
 mod reports;

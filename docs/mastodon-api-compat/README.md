@@ -68,7 +68,7 @@ Treat these as compatibility review items. Some may be deprecated Mastodon route
 ## Snapshot
 
 - tracked upstream routes: `235`
-- local tracked routes: `232`
+- local tracked routes: `244`
 - implemented routes: `225`
 - compatibility gaps: `0`
 - missing routes: `10`

@@ -264,7 +264,7 @@ async fn refreshed_remote_endorsement_account_response(
     actor: &RemoteActorRow,
 ) -> Result<Option<MastodonAccountResponse>> {
     Ok(Some(
-        refreshed_remote_actor_response(db, config, actor, None).await?,
+        refreshed_remote_actor_response(db, config, actor).await?,
     ))
 }
 

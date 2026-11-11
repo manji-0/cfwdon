@@ -81,11 +81,10 @@ pub(crate) async fn accounts_index_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let mut response = Vec::new();
 
     for account_id in parse_relationship_query_ids(&req)? {
-        let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
+        let fetch_context = RemoteCollectionFetchContext::public(&config, &db);
         match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
             Some(AccountReference::Local(account)) => {
                 let stats = load_account_stats(&db, account.id()).await?;

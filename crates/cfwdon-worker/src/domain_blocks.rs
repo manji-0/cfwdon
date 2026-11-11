@@ -11,7 +11,8 @@ use crate::request_utils::{
 use crate::runtime_config::load_config;
 use crate::store::instance::load_known_peer_domains;
 use crate::tracked_d1::D1Database;
-use serde::{Deserialize, Serialize};
+use cfwdon_domain::DomainBlockSeverity;
+use serde::Deserialize;
 use std::collections::HashSet;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
@@ -346,65 +347,283 @@ pub(crate) async fn delete_domain_block_response(
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// An `instance_domain_blocks` row as the admin APIs read it.
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct InstanceDomainBlockRow {
-    pub id: i64,
-    pub domain: String,
-    pub created_at: String,
+    pub(crate) id: i64,
+    pub(crate) domain: String,
+    pub(crate) created_at: String,
+    pub(crate) severity: String,
+    pub(crate) reject_media: i64,
+    pub(crate) reject_reports: i64,
+    pub(crate) obfuscate: i64,
+    pub(crate) private_comment: Option<String>,
+    pub(crate) public_comment: Option<String>,
 }
 
-fn normalize_instance_domain(domain: &str) -> Result<String> {
-    let normalized = domain.trim().trim_start_matches('@').to_ascii_lowercase();
-    if normalized.is_empty() || normalized.contains('/') {
-        return Err(worker::Error::RustError("invalid domain".to_owned()));
+/// Everything about a block except its domain, which never changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstanceDomainBlockInput {
+    pub(crate) severity: DomainBlockSeverity,
+    pub(crate) reject_media: bool,
+    pub(crate) reject_reports: bool,
+    pub(crate) obfuscate: bool,
+    pub(crate) private_comment: Option<String>,
+    pub(crate) public_comment: Option<String>,
+}
+
+impl Default for InstanceDomainBlockInput {
+    /// Mastodon's defaults for a new block.
+    fn default() -> Self {
+        Self {
+            severity: DomainBlockSeverity::Silence,
+            reject_media: false,
+            reject_reports: false,
+            obfuscate: false,
+            private_comment: None,
+            public_comment: None,
+        }
     }
-    Ok(normalized)
 }
 
+const INSTANCE_DOMAIN_BLOCK_COLUMNS: &str = "id, domain, created_at, severity, reject_media,
+    reject_reports, obfuscate, private_comment, public_comment";
+
+pub(crate) fn normalize_instance_domain(domain: &str) -> Option<String> {
+    let normalized = domain
+        .trim()
+        .trim_start_matches('@')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let valid = !normalized.is_empty()
+        && !normalized
+            .chars()
+            .any(|ch| ch.is_whitespace() || matches!(ch, '/' | '@' | ':' | '?' | '#'));
+    valid.then_some(normalized)
+}
+
+fn invalid_domain_error() -> worker::Error {
+    worker::Error::RustError("invalid domain".to_owned())
+}
+
+fn optional_id_binding(value: Option<i64>) -> D1Type<'static> {
+    value.map_or(D1Type::Null, |id| {
+        D1Type::Integer(i32::try_from(id).unwrap_or(if id < 0 { i32::MIN } else { i32::MAX }))
+    })
+}
+
+/// A page of blocks, newest first, under Mastodon's id cursors. `min_id`
+/// pages forward from the cursor and is still answered newest first.
 pub(crate) async fn list_instance_domain_blocks(
     db: &D1Database,
     limit: u32,
+    pagination: InternalPaginationIds,
 ) -> Result<Vec<InstanceDomainBlockRow>> {
     let limit = i32::try_from(limit.clamp(1, MAX_LIMIT)).unwrap_or(100);
+    let order = if pagination.min_id.is_some() {
+        "ASC"
+    } else {
+        "DESC"
+    };
+    let bindings = [
+        optional_id_binding(pagination.max_id),
+        optional_id_binding(pagination.since_id.or(pagination.min_id)),
+        D1Type::Integer(limit),
+    ];
     let result = db
-        .prepare(
-            "SELECT id, domain, created_at
+        .prepare(format!(
+            "SELECT {INSTANCE_DOMAIN_BLOCK_COLUMNS}
              FROM instance_domain_blocks
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?1",
-        )
-        .bind_refs(&[D1Type::Integer(limit)])?
+             WHERE (?1 IS NULL OR id < ?1)
+               AND (?2 IS NULL OR id > ?2)
+             ORDER BY id {order}
+             LIMIT ?3"
+        ))
+        .bind_refs(bindings.iter())?
         .all()
         .await?;
-    d1_results::<InstanceDomainBlockRow>(&result)
+    let mut rows = d1_results::<InstanceDomainBlockRow>(&result)?;
+    if pagination.min_id.is_some() {
+        rows.reverse();
+    }
+    Ok(rows)
 }
 
+pub(crate) async fn find_instance_domain_block(
+    db: &D1Database,
+    id: i64,
+) -> Result<Option<InstanceDomainBlockRow>> {
+    let bindings = [optional_id_binding(Some(id))];
+    let result = db
+        .prepare(format!(
+            "SELECT {INSTANCE_DOMAIN_BLOCK_COLUMNS} FROM instance_domain_blocks WHERE id = ?1"
+        ))
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+    Ok(d1_results::<InstanceDomainBlockRow>(&result)?
+        .into_iter()
+        .next())
+}
+
+pub(crate) async fn find_instance_domain_block_by_domain(
+    db: &D1Database,
+    domain: &str,
+) -> Result<Option<InstanceDomainBlockRow>> {
+    let bindings = [D1Type::Text(domain)];
+    let result = db
+        .prepare(format!(
+            "SELECT {INSTANCE_DOMAIN_BLOCK_COLUMNS} FROM instance_domain_blocks WHERE domain = ?1"
+        ))
+        .bind_refs(bindings.iter())?
+        .all()
+        .await?;
+    Ok(d1_results::<InstanceDomainBlockRow>(&result)?
+        .into_iter()
+        .next())
+}
+
+fn optional_text(value: Option<&str>) -> D1Type<'_> {
+    value.map_or(D1Type::Null, D1Type::Text)
+}
+
+/// Write the block for `domain`. `on_conflict` decides what an existing row
+/// for the domain becomes; the caller reads the row back by domain.
+async fn write_instance_domain_block(
+    db: &D1Database,
+    domain: &str,
+    input: &InstanceDomainBlockInput,
+    created_by_account_id: Option<&str>,
+    on_conflict: &str,
+) -> Result<Option<InstanceDomainBlockRow>> {
+    let domain = normalize_instance_domain(domain).ok_or_else(invalid_domain_error)?;
+    let bindings = [
+        D1Type::Text(&domain),
+        optional_text(created_by_account_id),
+        D1Type::Text(input.severity.as_str()),
+        D1Type::Integer(i32::from(input.reject_media)),
+        D1Type::Integer(i32::from(input.reject_reports)),
+        D1Type::Integer(i32::from(input.obfuscate)),
+        optional_text(input.private_comment.as_deref()),
+        optional_text(input.public_comment.as_deref()),
+    ];
+    db.prepare(format!(
+        "INSERT INTO instance_domain_blocks (
+            domain, created_by_account_id, severity, reject_media, reject_reports,
+            obfuscate, private_comment, public_comment
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(domain) {on_conflict}"
+    ))
+    .bind_refs(bindings.iter())?
+    .run()
+    .await?;
+    invalidate_suspended_domains();
+    find_instance_domain_block_by_domain(db, &domain).await
+}
+
+/// Mastodon's create: `None` when the domain already has a block.
 pub(crate) async fn insert_instance_domain_block(
+    db: &D1Database,
+    domain: &str,
+    input: &InstanceDomainBlockInput,
+    created_by_account_id: Option<&str>,
+) -> Result<Option<InstanceDomainBlockRow>> {
+    let domain = normalize_instance_domain(domain).ok_or_else(invalid_domain_error)?;
+    if find_instance_domain_block_by_domain(db, &domain)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    write_instance_domain_block(db, &domain, input, created_by_account_id, "DO NOTHING").await
+}
+
+/// Create the block for `domain`, or replace an existing block's policy.
+/// Comments left out keep their current text.
+pub(crate) async fn upsert_instance_domain_block(
+    db: &D1Database,
+    domain: &str,
+    input: &InstanceDomainBlockInput,
+    created_by_account_id: Option<&str>,
+) -> Result<Option<InstanceDomainBlockRow>> {
+    write_instance_domain_block(
+        db,
+        domain,
+        input,
+        created_by_account_id,
+        "DO UPDATE SET
+            severity = excluded.severity,
+            reject_media = excluded.reject_media,
+            reject_reports = excluded.reject_reports,
+            obfuscate = excluded.obfuscate,
+            private_comment = COALESCE(excluded.private_comment, private_comment),
+            public_comment = COALESCE(excluded.public_comment, public_comment)",
+    )
+    .await
+}
+
+/// Suspend `domain`, raising an existing block to `suspend` and keeping its
+/// flags and comments (a report's "block domain" action).
+pub(crate) async fn suspend_instance_domain(
     db: &D1Database,
     domain: &str,
     created_by_account_id: Option<&str>,
 ) -> Result<()> {
-    let domain = normalize_instance_domain(domain)?;
+    let input = InstanceDomainBlockInput {
+        severity: DomainBlockSeverity::Suspend,
+        ..InstanceDomainBlockInput::default()
+    };
+    write_instance_domain_block(
+        db,
+        domain,
+        &input,
+        created_by_account_id,
+        "DO UPDATE SET severity = excluded.severity",
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn update_instance_domain_block(
+    db: &D1Database,
+    id: i64,
+    input: &InstanceDomainBlockInput,
+) -> Result<Option<InstanceDomainBlockRow>> {
     let bindings = [
-        D1Type::Text(&domain),
-        match created_by_account_id {
-            Some(value) => D1Type::Text(value),
-            None => D1Type::Null,
-        },
+        optional_id_binding(Some(id)),
+        D1Type::Text(input.severity.as_str()),
+        D1Type::Integer(i32::from(input.reject_media)),
+        D1Type::Integer(i32::from(input.reject_reports)),
+        D1Type::Integer(i32::from(input.obfuscate)),
+        optional_text(input.private_comment.as_deref()),
+        optional_text(input.public_comment.as_deref()),
     ];
     db.prepare(
-        "INSERT OR IGNORE INTO instance_domain_blocks (domain, created_by_account_id)
-         VALUES (?1, ?2)",
+        "UPDATE instance_domain_blocks
+         SET severity = ?2, reject_media = ?3, reject_reports = ?4, obfuscate = ?5,
+             private_comment = ?6, public_comment = ?7
+         WHERE id = ?1",
     )
     .bind_refs(bindings.iter())?
     .run()
     .await?;
     invalidate_suspended_domains();
-    Ok(())
+    find_instance_domain_block(db, id).await
+}
+
+pub(crate) async fn delete_instance_domain_block_by_id(db: &D1Database, id: i64) -> Result<bool> {
+    let bindings = [optional_id_binding(Some(id))];
+    let result = db
+        .prepare("DELETE FROM instance_domain_blocks WHERE id = ?1")
+        .bind_refs(bindings.iter())?
+        .run()
+        .await?;
+    invalidate_suspended_domains();
+    Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
 pub(crate) async fn delete_instance_domain_block(db: &D1Database, domain: &str) -> Result<bool> {
-    let domain = normalize_instance_domain(domain)?;
+    let domain = normalize_instance_domain(domain).ok_or_else(invalid_domain_error)?;
     let bindings = [D1Type::Text(&domain)];
     let result = db
         .prepare("DELETE FROM instance_domain_blocks WHERE domain = ?1")

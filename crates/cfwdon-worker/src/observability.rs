@@ -55,6 +55,7 @@ pub(crate) fn log_federation_event(
             "level": federation_event_level(outcome),
         });
     }
+    crate::metrics::write_federation_event_metric(event, outcome);
     log_json_event(add_log_message(details, message));
 }
 

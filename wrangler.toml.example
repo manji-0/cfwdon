@@ -68,6 +68,10 @@ MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
 # rows before the hourly cron prunes them. 0 keeps them forever.
 # FEDERATION_ACTIVITY_RETENTION_DAYS = "30"
 
+# Rate limits (Mastodon's Rack::Attack throttles) are on by default.
+# RATE_LIMITS_ENABLED = "false" turns them off; RATE_LIMITS overrides buckets.
+# RATE_LIMITS = '{"api_ip": {"limit": 600, "period": 300}, "inbox_domain": false}'
+
 # Optional custom emoji registry (Mastodon CustomEmoji JSON array).
 # CUSTOM_EMOJIS_JSON = '[{"shortcode":"blobaww","url":"https://media.example.com/custom_emojis/blobaww.png"}]'
 
@@ -127,6 +131,23 @@ max_concurrency = 1
 name = "STREAM_HUB"
 class_name = "StreamHub"
 
+# Rate-limit counters: one instance per client address, account, app token
+# or sending server (see docs/reference/configuration.md#rate-limits).
+[[durable_objects.bindings]]
+name = "RATE_LIMIT_COUNTER"
+class_name = "RateLimitCounter"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["StreamHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitCounter"]
+
+# Optional Workers Analytics Engine dataset for operational data points
+# (docs/operations/runbook.md#analytics-engine-metrics). Enable Analytics Engine
+# for the account, then uncomment. Without the binding the Worker writes nothing.
+# [[analytics_engine_datasets]]
+# binding = "METRICS"
+# dataset = "cfwdon_metrics"

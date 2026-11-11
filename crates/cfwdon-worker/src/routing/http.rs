@@ -2,6 +2,7 @@ use crate::d1_metrics::{
     bind_d1_request_route, d1_request_route, publish_d1_request_pressure,
     snapshot_d1_request_metrics,
 };
+use crate::metrics::write_http_request_metric;
 use crate::observability::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
 };
@@ -107,13 +108,23 @@ impl HttpRequestContext {
         response: Response,
         error_message: Option<&str>,
     ) -> Result<Response> {
+        let duration_ms = observability_duration_ms(self.started_at_ms);
+        let d1_metrics = snapshot_d1_request_metrics();
+        write_http_request_metric(
+            &self.method,
+            &self.path,
+            response.status_code(),
+            duration_ms,
+            d1_metrics.query_count,
+            d1_metrics.sql_ms_sum,
+        );
         log_api_request(
             self.log_api_requests,
             &self.method,
             &self.path,
             response.status_code(),
             &self.user_agent,
-            observability_duration_ms(self.started_at_ms),
+            duration_ms,
             error_message,
         );
         Ok(response)
@@ -194,6 +205,7 @@ pub(crate) fn is_cors_enabled_path(path: &str) -> bool {
         || path.starts_with("/media/")
         || path.starts_with("/profiles/")
         || path.starts_with("/users/")
+        || path == "/actor"
         || path == "/.well-known/oauth-authorization-server"
         || path == "/.well-known/webfinger"
         || path == "/.well-known/host-meta"
@@ -237,6 +249,10 @@ fn is_websocket_upgrade_header(upgrade_header: Option<&str>) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }
 
+/// Mastodon clients read the `X-RateLimit-*` headers to pace themselves.
+const CORS_EXPOSED_HEADERS: &str =
+    "Link,Authorization,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset";
+
 fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<()> {
     response
         .headers_mut()
@@ -251,7 +267,7 @@ fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<(
     )?;
     response
         .headers_mut()
-        .set("Access-Control-Expose-Headers", "Link,Authorization")?;
+        .set("Access-Control-Expose-Headers", CORS_EXPOSED_HEADERS)?;
     response.headers_mut().set("Vary", "Origin")?;
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
 use crate::oauth_store::oauth_access_token_has_any_scope;
-use crate::remote::resolve_search_account_with_viewer;
+use crate::remote::resolve_search_account;
 use crate::response::{MastodonSearchResponse, MastodonTagResponse};
 use crate::response_utils::json_response;
 use crate::responses::{MastodonAccountResponse, MastodonStatusResponse};
@@ -256,8 +256,7 @@ async fn search_accounts_for_response(
     if viewer.is_some()
         && account_search_resolve_enabled(query.resolve, query_text, config)
         && accounts.is_empty()
-        && let Some(account) =
-            resolve_search_account_with_viewer(db, config, query_text, viewer).await?
+        && let Some(account) = resolve_search_account(db, config, query_text).await?
     {
         accounts.push(account);
         accounts.truncate(plan.limit as usize);
@@ -334,7 +333,7 @@ async fn resolve_search_url_only_response(
         return Ok(response);
     }
 
-    if let Some(account) = resolve_search_account_with_viewer(db, config, query, viewer).await? {
+    if let Some(account) = resolve_search_account(db, config, query).await? {
         if search_flags.accounts && search_v2_type_allows_url_resource(search_type, "accounts") {
             response.accounts.push(account);
         }

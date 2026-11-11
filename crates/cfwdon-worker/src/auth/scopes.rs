@@ -63,6 +63,10 @@ const WRITE_NOTIFICATIONS: &[&str] = &["write", "write:notifications"];
 const WRITE_REPORTS: &[&str] = &["write", "write:reports"];
 const WRITE_STATUSES: &[&str] = &["write", "write:statuses"];
 const PUSH: &[&str] = &["push"];
+const ADMIN_READ_DOMAIN_BLOCKS: &[&str] = &["admin:read", "admin:read:domain_blocks"];
+const ADMIN_WRITE_DOMAIN_BLOCKS: &[&str] = &["admin:write", "admin:write:domain_blocks"];
+const ADMIN_READ_IP_BLOCKS: &[&str] = &["admin:read", "admin:read:ip_blocks"];
+const ADMIN_WRITE_IP_BLOCKS: &[&str] = &["admin:write", "admin:write:ip_blocks"];
 
 /// Scopes that authorize `method path` for a user OAuth token.
 ///
@@ -129,6 +133,8 @@ pub(crate) fn required_oauth_scopes(method: &str, path: &str) -> &'static [&'sta
         ["reports", ..] => WRITE_REPORTS,
         ["search", ..] => READ_SEARCH,
         ["push", ..] => PUSH,
+        ["admin", "domain_blocks", ..] => pick(ADMIN_READ_DOMAIN_BLOCKS, ADMIN_WRITE_DOMAIN_BLOCKS),
+        ["admin", "ip_blocks", ..] => pick(ADMIN_READ_IP_BLOCKS, ADMIN_WRITE_IP_BLOCKS),
         _ => pick(READ_ANY, WRITE_ANY),
     }
 }
@@ -191,6 +197,38 @@ mod tests {
             "PATCH",
             "/api/v1/accounts/update_credentials",
             "follow"
+        ));
+    }
+
+    #[test]
+    fn admin_block_endpoints_need_admin_scopes() {
+        assert!(allows(
+            "GET",
+            "/api/v1/admin/ip_blocks",
+            "admin:read:ip_blocks"
+        ));
+        assert!(allows("GET", "/api/v1/admin/ip_blocks/3", "admin:read"));
+        assert!(allows(
+            "POST",
+            "/api/v1/admin/ip_blocks",
+            "admin:write:ip_blocks"
+        ));
+        assert!(!allows(
+            "POST",
+            "/api/v1/admin/ip_blocks",
+            "admin:read:ip_blocks"
+        ));
+        assert!(!allows("GET", "/api/v1/admin/ip_blocks", "read"));
+        assert!(!allows("DELETE", "/api/v1/admin/ip_blocks/3", "write"));
+        assert!(allows(
+            "PUT",
+            "/api/v1/admin/domain_blocks/3",
+            "admin:write:domain_blocks"
+        ));
+        assert!(!allows(
+            "GET",
+            "/api/v1/admin/domain_blocks",
+            "admin:read:ip_blocks"
         ));
     }
 

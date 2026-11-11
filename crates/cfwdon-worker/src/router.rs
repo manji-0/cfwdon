@@ -7,6 +7,8 @@ use crate::d1_metrics::reset_d1_request_metrics;
 use crate::deferred::defer;
 use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
+use crate::ip_blocks::ip_access_denied_response;
+use crate::rate_limit::{RateLimitGate, apply_rate_limit_headers, enforce_rate_limits};
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
     HttpRequestContext, dispatch_route, ensure_missing_content_type,
@@ -14,6 +16,7 @@ use crate::routing::{
     serves_head_as_get, should_apply_auth0_web_session_cookies, without_body,
 };
 use crate::runtime_config::load_config_from_env;
+use crate::tracked_d1::D1Database;
 use worker::{Env, Request, Response, Result, console_error};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
@@ -25,6 +28,13 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     install_app_cache(&env, &config.app_cache_binding);
     install_domain_suspensions(&env, &config.database_binding);
 
+    if let Ok(db) = env.d1(&config.database_binding)
+        && let Some(denied) =
+            ip_access_denied_response(&req, &D1Database::new(db), &req.path()).await?
+    {
+        return Ok(denied);
+    }
+
     let request_context = HttpRequestContext::from_request(&req, &env)?;
     if request_context.is_cors_preflight() {
         return request_context.cors_preflight_response();
@@ -33,6 +43,13 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let kick_env = env.clone();
     let method = request_context.method().to_owned();
     let path = request_context.path().to_owned();
+    // After CORS preflight (a 429 still gets CORS headers from
+    // `finish_response`) and before any route.
+    let rate_limit = match enforce_rate_limits(&req, &env, &config, &method, &path).await? {
+        RateLimitGate::Refused(response) => return request_context.finish_response(response),
+        RateLimitGate::Counted(headline) => Some(headline),
+        RateLimitGate::Open => None,
+    };
     let head_as_get = serves_head_as_get(&method, &path);
     let (req, dispatch_method) = if head_as_get {
         (get_request_for_head(&req)?, "GET")
@@ -50,6 +67,9 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
             } else {
                 into_mutable_response(response)?
             };
+            if let Some(headline) = &rate_limit {
+                apply_rate_limit_headers(&mut response, headline)?;
+            }
             if should_apply_auth0_web_session_cookies(
                 response.status_code(),
                 response.headers().get("Upgrade")?.as_deref(),

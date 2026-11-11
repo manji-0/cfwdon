@@ -73,7 +73,7 @@ The generated compatibility inventory currently maps all tracked upstream routes
 
 ## Security Follow-Up
 
-- Add rate limiting and abuse controls for shared inbox and expensive remote resolution paths.
+- **Done:** rate limiting after Mastodon's Rack::Attack throttles, including per-address and per-sending-server inbox limits (see [Rate Limits](../reference/configuration.md#rate-limits)). Expensive remote resolution paths (`resolve=true` search, remote account lookup) have no bucket of their own yet beyond the API limits.
 - Make signature clock skew policy configurable if operators need it. It is currently fixed in `cfwdon-domain` to Mastodon's window: a `Date` up to 12 hours old (`ACTIVITYPUB_MAX_DATE_AGE_MS`) and up to 1 hour ahead (`ACTIVITYPUB_MAX_DATE_AHEAD_MS`).
 - Harden digest and signed-header canonicalization tests.
 - Audit all internal routes and document which must require Auth0 authentication.

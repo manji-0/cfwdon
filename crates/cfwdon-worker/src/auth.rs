@@ -229,7 +229,7 @@ fn auth0_token_from_request(req: &Request, config: &AppConfig) -> Result<Option<
     request_cookie_value(req, AUTH0_SESSION_COOKIE)
 }
 
-fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
+pub(crate) fn request_cookie_value(req: &Request, name: &str) -> Result<Option<String>> {
     let Some(cookie_header) = req.headers().get("Cookie")? else {
         return Ok(None);
     };

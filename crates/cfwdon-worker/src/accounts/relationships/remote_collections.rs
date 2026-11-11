@@ -7,7 +7,6 @@ use crate::response::{
 use crate::responses::MastodonAccountResponse;
 use crate::store::remote::{find_remote_actor_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
 use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
 use worker::Result;
@@ -98,14 +97,13 @@ async fn resolve_remote_follow_collection_account(
 pub(crate) async fn remote_follow_collection_entries(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     collection_field: &str,
     limit: u32,
     max_id: Option<i64>,
     since_id: Option<i64>,
 ) -> Result<Option<Vec<CollectionAccountEntry>>> {
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     let fetch_context = Some(&fetch_context);
     let actor_document =
         match fetch_activitypub_document_with_context(actor_uri, fetch_context).await {

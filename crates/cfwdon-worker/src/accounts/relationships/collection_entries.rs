@@ -13,7 +13,6 @@ use crate::relationship::{
 use crate::responses::MastodonAccountResponse;
 use crate::store::remote::find_remote_actors_by_actor_uris;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::LocalAccount;
 use std::collections::HashMap;
 use worker::Result;
 
@@ -172,7 +171,6 @@ pub(crate) async fn local_account_following_entries(
 pub(crate) async fn remote_actor_follower_entries(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     limit: u32,
     max_id: Option<i64>,
@@ -181,7 +179,6 @@ pub(crate) async fn remote_actor_follower_entries(
     if let Some(remote_entries) = remote_follow_collection_entries(
         db,
         config,
-        viewer,
         actor_uri,
         "followers",
         limit,
@@ -208,7 +205,6 @@ pub(crate) async fn remote_actor_follower_entries(
 pub(crate) async fn remote_actor_following_entries(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
-    viewer: Option<&LocalAccount>,
     actor_uri: &str,
     limit: u32,
     max_id: Option<i64>,
@@ -217,7 +213,6 @@ pub(crate) async fn remote_actor_following_entries(
     if let Some(remote_entries) = remote_follow_collection_entries(
         db,
         config,
-        viewer,
         actor_uri,
         "following",
         limit,

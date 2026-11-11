@@ -4,7 +4,7 @@ use crate::collections_alpha::{
     handle_inbox_collection_feature_accept, handle_inbox_collection_feature_reject,
 };
 use crate::delivery::queue_remote_actor_activity_required;
-use crate::federation::RemoteActorProfile;
+use crate::federation::{RemoteActorProfile, remote_actor_domain_restrictions};
 use crate::follow_requests::{delete_remote_follow_request_by_actor, upsert_remote_follow_request};
 use crate::identity::actor_url;
 use crate::notifications::publish_remote_actor_notification_soft;
@@ -29,10 +29,15 @@ pub(crate) async fn handle_inbox_follow(
         return Ok(());
     }
 
-    let locked = account.is_locked();
+    // Mastodon's inbound `Follow` handling makes a silenced account's follow a
+    // request, even to an unlocked account.
+    let requires_approval = account.is_locked()
+        || remote_actor_domain_restrictions(&remote_actor.domain, &remote_actor.actor_uri)
+            .await?
+            .silenced;
     let follow_activity_id = activity.get("id").and_then(serde_json::Value::as_str);
 
-    if locked {
+    if requires_approval {
         upsert_remote_follow_request(db, account.id(), remote_actor, follow_activity_id).await?;
         if let Ok(created_at) = now_iso_string() {
             publish_remote_actor_notification_soft(

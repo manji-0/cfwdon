@@ -3,7 +3,7 @@ use super::reports::build_admin_report_response;
 use crate::app_cache::invalidate_account_capabilities;
 use crate::auth::find_account_by_id;
 use crate::db_session::bind_request_d1;
-use crate::domain_blocks::insert_instance_domain_block;
+use crate::domain_blocks::suspend_instance_domain;
 use crate::remote::{AccountReference, resolve_account_reference};
 use crate::reports::{ReportRow, find_report_by_id, list_report_status_ids, resolve_report};
 use crate::runtime_config::load_config;
@@ -130,7 +130,7 @@ async fn apply_block_domain(
     admin_id: Option<&str>,
 ) -> Result<()> {
     let domain = report_domain(db, report, config).await?;
-    insert_instance_domain_block(db, &domain, admin_id).await
+    suspend_instance_domain(db, &domain, admin_id).await
 }
 
 async fn report_domain(db: &D1Database, report: &ReportRow, config: &AppConfig) -> Result<String> {

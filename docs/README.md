@@ -25,6 +25,10 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 
 - [Cloudflare Deploy Checklist](operations/cloudflare-deploy.md)
   D1, R2, Worker deploy, and pre-deploy verification steps.
+- [Operations Runbook](operations/runbook.md)
+  What holds state, scheduled encrypted D1 backups and restore, logs and Analytics Engine metrics, delivery retry policy, incidents, retention, and the dead-letter queue decision.
+- [Launch Checklist](operations/launch-checklist.md)
+  Go-live verification: bindings, secrets, sign-in, media, crons and queue, backups, and a federation smoke test.
 - [Auth0 Configuration Guide](operations/auth0-configuration.md)
   Auth0 API, public PKCE application, e-mail claim, Worker vars, and login validation steps.
 - [Cloudflare Access Configuration Guide](operations/cloudflare-access-configuration.md)
@@ -48,7 +52,7 @@ This directory is the documentation entry point for `cfwdon`. The root [README](
 | --- | --- |
 | `getting-started/` | Fresh clone setup, contributor setup, and day-to-day development workflow. |
 | `reference/` | Stable reference material for configuration, runtime behavior, and the model-refinement mapping. |
-| `operations/` | Deployment, Auth0, Cloudflare Access, CI build offloading, and production-operation checklists. |
+| `operations/` | Deployment, runbook, launch checklist, Auth0, Cloudflare Access, CI build offloading, and production-operation checklists. |
 | `architecture/` | Design documents and architecture decisions. |
 | `planning/` | Roadmaps, TODOs, interop trackers, and design/spike notes. Each states its status (current, implemented, deferred, or historical) near the top. |
 | `mastodon-api-compat/` | Generated Mastodon API compatibility reports. |
