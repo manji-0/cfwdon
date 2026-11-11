@@ -9,6 +9,7 @@ use crate::response::{
     MastodonContextResponse, context_descendant_max_depth, trim_context_ancestors,
     trim_context_descendants,
 };
+use crate::store::relationship::silenced_authors_hidden_from;
 use crate::timelines::{StatusRenderItem, render_status_items};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -71,9 +72,33 @@ pub(super) async fn render_context_response(
     db: &D1Database,
     config: &AppConfig,
     viewer: Option<&LocalAccount>,
-    ancestors: Vec<StatusRenderItem>,
-    descendants: Vec<StatusRenderItem>,
+    mut ancestors: Vec<StatusRenderItem>,
+    mut descendants: Vec<StatusRenderItem>,
 ) -> Result<MastodonContextResponse> {
+    // Mastodon's `StatusFilter` drops silenced accounts the viewer does not
+    // follow from a thread; their replies' own replies stay.
+    let silenced = silenced_authors_hidden_from(
+        db,
+        viewer.map(LocalAccount::id),
+        ancestors
+            .iter()
+            .chain(&descendants)
+            .filter_map(|item| match item {
+                StatusRenderItem::Remote { actor, .. } => {
+                    Some((actor.domain.as_str(), actor.actor_uri.as_str()))
+                }
+                StatusRenderItem::Local(_) => None,
+            }),
+    )
+    .await?;
+    if !silenced.is_empty() {
+        let shown = |item: &StatusRenderItem| match item {
+            StatusRenderItem::Remote { actor, .. } => !silenced.contains(&actor.actor_uri),
+            StatusRenderItem::Local(_) => true,
+        };
+        ancestors.retain(shown);
+        descendants.retain(shown);
+    }
     let ancestor_count = ancestors.len();
     let mut items = ancestors;
     items.extend(descendants);

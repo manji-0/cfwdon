@@ -475,6 +475,16 @@ def main() -> int:
             "a,p",
         ),
         (
+            "silenced authors the viewer follows",
+            """SELECT target_actor_uri
+               FROM follows
+               WHERE follower_account_id = ?1
+                 AND state = 'accepted'
+                 AND target_actor_uri IN (SELECT value FROM json_each(?2))""",
+            ("acct-1", '["https://remote.example/users/bob"]'),
+            None,
+        ),
+        (
             "directory remote actor last status",
             """SELECT MAX(published_at) FROM remote_statuses WHERE actor_uri = ?""",
             ("https://remote.example/users/bob",),

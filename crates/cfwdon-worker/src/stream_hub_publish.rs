@@ -5,7 +5,7 @@ use crate::content_helpers::{
 use crate::conversation_store::{find_conversation_for_account, find_conversation_id_by_status_id};
 use crate::conversations::conversation_document;
 use crate::deferred::defer;
-use crate::federation::RemoteActorProfile;
+use crate::federation::{RemoteActorProfile, remote_actor_domain_restrictions};
 use crate::identity::actor_url;
 use crate::lists::{
     STREAM_HUB_LIST_FANOUT_LIMIT, list_local_account_list_stream_fanout,
@@ -866,16 +866,28 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
             None => return,
         };
 
-    publish_remote_public_timeline_events_soft(
-        env, binding, has_media, "update", &payload, event_id,
-    )
-    .await;
-
-    if !tags.is_empty() {
-        publish_remote_hashtag_timeline_events_soft(
-            env, binding, &tags, "update", &payload, event_id,
+    // Mastodon's `FanOutOnWriteService#broadcastable?`: a silenced account's
+    // posts stay off the public and hashtag streams, as off those timelines.
+    let silenced =
+        match remote_actor_domain_restrictions(&actor_row.domain, &actor_row.actor_uri).await {
+            Ok(restrictions) => restrictions.silenced,
+            Err(error) => {
+                console_error!("failed to load domain blocks for stream fan-out: {error}");
+                true
+            }
+        };
+    if !silenced {
+        publish_remote_public_timeline_events_soft(
+            env, binding, has_media, "update", &payload, event_id,
         )
         .await;
+
+        if !tags.is_empty() {
+            publish_remote_hashtag_timeline_events_soft(
+                env, binding, &tags, "update", &payload, event_id,
+            )
+            .await;
+        }
     }
 
     publish_remote_list_timeline_events_soft(

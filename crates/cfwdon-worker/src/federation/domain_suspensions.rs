@@ -61,6 +61,14 @@ impl InstanceDomainBlocks {
         &self.blocks
     }
 
+    /// Whether any block silences a domain, so callers can skip loading what
+    /// a silence check needs on the common instance that silences nothing.
+    pub(crate) fn silences_any_domain(&self) -> bool {
+        self.blocks
+            .iter()
+            .any(|block| block.policy.restrictions().silenced)
+    }
+
     pub(crate) fn restrictions_for_host(&self, host: &str) -> DomainRestrictions {
         domain_restrictions_for_host(
             host,
@@ -267,6 +275,21 @@ mod tests {
             blocks.restrictions_for_actor("silenced.example", "https://ap.other.example/users/bob");
         assert!(delegated.silenced);
         assert!(blocks.restrictions_for_url("not a url") == Default::default());
+    }
+
+    #[test]
+    fn silence_checks_run_only_when_a_block_silences() {
+        assert!(!InstanceDomainBlocks::default().silences_any_domain());
+        assert!(
+            !InstanceDomainBlocks::new(vec![block("noop.example", DomainBlockSeverity::Noop)])
+                .silences_any_domain()
+        );
+        for severity in [DomainBlockSeverity::Silence, DomainBlockSeverity::Suspend] {
+            assert!(
+                InstanceDomainBlocks::new(vec![block("blocked.example", severity)])
+                    .silences_any_domain()
+            );
+        }
     }
 
     #[test]

@@ -33,6 +33,7 @@ use super::statuses::{
     status_matches_search_syntax, status_matches_search_timestamp, status_search_query_terms,
     status_search_rank, text_mentions_search_library_viewer,
 };
+use crate::store::relationship::silenced_authors_hidden_from;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{AccountHandle, LocalAccount};
 use worker::Result;
@@ -348,8 +349,7 @@ async fn collect_remote_search_status_entries(
         _ => None,
     };
     let mut entries = Vec::new();
-
-    for (status, actor) in search_remote_status_rows(
+    let rows = search_remote_status_rows(
         db,
         search_terms,
         query_limit,
@@ -359,8 +359,21 @@ async fn collect_remote_search_status_entries(
         min_id,
         min_timestamp,
     )
-    .await?
-    {
+    .await?;
+    // Mastodon's `StatusesSearchService` rejects what `StatusFilter` filters,
+    // which includes silenced accounts the viewer does not follow.
+    let silenced = silenced_authors_hidden_from(
+        db,
+        Some(viewer.id()),
+        rows.iter()
+            .map(|(_, actor)| (actor.domain.as_str(), actor.actor_uri.as_str())),
+    )
+    .await?;
+
+    for (status, actor) in rows {
+        if silenced.contains(&actor.actor_uri) {
+            continue;
+        }
         let is_public = is_public_activitypub_visibility(status.visibility.as_str());
         if excluded_account_reference.is_some_and(|reference| {
             account_reference_matches_owner(reference, None, Some(&status.actor_uri))
