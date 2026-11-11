@@ -1,6 +1,7 @@
 mod accounts;
 mod activitypub;
 mod alpha;
+mod authorized_fetch;
 mod conversations;
 mod dispatch;
 mod exact;

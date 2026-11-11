@@ -5,7 +5,7 @@ use crate::federation::{
     FetchedRemoteActorProfile, RemoteActorProfile, fetch_remote_activitypub_document,
     parse_remote_actor_profile_document, validate_remote_actor_profile_urls,
 };
-use crate::http::fetch_signed_activitypub_document;
+use crate::http::fetch_activitypub_document_as_instance;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::observability::log_json_event;
 use crate::response::media_object_url;
@@ -35,7 +35,9 @@ thread_local! {
 /// Controls whether ActivityPub GETs may use HTTP signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteFetchAuthMode {
-    /// Public documents only — skip signed GET (avoids slow signed failures / WAF paths).
+    /// Public documents only: skip the signed GET (avoids slow signed failures
+    /// and WAF paths). In secure mode every fetch is signed regardless; see
+    /// `install_secure_mode_fetch_signing`.
     Public,
     /// Prefer a GET signed as the instance actor, then fall back to unsigned.
     Authorized,
@@ -222,20 +224,6 @@ fn log_remote_account_enrichment_failure(actor_uri: &str, stage: &str, error: &E
     }));
 }
 
-pub(crate) fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
-    // Public ActivityPub GETs should fall back to an unsigned fetch whenever the
-    // signed attempt fails. Auth-rejection (401/403) is the common case, but some
-    // remotes (and Cloudflare WAF in front of them) return other status codes or
-    // non-JSON challenge bodies that still leave the unsigned public document
-    // reachable.
-    let message = error.to_string();
-    message.contains("HTTP ")
-        || message.contains("error decoding response body")
-        || message.contains("expected value")
-        || message.contains("invalid type")
-        || message.contains("EOF while parsing")
-}
-
 pub(crate) async fn fetch_activitypub_document_with_context(
     url: &str,
     fetch_context: Option<&RemoteCollectionFetchContext<'_>>,
@@ -243,17 +231,7 @@ pub(crate) async fn fetch_activitypub_document_with_context(
     if let Some(context) = fetch_context
         && context.auth_mode == RemoteFetchAuthMode::Authorized
     {
-        match fetch_signed_activitypub_document(context.config, context.db, url).await {
-            Ok(document) => return Ok(document),
-            Err(error) if signed_fetch_allows_unsigned_fallback(&error) => {
-                log_json_event(serde_json::json!({
-                    "event": "signed_remote_fetch_fallback",
-                    "url": url,
-                    "error": error.to_string(),
-                }));
-            }
-            Err(error) => return Err(error),
-        }
+        return fetch_activitypub_document_as_instance(context.config, context.db, url).await;
     }
     fetch_remote_activitypub_document(url).await
 }
@@ -820,19 +798,6 @@ mod tests {
         assert!(note.contains("hi"));
         assert!(!note.contains("<script"));
         assert!(!note.contains("onclick"));
-    }
-
-    #[test]
-    fn signed_fetch_allows_unsigned_fallback_for_auth_failures() {
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "failed to fetch signed remote document https://x: HTTP 401".to_owned()
-        )));
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "failed to fetch signed remote document https://x: HTTP 523".to_owned()
-        )));
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "error decoding response body: expected value at line 1 column 1".to_owned()
-        )));
     }
 
     #[test]

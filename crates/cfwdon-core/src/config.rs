@@ -64,6 +64,9 @@ pub struct AppConfig {
     pub auth0_admin_roles: Vec<String>,
     /// Days to keep terminal federation activity rows; `None` keeps them forever.
     pub federation_activity_retention_days: Option<u32>,
+    /// Secure mode (Mastodon's `AUTHORIZED_FETCH`): this server's ActivityPub
+    /// objects need a signed GET, and its own fetches are signed.
+    pub authorized_fetch: bool,
 }
 
 impl AppConfig {
@@ -114,6 +117,7 @@ impl AppConfig {
             auth0_roles_claim: String::new(),
             auth0_admin_roles: Vec::new(),
             federation_activity_retention_days: Some(30),
+            authorized_fetch: false,
         }
     }
 }

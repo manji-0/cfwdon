@@ -68,6 +68,10 @@ MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
 # rows before the hourly cron prunes them. 0 keeps them forever.
 # FEDERATION_ACTIVITY_RETENTION_DAYS = "30"
 
+# Secure mode (Mastodon's AUTHORIZED_FETCH): ActivityPub GETs of actors, notes
+# and collections need an HTTP signature, and this server signs its own fetches.
+# AUTHORIZED_FETCH = "true"
+
 # Rate limits (Mastodon's Rack::Attack throttles) are on by default.
 # RATE_LIMITS_ENABLED = "false" turns them off; RATE_LIMITS overrides buckets.
 # RATE_LIMITS = '{"api_ip": {"limit": 600, "period": 300}, "inbox_domain": false}'

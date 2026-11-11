@@ -3,6 +3,7 @@ use crate::activitypub::{
     local_status_ap_id,
 };
 use crate::auth::find_account_by_username;
+use crate::authorized_fetch::{FetchViewer, activitypub_request_prefers_html};
 use crate::content_helpers::strip_html_tags;
 use crate::db_session::bind_request_d1;
 use crate::identity::instance_base_url;
@@ -23,6 +24,7 @@ use worker::{Error, Request, Response, Result, RouteContext};
 pub(crate) async fn status_object_response(
     req: Request,
     ctx: RouteContext<()>,
+    viewer: FetchViewer,
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let username = ctx
@@ -46,11 +48,13 @@ pub(crate) async fn status_object_response(
     if status.account_id != account.id() {
         return Response::error("status not found", 404);
     }
-    if !is_public_activitypub_visibility(status.visibility.as_str()) {
+    if !is_public_activitypub_visibility(status.visibility.as_str())
+        || viewer.hides_owner_content(&db, account.id()).await?
+    {
         return Response::error("status not found", 404);
     }
 
-    if status_object_prefers_html(&req)? {
+    if activitypub_request_prefers_html(&req)? {
         let preload = load_local_status_response_preload(&db, &status).await?;
         return cache_public_response_with_options(
             status_object_html_response(&config, &account, &status, &preload.media)?,
@@ -77,6 +81,7 @@ pub(crate) async fn status_object_response(
 
 pub(crate) async fn status_quote_authorization_object_response(
     ctx: RouteContext<()>,
+    viewer: FetchViewer,
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let username = ctx
@@ -105,7 +110,9 @@ pub(crate) async fn status_quote_authorization_object_response(
     if target_status.account_id != target_account.id() {
         return Response::error("status not found", 404);
     }
-    if !is_public_activitypub_visibility(target_status.visibility.as_str()) {
+    if !is_public_activitypub_visibility(target_status.visibility.as_str())
+        || viewer.hides_owner_content(&db, target_account.id()).await?
+    {
         return Response::error("status not found", 404);
     }
 
@@ -149,14 +156,6 @@ pub(crate) async fn status_quote_authorization_object_response(
         CACHE_TTL_FEDERATION,
         &[("Cache-Tag", &format!("status-{target_status_id}"))],
     )
-}
-
-pub(crate) fn status_object_prefers_html(req: &Request) -> Result<bool> {
-    let accept = req.headers().get("Accept")?.unwrap_or_default();
-    let accept = accept.to_ascii_lowercase();
-    Ok(accept.contains("text/html")
-        && !accept.contains("application/activity+json")
-        && !accept.contains("application/ld+json"))
 }
 
 pub(super) fn status_object_html_response(

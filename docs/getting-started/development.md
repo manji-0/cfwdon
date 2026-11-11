@@ -168,6 +168,8 @@ Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdo
 
 Status draft transitions now emit typed [`StatusDraftEvent`](../../crates/cfwdon-domain/src/status/draft.rs) values on validate and publish-intent resolution, and a fifteenth model checks those events are surfaced consistently.
 
+A seventeenth model covers secure mode (`AUTHORIZED_FETCH`) in [`crates/cfwdon-domain/src/federation/authorized_fetch.rs`](../../crates/cfwdon-domain/src/federation/authorized_fetch.rs). It checks that an unsigned or unverified GET never receives a non-public resource in secure mode, that an unsigned actor GET still gets the key, that a signer the owner blocks never sees the owner's posts, and that no secure-mode answer is shared-cacheable.
+
 Refinement mappings in [`docs/reference/model-refinement.md`](../reference/model-refinement.md) link each model to domain symbols and worker call sites. Executable refinement checks cover quote policy/state resolution, status draft publish, registration, federation, delivery, follow, and ActivityPub visibility inside `verify_models()`.
 
 ```sh

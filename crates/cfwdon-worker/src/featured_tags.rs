@@ -1,4 +1,5 @@
 use crate::auth::find_authenticated_local_account;
+use crate::authorized_fetch::FetchViewer;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::{d1_results, sql_placeholders};
 use crate::identity::{actor_url, instance_base_url};
@@ -485,7 +486,10 @@ pub(crate) async fn unfeature_tag_response(
     Response::from_json(&serde_json::json!({}))
 }
 
-pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn featured_tags_collection_response(
+    ctx: RouteContext<()>,
+    viewer: FetchViewer,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let username = ctx
         .param("username")
@@ -496,11 +500,15 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
-    let tags = list_featured_tags_for_account(&db, account.id())
-        .await?
-        .into_iter()
-        .map(|row| row.tag_name)
-        .collect::<Vec<_>>();
+    let tags = if viewer.hides_owner_content(&db, account.id()).await? {
+        Vec::new()
+    } else {
+        list_featured_tags_for_account(&db, account.id())
+            .await?
+            .into_iter()
+            .map(|row| row.tag_name)
+            .collect::<Vec<_>>()
+    };
 
     cache_public_response(
         Response::from_json(&build_featured_tags_collection_document(
@@ -512,7 +520,10 @@ pub(crate) async fn featured_tags_collection_response(ctx: RouteContext<()>) -> 
     )
 }
 
-pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn featured_collection_response(
+    ctx: RouteContext<()>,
+    viewer: FetchViewer,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let username = ctx
         .param("username")
@@ -523,11 +534,15 @@ pub(crate) async fn featured_collection_response(ctx: RouteContext<()>) -> Resul
     let account = find_account_by_username(&db, &username)
         .await?
         .ok_or_else(|| worker::Error::RustError("account not found".to_owned()))?;
-    let pinned_status_uris = list_pinned_statuses_for_account(&db, account.id())
-        .await?
-        .into_iter()
-        .filter_map(|status| status.ap_id)
-        .collect::<Vec<_>>();
+    let pinned_status_uris = if viewer.hides_owner_content(&db, account.id()).await? {
+        Vec::new()
+    } else {
+        list_pinned_statuses_for_account(&db, account.id())
+            .await?
+            .into_iter()
+            .filter_map(|status| status.ap_id)
+            .collect::<Vec<_>>()
+    };
 
     Response::from_json(&build_featured_collection_document(
         &config,

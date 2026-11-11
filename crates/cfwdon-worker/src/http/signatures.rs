@@ -8,16 +8,22 @@ use super::{
 };
 use crate::activitypub::activitypub_primary_type;
 use crate::federation::{
-    RemoteActorProfile, fetch_remote_actor_profile, parse_http_url_parts,
+    RemoteActorProfile, SecureModeFetcher, fetch_remote_actor_profile,
+    fetch_unsigned_activitypub_document, install_secure_mode_fetcher, parse_http_url_parts,
     parse_remote_http_json_response, parse_remote_http_url, resolve_remote_redirect_location,
-    validate_remote_fetch_url,
+    suspended_instance_domains, url_host_within_blocked_domains, validate_remote_fetch_url,
 };
 use crate::identity::instance_actor_key_id;
+use crate::observability::log_json_event;
 use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::activitypub_key_id_matches_actor;
-use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
+use cfwdon_domain::{
+    SignedFetchVerdict, activitypub_fetch_signature_lists_required_headers,
+    activitypub_key_id_matches_actor,
+};
+use std::rc::Rc;
+use worker::{Env, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
 pub(super) const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
 pub(super) const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
@@ -127,6 +133,130 @@ pub(crate) async fn fetch_signed_activitypub_document(
     Err(Error::RustError(format!(
         "signed remote fetch exceeded redirect limit for {url}"
     )))
+}
+
+/// Whether a failed signed GET may be retried unsigned. Public ActivityPub
+/// GETs fall back whenever the signed attempt fails: auth rejection (401/403)
+/// is the common case, but some remotes (and Cloudflare WAF in front of them)
+/// return other status codes or non-JSON challenge bodies that still leave the
+/// unsigned public document reachable. A server in secure mode refuses the
+/// unsigned retry too, so the fallback reads nothing it would not serve
+/// anyone.
+fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
+    let message = error.to_string();
+    message.contains("HTTP ")
+        || message.contains("error decoding response body")
+        || message.contains("expected value")
+        || message.contains("invalid type")
+        || message.contains("EOF while parsing")
+}
+
+/// A GET signed as the instance actor, retried unsigned when the remote
+/// rejects the signature or answers something other than JSON.
+pub(crate) async fn fetch_activitypub_document_as_instance(
+    config: &AppConfig,
+    db: &D1Database,
+    url: &str,
+) -> Result<serde_json::Value> {
+    match fetch_signed_activitypub_document(config, db, url).await {
+        Ok(document) => Ok(document),
+        Err(error) if signed_fetch_allows_unsigned_fallback(&error) => {
+            log_json_event(serde_json::json!({
+                "event": "signed_remote_fetch_fallback",
+                "url": url,
+                "error": error.to_string(),
+            }));
+            fetch_unsigned_activitypub_document(url).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// In secure mode (`AUTHORIZED_FETCH`), sign every ActivityPub GET this
+/// isolate makes as the instance actor, key fetches for signature checks
+/// included. A remote in secure mode verifies such a fetch with this server's
+/// `/actor`, which stays public, so a key fetch never waits on one of its own.
+pub(crate) fn install_secure_mode_fetch_signing(env: &Env, config: &AppConfig) {
+    let fetcher = if config.authorized_fetch {
+        env.d1(&config.database_binding).ok().map(|binding| {
+            let db = D1Database::new(binding);
+            let config = config.clone();
+            Rc::new(move |url: String| {
+                let db = db.detached();
+                let config = config.clone();
+                Box::pin(
+                    async move { fetch_activitypub_document_as_instance(&config, &db, &url).await },
+                ) as futures_util::future::LocalBoxFuture<'static, _>
+            }) as SecureModeFetcher
+        })
+    } else {
+        None
+    };
+    install_secure_mode_fetcher(fetcher);
+}
+
+/// Who signed a GET of a local ActivityPub resource (an "authorized fetch").
+pub(crate) enum SignedFetch {
+    Unsigned,
+    Invalid(Error),
+    Refused,
+    Signed(RemoteActorProfile),
+}
+
+impl SignedFetch {
+    pub(crate) fn verdict(&self) -> SignedFetchVerdict {
+        match self {
+            Self::Unsigned => SignedFetchVerdict::Unsigned,
+            Self::Invalid(_) => SignedFetchVerdict::Invalid,
+            Self::Refused => SignedFetchVerdict::Refused,
+            Self::Signed(_) => SignedFetchVerdict::Signed,
+        }
+    }
+}
+
+/// Verify the `Signature` of a GET as the inbox verifies a delivery, without
+/// the `Digest` a GET has no body for. A key or actor on a suspended domain is
+/// refused, the key before anything is fetched from its server.
+pub(crate) async fn verify_signed_fetch(req: &Request, db: &D1Database) -> Result<SignedFetch> {
+    let Some(header) = req.headers().get("Signature")? else {
+        return Ok(SignedFetch::Unsigned);
+    };
+    let Ok(parsed_signature) = parse_signature_header(&header) else {
+        return Ok(SignedFetch::Unsigned);
+    };
+    let suspended_domains = suspended_instance_domains().await?;
+    if url_host_within_blocked_domains(&parsed_signature.key_id, &suspended_domains) {
+        return Ok(SignedFetch::Refused);
+    }
+    match verify_fetch_signature(req, db, &parsed_signature).await {
+        Err(error) => Ok(SignedFetch::Invalid(error)),
+        Ok(actor) if url_host_within_blocked_domains(&actor.actor_uri, &suspended_domains) => {
+            Ok(SignedFetch::Refused)
+        }
+        Ok(actor) => Ok(SignedFetch::Signed(actor)),
+    }
+}
+
+async fn verify_fetch_signature(
+    req: &Request,
+    db: &D1Database,
+    parsed_signature: &super::ParsedSignatureHeader,
+) -> Result<RemoteActorProfile> {
+    if !activitypub_fetch_signature_lists_required_headers(&parsed_signature.headers) {
+        return Err(Error::RustError(
+            "Signature must cover (request-target) and date".to_owned(),
+        ));
+    }
+    validate_signed_host_header(req, req.headers(), parsed_signature)?;
+    let signing_string = build_signature_signing_string(req, req.headers(), parsed_signature)?;
+    validate_request_date(req.headers())?;
+    resolve_remote_actor_for_signature(
+        db,
+        &parsed_signature.key_id,
+        signing_string.as_bytes(),
+        &parsed_signature.signature,
+    )
+    .await
 }
 
 pub(crate) async fn verify_incoming_activitypub_request(
@@ -338,6 +468,22 @@ mod tests {
             "https://remote.example/users/bob",
             "https://remote.example/users/bob",
         ));
+    }
+
+    #[test]
+    fn signed_fetch_allows_unsigned_fallback_for_auth_failures() {
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "failed to fetch signed remote document https://x: HTTP 401".to_owned()
+        )));
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "failed to fetch signed remote document https://x: HTTP 523".to_owned()
+        )));
+        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "error decoding response body: expected value at line 1 column 1".to_owned()
+        )));
+        assert!(!signed_fetch_allows_unsigned_fallback(&Error::RustError(
+            "remote fetch blocked for private address".to_owned()
+        )));
     }
 
     #[test]
