@@ -314,11 +314,7 @@ async fn retain_candidates_from_unlimited_senders(
             .iter()
             .filter(|candidate| notification_type_filterable(&candidate.notification_type)),
     );
-    if senders.is_empty()
-        || !instance_domain_blocks()
-            .await?
-            .may_silence_any(senders.iter().map(String::as_str))
-    {
+    if senders.is_empty() || !instance_domain_blocks().await?.may_silence() {
         return Ok(());
     }
     let actors = find_remote_actors_by_actor_uris(db, &senders).await?;
