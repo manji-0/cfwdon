@@ -268,7 +268,7 @@ fn remote_account_api_cache_key(config: &cfwdon_core::AppConfig, actor_uri: &str
     )
 }
 
-fn sha256_hex(input: &[u8]) -> String {
+pub(crate) fn sha256_hex(input: &[u8]) -> String {
     use std::fmt::Write as _;
     Sha256::digest(input)
         .iter()

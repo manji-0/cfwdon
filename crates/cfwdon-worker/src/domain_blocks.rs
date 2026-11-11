@@ -2,6 +2,9 @@ use crate::app_cache::{invalidate_account_capabilities, load_account_capabilitie
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
+use crate::federation::{
+    invalidate_suspended_domains, suspended_instance_domains, url_host_within_blocked_domains,
+};
 use crate::request_utils::{
     InternalPaginationIds, build_internal_cursor_link_header, empty_page_response,
 };
@@ -10,7 +13,6 @@ use crate::store::instance::load_known_peer_domains;
 use crate::tracked_d1::D1Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use url::Url;
 use worker::d1::D1Type;
 use worker::{Request, Response, Result, RouteContext};
 const DEFAULT_LIMIT: u32 = 100;
@@ -81,33 +83,13 @@ fn normalize_domain_block_value(value: Option<&str>) -> std::result::Result<Stri
     Ok(domain.to_ascii_lowercase())
 }
 
-pub(crate) fn delivery_inbox_blocked_by_domains(
-    inbox_url: &str,
-    blocked_domains: &[String],
-) -> bool {
-    if blocked_domains.is_empty() {
-        return false;
-    }
-    let Ok(url) = Url::parse(inbox_url) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    blocked_domains.iter().any(|blocked| {
-        let blocked = blocked.trim().to_ascii_lowercase();
-        !blocked.is_empty() && (host == blocked || host.ends_with(&format!(".{blocked}")))
-    })
-}
-
 pub(crate) fn filter_delivery_inboxes_for_domain_blocks(
     inboxes: Vec<String>,
     blocked_domains: &[String],
 ) -> Vec<String> {
     inboxes
         .into_iter()
-        .filter(|inbox| !delivery_inbox_blocked_by_domains(inbox, blocked_domains))
+        .filter(|inbox| !url_host_within_blocked_domains(inbox, blocked_domains))
         .collect()
 }
 
@@ -194,6 +176,17 @@ pub(crate) async fn list_all_account_domain_blocks(
                 .map(ToOwned::to_owned)
         })
         .collect())
+}
+
+/// Domains `account_id` must not deliver to: its own domain blocks plus the
+/// instance's suspended domains.
+pub(crate) async fn list_delivery_blocked_domains(
+    db: &D1Database,
+    account_id: &str,
+) -> Result<Vec<String>> {
+    let mut domains = list_all_account_domain_blocks(db, account_id).await?;
+    domains.extend(suspended_instance_domains().await?.iter().cloned());
+    Ok(domains)
 }
 
 async fn delete_account_domain_block(
@@ -386,21 +379,6 @@ pub(crate) async fn list_instance_domain_blocks(
     d1_results::<InstanceDomainBlockRow>(&result)
 }
 
-pub(crate) async fn list_instance_domain_block_domains(db: &D1Database) -> Result<Vec<String>> {
-    let result = db
-        .prepare("SELECT domain FROM instance_domain_blocks ORDER BY domain ASC")
-        .all()
-        .await?;
-    Ok(d1_results::<serde_json::Value>(&result)?
-        .into_iter()
-        .filter_map(|row| {
-            row.get("domain")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .collect())
-}
-
 pub(crate) async fn insert_instance_domain_block(
     db: &D1Database,
     domain: &str,
@@ -421,6 +399,7 @@ pub(crate) async fn insert_instance_domain_block(
     .bind_refs(bindings.iter())?
     .run()
     .await?;
+    invalidate_suspended_domains();
     Ok(())
 }
 
@@ -432,15 +411,13 @@ pub(crate) async fn delete_instance_domain_block(db: &D1Database, domain: &str) 
         .bind_refs(bindings.iter())?
         .run()
         .await?;
+    invalidate_suspended_domains();
     Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        delivery_inbox_blocked_by_domains, domain_block_preview_candidates,
-        filter_delivery_inboxes_for_domain_blocks,
-    };
+    use super::{domain_block_preview_candidates, filter_delivery_inboxes_for_domain_blocks};
 
     #[test]
     fn domain_block_preview_excludes_blocked_domains() {
@@ -475,24 +452,13 @@ mod tests {
     }
 
     #[test]
-    fn delivery_inbox_domain_block_matches_host_and_subdomain() {
+    fn delivery_inbox_filter_drops_blocked_host_and_subdomain() {
         let blocked = vec!["blocked.example".to_owned()];
-        assert!(delivery_inbox_blocked_by_domains(
-            "https://blocked.example/inbox",
-            &blocked
-        ));
-        assert!(delivery_inbox_blocked_by_domains(
-            "https://sub.blocked.example/users/a/inbox",
-            &blocked
-        ));
-        assert!(!delivery_inbox_blocked_by_domains(
-            "https://safe.example/inbox",
-            &blocked
-        ));
         assert_eq!(
             filter_delivery_inboxes_for_domain_blocks(
                 vec![
                     "https://blocked.example/inbox".to_owned(),
+                    "https://sub.blocked.example/users/a/inbox".to_owned(),
                     "https://safe.example/inbox".to_owned(),
                 ],
                 &blocked,

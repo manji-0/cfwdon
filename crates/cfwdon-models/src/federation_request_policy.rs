@@ -2,7 +2,7 @@ use cfwdon_domain::{
     ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS, RemoteUrlPolicyIssue,
     activitypub_date_within_skew, activitypub_key_id_matches_actor,
     activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
-    remote_url_policy_from_parts,
+    host_within_any_blocked_domain, remote_url_policy_from_parts,
 };
 use stateright::{Checker, Model, Property};
 
@@ -33,6 +33,15 @@ enum RemoteHostCase {
     UnsupportedScheme,
 }
 
+/// Remote host against an instance domain block on `blocked.example`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DomainBlockCase {
+    Unblocked,
+    BlockedDomain,
+    BlockedSubdomain,
+    Lookalike,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DateSkewCase {
     Now,
@@ -58,6 +67,7 @@ pub(crate) struct FederationRequestPolicyModelState {
     cached_public_key_id_present: bool,
     remote_host: RemoteHostCase,
     date_skew: DateSkewCase,
+    domain_block: DomainBlockCase,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -67,11 +77,13 @@ pub(crate) enum FederationRequestPolicyAction {
     ToggleCachedPublicKeyId,
     CycleRemoteHost,
     CycleDateSkew,
+    CycleDomainBlock,
 }
 
 impl FederationRequestPolicyModel {
     const ACTOR_URI: &'static str = "https://remote.example/users/bob";
     const CANONICAL_ACTOR_URI: &'static str = "https://remote.example/@bob";
+    const SUSPENDED_DOMAINS: [&'static str; 1] = ["blocked.example"];
 
     fn signed_header_list(set: SignedHeaderSet) -> Vec<String> {
         match set {
@@ -106,6 +118,24 @@ impl FederationRequestPolicyModel {
             RemoteHostCase::PrivateIp => ("https", "127.0.0.1", false),
             RemoteHostCase::UserInfo => ("https", "remote.example", true),
             RemoteHostCase::UnsupportedScheme => ("file", "remote.example", false),
+        }
+    }
+
+    fn domain_block_host(case: DomainBlockCase) -> &'static str {
+        match case {
+            DomainBlockCase::Unblocked => "remote.example",
+            DomainBlockCase::BlockedDomain => "blocked.example",
+            DomainBlockCase::BlockedSubdomain => "a.blocked.example",
+            DomainBlockCase::Lookalike => "notblocked.example",
+        }
+    }
+
+    fn cycle_domain_block(current: DomainBlockCase) -> DomainBlockCase {
+        match current {
+            DomainBlockCase::Unblocked => DomainBlockCase::BlockedDomain,
+            DomainBlockCase::BlockedDomain => DomainBlockCase::BlockedSubdomain,
+            DomainBlockCase::BlockedSubdomain => DomainBlockCase::Lookalike,
+            DomainBlockCase::Lookalike => DomainBlockCase::Unblocked,
         }
     }
 
@@ -168,6 +198,13 @@ impl FederationRequestPolicyModel {
         remote_url_policy_from_parts(scheme, host, has_userinfo).is_ok()
     }
 
+    fn domain_suspended(state: &FederationRequestPolicyModelState) -> bool {
+        host_within_any_blocked_domain(
+            Self::domain_block_host(state.domain_block),
+            Self::SUSPENDED_DOMAINS,
+        )
+    }
+
     fn date_within_skew(state: &FederationRequestPolicyModelState) -> bool {
         let now_ms = 1_000_000.0;
         let parsed_ms = match state.date_skew {
@@ -207,13 +244,21 @@ impl Model for FederationRequestPolicyModel {
                         RemoteHostCase::UserInfo,
                         RemoteHostCase::UnsupportedScheme,
                     ] {
-                        states.push(FederationRequestPolicyModelState {
-                            signed_headers,
-                            key_id_case,
-                            cached_public_key_id_present,
-                            remote_host,
-                            date_skew: DateSkewCase::Now,
-                        });
+                        for domain_block in [
+                            DomainBlockCase::Unblocked,
+                            DomainBlockCase::BlockedDomain,
+                            DomainBlockCase::BlockedSubdomain,
+                            DomainBlockCase::Lookalike,
+                        ] {
+                            states.push(FederationRequestPolicyModelState {
+                                signed_headers,
+                                key_id_case,
+                                cached_public_key_id_present,
+                                remote_host,
+                                date_skew: DateSkewCase::Now,
+                                domain_block,
+                            });
+                        }
                     }
                 }
             }
@@ -229,6 +274,7 @@ impl Model for FederationRequestPolicyModel {
             FederationRequestPolicyAction::ToggleCachedPublicKeyId,
             FederationRequestPolicyAction::CycleRemoteHost,
             FederationRequestPolicyAction::CycleDateSkew,
+            FederationRequestPolicyAction::CycleDomainBlock,
         ]);
     }
 
@@ -256,6 +302,9 @@ impl Model for FederationRequestPolicyModel {
                     DateSkewCase::TooOld => DateSkewCase::TooFarAhead,
                     DateSkewCase::TooFarAhead => DateSkewCase::Now,
                 };
+            }
+            FederationRequestPolicyAction::CycleDomainBlock => {
+                next.domain_block = Self::cycle_domain_block(next.domain_block);
             }
         }
 
@@ -339,6 +388,24 @@ impl Model for FederationRequestPolicyModel {
                         || !FederationRequestPolicyModel::date_within_skew(state)
                 },
             ),
+            Property::always(
+                "suspended_domain_and_subdomains_are_refused",
+                |_, state: &FederationRequestPolicyModelState| {
+                    !matches!(
+                        state.domain_block,
+                        DomainBlockCase::BlockedDomain | DomainBlockCase::BlockedSubdomain
+                    ) || FederationRequestPolicyModel::domain_suspended(state)
+                },
+            ),
+            Property::always(
+                "unblocked_and_lookalike_domains_federate",
+                |_, state: &FederationRequestPolicyModelState| {
+                    !matches!(
+                        state.domain_block,
+                        DomainBlockCase::Unblocked | DomainBlockCase::Lookalike
+                    ) || !FederationRequestPolicyModel::domain_suspended(state)
+                },
+            ),
             Property::sometimes(
                 "valid_signature_prerequisites_reachable",
                 |_, state: &FederationRequestPolicyModelState| {
@@ -346,6 +413,7 @@ impl Model for FederationRequestPolicyModel {
                         && FederationRequestPolicyModel::key_id_matches_actor(state)
                         && FederationRequestPolicyModel::remote_url_allowed(state)
                         && FederationRequestPolicyModel::date_within_skew(state)
+                        && !FederationRequestPolicyModel::domain_suspended(state)
                 },
             ),
         ]

@@ -62,6 +62,8 @@ pub struct AppConfig {
     pub auth0_email_claim: String,
     pub auth0_roles_claim: String,
     pub auth0_admin_roles: Vec<String>,
+    /// Days to keep terminal federation activity rows; `None` keeps them forever.
+    pub federation_activity_retention_days: Option<u32>,
 }
 
 impl AppConfig {
@@ -111,6 +113,7 @@ impl AppConfig {
             auth0_email_claim: "email".to_owned(),
             auth0_roles_claim: String::new(),
             auth0_admin_roles: Vec::new(),
+            federation_activity_retention_days: Some(30),
         }
     }
 }

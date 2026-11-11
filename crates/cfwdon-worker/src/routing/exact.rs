@@ -1,6 +1,6 @@
 use crate::discovery::{host_meta_json_response_from_env, host_meta_response_from_env};
 use crate::instance::{
-    custom_emojis_response_from_env, instance_domain_blocks_response_direct,
+    custom_emojis_response_from_env, instance_domain_blocks_response,
     instance_languages_response_from_env, instance_rules_response_direct,
     instance_summary_response_from_env, instance_v2_response_from_env,
     nodeinfo_21_response_from_env, nodeinfo_links_response_from_env, nodeinfo_response_from_env,
@@ -32,7 +32,7 @@ pub(crate) async fn dispatch_exact_without_router(
         ExactWithoutRouterKind::Nodeinfo21 => nodeinfo_21_response_from_env(env).await.map(Some),
         ExactWithoutRouterKind::InstanceRules => instance_rules_response_direct().map(Some),
         ExactWithoutRouterKind::InstanceDomainBlocks => {
-            instance_domain_blocks_response_direct().map(Some)
+            instance_domain_blocks_response().await.map(Some)
         }
         ExactWithoutRouterKind::InstanceLanguages => {
             instance_languages_response_from_env(env).map(Some)

@@ -4,8 +4,10 @@ use crate::activitypub::{
 use crate::auth::{ensure_account_keys, find_account_by_id};
 use crate::db_utils::d1_results;
 use crate::delivery::enqueue_targeted_outbox_activity;
-use crate::domain_blocks::{delivery_inbox_blocked_by_domains, list_instance_domain_block_domains};
-use crate::federation::{RemoteActorProfile, parse_remote_http_url};
+use crate::federation::{
+    RemoteActorProfile, parse_remote_http_url, suspended_instance_domains,
+    url_host_within_blocked_domains,
+};
 use crate::id_utils::generate_entity_id;
 use crate::identity::actor_url;
 use crate::tracked_d1::D1Database;
@@ -103,7 +105,7 @@ pub(crate) async fn find_federation_relay_by_id(
 }
 
 pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec<String>> {
-    let blocked_domains = list_instance_domain_block_domains(db).await?;
+    let suspended_domains = suspended_instance_domains().await?;
     let result = db
         .prepare(
             "SELECT inbox_url
@@ -121,7 +123,7 @@ pub(crate) async fn list_enabled_relay_inbox_urls(db: &D1Database) -> Result<Vec
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
         })
-        .filter(|inbox| !delivery_inbox_blocked_by_domains(inbox, &blocked_domains))
+        .filter(|inbox| !url_host_within_blocked_domains(inbox, &suspended_domains))
         .collect())
 }
 

@@ -105,6 +105,10 @@ ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, 
 
 Failed deliveries follow Mastodon's retry policy (`cfwdon_domain::delivery`). A 2xx is delivered. A 4xx other than 401, 408 and 429, or a 501, fails the row at once. Anything else is retried with Sidekiq's backoff (`count^4 + 15` seconds plus jitter) for up to 17 attempts, about two days. On a 429 or 503 the remote's `Retry-After` (delta-seconds or HTTP-date) replaces the backoff when it is longer, capped at 12 hours.
 
+### Instance Domain Blocks
+
+Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Each block acts as a Mastodon `suspend` block on the domain and every subdomain: a block on `example.com` also covers `a.example.com`. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. `GET /api/v1/instance/domain_blocks` lists the blocks publicly, with each domain's SHA-256 digest and `severity: "suspend"`. Each isolate caches the blocked set for 60 seconds, so another isolate applies an admin edit within that time.
+
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 <!-- constrained-by ./web-ui-foreground-resume.md -->
@@ -116,7 +120,7 @@ Failed deliveries follow Mastodon's retry policy (`cfwdon_domain::delivery`). A 
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.
 - Protect user and internal routes with Auth0 settings where required.
-- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
+- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, federation activity retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
 
 ## Observability
 

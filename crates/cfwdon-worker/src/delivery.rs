@@ -5,9 +5,9 @@ use crate::d1_metrics::{bind_d1_request_route, reset_d1_request_metrics};
 use crate::db_session::bind_request_d1;
 use crate::db_utils::unique_ordered_refs;
 use crate::domain_blocks::{
-    filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
+    filter_delivery_inboxes_for_domain_blocks, list_delivery_blocked_domains,
 };
-use crate::federation::install_remote_dns_cache;
+use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::observability::log_federation_event;
 use crate::relays::{list_enabled_relay_inbox_urls, outbox_payload_is_public_relay_candidate};
 use crate::runtime_config::{load_config, load_config_from_env};
@@ -212,6 +212,7 @@ async fn process_outbox_queue_batch(env: &Env, message_count: usize) -> Result<(
     let config = load_config_from_env(env);
     install_remote_dns_cache(env, &config.remote_dns_cache_binding);
     install_app_cache(env, &config.app_cache_binding);
+    install_domain_suspensions(env, &config.database_binding);
     let db = D1Database::new(env.d1(&config.database_binding)?);
     if !pending_outbox_work_exists(&db).await? {
         log_federation_event(
@@ -294,7 +295,7 @@ pub(super) async fn process_generic_outbox_deliveries(
         list_follower_delivery_targets_by_account_ids(db, &account_ids).await?;
     let mut filtered_targets = HashMap::new();
     for (account_id, targets) in targets_by_account {
-        let blocked_domains = list_all_account_domain_blocks(db, &account_id).await?;
+        let blocked_domains = list_delivery_blocked_domains(db, &account_id).await?;
         let targets = filter_delivery_inboxes_for_domain_blocks(targets, &blocked_domains);
         if !targets.is_empty() {
             filtered_targets.insert(account_id, targets);

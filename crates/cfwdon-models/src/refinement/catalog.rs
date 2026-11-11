@@ -407,8 +407,10 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         implementation_sites: &[
             "crates/cfwdon-worker/src/http/request_validation.rs",
             "crates/cfwdon-worker/src/federation/url_guard.rs",
+            "crates/cfwdon-worker/src/federation/domain_suspensions.rs",
+            "crates/cfwdon-worker/src/inbox.rs",
         ],
-        abstraction: "signed-header facts + URL host + date skew",
+        abstraction: "signed-header facts + URL host + date skew + instance domain block",
         operations: &[
             OperationMapping {
                 model_action: "CycleSignedHeaders",
@@ -439,6 +441,12 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 domain_call: "activitypub_date_within_skew",
                 implementation_call: "validate_request_date",
                 worker_guard: "Date header parses",
+            },
+            OperationMapping {
+                model_action: "CycleDomainBlock",
+                domain_call: "host_within_any_blocked_domain",
+                implementation_call: "host_within_blocked_domains",
+                worker_guard: "instance_domain_blocks binding installed",
             },
         ],
     },

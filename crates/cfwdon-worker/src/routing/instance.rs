@@ -29,8 +29,8 @@ pub(crate) fn add_instance_routes(router: Router<'static, ()>) -> Router<'static
         .get_async("/api/v1/instance/rules", |_req, ctx| async move {
             instance_rules_response(ctx).await
         })
-        .get_async("/api/v1/instance/domain_blocks", |_req, ctx| async move {
-            instance_domain_blocks_response(ctx).await
+        .get_async("/api/v1/instance/domain_blocks", |_req, _ctx| async move {
+            instance_domain_blocks_response().await
         })
         .get_async("/api/v1/domain_blocks/preview", |req, ctx| async move {
             domain_blocks_preview_response(req, ctx).await

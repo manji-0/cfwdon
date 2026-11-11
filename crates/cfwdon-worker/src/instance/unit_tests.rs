@@ -2,7 +2,7 @@ use crate::identity::nodeinfo_url;
 use crate::instance::{
     build_announcements_document, build_instance_v1_document, build_instance_v2_document,
     build_nodeinfo_document_with_halfyear, build_nodeinfo_links_document,
-    instance_open_registrations, set_instance_translation_enabled,
+    instance_open_registrations, public_domain_blocks, set_instance_translation_enabled,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
@@ -382,4 +382,19 @@ fn build_nodeinfo_documents_expose_expected_urls_and_counts() {
         serde_json::json!(4)
     );
     assert_eq!(document["usage"]["localPosts"], serde_json::json!(8));
+}
+
+#[test]
+fn public_domain_blocks_use_mastodon_entity_shape() {
+    let document =
+        serde_json::to_value(public_domain_blocks(&["blocked.example".to_owned()])).unwrap();
+    assert_eq!(
+        document,
+        serde_json::json!([{
+            "domain": "blocked.example",
+            "digest": "1f30273176bf43428242811a3bd5e04653804cff849e2ac73a14aa6e00c66a48",
+            "severity": "suspend",
+            "comment": null,
+        }])
+    );
 }

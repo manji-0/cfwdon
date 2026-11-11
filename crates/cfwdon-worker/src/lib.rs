@@ -6,7 +6,8 @@ use crate::delivery::{
     OutboxProcessQueueMessage, consume_outbox_process_queue_batch,
     enqueue_outbox_process_queue_if_pending,
 };
-use crate::federation::install_remote_dns_cache;
+use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
+use crate::federation_retention::prune_terminal_federation_activities;
 use crate::inbox::reclaim_stale_inbox_activities;
 use crate::instance::{refresh_instance_activity_cache, refresh_trending_statuses_cache};
 use crate::observability::log_federation_event;
@@ -48,6 +49,7 @@ mod discovery;
 mod domain_blocks;
 mod featured_tags;
 mod federation;
+mod federation_retention;
 mod filters;
 mod follow_requests;
 mod home_timeline;
@@ -160,6 +162,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
+    install_domain_suspensions(&env, &config.database_binding);
     let result = async {
         let db = D1Database::new(env.d1(&config.database_binding)?);
         if run_hourly {
@@ -241,6 +244,12 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             }
             if let Err(error) = purge_stale_public_remote_content(&db).await {
                 console_error!("public remote retention purge failed: {error}");
+            }
+            if let Err(error) =
+                prune_terminal_federation_activities(&db, config.federation_activity_retention_days)
+                    .await
+            {
+                console_error!("federation activity retention prune failed: {error}");
             }
             if let Err(error) = refresh_instance_activity_cache(&db).await {
                 console_error!("instance activity cache refresh failed: {error}");
