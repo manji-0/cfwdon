@@ -1,39 +1,42 @@
 use crate::delivery::cancel_pending_outbox_deliveries_for_inbox;
 use crate::federation::RemoteActorProfile;
 use crate::tracked_d1::D1Database;
-use worker::Result;
+use cfwdon_domain::{InboxActivityRecordState, InboxClaim, inbox_activity_after_receive};
 use worker::d1::D1Type;
+use worker::{Error, Result};
 
 pub(crate) const INBOX_IN_FLIGHT_STALE_MODIFIER: &str = "-15 minutes";
 
+/// Claim `activity_id` for this delivery. One D1 batch, so one transaction:
+/// drop a claim left stale by an apply that was cut off, insert a fresh claim
+/// if none is held, then read the row the insert kept.
 pub(crate) async fn begin_inbox_activity_processing(
     db: &D1Database,
     actor_uri: &str,
     activity_id: &str,
     activity_type: &str,
-) -> Result<bool> {
+) -> Result<InboxClaim> {
     let reclaim_bindings = [
         D1Type::Text(actor_uri),
         D1Type::Text(activity_id),
         D1Type::Text(INBOX_IN_FLIGHT_STALE_MODIFIER),
     ];
-    db.prepare(
-        "DELETE FROM inbox_activities
-         WHERE actor_uri = ?1
-           AND activity_id = ?2
-           AND processed_at IS NULL
-           AND created_at <= datetime(CURRENT_TIMESTAMP, ?3)",
-    )
-    .bind_refs(reclaim_bindings.iter())?
-    .run()
-    .await?;
+    let reclaim = db
+        .prepare(
+            "DELETE FROM inbox_activities
+             WHERE actor_uri = ?1
+               AND activity_id = ?2
+               AND processed_at IS NULL
+               AND created_at <= datetime(CURRENT_TIMESTAMP, ?3)",
+        )
+        .bind_refs(reclaim_bindings.iter())?;
 
-    let bindings = [
+    let insert_bindings = [
         D1Type::Text(actor_uri),
         D1Type::Text(activity_id),
         D1Type::Text(activity_type),
     ];
-    let row = db
+    let insert = db
         .prepare(
             "INSERT OR IGNORE INTO inbox_activities (
                 actor_uri,
@@ -50,11 +53,43 @@ pub(crate) async fn begin_inbox_activity_processing(
             )
             RETURNING activity_id",
         )
-        .bind_refs(bindings.iter())?
-        .first::<serde_json::Value>(None)
-        .await?;
+        .bind_refs(insert_bindings.iter())?;
 
-    Ok(row.is_some())
+    let lookup_bindings = [D1Type::Text(actor_uri), D1Type::Text(activity_id)];
+    let lookup = db
+        .prepare(
+            "SELECT processed_at
+             FROM inbox_activities
+             WHERE actor_uri = ?1
+               AND activity_id = ?2",
+        )
+        .bind_refs(lookup_bindings.iter())?;
+
+    let results = db.batch(vec![reclaim, insert, lookup]).await?;
+    let [_, inserted, held] = results.as_slice() else {
+        return Err(Error::RustError(format!(
+            "inbox claim batch returned {} results, expected 3",
+            results.len()
+        )));
+    };
+    let found = if !inserted.results::<serde_json::Value>()?.is_empty() {
+        InboxActivityRecordState::Absent
+    } else {
+        match held.results::<HeldClaimRow>()?.first() {
+            Some(HeldClaimRow {
+                processed_at: Some(_),
+            }) => InboxActivityRecordState::Processed,
+            // A missing row cannot happen inside the batch's transaction;
+            // answering in flight keeps the sender retrying if it ever does.
+            Some(HeldClaimRow { processed_at: None }) | None => InboxActivityRecordState::InFlight,
+        }
+    };
+    Ok(inbox_activity_after_receive(found).1)
+}
+
+#[derive(serde::Deserialize)]
+struct HeldClaimRow {
+    processed_at: Option<String>,
 }
 
 pub(crate) async fn mark_inbox_activity_processed(

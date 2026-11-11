@@ -5,15 +5,28 @@ pub enum InboxActivityRecordState {
     Processed,
 }
 
+/// What a delivery learns when it tries to claim an activity id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InboxClaim {
+    /// This delivery applies the activity.
+    Acquired,
+    /// Another delivery holds the claim and has not finished. Its apply may
+    /// have been cut off, so the sender must retry rather than stop.
+    InFlight,
+    /// The activity was applied before; the delivery is a replay.
+    AlreadyProcessed,
+}
+
 /// Result of attempting to begin inbox processing for an activity ID.
 pub fn inbox_activity_after_receive(
     current: InboxActivityRecordState,
-) -> (InboxActivityRecordState, bool) {
+) -> (InboxActivityRecordState, InboxClaim) {
     match current {
-        InboxActivityRecordState::Absent => (InboxActivityRecordState::InFlight, true),
-        InboxActivityRecordState::InFlight | InboxActivityRecordState::Processed => {
-            (current, false)
+        InboxActivityRecordState::Absent => {
+            (InboxActivityRecordState::InFlight, InboxClaim::Acquired)
         }
+        InboxActivityRecordState::InFlight => (current, InboxClaim::InFlight),
+        InboxActivityRecordState::Processed => (current, InboxClaim::AlreadyProcessed),
     }
 }
 
@@ -40,14 +53,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replay_is_rejected_while_in_flight_or_processed() {
+    fn replay_claim_distinguishes_in_flight_from_processed() {
+        assert_eq!(
+            inbox_activity_after_receive(InboxActivityRecordState::Absent),
+            (InboxActivityRecordState::InFlight, InboxClaim::Acquired)
+        );
         assert_eq!(
             inbox_activity_after_receive(InboxActivityRecordState::InFlight),
-            (InboxActivityRecordState::InFlight, false)
+            (InboxActivityRecordState::InFlight, InboxClaim::InFlight)
         );
         assert_eq!(
             inbox_activity_after_receive(InboxActivityRecordState::Processed),
-            (InboxActivityRecordState::Processed, false)
+            (
+                InboxActivityRecordState::Processed,
+                InboxClaim::AlreadyProcessed
+            )
         );
     }
 }

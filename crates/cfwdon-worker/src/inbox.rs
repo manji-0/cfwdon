@@ -12,7 +12,7 @@ use crate::observability::log_federation_event;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{InboxClaim, LocalAccount};
 use worker::{Request, Response, Result, RouteContext};
 
 mod activity_store;
@@ -102,15 +102,6 @@ pub(crate) fn shared_inbox_preprocess_outcome(
     } else {
         SharedInboxPreprocessOutcome::Process
     }
-}
-
-async fn begin_inbox_activity_if_needed(
-    db: &D1Database,
-    remote_actor: &RemoteActorProfile,
-    activity_id: &str,
-    activity_type: &str,
-) -> Result<bool> {
-    begin_inbox_activity_processing(db, &remote_actor.actor_uri, activity_id, activity_type).await
 }
 
 async fn finish_inbox_activity_if_needed(
@@ -208,6 +199,45 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// Seconds a sender should wait before retrying a delivery whose activity
+/// another delivery is still applying.
+const INBOX_IN_FLIGHT_RETRY_AFTER_SECS: u32 = 60;
+
+/// A duplicate whose first delivery has not finished must not get a 2xx: if
+/// that apply was cut off, the sender's retry is what applies the activity
+/// once the claim goes stale.
+fn inbox_in_flight_response() -> Result<Response> {
+    let mut response = Response::error("inbox activity is being processed", 503)?;
+    response
+        .headers_mut()
+        .set("Retry-After", &INBOX_IN_FLIGHT_RETRY_AFTER_SECS.to_string())?;
+    Ok(response)
+}
+
+fn log_inbox_duplicate(
+    event: &str,
+    outcome: &str,
+    activity_type: &str,
+    activity_id: &str,
+    remote_actor: &RemoteActorProfile,
+    target_count: usize,
+) {
+    log_federation_event(
+        event,
+        outcome,
+        format!(
+            "{event}: activity_type={activity_type} actor={} activity_id={activity_id}",
+            remote_actor.actor_uri
+        ),
+        serde_json::json!({
+            "activity_type": activity_type,
+            "activity_id": activity_id,
+            "actor_uri": remote_actor.actor_uri,
+            "target_count": target_count,
+        }),
+    );
 }
 
 /// Whether the signing key or the attributed actor lives on a suspended
@@ -434,22 +464,33 @@ async fn process_verified_inbox_activity(
     let remote_actor = &remote_actor;
     let activity_id = activity_id.as_str();
     let activity_type = activity_type.as_str();
-    if !begin_inbox_activity_if_needed(db, remote_actor, activity_id, activity_type).await? {
-        log_federation_event(
-            "inbox_replay_skipped",
-            "replay",
-            format!(
-                "inbox replay skipped: activity_type={activity_type} actor={} activity_id={activity_id}",
-                remote_actor.actor_uri
-            ),
-            serde_json::json!({
-                "activity_type": activity_type,
-                "activity_id": activity_id,
-                "actor_uri": remote_actor.actor_uri,
-                "target_count": accounts.len(),
-            }),
-        );
-        return Ok(Response::empty()?.with_status(202));
+    let claim =
+        begin_inbox_activity_processing(db, &remote_actor.actor_uri, activity_id, activity_type)
+            .await?;
+    match claim {
+        InboxClaim::Acquired => {}
+        InboxClaim::InFlight => {
+            log_inbox_duplicate(
+                "inbox_activity_in_flight",
+                "retry_later",
+                activity_type,
+                activity_id,
+                remote_actor,
+                accounts.len(),
+            );
+            return inbox_in_flight_response();
+        }
+        InboxClaim::AlreadyProcessed => {
+            log_inbox_duplicate(
+                "inbox_replay_skipped",
+                "replay",
+                activity_type,
+                activity_id,
+                remote_actor,
+                accounts.len(),
+            );
+            return Ok(Response::empty()?.with_status(202));
+        }
     }
 
     let result = if accounts.is_empty() {

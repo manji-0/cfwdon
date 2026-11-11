@@ -41,9 +41,9 @@ pub use error::{
 };
 pub use federation::{
     ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS,
-    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState, RemoteActorAuthorityIssue,
-    RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue, RemoteUrlPolicyIssue,
-    activitypub_date_within_skew, activitypub_host_header_matches_url_host,
+    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState, InboxClaim,
+    RemoteActorAuthorityIssue, RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue,
+    RemoteUrlPolicyIssue, activitypub_date_within_skew, activitypub_host_header_matches_url_host,
     activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
     cached_remote_actor_key_matches, host_is_ip_literal, host_within_any_blocked_domain,
     host_within_blocked_domain, inbox_activity_after_failure, inbox_activity_after_receive,

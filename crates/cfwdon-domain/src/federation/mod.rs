@@ -18,8 +18,8 @@ pub use dns::{
 };
 pub use domain_block::{host_within_any_blocked_domain, host_within_blocked_domain};
 pub use inbox::{
-    InboxActivityRecordState, inbox_activity_after_failure, inbox_activity_after_receive,
-    inbox_activity_after_success,
+    InboxActivityRecordState, InboxClaim, inbox_activity_after_failure,
+    inbox_activity_after_receive, inbox_activity_after_success,
 };
 pub use signature::{
     ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS,
