@@ -21,6 +21,7 @@ export type AdminReport = {
   action_taken_at: string | null;
   status_ids: string[];
   target_account: AdminReportTarget;
+  origin_domain: string | null;
 };
 
 export type AdminEmoji = {

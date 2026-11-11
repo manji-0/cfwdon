@@ -129,10 +129,21 @@ Admins manage instance domain blocks through Mastodon's `/api/v1/admin/domain_bl
 - `severity: "silence"` hides the server's remote posts from the public and hashtag timelines, and a follow from one of its accounts waits for approval as if the local account were locked. Federation still works. Unlike Mastodon, a viewer who follows a silenced account does not see its posts on those timelines either, and silenced accounts' notifications and search results are not filtered.
 - `severity: "noop"` limits nothing on its own and carries only the flags below.
 - `reject_media` stores no attachments for the server's remote posts and no avatar or header for its accounts. The Worker never downloads remote media, so this keeps the server's media URLs out of D1 and out of API responses. Rows stored before the block keep their media until the post or profile is refreshed.
-- `reject_reports` is stored and returned. The inbox does not process inbound `Flag` activities from any server, so there is nothing further to drop.
+- `reject_reports` drops every inbound `Flag` from the server, so it files no report (see [Inbound Reports](#inbound-reports)).
 - `obfuscate`, `public_comment`, and `private_comment` shape the listings. `GET /api/v1/instance/domain_blocks` lists `silence` and `suspend` blocks publicly with each domain's SHA-256 digest, its severity, and its public comment. An obfuscated block shows the domain with its middle characters replaced by `*`, as Mastodon's `public_domain` does.
 
 Each isolate caches the block set for 60 seconds, so another isolate applies an admin edit within that time.
+
+### Inbound Reports
+<!-- derived-from #instance-domain-blocks -->
+
+Another server files a report here by delivering an ActivityPub `Flag` to a personal inbox or the shared inbox. cfwdon handles it the way Mastodon's `ActivityPub::Activity::Flag` does:
+
+- A `Flag` from a server whose domain block has `reject_reports` (or `severity: "suspend"`) files nothing. The block is matched on the sender's acct domain and on its actor URI host.
+- The `Flag` files one report for each local account its `object` names. A report carries only the named local statuses that the account wrote. A status alone does not make its author a target, and remote or unknown objects are ignored. At most 100 objects are looked up.
+- The reporter is the actor that signed the `Flag`. For an anonymous report this is the remote server's instance actor. The report's category is `other`, its comment is the `Flag` `content` cut to 1,000 characters, and `origin_domain` records the sender's domain. The admin reports page shows that domain as the report's source.
+- A report is keyed on the `Flag` id and the target account, so a redelivered `Flag` files nothing new. The id counts only when its host matches the sender's actor URI. A `Flag` with any other id is not keyed and relies on the inbox claim alone.
+- Each new report sends the `admin.report` push to the configured admins. It also lists in their `admin.report` notifications with the remote reporter as the notification's account.
 
 ### IP Blocks
 

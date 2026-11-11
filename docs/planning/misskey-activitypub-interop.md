@@ -45,7 +45,7 @@ behavior; live rows stay `unverified` until a Misskey environment is available.
 | `Announce` | supported | `handle_inbox_announce` | Renote / boost | Medium | Handled |
 | Poll vote as `Create` Note/`Question` with `name` + `inReplyTo` | supported | `handle_inbox_poll_vote` | Common federated vote shape | High | Handler present |
 | `Vote` activity type | unsupported | `dispatch_inbox_activity` default | Misskey may emit dedicated `Vote` | Medium | Fixture: dispatch no-op |
-| `Flag` | unsupported | `dispatch_inbox_activity` default | Remote report | Low | Fixture: dispatch no-op |
+| `Flag` | supported | `handle_inbox_flag` | Remote report | Low | Files a report per named local account |
 | Unknown types | partial | `_ => Ok(())` | Safe ignore vs ack | Low | Silent 202-path ignore after verify |
 
 ## Outbound Activities
@@ -119,7 +119,7 @@ Covered shapes (all green under `cargo test -p cfwdon-worker misskey_`):
 - Note with `_misskey_content` / MFM `source` (content HTML kept, extensions ignored)
 - Note with `_misskey_quote` only
 - `Like` with `_misskey_reaction`
-- `EmojiReact`, `Vote`, and `Flag` activity types (recognized, not handled)
+- `EmojiReact` and `Vote` activity types (recognized, not handled); `Flag` (recognized and handled)
 - Poll vote-shaped `Create` Note (`name` + `inReplyTo`)
 - Actor with `endpoints.sharedInbox`
 - Actor with top-level `sharedInbox` only
