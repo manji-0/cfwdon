@@ -1,10 +1,12 @@
 //! Prunes federation bookkeeping rows that reached a terminal state longer
 //! ago than `FEDERATION_ACTIVITY_RETENTION_DAYS`.
 //!
-//! Only terminal rows go: deliveries that are `delivered` or `failed`, and
-//! inbox activities with a `processed_at`. Queued, `expanded` (generic rows
-//! whose per-inbox rows may still be pending), and `in_flight` rows stay. No
-//! foreign key points at these tables.
+//! Only terminal rows go: deliveries that are `delivered`, `failed` or
+//! `expanded`, and inbox activities with a `processed_at`. An `expanded` row is
+//! a generic row whose fan-out is done: each per-inbox row carries its own copy
+//! of the payload and retries on its own, so the generic row is never read
+//! again. Queued and `in_flight` rows stay. No foreign key points at these
+//! tables.
 
 use crate::observability::log_federation_event;
 use crate::tracked_d1::D1Database;
@@ -29,7 +31,7 @@ const RETENTION_TABLES: [RetentionTable; 3] = [
              WHERE id IN (
                  SELECT id
                  FROM outbox_deliveries
-                 WHERE state IN ('delivered', 'failed')
+                 WHERE state IN ('delivered', 'failed', 'expanded')
                    AND updated_at < datetime(CURRENT_TIMESTAMP, ?1)
                  LIMIT ?2
              )",

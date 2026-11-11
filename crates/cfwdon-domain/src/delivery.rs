@@ -10,6 +10,8 @@ pub const OUTBOX_DELIVERY_CONCURRENCY: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OutboxDeliveryRecordState {
     Queued,
+    /// Terminal for a generic row: its per-inbox rows were created and each
+    /// one carries the payload and its own retry state from here on.
     Expanded,
     Delivered,
     Failed,

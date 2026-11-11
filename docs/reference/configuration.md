@@ -140,7 +140,7 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `FEDERATION_ACTIVITY_RETENTION_DAYS` | Optional | `30` | Days to keep terminal federation bookkeeping rows: `delivered` or `failed` rows in `outbox_deliveries` and `outbound_activities`, and processed `inbox_activities`. The hourly cron deletes at most 5,000 older rows per table per run, in batches of 500. Queued, `expanded`, and `in_flight` rows are never deleted. Set `0` to keep every row. A blank or non-numeric value keeps the default. |
+| `FEDERATION_ACTIVITY_RETENTION_DAYS` | Optional | `30` | Days to keep terminal federation bookkeeping rows: `delivered` or `failed` rows in `outbox_deliveries` and `outbound_activities`, `expanded` generic rows in `outbox_deliveries` (their per-inbox rows retry on their own), and processed `inbox_activities`. The hourly cron deletes at most 5,000 older rows per table per run, in batches of 500. Queued and `in_flight` rows are never deleted. Set `0` to keep every row. A blank or non-numeric value keeps the default. |
 
 ## Logging Vars
 

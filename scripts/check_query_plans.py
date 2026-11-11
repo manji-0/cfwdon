@@ -100,7 +100,7 @@ def assert_retention_prunes_seek_age(conn: sqlite3.Connection) -> None:
     terminal rows by age; a walk of every delivered row costs D1 reads on
     each cron tick."""
     for table, age_column, where in [
-        ("outbox_deliveries", "updated_at", "state IN ('delivered', 'failed') AND updated_at"),
+        ("outbox_deliveries", "updated_at", "state IN ('delivered', 'failed', 'expanded') AND updated_at"),
         ("outbound_activities", "updated_at", "state IN ('delivered', 'failed') AND updated_at"),
         ("inbox_activities", "processed_at", "processed_at"),
     ]:

@@ -49,7 +49,7 @@ pub(crate) async fn admin_dashboard_response(
         &db,
         "SELECT COUNT(*) AS count
          FROM (
-             SELECT id FROM outbox_deliveries WHERE state IN ('queued', 'expanded', 'in_flight')
+             SELECT id FROM outbox_deliveries WHERE state IN ('queued', 'in_flight')
              UNION ALL
              SELECT id FROM outbound_activities WHERE state IN ('queued', 'in_flight')
          )",
