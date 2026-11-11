@@ -5,8 +5,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use cfwdon_domain::{
     activitypub_date_within_skew, activitypub_host_header_matches_url_host,
-    activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
-    cached_remote_actor_key_matches,
+    activitypub_key_id_matches_actor, activitypub_signature_created_within_window,
+    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
 };
 use time::{
     Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
@@ -19,6 +19,39 @@ pub(crate) struct ParsedSignatureHeader {
     pub(crate) key_id: String,
     pub(crate) headers: Vec<String>,
     pub(crate) signature: Vec<u8>,
+    /// The hs2019 `created` and `expires` parameters, as sent: the signing
+    /// string's `(created)` and `(expires)` lines repeat them verbatim.
+    pub(crate) created: Option<String>,
+    pub(crate) expires: Option<String>,
+    algorithm: Option<String>,
+}
+
+impl ParsedSignatureHeader {
+    /// `(created)` and `(expires)` exist only in hs2019 signatures, the
+    /// algorithm a `Signature` without one names by default.
+    fn is_hs2019(&self) -> bool {
+        self.algorithm
+            .as_deref()
+            .is_none_or(|algorithm| algorithm.eq_ignore_ascii_case("hs2019"))
+    }
+
+    fn pseudo_header_parameter(&self, header_name: &str) -> Result<Option<&str>> {
+        let parameter = match header_name {
+            "(created)" => &self.created,
+            "(expires)" => &self.expires,
+            _ => return Ok(None),
+        };
+        if !self.is_hs2019() {
+            return Err(Error::RustError(format!(
+                "{header_name} is only valid in hs2019 signatures"
+            )));
+        }
+        parameter.as_deref().map(Some).ok_or_else(|| {
+            Error::RustError(format!(
+                "Signature signs {header_name} without its parameter"
+            ))
+        })
+    }
 }
 
 pub(crate) fn cached_remote_actor_matches_key(
@@ -43,6 +76,9 @@ pub(crate) fn parse_signature_header(header: &str) -> Result<ParsedSignatureHead
     let mut key_id = None;
     let mut headers = None;
     let mut signature = None;
+    let mut created = None;
+    let mut expires = None;
+    let mut algorithm = None;
 
     for part in header.split(',') {
         let mut segments = part.trim().splitn(2, '=');
@@ -69,6 +105,9 @@ pub(crate) fn parse_signature_header(header: &str) -> Result<ParsedSignatureHead
                     Error::RustError(format!("invalid Signature header encoding: {error}"))
                 })?)
             }
+            "created" => created = Some(value.to_owned()),
+            "expires" => expires = Some(value.to_owned()),
+            "algorithm" => algorithm = Some(value.to_owned()),
             _ => {}
         }
     }
@@ -78,6 +117,9 @@ pub(crate) fn parse_signature_header(header: &str) -> Result<ParsedSignatureHead
         headers: headers.ok_or_else(|| Error::RustError("Signature headers missing".to_owned()))?,
         signature: signature
             .ok_or_else(|| Error::RustError("Signature value missing".to_owned()))?,
+        created,
+        expires,
+        algorithm,
     })
 }
 
@@ -206,6 +248,41 @@ pub(crate) fn validate_request_date(headers: &Headers) -> Result<()> {
     Ok(())
 }
 
+/// When a GET says it was signed: the hs2019 `created` parameter when the
+/// signature covers `(created)`, the `Date` header otherwise.
+pub(crate) fn validate_signature_time(
+    headers: &Headers,
+    signature: &ParsedSignatureHeader,
+) -> Result<()> {
+    if !signature.headers.iter().any(|header| header == "(created)") {
+        return validate_request_date(headers);
+    }
+    let created_ms = signature
+        .created
+        .as_deref()
+        .and_then(signature_parameter_epoch_ms)
+        .ok_or_else(|| Error::RustError("invalid Signature created parameter".to_owned()))?;
+    let expires_ms =
+        match signature.expires.as_deref() {
+            Some(expires) => Some(signature_parameter_epoch_ms(expires).ok_or_else(|| {
+                Error::RustError("invalid Signature expires parameter".to_owned())
+            })?),
+            None => None,
+        };
+    if !activitypub_signature_created_within_window(created_ms, expires_ms, js_sys::Date::now()) {
+        return Err(Error::RustError(
+            "Signature created outside allowed window".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// `created` and `expires` are Unix times in seconds, possibly fractional.
+fn signature_parameter_epoch_ms(value: &str) -> Option<f64> {
+    let seconds = value.trim().parse::<f64>().ok()?;
+    seconds.is_finite().then_some(seconds * 1000.0)
+}
+
 pub(crate) fn validate_activitypub_signature_headers(
     signature: &ParsedSignatureHeader,
 ) -> Result<()> {
@@ -293,6 +370,8 @@ pub(crate) fn build_signature_signing_string(
                 req.method().as_ref().to_ascii_lowercase(),
                 path_and_query
             )
+        } else if let Some(parameter) = signature.pseudo_header_parameter(header_name)? {
+            format!("{header_name}: {parameter}")
         } else {
             let value = headers
                 .get(header_name)?
@@ -392,6 +471,40 @@ mod tests {
             signing_string,
             "(request-target): post /inbox\nhost: social.example\ndate: Sat, 25 Jul 2026 00:00:00 GMT\ndigest: SHA-256=abc\ncontent-type: application/activity+json"
         );
+    }
+
+    #[test]
+    fn created_pseudo_header_signs_the_created_parameter_of_hs2019_only() {
+        let hs2019 = parse_signature_header(
+            "keyId=\"https://remote.example/users/bob#main-key\",algorithm=\"hs2019\",created=1700000000,expires=1700000300,headers=\"(request-target) host (created) (expires)\",signature=\"YQ==\"",
+        )
+        .unwrap();
+        assert_eq!(
+            hs2019.pseudo_header_parameter("(created)").unwrap(),
+            Some("1700000000")
+        );
+        assert_eq!(
+            hs2019.pseudo_header_parameter("(expires)").unwrap(),
+            Some("1700000300")
+        );
+        assert_eq!(hs2019.pseudo_header_parameter("date").unwrap(), None);
+        assert_eq!(
+            signature_parameter_epoch_ms("1700000000.5"),
+            Some(1_700_000_000_500.0)
+        );
+        assert_eq!(signature_parameter_epoch_ms("soon"), None);
+
+        let rsa = parse_signature_header(
+            "keyId=\"https://remote.example/users/bob#main-key\",algorithm=\"rsa-sha256\",created=1700000000,headers=\"(request-target) host (created)\",signature=\"YQ==\"",
+        )
+        .unwrap();
+        assert!(rsa.pseudo_header_parameter("(created)").is_err());
+
+        let missing = parse_signature_header(
+            "keyId=\"https://remote.example/users/bob#main-key\",headers=\"(request-target) host (created)\",signature=\"YQ==\"",
+        )
+        .unwrap();
+        assert!(missing.pseudo_header_parameter("(created)").is_err());
     }
 
     #[test]

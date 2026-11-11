@@ -4,7 +4,7 @@ use super::{
     cached_remote_actor_matches_key, extract_activity_actor_uri, now_http_date_string,
     parse_signature_header, sha256_http_digest, sign_http_signature,
     validate_activitypub_signature_headers, validate_request_date, validate_request_digest,
-    validate_signed_host_header, verify_http_signature_bytes,
+    validate_signature_time, validate_signed_host_header, verify_http_signature_bytes,
 };
 use crate::activitypub::activitypub_primary_type;
 use crate::federation::{
@@ -257,12 +257,12 @@ async fn verify_fetch_signature(
 ) -> Result<RemoteActorProfile> {
     if !activitypub_fetch_signature_lists_required_headers(&parsed_signature.headers) {
         return Err(Error::RustError(
-            "Signature must cover (request-target) and date".to_owned(),
+            "Signature must cover (request-target), host, and date or (created)".to_owned(),
         ));
     }
     validate_signed_host_header(req, req.headers(), parsed_signature)?;
     let signing_string = build_signature_signing_string(req, req.headers(), parsed_signature)?;
-    validate_request_date(req.headers())?;
+    validate_signature_time(req.headers(), parsed_signature)?;
     resolve_remote_actor_for_signature(
         db,
         &parsed_signature.key_id,

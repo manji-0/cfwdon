@@ -2,9 +2,6 @@ use crate::federation::url::remote_http_url_scheme_allowed;
 
 pub const ACTIVITYPUB_REQUIRED_SIGNED_HEADERS: &[&str] = &["(request-target)", "date", "digest"];
 
-/// A signed GET has no body, so no `Digest` to sign.
-pub const ACTIVITYPUB_REQUIRED_SIGNED_FETCH_HEADERS: &[&str] = &["(request-target)", "date"];
-
 /// How old a signed request's `Date` may be: Mastodon's
 /// `SignatureVerification::EXPIRATION_WINDOW_LIMIT` (12 hours).
 pub const ACTIVITYPUB_MAX_DATE_AGE_MS: f64 = 12.0 * 60.0 * 60.0 * 1000.0;
@@ -13,21 +10,45 @@ pub const ACTIVITYPUB_MAX_DATE_AGE_MS: f64 = 12.0 * 60.0 * 60.0 * 1000.0;
 /// Mastodon's `CLOCK_SKEW_MARGIN` (1 hour).
 pub const ACTIVITYPUB_MAX_DATE_AHEAD_MS: f64 = 60.0 * 60.0 * 1000.0;
 
+/// How long an hs2019 signature without an `expires` parameter stays valid
+/// after its `created`: Mastodon's default in `matches_time_window?`.
+pub const ACTIVITYPUB_SIGNATURE_DEFAULT_LIFETIME_MS: f64 = 5.0 * 60.0 * 1000.0;
+
 pub fn activitypub_signature_lists_required_headers(signed_headers: &[String]) -> bool {
     ACTIVITYPUB_REQUIRED_SIGNED_HEADERS
         .iter()
         .all(|required| signed_headers.iter().any(|header| header == required))
 }
 
+/// What a signed GET must cover, as Mastodon's `verify_signature_strength!`
+/// asks: the `(request-target)`, the `host` it was sent to (so a GET signed
+/// for another server cannot be replayed here), and when it was made, as
+/// `date` or the hs2019 `(created)`. A GET has no body, so no `digest`.
 pub fn activitypub_fetch_signature_lists_required_headers(signed_headers: &[String]) -> bool {
-    ACTIVITYPUB_REQUIRED_SIGNED_FETCH_HEADERS
-        .iter()
-        .all(|required| signed_headers.iter().any(|header| header == required))
+    let signs = |name: &str| signed_headers.iter().any(|header| header == name);
+    signs("(request-target)") && signs("host") && (signs("date") || signs("(created)"))
 }
 
 pub fn activitypub_date_within_skew(parsed_ms: f64, now_ms: f64) -> bool {
     parsed_ms >= now_ms - ACTIVITYPUB_MAX_DATE_AGE_MS
         && parsed_ms <= now_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS
+}
+
+/// Whether an hs2019 signature that signs `(created)` is still valid, as
+/// Mastodon's `matches_time_window?` decides: `created` at most 1 hour
+/// ahead, and `now` at most 1 hour past `expires`. Without `expires` the
+/// signature expires 5 minutes after `created`, and never later than 12 hours
+/// after it.
+pub fn activitypub_signature_created_within_window(
+    created_ms: f64,
+    expires_ms: Option<f64>,
+    now_ms: f64,
+) -> bool {
+    let expires_ms = expires_ms
+        .unwrap_or(created_ms + ACTIVITYPUB_SIGNATURE_DEFAULT_LIFETIME_MS)
+        .min(created_ms + ACTIVITYPUB_MAX_DATE_AGE_MS);
+    created_ms <= now_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS
+        && now_ms <= expires_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS
 }
 
 pub fn activitypub_key_id_matches_actor(
@@ -113,6 +134,58 @@ mod tests {
             "date".to_owned(),
             "digest".to_owned(),
         ]));
+    }
+
+    #[test]
+    fn signed_get_must_cover_host_and_a_creation_time() {
+        let headers = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(activitypub_fetch_signature_lists_required_headers(
+            &headers(&["(request-target)", "host", "date",])
+        ));
+        assert!(activitypub_fetch_signature_lists_required_headers(
+            &headers(&["(request-target)", "host", "(created)",])
+        ));
+        assert!(!activitypub_fetch_signature_lists_required_headers(
+            &headers(&["(request-target)", "date",])
+        ));
+        assert!(!activitypub_fetch_signature_lists_required_headers(
+            &headers(&["(request-target)", "host",])
+        ));
+        assert!(!activitypub_fetch_signature_lists_required_headers(
+            &headers(&["host", "date",])
+        ));
+    }
+
+    #[test]
+    fn created_signature_expires_after_five_minutes_unless_it_says_otherwise() {
+        let minute_ms = 60.0 * 1000.0;
+        let hour_ms = 60.0 * minute_ms;
+        let created_ms = 1_000_000_000.0;
+        let within = |expires_ms, now_ms| {
+            activitypub_signature_created_within_window(created_ms, expires_ms, now_ms)
+        };
+        assert!(within(None, created_ms));
+        assert!(within(None, created_ms + 5.0 * minute_ms + hour_ms));
+        assert!(!within(None, created_ms + 5.0 * minute_ms + hour_ms + 1.0));
+        assert!(within(
+            Some(created_ms + 2.0 * hour_ms),
+            created_ms + 3.0 * hour_ms
+        ));
+        assert!(!within(
+            Some(created_ms + 2.0 * hour_ms),
+            created_ms + 3.0 * hour_ms + 1.0
+        ));
+        assert!(!within(
+            Some(created_ms + 24.0 * hour_ms),
+            created_ms + 14.0 * hour_ms
+        ));
+        assert!(within(None, created_ms - hour_ms));
+        assert!(!within(None, created_ms - hour_ms - 1.0));
     }
 
     #[test]
