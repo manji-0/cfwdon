@@ -129,3 +129,10 @@ class_name = "StreamHub"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["StreamHub"]
+
+# Optional Workers Analytics Engine dataset for operational data points
+# (docs/operations/runbook.md#analytics-engine-metrics). Enable Analytics Engine
+# for the account, then uncomment. Without the binding the Worker writes nothing.
+# [[analytics_engine_datasets]]
+# binding = "METRICS"
+# dataset = "cfwdon_metrics"

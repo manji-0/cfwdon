@@ -68,6 +68,8 @@ Local routes that depend on D1, R2, or Auth0 need matching local or remote bindi
 - [Development Workflow](docs/getting-started/development.md)
 - [Configuration Reference](docs/reference/configuration.md)
 - [Cloudflare Deploy Checklist](docs/operations/cloudflare-deploy.md)
+- [Operations Runbook](docs/operations/runbook.md)
+- [Launch Checklist](docs/operations/launch-checklist.md)
 - [Auth0 Configuration Guide](docs/operations/auth0-configuration.md)
 - [Cloudflare Access Configuration Guide](docs/operations/cloudflare-access-configuration.md)
 - [Architecture](docs/architecture/cfwdon-architecture.md)
