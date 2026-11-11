@@ -118,6 +118,18 @@ fn admin_api_router() -> Router<'static, ()> {
             "/api/cfwdon/admin/domain-blocks/:id",
             |req, ctx| async move { admin_domain_blocks_delete_response(req, ctx).await },
         )
+        .get_async("/api/cfwdon/admin/ip-blocks", |req, ctx| async move {
+            admin_ip_blocks_list_response(req, ctx).await
+        })
+        .post_async("/api/cfwdon/admin/ip-blocks", |req, ctx| async move {
+            admin_ip_block_create_response(req, ctx).await
+        })
+        .patch_async("/api/cfwdon/admin/ip-blocks/:id", |req, ctx| async move {
+            admin_ip_block_update_response(req, ctx).await
+        })
+        .delete_async("/api/cfwdon/admin/ip-blocks/:id", |req, ctx| async move {
+            admin_ip_block_delete_response(req, ctx).await
+        })
         .get_async("/api/cfwdon/admin/background-jobs", |req, ctx| async move {
             admin_background_jobs_response(req, ctx).await
         })

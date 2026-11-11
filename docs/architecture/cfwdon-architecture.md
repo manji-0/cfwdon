@@ -147,7 +147,7 @@ Another server files a report here by delivering an ActivityPub `Flag` to a pers
 
 ### IP Blocks
 
-Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `admin:read:ip_blocks` and `admin:write:ip_blocks`). The admin UI has no IP block page. A block names an IPv4 or IPv6 CIDR range, stored in canonical form (`10.1.2.3/8` is stored as `10.0.0.0/8`), an optional `expires_in` in seconds, a comment, and a severity:
+Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `admin:read:ip_blocks` and `admin:write:ip_blocks`). The admin UI has an IP blocks page (`/admin/ip-blocks`) backed by `/api/cfwdon/admin/ip-blocks` (list, create, `PATCH`/delete by id), which share the Mastodon handlers and so the same administrator check. A block names an IPv4 or IPv6 CIDR range, stored in canonical form (`10.1.2.3/8` is stored as `10.0.0.0/8`), an optional `expires_in` in seconds, a comment, and a severity:
 
 - `no_access` answers every request from the range with `403` before routing, except `GET /healthz`.
 - `sign_up_block` refuses `POST /api/v1/accounts` from the range with `403`.

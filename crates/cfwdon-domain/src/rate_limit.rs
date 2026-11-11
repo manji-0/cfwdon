@@ -44,10 +44,14 @@ pub enum RateLimitBucket {
     InboxIp,
     /// Inbox deliveries per sending server, once its signature verified.
     InboxDomain,
+    /// Lookups that make this server fetch a remote account: `resolve=true`
+    /// searches and `accounts/lookup` of a remote `acct`. Per account, or per
+    /// client address when anonymous.
+    RemoteLookup,
 }
 
 impl RateLimitBucket {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::ApiIp,
         Self::ApiToken,
         Self::ApiAccount,
@@ -62,6 +66,7 @@ impl RateLimitBucket {
         Self::FederationFetch,
         Self::InboxIp,
         Self::InboxDomain,
+        Self::RemoteLookup,
     ];
 
     pub fn name(self) -> &'static str {
@@ -80,6 +85,7 @@ impl RateLimitBucket {
             Self::FederationFetch => "federation_fetch",
             Self::InboxIp => "inbox_ip",
             Self::InboxDomain => "inbox_domain",
+            Self::RemoteLookup => "remote_lookup",
         }
     }
 
@@ -141,6 +147,7 @@ impl RateLimitPolicy {
                 throttle(1500, 5 * MINUTES)
             }
             RateLimitBucket::InboxDomain => throttle(3000, 5 * MINUTES),
+            RateLimitBucket::RemoteLookup => throttle(60, 5 * MINUTES),
         };
         Self {
             rules: RateLimitBucket::ALL.map(rule),
@@ -286,6 +293,10 @@ pub enum RateLimitCaller {
 pub struct RateLimitRequest<'a> {
     pub method: &'a str,
     pub path: &'a str,
+    /// The raw query string, without the leading `?`.
+    pub query: &'a str,
+    /// This instance's own domain: an `acct` on it is not a remote lookup.
+    pub local_domain: &'a str,
     /// The client address's throttle key (`ip_throttle_key`), when Cloudflare named one.
     pub ip: Option<&'a str>,
     pub caller: &'a RateLimitCaller,
@@ -315,6 +326,67 @@ fn matches(path: &str, pattern: &[&str]) -> bool {
                 "*" => !segment.is_empty(),
                 literal => *segment == literal,
             })
+}
+
+/// The decoded value of query parameter `key` (`+` is a space, `%XX` a byte).
+fn query_value(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (percent_decode(name) == key).then(|| percent_decode(value))
+    })
+}
+
+fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                match raw
+                    .get(index + 1..index + 3)
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                {
+                    Some(byte) => {
+                        out.push(byte);
+                        index += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            byte => out.push(byte),
+        }
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether the request makes the server fetch a remote account: a search with
+/// `resolve=true`, or a lookup of an `acct` naming another domain.
+fn is_remote_lookup(request: &RateLimitRequest<'_>) -> bool {
+    if request.method != "GET" {
+        return false;
+    }
+    let path = request.path;
+    if matches(path, &["api", "v2", "search"])
+        || matches(path, &["api", "v1", "accounts", "search"])
+    {
+        return matches!(
+            query_value(request.query, "resolve").as_deref(),
+            Some("true" | "1" | "t" | "on" | "yes")
+        );
+    }
+    if matches(path, &["api", "v1", "accounts", "lookup"]) {
+        let Some(acct) = query_value(request.query, "acct") else {
+            return false;
+        };
+        return acct
+            .trim_start_matches('@')
+            .split_once('@')
+            .is_some_and(|(_, domain)| !domain.eq_ignore_ascii_case(request.local_domain));
+    }
+    false
 }
 
 fn is_inbox_path(path: &str) -> bool {
@@ -363,6 +435,9 @@ fn ip_buckets(request: &RateLimitRequest<'_>) -> Vec<RateLimitBucket> {
     let mut buckets = Vec::new();
     if *caller == RateLimitCaller::Anonymous && is_api_path(path) {
         buckets.push(RateLimitBucket::ApiIp);
+        if is_remote_lookup(request) {
+            buckets.push(RateLimitBucket::RemoteLookup);
+        }
     }
     match method {
         "POST" => {
@@ -404,7 +479,12 @@ fn caller_check(
         RateLimitCaller::Anonymous => None,
         RateLimitCaller::Application { token_id } => check_of(
             RateLimitSubject::Token(token_id.clone()),
-            vec![policy.bucket_hit(RateLimitBucket::ApiToken)],
+            vec![
+                policy.bucket_hit(RateLimitBucket::ApiToken),
+                is_remote_lookup(request)
+                    .then(|| policy.bucket_hit(RateLimitBucket::RemoteLookup))
+                    .flatten(),
+            ],
         ),
         RateLimitCaller::Account {
             account_id,
@@ -418,6 +498,9 @@ fn caller_check(
                 account_family(request.method, request.path)
                     .map(|bucket| policy.bucket_hit(bucket)),
             );
+            if is_remote_lookup(request) {
+                hits.push(policy.bucket_hit(RateLimitBucket::RemoteLookup));
+            }
             check_of(RateLimitSubject::Account(account_id.clone()), hits)
         }
     }
@@ -591,6 +674,8 @@ mod tests {
         RateLimitRequest {
             method,
             path,
+            query: "",
+            local_domain: "cfwdon.test",
             ip,
             caller,
         }
@@ -801,6 +886,78 @@ mod tests {
         );
     }
 
+    fn lookup_request<'a>(
+        path: &'a str,
+        query: &'a str,
+        caller: &'a RateLimitCaller,
+    ) -> RateLimitRequest<'a> {
+        RateLimitRequest {
+            query,
+            ..request("GET", path, Some("192.0.2.1"), caller)
+        }
+    }
+
+    fn lookup_summary(
+        path: &str,
+        query: &str,
+        caller: &RateLimitCaller,
+    ) -> Vec<(String, Vec<String>)> {
+        summary(&rate_limit_checks(
+            &RateLimitPolicy::mastodon_defaults(),
+            &lookup_request(path, query, caller),
+        ))
+    }
+
+    #[test]
+    fn remote_lookups_count_per_account_and_per_address_when_anonymous() {
+        for (path, query) in [
+            ("/api/v2/search", "q=alice%40example.com&resolve=true"),
+            ("/api/v1/accounts/search", "q=a&resolve=1"),
+            ("/api/v1/accounts/lookup", "acct=alice@example.com"),
+            ("/api/v1/accounts/lookup", "acct=%40Alice%40Example.com"),
+        ] {
+            assert_eq!(
+                lookup_summary(path, query, &account()),
+                vec![named(
+                    "account:acct-1",
+                    &["api_token:tok-1", "api_account", "remote_lookup"]
+                )],
+                "{path}?{query}"
+            );
+            assert_eq!(
+                lookup_summary(path, query, &RateLimitCaller::Anonymous),
+                vec![named("ip:192.0.2.1", &["api_ip", "remote_lookup"])],
+                "{path}?{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_and_non_resolving_lookups_stay_on_the_general_limits() {
+        for (path, query) in [
+            ("/api/v2/search", "q=alice"),
+            ("/api/v2/search", "q=alice&resolve=false"),
+            ("/api/v1/accounts/search", "q=alice@example.com"),
+            ("/api/v1/accounts/lookup", "acct=alice"),
+            ("/api/v1/accounts/lookup", "acct=alice@CFWDON.test"),
+            ("/api/v1/accounts/lookup", ""),
+        ] {
+            let checks = lookup_summary(path, query, &account());
+            assert_eq!(
+                checks,
+                vec![named("account:acct-1", &["api_token:tok-1", "api_account"])],
+                "{path}?{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn percent_decoding_handles_malformed_escapes() {
+        assert_eq!(percent_decode("a%40b+c"), "a@b c");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%zz%4"), "%zz%4");
+    }
+
     #[test]
     fn defaults_are_mastodons_documented_numbers() {
         let policy = RateLimitPolicy::mastodon_defaults();
@@ -819,6 +976,7 @@ mod tests {
             ("federation_fetch", 1500, 300),
             ("inbox_ip", 1500, 300),
             ("inbox_domain", 3000, 300),
+            ("remote_lookup", 60, 300),
         ];
         assert_eq!(expected.len(), RateLimitBucket::ALL.len());
         for (name, limit, period_seconds) in expected {

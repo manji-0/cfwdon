@@ -208,6 +208,52 @@ export function deleteDomainBlock(domain: string): Promise<void> {
   );
 }
 
+export type IpBlockSeverity = "no_access" | "sign_up_block" | "sign_up_requires_approval";
+
+export type AdminIpBlock = {
+  id: string;
+  ip: string;
+  severity: IpBlockSeverity;
+  comment: string;
+  created_at: string;
+  expires_at: string | null;
+};
+
+export type IpBlockForm = {
+  ip: string;
+  severity: IpBlockSeverity;
+  comment: string;
+  /** Seconds from now; null makes the block permanent; left out keeps the current expiry. */
+  expires_in?: number | null;
+};
+
+export function fetchIpBlocks(): Promise<AdminIpBlock[]> {
+  return apiFetch<AdminIpBlock[]>("/api/cfwdon/admin/ip-blocks");
+}
+
+export function createIpBlock(form: IpBlockForm): Promise<AdminIpBlock> {
+  return apiFetch<AdminIpBlock>("/api/cfwdon/admin/ip-blocks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(form),
+  });
+}
+
+export function updateIpBlock(id: string, form: IpBlockForm): Promise<AdminIpBlock> {
+  return apiFetch<AdminIpBlock>(`/api/cfwdon/admin/ip-blocks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(form),
+  });
+}
+
+export function deleteIpBlock(id: string): Promise<void> {
+  return apiFetch<void>(`/api/cfwdon/admin/ip-blocks/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    parseJson: false,
+  });
+}
+
 export type AdminDashboard = {
   pending_reports: number;
   failed_deliveries: number;
