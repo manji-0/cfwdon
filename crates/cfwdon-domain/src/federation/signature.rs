@@ -51,6 +51,24 @@ pub fn activitypub_signature_created_within_window(
         && now_ms <= expires_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS
 }
 
+/// How long after a remote actor was last fetched a signature its cached key
+/// does not verify may not fetch it again. Without it, any request naming a
+/// foreign `keyId` with a bogus signature makes this server fetch that actor,
+/// and a stream of them turns the server into a fetch amplifier. A sender
+/// whose key really rotated within the window is refused until it passes, and
+/// retries as for any failed delivery.
+pub const REMOTE_KEY_REFETCH_COOLDOWN_MS: f64 = 5.0 * 60.0 * 1000.0;
+
+/// Whether a signature its signer's cached key does not verify may refetch
+/// the signer, given when the signer was last fetched (`None`: never). A
+/// refresh time ahead of `now_ms` is a clock disagreement, not a refresh, and
+/// does not hold the refetch back.
+pub fn remote_key_refetch_allowed(last_refreshed_ms: Option<f64>, now_ms: f64) -> bool {
+    last_refreshed_ms.is_none_or(|refreshed_ms| {
+        !(0.0..REMOTE_KEY_REFETCH_COOLDOWN_MS).contains(&(now_ms - refreshed_ms))
+    })
+}
+
 pub fn activitypub_key_id_matches_actor(
     key_id: &str,
     raw_actor_uri: &str,
@@ -186,6 +204,22 @@ mod tests {
         ));
         assert!(within(None, created_ms - hour_ms));
         assert!(!within(None, created_ms - hour_ms - 1.0));
+    }
+
+    #[test]
+    fn key_refetch_waits_out_the_cooldown_after_the_last_fetch() {
+        let now_ms = 1_000_000_000.0;
+        assert!(remote_key_refetch_allowed(None, now_ms));
+        assert!(!remote_key_refetch_allowed(Some(now_ms), now_ms));
+        assert!(!remote_key_refetch_allowed(
+            Some(now_ms - REMOTE_KEY_REFETCH_COOLDOWN_MS + 1.0),
+            now_ms
+        ));
+        assert!(remote_key_refetch_allowed(
+            Some(now_ms - REMOTE_KEY_REFETCH_COOLDOWN_MS),
+            now_ms
+        ));
+        assert!(remote_key_refetch_allowed(Some(now_ms + 1.0), now_ms));
     }
 
     #[test]

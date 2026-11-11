@@ -1,6 +1,7 @@
 use crate::accounts::AccountStats;
 use crate::content_helpers::sanitize_remote_status_html;
 use crate::custom_emojis::{custom_emojis_used_in_texts, resolve_account_emojis_from_document};
+use crate::db_utils::parse_sqlite_utc_timestamp_ms;
 use crate::federation::{
     FetchedRemoteActorProfile, RemoteActorProfile, fetch_remote_activitypub_document,
     parse_remote_actor_profile_document, validate_remote_actor_profile_urls,
@@ -136,29 +137,6 @@ pub(crate) fn remote_actor_social_counts_are_fresh(updated_at: Option<&str>) -> 
     };
     let age_ms = js_sys::Date::now() - updated_at_ms;
     (0.0..REMOTE_ACTOR_SOCIAL_COUNTS_TTL_MS).contains(&age_ms)
-}
-
-fn parse_sqlite_utc_timestamp_ms(value: &str) -> Option<f64> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    let iso = if value.contains('T') {
-        if value.ends_with('Z')
-            || value.contains('+')
-            || value.rfind('-').is_some_and(|idx| idx > 10)
-        {
-            value.to_owned()
-        } else {
-            format!("{value}Z")
-        }
-    } else if value.len() >= "YYYY-MM-DD HH:MM:SS".len() {
-        format!("{}T{}Z", &value[..10], &value[11..19])
-    } else {
-        return None;
-    };
-    let parsed = js_sys::Date::new(&iso.into()).get_time();
-    (!parsed.is_nan()).then_some(parsed)
 }
 
 /// Prefer AP/DB counts; raise response `statuses_count` from local inventory without

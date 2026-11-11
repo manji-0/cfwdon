@@ -1,4 +1,8 @@
 use super::load_instance_actor_signing_key;
+use super::signer_cache::{
+    recently_verified_signer, remember_signer_refetch, remember_verified_signer,
+    signer_refetched_at,
+};
 use super::{
     build_signature_signing_string, build_signature_signing_string_from_parts,
     cached_remote_actor_matches_key, extract_activity_actor_uri, now_http_date_string,
@@ -15,12 +19,12 @@ use crate::federation::{
 };
 use crate::identity::instance_actor_key_id;
 use crate::observability::log_json_event;
-use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
+use crate::store::remote::{find_cached_remote_actor_profile_and_refresh, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{
     SignedFetchVerdict, activitypub_fetch_signature_lists_required_headers,
-    activitypub_key_id_matches_actor,
+    activitypub_key_id_matches_actor, remote_key_refetch_allowed,
 };
 use std::rc::Rc;
 use worker::{Env, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
@@ -328,6 +332,14 @@ pub(crate) async fn verify_incoming_activitypub_delivery(
     })
 }
 
+/// The actor whose key verifies a signature: this isolate's recent copy, the
+/// D1 cache, or, when neither verifies, the actor fetched again. The refetch
+/// waits out `REMOTE_KEY_REFETCH_COOLDOWN_MS` since the last fetch of that
+/// actor, by any isolate (D1's `updated_at`) or by this one (a fetch that
+/// failed stamps no row), so bogus signatures naming a foreign `keyId` cannot
+/// make this server fetch that actor on every request. The fetched profile
+/// is stored before its key is checked, which stamps the refetch for every
+/// isolate whether or not the signature verifies.
 async fn resolve_remote_actor_for_signature(
     db: &D1Database,
     key_id: &str,
@@ -335,45 +347,57 @@ async fn resolve_remote_actor_for_signature(
     signature: &[u8],
 ) -> Result<RemoteActorProfile> {
     let actor_uri = actor_uri_from_key_id(key_id)?;
-    let cached_actor = find_cached_remote_actor_profile_by_actor_uri(db, &actor_uri).await?;
-    if let Some(remote_actor) = cached_actor.as_ref()
-        && cached_actor_can_verify_key(remote_actor, key_id, &actor_uri)
-        && verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature)
-            .await
-            .is_ok()
+    let now_ms = js_sys::Date::now();
+    if let Some(actor) = recently_verified_signer(&actor_uri, now_ms)
+        && cached_actor_verifies(&actor, key_id, &actor_uri, signing_string, signature).await
     {
-        return Ok(remote_actor.clone());
+        return Ok(actor);
     }
 
-    match fetch_remote_actor_profile(&actor_uri).await {
-        Ok(remote_actor) => {
-            if !cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri) {
-                return Err(Error::RustError(
-                    "Signature keyId did not match delivery actor".to_owned(),
-                ));
-            }
-            verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature)
-                .await?;
-            upsert_remote_actor(db, &remote_actor).await?;
-            Ok(remote_actor)
-        }
-        Err(error) if remote_actor_document_unavailable(&error) => {
-            if let Some(remote_actor) = cached_actor
-                && cached_actor_can_verify_key(&remote_actor, key_id, &actor_uri)
-                && verify_http_signature_bytes(
-                    &remote_actor.public_key_pem,
-                    signing_string,
-                    signature,
-                )
-                .await
-                .is_ok()
-            {
-                return Ok(remote_actor);
-            }
-            Err(error)
-        }
-        Err(error) => Err(error),
+    let cached = find_cached_remote_actor_profile_and_refresh(db, &actor_uri).await?;
+    if let Some((actor, _)) = cached.as_ref()
+        && cached_actor_verifies(actor, key_id, &actor_uri, signing_string, signature).await
+    {
+        remember_verified_signer(&actor_uri, actor, now_ms);
+        return Ok(actor.clone());
     }
+
+    let last_refreshed_ms = cached
+        .and_then(|(_, refreshed_at_ms)| refreshed_at_ms)
+        .into_iter()
+        .chain(signer_refetched_at(&actor_uri))
+        .reduce(f64::max);
+    if !remote_key_refetch_allowed(last_refreshed_ms, now_ms) {
+        return Err(Error::RustError(
+            "Signature did not verify, and the signer's key was refetched within the cooldown"
+                .to_owned(),
+        ));
+    }
+    remember_signer_refetch(&actor_uri, now_ms);
+
+    let remote_actor = fetch_remote_actor_profile(&actor_uri).await?;
+    if !cached_remote_actor_matches_key(&remote_actor, key_id, &actor_uri) {
+        return Err(Error::RustError(
+            "Signature keyId did not match delivery actor".to_owned(),
+        ));
+    }
+    upsert_remote_actor(db, &remote_actor).await?;
+    verify_http_signature_bytes(&remote_actor.public_key_pem, signing_string, signature).await?;
+    remember_verified_signer(&actor_uri, &remote_actor, now_ms);
+    Ok(remote_actor)
+}
+
+async fn cached_actor_verifies(
+    actor: &RemoteActorProfile,
+    key_id: &str,
+    actor_uri: &str,
+    signing_string: &[u8],
+    signature: &[u8],
+) -> bool {
+    cached_actor_can_verify_key(actor, key_id, actor_uri)
+        && verify_http_signature_bytes(&actor.public_key_pem, signing_string, signature)
+            .await
+            .is_ok()
 }
 
 fn cached_actor_can_verify_key(
@@ -383,13 +407,6 @@ fn cached_actor_can_verify_key(
 ) -> bool {
     cached_remote_actor_matches_key(remote_actor, key_id, actor_uri)
         || activitypub_key_id_matches_actor(key_id, actor_uri, &remote_actor.actor_uri)
-}
-
-fn remote_actor_document_unavailable(error: &Error) -> bool {
-    let message = error.to_string();
-    ["HTTP 403", "HTTP 404", "HTTP 410"]
-        .iter()
-        .any(|status| message.contains(status))
 }
 
 fn actor_uri_from_key_id(key_id: &str) -> Result<String> {
@@ -506,21 +523,5 @@ mod tests {
             false,
             &Error::RustError("remote fetch blocked for private address".to_owned())
         ));
-    }
-
-    #[test]
-    fn remote_actor_document_unavailable_matches_gone_and_forbidden() {
-        assert!(remote_actor_document_unavailable(&Error::RustError(
-            "failed to fetch remote document https://remote.example/users/bob: HTTP 410".to_owned()
-        )));
-        assert!(remote_actor_document_unavailable(&Error::RustError(
-            "failed to fetch remote document https://remote.example/users/bob: HTTP 404".to_owned()
-        )));
-        assert!(remote_actor_document_unavailable(&Error::RustError(
-            "failed to fetch remote document https://remote.example/users/bob: HTTP 403".to_owned()
-        )));
-        assert!(!remote_actor_document_unavailable(&Error::RustError(
-            "failed to fetch remote document https://remote.example/users/bob: HTTP 500".to_owned()
-        )));
     }
 }

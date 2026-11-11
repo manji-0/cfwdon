@@ -238,3 +238,28 @@ mod tests {
         assert_eq!(decoded[0].bot, 0);
     }
 }
+
+/// A D1 `CURRENT_TIMESTAMP` (UTC, `YYYY-MM-DD HH:MM:SS`) or ISO 8601 value as
+/// Unix milliseconds.
+pub(crate) fn parse_sqlite_utc_timestamp_ms(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let iso = if value.contains('T') {
+        if value.ends_with('Z')
+            || value.contains('+')
+            || value.rfind('-').is_some_and(|idx| idx > 10)
+        {
+            value.to_owned()
+        } else {
+            format!("{value}Z")
+        }
+    } else if value.len() >= "YYYY-MM-DD HH:MM:SS".len() {
+        format!("{}T{}Z", &value[..10], &value[11..19])
+    } else {
+        return None;
+    };
+    let parsed = js_sys::Date::new(&iso.into()).get_time();
+    (!parsed.is_nan()).then_some(parsed)
+}
