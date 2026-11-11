@@ -109,8 +109,11 @@ pub(crate) async fn outbox_response(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
     let req_url = req.url()?.to_string();
-    // A signer may be blocked by the owner, so its page is not the shared one.
-    if !viewer.is_signed()
+    let limit = query.limit.unwrap_or(20).clamp(1, 80);
+    let offset = query.offset.unwrap_or(0);
+    let page_requested = query.page.unwrap_or(false) || offset > 0;
+    // The owner may block a signer, so a signer's page is not the shared one.
+    if !(page_requested && viewer.is_signed())
         && let Some(response) = cached_federation_document(&req_url).await?
     {
         return cache_public_response(response, CACHE_TTL_FEDERATION);
@@ -120,16 +123,14 @@ pub(crate) async fn outbox_response(
     let Some(account) = find_account_by_username(&db, &username).await? else {
         return Response::error("actor not found", 404);
     };
-    let hidden = viewer.hides_owner_content(&db, account.id()).await?;
 
     let actor = actor_url(&config, account.username());
     let outbox = format!("{actor}/outbox");
     let total_items = count_public_outbox_statuses(&db, account.id()).await?;
-    let limit = query.limit.unwrap_or(20).clamp(1, 80);
-    let offset = query.offset.unwrap_or(0);
     let cache_tag = format!("account-{username}");
 
-    if query.page.unwrap_or(false) || query.offset.unwrap_or(0) > 0 {
+    if page_requested {
+        let hidden = viewer.hides_owner_content(&db, account.id()).await?;
         let statuses = if hidden {
             Vec::new()
         } else {
