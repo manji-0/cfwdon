@@ -9,6 +9,7 @@ use crate::http::{
     verify_incoming_activitypub_delivery, verify_incoming_activitypub_request,
 };
 use crate::observability::log_federation_event;
+use crate::rate_limit::limit_inbox_delivery;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -319,6 +320,15 @@ pub(crate) async fn shared_inbox_response(
             return Response::error("invalid activitypub signature", 401);
         }
     };
+    if let Some(response) = limit_inbox_delivery(
+        &ctx.env,
+        &delivery.delivery_actor.actor_uri,
+        &delivery.delivery_actor.domain,
+    )
+    .await?
+    {
+        return Ok(response);
+    }
 
     if delivery.relayed {
         match handle_relay_delivered_activity(&db, &config, &activity, &delivery, Some(&ctx.env))
@@ -438,6 +448,12 @@ pub(crate) async fn handle_inbox_request_for_accounts(
             return Response::error("invalid activitypub signature", 401);
         }
     };
+    if let Some(env) = env
+        && let Some(response) =
+            limit_inbox_delivery(env, &remote_actor.actor_uri, &remote_actor.domain).await?
+    {
+        return Ok(response);
+    }
     process_verified_inbox_activity(db, config, accounts, body, activity, remote_actor, env).await
 }
 

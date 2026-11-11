@@ -74,6 +74,7 @@ mod polls;
 mod profile;
 mod public_endpoint_cache;
 mod push;
+mod rate_limit;
 mod relationship;
 mod relationships;
 mod relays;

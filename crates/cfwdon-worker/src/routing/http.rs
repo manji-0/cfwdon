@@ -237,6 +237,10 @@ fn is_websocket_upgrade_header(upgrade_header: Option<&str>) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }
 
+/// Mastodon clients read the `X-RateLimit-*` headers to pace themselves.
+const CORS_EXPOSED_HEADERS: &str =
+    "Link,Authorization,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset";
+
 fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<()> {
     response
         .headers_mut()
@@ -251,7 +255,7 @@ fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<(
     )?;
     response
         .headers_mut()
-        .set("Access-Control-Expose-Headers", "Link,Authorization")?;
+        .set("Access-Control-Expose-Headers", CORS_EXPOSED_HEADERS)?;
     response.headers_mut().set("Vary", "Origin")?;
     Ok(())
 }
