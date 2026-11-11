@@ -456,4 +456,28 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             },
         ],
     },
+    RefinementEntry {
+        model: "authorized_fetch",
+        domain_module: "cfwdon_domain::federation::authorized_fetch",
+        implementation_sites: &[
+            "crates/cfwdon-worker/src/routing/authorized_fetch.rs",
+            "crates/cfwdon-worker/src/authorized_fetch.rs",
+            "crates/cfwdon-worker/src/http/signatures.rs",
+        ],
+        abstraction: "AUTHORIZED_FETCH + resource kind + signature verdict + owner block",
+        operations: &[
+            OperationMapping {
+                model_action: "ToggleSecureMode / CycleResource / CycleVerdict",
+                domain_call: "authorized_fetch_access",
+                implementation_call: "authorized_activitypub_fetch",
+                worker_guard: "GET of a guarded route that is not an HTML page",
+            },
+            OperationMapping {
+                model_action: "ToggleOwnerBlock",
+                domain_call: "authorized_fetch_body",
+                implementation_call: "FetchViewer::hides_owner_content",
+                worker_guard: "signed fetch of the owner's content: a note, quote stamp, outbox or featured collection; never the actor or its follower and following collections",
+            },
+        ],
+    },
 ];

@@ -1,3 +1,4 @@
+use crate::db_utils::parse_sqlite_utc_timestamp_ms;
 use crate::federation::{RemoteActorProfile, remote_actor_domain_restrictions};
 use crate::tracked_d1::D1Database;
 use worker::Result;
@@ -52,10 +53,21 @@ pub(crate) async fn find_cached_remote_actor_profile_by_actor_uri(
     db: &D1Database,
     actor_uri: &str,
 ) -> Result<Option<RemoteActorProfile>> {
+    Ok(find_cached_remote_actor_profile_and_refresh(db, actor_uri)
+        .await?
+        .map(|(profile, _)| profile))
+}
+
+/// The cached profile and when it was last fetched (`updated_at`, which every
+/// upsert of a fetched profile stamps), as Unix milliseconds.
+pub(crate) async fn find_cached_remote_actor_profile_and_refresh(
+    db: &D1Database,
+    actor_uri: &str,
+) -> Result<Option<(RemoteActorProfile, Option<f64>)>> {
     let actor_uri = D1Type::Text(actor_uri);
     let row = db
         .prepare(
-            "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, inbox_uri, shared_inbox_uri, public_key_id, public_key_pem, display_name, summary_html, profile_url, avatar_url, header_url
+            "SELECT actor_uri, username, domain, locked, bot, discoverable, indexable, inbox_uri, shared_inbox_uri, public_key_id, public_key_pem, display_name, summary_html, profile_url, avatar_url, header_url, updated_at
              FROM remote_actors
              WHERE actor_uri = ?1
              LIMIT 1",
@@ -64,7 +76,13 @@ pub(crate) async fn find_cached_remote_actor_profile_by_actor_uri(
         .first::<serde_json::Value>(None)
         .await?;
 
-    Ok(row.map(|value| remote_actor_profile_from_value(&value)))
+    Ok(row.map(|value| {
+        let refreshed_at_ms = value
+            .get("updated_at")
+            .and_then(serde_json::Value::as_str)
+            .and_then(parse_sqlite_utc_timestamp_ms);
+        (remote_actor_profile_from_value(&value), refreshed_at_ms)
+    }))
 }
 
 const UPSERT_REMOTE_ACTOR_SQL: &str = "INSERT INTO remote_actors (

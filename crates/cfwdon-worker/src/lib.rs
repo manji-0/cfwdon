@@ -8,6 +8,7 @@ use crate::delivery::{
 };
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::federation_retention::prune_terminal_federation_activities;
+use crate::http::install_secure_mode_fetch_signing;
 use crate::inbox::reclaim_stale_inbox_activities;
 use crate::instance::{refresh_instance_activity_cache, refresh_trending_statuses_cache};
 use crate::media_metadata_backfill::run_stored_media_metadata_backfill;
@@ -39,6 +40,7 @@ mod app_cache;
 mod async_refreshes;
 mod auth;
 mod authorize_interaction;
+mod authorized_fetch;
 mod background_jobs;
 mod collections_alpha;
 mod content_helpers;
@@ -178,6 +180,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
     install_domain_suspensions(&env, &config.database_binding);
+    install_secure_mode_fetch_signing(&env, &config);
     let result = async {
         let db = D1Database::new(env.d1(&config.database_binding)?);
         if run_hourly {

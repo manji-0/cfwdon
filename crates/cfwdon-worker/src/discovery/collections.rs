@@ -1,4 +1,5 @@
 use crate::auth::find_account_by_username;
+use crate::authorized_fetch::FetchViewer;
 use crate::db_session::bind_request_d1;
 use crate::delivery::list_follower_actor_uris;
 use crate::identity::actor_url;
@@ -95,7 +96,11 @@ pub(crate) async fn following_collection_response(
     )
 }
 
-pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn outbox_response(
+    req: Request,
+    ctx: RouteContext<()>,
+    viewer: FetchViewer,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let query: CollectionPagingQuery = req.query().unwrap_or_default();
     let username = ctx
@@ -104,7 +109,13 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::RustError("missing username route parameter".to_owned()))?;
     let req_url = req.url()?.to_string();
-    if let Some(response) = cached_federation_document(&req_url).await? {
+    let limit = query.limit.unwrap_or(20).clamp(1, 80);
+    let offset = query.offset.unwrap_or(0);
+    let page_requested = query.page.unwrap_or(false) || offset > 0;
+    // The owner may block a signer, so a signer's page is not the shared one.
+    if !(page_requested && viewer.is_signed())
+        && let Some(response) = cached_federation_document(&req_url).await?
+    {
         return cache_public_response(response, CACHE_TTL_FEDERATION);
     }
 
@@ -116,15 +127,18 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
     let actor = actor_url(&config, account.username());
     let outbox = format!("{actor}/outbox");
     let total_items = count_public_outbox_statuses(&db, account.id()).await?;
-    let limit = query.limit.unwrap_or(20).clamp(1, 80);
-    let offset = query.offset.unwrap_or(0);
     let cache_tag = format!("account-{username}");
 
-    if query.page.unwrap_or(false) || query.offset.unwrap_or(0) > 0 {
-        let statuses = list_public_outbox_statuses_page(&db, account.id(), limit, offset).await?;
+    if page_requested {
+        let hidden = viewer.hides_owner_content(&db, account.id()).await?;
+        let statuses = if hidden {
+            Vec::new()
+        } else {
+            list_public_outbox_statuses_page(&db, account.id(), limit, offset).await?
+        };
         let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
         let next_offset = offset.saturating_add(ordered_items.len() as u32);
-        let next = if (next_offset as u64) < total_items {
+        let next = if !hidden && (next_offset as u64) < total_items {
             Some(format!(
                 "{outbox}?page=true&offset={next_offset}&limit={limit}"
             ))
@@ -140,7 +154,9 @@ pub(crate) async fn outbox_response(req: Request, ctx: RouteContext<()>) -> Resu
             "next": next,
             "orderedItems": ordered_items,
         });
-        cache_federation_document(&req_url, &document, &cache_tag).await?;
+        if !hidden {
+            cache_federation_document(&req_url, &document, &cache_tag).await?;
+        }
         return cache_public_json_response(
             &document,
             "application/activity+json",

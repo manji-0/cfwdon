@@ -268,8 +268,19 @@ where
     set_content_config(&vars, &mut config);
     set_auth0_config(&vars, &mut config);
     set_federation_retention_config(&vars, &mut config);
+    config.authorized_fetch = parse_enabled_flag(vars("AUTHORIZED_FETCH"));
 
     config
+}
+
+/// `true`, `1`, `yes` and `on` (any case) turn a flag on; anything else is off.
+fn parse_enabled_flag(value: Option<String>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        )
+    })
 }
 
 fn set_federation_retention_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
@@ -565,6 +576,27 @@ mod tests {
         assert_eq!(retention(Some("0")), None);
         assert_eq!(retention(Some("thirty")), Some(30));
         assert_eq!(retention(Some("-1")), Some(30));
+    }
+
+    #[test]
+    fn authorized_fetch_is_off_unless_set_to_a_true_value() {
+        assert!(!config_from_vars(|_| None).authorized_fetch);
+        for (value, expected) in [
+            ("true", true),
+            (" ON ", true),
+            ("1", true),
+            ("yes", true),
+            ("false", false),
+            ("0", false),
+            ("", false),
+        ] {
+            let config =
+                config_from_vars(|key| (key == "AUTHORIZED_FETCH").then(|| value.to_owned()));
+            assert_eq!(
+                config.authorized_fetch, expected,
+                "AUTHORIZED_FETCH={value:?}"
+            );
+        }
     }
 
     #[test]

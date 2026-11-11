@@ -21,7 +21,7 @@ The worker is therefore a **restricted** implementation of the abstract model: i
 
 ## Catalog
 
-The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all sixteen models with domain modules and worker call sites. Every cataloged model currently has an executable refinement check.
+The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all seventeen models with domain modules and worker call sites. Every cataloged model currently has an executable refinement check.
 
 | Model | Domain module | Worker sites | Executable refinement |
 | --- | --- | --- | --- |
@@ -41,6 +41,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `access_provision` | `account::registration` | `auth/account_store` | yes |
 | `federation_request_policy` | `federation` | `http/request_validation.rs`, `federation/url_guard.rs`, `federation/domain_suspensions.rs`, `inbox.rs` | yes |
 | `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |
+| `authorized_fetch` | `federation::authorized_fetch` | `routing/authorized_fetch.rs`, `authorized_fetch.rs`, `http/signatures.rs` | yes |
 
 ## Worked example: quote approval
 

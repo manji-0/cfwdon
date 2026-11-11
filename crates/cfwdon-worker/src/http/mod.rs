@@ -2,6 +2,7 @@ mod crypto;
 mod request_validation;
 mod signatures;
 mod signed_delivery;
+mod signer_cache;
 mod signing_keys;
 
 pub(crate) use crypto::*;

@@ -13,6 +13,7 @@ pub mod refinement;
 
 mod access_provision;
 mod activitypub_visibility;
+mod authorized_fetch;
 mod concurrent_delivery;
 mod federation_dns_policy;
 mod federation_request_policy;
@@ -45,6 +46,7 @@ pub fn verify_models() {
     access_provision::check_access_provision_model();
     inbox_replay::check_inbox_replay_model();
     federation_request_policy::check_federation_request_policy_model();
+    authorized_fetch::check_authorized_fetch_model();
     federation_dns_policy::check_federation_dns_policy_model();
     refinement::verify_refinements();
 }

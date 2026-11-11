@@ -8,6 +8,7 @@ use crate::domain_blocks::{
     filter_delivery_inboxes_for_domain_blocks, list_delivery_blocked_domains,
 };
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
+use crate::http::install_secure_mode_fetch_signing;
 use crate::observability::log_federation_event;
 use crate::relays::{list_enabled_relay_inbox_urls, outbox_payload_is_public_relay_candidate};
 use crate::runtime_config::{load_config, load_config_from_env};
@@ -213,6 +214,7 @@ async fn process_outbox_queue_batch(env: &Env, message_count: usize) -> Result<(
     install_remote_dns_cache(env, &config.remote_dns_cache_binding);
     install_app_cache(env, &config.app_cache_binding);
     install_domain_suspensions(env, &config.database_binding);
+    install_secure_mode_fetch_signing(env, &config);
     let db = D1Database::new(env.d1(&config.database_binding)?);
     if !pending_outbox_work_exists(&db).await? {
         log_federation_event(

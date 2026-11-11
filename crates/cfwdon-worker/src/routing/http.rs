@@ -6,6 +6,7 @@ use crate::metrics::write_http_request_metric;
 use crate::observability::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
 };
+use crate::response_utils::vary_including;
 use worker::{Env, Method, Request, RequestInit, Response, Result};
 
 /// Mastodon API routes register GET only, so HEAD would 405. Rails answers
@@ -268,7 +269,8 @@ fn apply_cors_headers(response: &mut Response, origin: Option<&str>) -> Result<(
     response
         .headers_mut()
         .set("Access-Control-Expose-Headers", CORS_EXPOSED_HEADERS)?;
-    response.headers_mut().set("Vary", "Origin")?;
+    let vary = vary_including(response.headers().get("Vary")?.as_deref(), "Origin");
+    response.headers_mut().set("Vary", &vary)?;
     Ok(())
 }
 
