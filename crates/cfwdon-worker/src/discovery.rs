@@ -1,6 +1,9 @@
 use crate::accounts::{load_account_stats, local_status_html_item};
 use crate::activitypub::build_activitypub_actor_document;
 use crate::auth::{ensure_account_keys, find_account_by_username};
+use crate::authorized_fetch::{
+    FetchViewer, activitypub_request_prefers_html, restricted_actor_response,
+};
 use crate::db_session::bind_request_d1;
 use crate::identity::{actor_url, instance_base_url, instance_host};
 use crate::media::find_media_attachments_by_status_ids;
@@ -32,16 +35,24 @@ pub(in crate::discovery) use profile_html::{profile_html_document, profile_html_
 pub(crate) use remote_follow::*;
 pub(crate) use webfinger::*;
 
-pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn actor_response(
+    req: Request,
+    ctx: RouteContext<()>,
+    viewer: FetchViewer,
+) -> Result<Response> {
     let config = load_config(&ctx);
     let username = route_username(&ctx)?;
 
-    let wants_html = prefers_profile_html(&req)?;
+    let wants_html = activitypub_request_prefers_html(&req)?;
     if wants_html {
         if let Some(response) = cached_actor_profile_html_response(&ctx, &username).await? {
             return with_profile_discovery_link_headers(response, &config, &username);
         }
-    } else if let Some(response) = cached_actor_json_response(&ctx, &username).await? {
+    } else if let Some(mut response) = cached_actor_json_response(&ctx, &username).await? {
+        if viewer.is_restricted() {
+            let document: serde_json::Value = response.json().await?;
+            return restricted_actor_response(&document);
+        }
         return Ok(response);
     }
 
@@ -81,6 +92,12 @@ pub(crate) async fn actor_response(req: Request, ctx: RouteContext<()>) -> Resul
 
     let response = build_activitypub_actor_document(&config, &account);
     cache_actor_json_response(&ctx, &username, &response).await?;
+    if viewer.is_restricted() {
+        let document = serde_json::to_value(&response).map_err(|error| {
+            Error::RustError(format!("failed to encode actor document: {error}"))
+        })?;
+        return restricted_actor_response(&document);
+    }
 
     let cache_tag = format!("account-{username}");
     cache_public_json_response(
@@ -118,14 +135,6 @@ fn with_profile_discovery_link_headers(
         response.headers_mut().set("Vary", "Accept")?;
     }
     Ok(response)
-}
-
-fn prefers_profile_html(req: &Request) -> Result<bool> {
-    let accept = req.headers().get("Accept")?.unwrap_or_default();
-    let accept = accept.to_ascii_lowercase();
-    Ok(accept.contains("text/html")
-        && !accept.contains("application/activity+json")
-        && !accept.contains("application/ld+json"))
 }
 
 pub(crate) async fn tag_response(ctx: RouteContext<()>) -> Result<Response> {

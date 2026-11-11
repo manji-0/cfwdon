@@ -2,6 +2,9 @@ use crate::federation::url::remote_http_url_scheme_allowed;
 
 pub const ACTIVITYPUB_REQUIRED_SIGNED_HEADERS: &[&str] = &["(request-target)", "date", "digest"];
 
+/// A signed GET has no body, so no `Digest` to sign.
+pub const ACTIVITYPUB_REQUIRED_SIGNED_FETCH_HEADERS: &[&str] = &["(request-target)", "date"];
+
 /// How old a signed request's `Date` may be: Mastodon's
 /// `SignatureVerification::EXPIRATION_WINDOW_LIMIT` (12 hours).
 pub const ACTIVITYPUB_MAX_DATE_AGE_MS: f64 = 12.0 * 60.0 * 60.0 * 1000.0;
@@ -12,6 +15,12 @@ pub const ACTIVITYPUB_MAX_DATE_AHEAD_MS: f64 = 60.0 * 60.0 * 1000.0;
 
 pub fn activitypub_signature_lists_required_headers(signed_headers: &[String]) -> bool {
     ACTIVITYPUB_REQUIRED_SIGNED_HEADERS
+        .iter()
+        .all(|required| signed_headers.iter().any(|header| header == required))
+}
+
+pub fn activitypub_fetch_signature_lists_required_headers(signed_headers: &[String]) -> bool {
+    ACTIVITYPUB_REQUIRED_SIGNED_FETCH_HEADERS
         .iter()
         .all(|required| signed_headers.iter().any(|header| header == required))
 }

@@ -143,6 +143,35 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | --- | --- | --- | --- |
 | `FEDERATION_ACTIVITY_RETENTION_DAYS` | Optional | `30` | Days to keep terminal federation bookkeeping rows: `delivered` or `failed` rows in `outbox_deliveries` and `outbound_activities`, `expanded` generic rows in `outbox_deliveries` (their per-inbox rows retry on their own), and processed `inbox_activities`. The hourly cron deletes at most 5,000 older rows per table per run, in batches of 500. Queued and `in_flight` rows are never deleted. Set `0` to keep every row. A blank or non-numeric value keeps the default. |
 
+## Authorized Fetch (Secure Mode)
+<!-- derived-from ../../wrangler.toml.example -->
+<!-- constrained-by ./model-refinement.md#catalog -->
+
+`AUTHORIZED_FETCH` turns on Mastodon's secure mode. It is off unless set to `true`, `1`, `yes`, or `on`. With it on, a GET of this server's own ActivityPub resources needs a valid HTTP signature (draft-cavage) from a remote actor on a domain that is not suspended. `cfwdon_domain::authorized_fetch_access` decides each GET, and the `authorized_fetch` Stateright model checks the decision (see [Model Refinement Mapping](./model-refinement.md#catalog)).
+
+| Path | Unsigned, or the signature does not verify | Signed by an allowed actor | Signer's key or actor on a suspended domain |
+| --- | --- | --- | --- |
+| `/users/:username`, `/@:username` (an actor) | `200` with the restricted document | `200`, the whole document | `403` |
+| `/users/:username/statuses/:id`, `/@:username/:id` (a note) | `401` | `200`, or `404` when the author blocks the signer | `403` |
+| `/users/:username/statuses/:id/quote_authorizations/:key` | `401` | `200`, or `404` when the author blocks the signer | `403` |
+| `/users/:username/outbox` | `401` | `200`; pages are empty when the owner blocks the signer | `403` |
+| `/users/:username/collections/featured`, `/collections/tags` | `401` | `200`; empty when the owner blocks the signer | `403` |
+| `/users/:username/followers`, `/following` | `401` | `200` | `403` |
+
+**Signatures.** The signature must cover `(request-target)` and `date`. A GET has no body, so no `Digest` is needed. The `Date` must be at most 12 hours old and at most 1 hour ahead of this server's clock, as for inbox deliveries. The key's actor is resolved as for an inbox delivery: from the cache, or fetched once. A key on a suspended domain is refused before anything is fetched from its server. "Blocks the signer" means the local user blocked the signer's account, or blocked its domain (or a parent domain), as Mastodon's `StatusPolicy#show?` and `for_signed_account` do.
+
+**The restricted actor document.** An unsigned GET of an actor gets only `@context`, `id`, `type`, `preferredUsername`, `inbox`, `outbox`, `publicKey`, and `endpoints` (Mastodon's `restrict_fields_to`). A remote server can still read the key it needs to verify that actor's signatures.
+
+**Always public.** The instance actor (`/actor` and `/actor/outbox`), `/.well-known/webfinger`, `/.well-known/host-meta`, `/.well-known/nodeinfo`, `/nodeinfo/2.0`, `/nodeinfo/2.1`, the inboxes (they verify their own signatures), the REST API, and the HTML pages. A request for `/@user` or a note whose `Accept` asks for `text/html` (and not ActivityPub) gets the HTML page. Remote servers in secure mode fetch `/actor` to verify the signatures this server sends, so `/actor` must answer unsigned GETs.
+
+**Signed outbound fetches.** In secure mode, this server signs every ActivityPub GET it makes as the instance actor (`/actor#main-key`), as Mastodon does. This includes the key fetches that verify inbound signatures. When a remote server refuses the signed GET (any HTTP error status, or a body that is not JSON), the Worker retries the GET unsigned once. A remote server in secure mode refuses the unsigned retry too, so the retry only reads public documents. A key fetch cannot loop: the remote server verifies this server's signature with `/actor`, which needs no signature.
+
+**Caching.** Every answer of a guarded path in secure mode carries `Cache-Control: private` and `Vary: Signature`, refusals included, so no shared cache gives one requester's answer to the next. The Worker's own Cache API entries hold the whole documents. In secure mode the Worker reads them only after the signature check allows the whole document, and it builds the restricted actor document from them. A signed outbox request skips the cache, because the owner may block that signer. Cloudflare's cache does not vary on `Signature`. Do not add a Cache Rule that caches `/users/*` or `/@*` regardless of the origin `Cache-Control` ("Cache Everything", or an Edge TTL that overrides the origin). Public answers cached before you turn secure mode on expire within their `max-age` (60 seconds).
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `AUTHORIZED_FETCH` | Optional | off | `true`, `1`, `yes`, or `on` turns on secure mode as described above. Any other value leaves it off. |
+
 ## Logging Vars
 
 | Var | Required | Default / Behavior | Notes |

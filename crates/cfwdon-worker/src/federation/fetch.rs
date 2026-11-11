@@ -5,8 +5,11 @@ use cfwdon_domain::{
     remote_actor_uri_matches_acct_domain, remote_http_authority,
     webfinger_link_is_activitypub_type,
 };
+use futures_util::future::LocalBoxFuture;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::net::IpAddr;
+use std::rc::Rc;
 use url::Url;
 use worker::{Error, Result};
 
@@ -376,7 +379,33 @@ pub(crate) async fn validate_remote_actor_profile_urls(profile: &RemoteActorProf
     Ok(())
 }
 
+/// Fetches an ActivityPub document signed as the instance actor.
+pub(crate) type SecureModeFetcher =
+    Rc<dyn Fn(String) -> LocalBoxFuture<'static, Result<serde_json::Value>>>;
+
+thread_local! {
+    static SECURE_MODE_FETCHER: RefCell<Option<SecureModeFetcher>> = const { RefCell::new(None) };
+}
+
+/// Install how this isolate signs its ActivityPub GETs in secure mode
+/// (`AUTHORIZED_FETCH`), or `None` to fetch unsigned. Signing needs the
+/// instance actor's key from D1, which this module does not read, so the
+/// entry points install it, as they install the domain suspensions.
+pub(crate) fn install_secure_mode_fetcher(fetcher: Option<SecureModeFetcher>) {
+    SECURE_MODE_FETCHER.with(|slot| *slot.borrow_mut() = fetcher);
+}
+
+/// A remote ActivityPub document: signed as the instance actor in secure
+/// mode, as Mastodon signs every fetch then, and unsigned otherwise.
 pub(crate) async fn fetch_remote_activitypub_document(url: &str) -> Result<serde_json::Value> {
+    let fetcher = SECURE_MODE_FETCHER.with(|slot| slot.borrow().clone());
+    match fetcher {
+        Some(fetcher) => fetcher(url.to_owned()).await,
+        None => fetch_unsigned_activitypub_document(url).await,
+    }
+}
+
+pub(crate) async fn fetch_unsigned_activitypub_document(url: &str) -> Result<serde_json::Value> {
     fetch_remote_http_json(
         url,
         "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",

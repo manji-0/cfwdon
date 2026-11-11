@@ -1,4 +1,5 @@
 use super::activitypub::{ACTIVITYPUB_CONTENT_TYPE, static_head_response};
+use super::authorized_fetch::{GuardedRoute, authorized_activitypub_fetch};
 use crate::meta_placeholder_routes::statuses_index_placeholder_response;
 use crate::statuses::{
     approve_quote_response, bookmark_status, create_status, delete_status, favourite_status,
@@ -66,20 +67,25 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
             translate_status_response(req, ctx).await
         })
         .get_async("/users/:username/statuses/:id", |req, ctx| async move {
-            status_object_response(req, ctx).await
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::Note, status_object_response).await
         })
         .head_async("/users/:username/statuses/:id", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
         .get_async("/@:username/:id", |req, ctx| async move {
-            status_object_response(req, ctx).await
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::Note, status_object_response).await
         })
         .head_async("/@:username/:id", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
         .get_async(
             "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
-            |_, ctx| async move { status_quote_authorization_object_response(ctx).await },
+            |req, ctx| async move {
+                authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |_, ctx, viewer| {
+                    status_quote_authorization_object_response(ctx, viewer)
+                })
+                .await
+            },
         )
         .head_async(
             "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
