@@ -6,7 +6,7 @@
 //! becomes spaces. The orientation of a HEIF image is its `irot` / `imir`
 //! properties, which stay.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::bytes::{at, end_within, fourcc, starts_with, u16be, u32be, uint_be};
 use super::edits::Edits;
@@ -185,6 +185,8 @@ fn item_extents(
     };
     pos += count_size;
     let id_size = if version < 2 { 2 } else { 4 };
+    let extent_size = index_size + offset_size + length_size;
+    let mut ids = HashSet::new();
     let mut extents = Vec::new();
     for _ in 0..count {
         let fixed = id_size + if version == 0 { 0 } else { 2 } + 2 + base_offset_size + 2;
@@ -197,6 +199,10 @@ fn item_extents(
             u32be(bytes, pos)
         };
         pos += id_size;
+        // Each item is listed once (ISO/IEC 23008-12, 9.3.2.2).
+        if !ids.insert(id) {
+            return None;
+        }
         let method = if version == 0 {
             0
         } else {
@@ -208,9 +214,14 @@ fn item_extents(
         pos += base_offset_size;
         let extent_count = u16be(bytes, pos);
         pos += 2;
+        // An extent of zero-width fields reads nothing, so only one can be
+        // meant; more would be the same bytes over and over.
+        if extent_size == 0 && extent_count > 1 {
+            return None;
+        }
         let mut ranges = Vec::new();
         for _ in 0..extent_count {
-            if pos + index_size + offset_size + length_size > iloc.end {
+            if pos + extent_size > iloc.end {
                 return None;
             }
             pos += index_size;

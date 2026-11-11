@@ -157,7 +157,7 @@ Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Eac
 
 ### Media Metadata Stripping
 
-Cameras and phones write the GPS position, device, owner, and capture time into photos and videos. Mastodon removes them by re-encoding with libvips and ffmpeg. A Worker has neither, so `cfwdon_domain::media_metadata` rewrites the container losslessly. It decodes no pixels or samples, and its time is linear in the file size.
+Cameras and phones write the GPS position, device, owner, and capture time into photos and videos. Mastodon removes them by re-encoding with libvips and ffmpeg. A Worker has neither, so `cfwdon_domain::media_metadata` rewrites the container losslessly. It decodes no pixels or samples, and its time is linear in the file size. The in-place overwrites are kept as merged byte ranges, so a file that points many metadata ranges at the same bytes writes each byte once. An `iloc` that lists an item twice, and a sample table that claims more metadata bytes than `mdat` holds, are refused as malformed.
 
 | Container | Removed | Kept |
 | --- | --- | --- |

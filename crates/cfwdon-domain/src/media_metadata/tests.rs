@@ -521,6 +521,70 @@ fn heif_refuses_boxes_that_do_not_fit() {
     );
 }
 
+/// A HEIF image whose EXIF item 1 has the `iloc` entries `entries`, each
+/// made of the item id, construction method, data reference, base offset
+/// count and extents as written, with field sizes `sizes`, ahead of `mdat`.
+fn heif_with_iloc(sizes: u16, entries: &[Vec<u8>], mdat: &[u8]) -> Vec<u8> {
+    let ftyp = mp4_box(b"ftyp", b"avif\0\0\0\0avifmif1");
+    let hdlr = full_box(b"hdlr", &[&[0; 4][..], b"pict", &[0; 13]].concat());
+    let infe = mp4_box(b"infe", b"\x02\0\0\0\0\x01\0\0Exif\0");
+    let iinf = full_box(b"iinf", &[&1u16.to_be_bytes()[..], &infe].concat());
+    let mut iloc = vec![1, 0, 0, 0];
+    iloc.extend(sizes.to_be_bytes());
+    iloc.extend((entries.len() as u16).to_be_bytes());
+    iloc.extend(entries.concat());
+    let iloc = mp4_box(b"iloc", &iloc);
+    let meta = full_box(b"meta", &[hdlr, iinf, iloc].concat());
+    [ftyp, meta, mp4_box(b"mdat", mdat)].concat()
+}
+
+#[test]
+fn heif_refuses_an_item_located_twice_or_zero_width_extents_repeated() {
+    // Version 1 entries with no field wider than zero: every extent reads no
+    // bytes and means the whole file, so 65535 of them would refill it
+    // 65535 times.
+    let repeated = heif_with_iloc(0, &[vec![0, 1, 0, 0, 0, 0, 0xff, 0xff]], b"secret-gps");
+    assert_eq!(
+        malformed_reason(&repeated),
+        Some("unreadable item locations")
+    );
+    let one = vec![0, 1, 0, 0, 0, 0, 0, 1];
+    assert_eq!(
+        malformed_reason(&heif_with_iloc(
+            0,
+            &[one.clone(), one.clone()],
+            b"secret-gps"
+        )),
+        Some("unreadable item locations")
+    );
+    // Listed once, the same extent is a whole-file item, blanked.
+    let out = stripped(&heif_with_iloc(0, &[one], b"secret-gps"));
+    assert_no_secrets(&out.bytes);
+}
+
+#[test]
+fn heif_extents_over_the_same_bytes_are_filled_once() {
+    // One item of 4000 four-byte extents, each from the start of `mdat` to
+    // the end of the file: 4000 whole-file fills before they were merged.
+    let mdat = vec![b'x'; 4096];
+    let prefix = heif_with_iloc(0x4400, &[], &[]).len();
+    let mut entry = vec![0, 1, 0, 0, 0, 0];
+    entry.extend(4000u16.to_be_bytes());
+    let entry_len = entry.len() + 4000 * 8;
+    let mdat_body = (prefix + entry_len) as u32;
+    for _ in 0..4000 {
+        entry.extend(mdat_body.to_be_bytes());
+        entry.extend(0u32.to_be_bytes());
+    }
+    let input = heif_with_iloc(0x4400, &[entry], &mdat);
+    assert_eq!(&input[mdat_body as usize..][..4], b"xxxx");
+
+    let edits = heif::strip(&input).expect("a readable HEIF");
+    assert!(edits.written_bytes() <= input.len());
+    let out = stripped(&input);
+    assert!(!contains(&out.bytes, b"xxxx"));
+}
+
 // --- MP4 / QuickTime ---------------------------------------------------------------
 
 fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -622,6 +686,103 @@ fn mp4_and_mov_from_an_encoder_lose_their_tags_and_keep_their_length() {
         assert_no_secrets(&out.bytes);
         assert_stable(&out);
     }
+}
+
+/// A timed metadata track of `sample_count` samples of `sample_size` bytes,
+/// `per_chunk` to a chunk, in chunks at `chunk_offsets`.
+fn metadata_track(
+    per_chunk: u32,
+    sample_size: u32,
+    sample_count: u32,
+    chunk_offsets: &[u32],
+) -> Vec<u8> {
+    let tkhd = full_box(
+        b"tkhd",
+        &[&[0; 8][..], &2u32.to_be_bytes(), &[0; 8]].concat(),
+    );
+    let hdlr = full_box(b"hdlr", &[&[0; 4][..], b"meta", &[0; 13]].concat());
+    let stsc = full_box(
+        b"stsc",
+        &[1u32, 1, per_chunk, 1].map(u32::to_be_bytes).concat(),
+    );
+    let stsz = full_box(
+        b"stsz",
+        &[sample_size, sample_count].map(u32::to_be_bytes).concat(),
+    );
+    let mut stco = (chunk_offsets.len() as u32).to_be_bytes().to_vec();
+    for offset in chunk_offsets {
+        stco.extend(offset.to_be_bytes());
+    }
+    let stbl = mp4_box(b"stbl", &[stsc, stsz, full_box(b"stco", &stco)].concat());
+    let mdia = mp4_box(b"mdia", &[hdlr, mp4_box(b"minf", &stbl)].concat());
+    mp4_box(b"trak", &[tkhd, mdia].concat())
+}
+
+/// `ftyp`, then `mdat` holding `samples`, then a `moov` with `track`, whose
+/// sample offsets count from where `mdat_body` says the samples are.
+fn mp4_with_track(samples: &[u8], track: impl Fn(u32) -> Vec<u8>) -> Vec<u8> {
+    let ftyp = mp4_box(b"ftyp", b"isom\0\0\0\0isom");
+    let mdat_body = (ftyp.len() + 8) as u32;
+    let mvhd = full_box(b"mvhd", &[0; 96]);
+    let moov = mp4_box(b"moov", &[mvhd, track(mdat_body)].concat());
+    [ftyp, mp4_box(b"mdat", samples), moov].concat()
+}
+
+#[test]
+fn mp4_refuses_a_metadata_track_with_more_samples_than_mdat() {
+    // 20000 chunks of 100 bytes, all at the same 100 bytes.
+    let overlapping = mp4_with_track(&[b'x'; 100], |at| {
+        metadata_track(1, 100, 20_000, &vec![at; 20_000])
+    });
+    assert_eq!(
+        malformed_reason(&overlapping),
+        Some("a metadata track has more samples than mdat holds")
+    );
+    // One chunk of four billion one-byte samples, summed one by one before.
+    let endless = mp4_with_track(&[b'x'; 64], |at| {
+        metadata_track(u32::MAX, 1, u32::MAX, &[at])
+    });
+    assert_eq!(
+        malformed_reason(&endless),
+        Some("a metadata track has more samples than mdat holds")
+    );
+    // Chunks that share bytes but stay within mdat are zeroed.
+    let shared = mp4_with_track(b"secret-gps-fix", |at| {
+        metadata_track(1, 4, 3, &[at, at + 2, at + 4])
+    });
+    assert!(!contains(&stripped(&shared).bytes, b"secret-gps"));
+}
+
+#[test]
+fn mp4_fragments_over_the_same_samples_are_filled_once() {
+    let ftyp = mp4_box(b"ftyp", b"isom\0\0\0\0isom");
+    let mvhd = full_box(b"mvhd", &[0; 96]);
+    let samples = vec![b'x'; 4096];
+    let moov_len = mp4_box(
+        b"moov",
+        &[mvhd.clone(), metadata_track(1, 1, 1, &[0])].concat(),
+    )
+    .len();
+    let mdat_body = (ftyp.len() + moov_len + 8) as u32;
+    let moov = mp4_box(
+        b"moov",
+        &[mvhd, metadata_track(1, 1, 1, &[mdat_body])].concat(),
+    );
+    // 2000 fragments of the metadata track, each one sample over all of mdat.
+    let tfhd = full_box(
+        b"tfhd",
+        &[&2u32.to_be_bytes()[..], &u64::from(mdat_body).to_be_bytes()].concat(),
+    );
+    let mut tfhd = tfhd;
+    tfhd[11] = 0x01; // base data offset
+    let mut trun = full_box(b"trun", &[1u32, 0, 4096].map(u32::to_be_bytes).concat());
+    trun[10..12].copy_from_slice(&0x0201u16.to_be_bytes()); // data offset, sample sizes
+    let moof = mp4_box(b"moof", &mp4_box(b"traf", &[tfhd, trun].concat()));
+    let input = [ftyp, moov, mp4_box(b"mdat", &samples), moof.repeat(2000)].concat();
+
+    let edits = mp4::strip(&input).expect("a readable fragmented MP4");
+    assert!(edits.written_bytes() <= input.len());
+    assert!(!contains(&stripped(&input).bytes, b"xxxx"));
 }
 
 #[test]

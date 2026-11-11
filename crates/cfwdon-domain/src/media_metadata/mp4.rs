@@ -213,6 +213,8 @@ struct Mp4Walk<'a> {
     /// lie in; each ends where its header says, which may be past the file's
     /// end.
     mdats: Vec<(u64, u64)>,
+    /// The bytes the `mdat` payloads declare, in all.
+    mdat_bytes: u64,
     /// Track ids of the timed metadata tracks taken out of `moov`.
     metadata_tracks: HashSet<u32>,
     /// `trex` default sample sizes by track id, for fragments.
@@ -316,6 +318,7 @@ impl Mp4Walk<'_> {
         let mut entry = 0;
         let mut sample = 0;
         let mut chunk = 1u32;
+        let mut zeroed = 0u64;
         while chunk <= chunk_count && sample < sample_count {
             while entry + 1 < stsc_count && u32be(bytes, entry_at(entry + 1)) <= chunk {
                 entry += 1;
@@ -326,8 +329,18 @@ impl Mp4Walk<'_> {
                 u32be(bytes, entry_at(entry) + 4) as usize
             };
             let in_chunk = per_chunk.min(sample_count - sample);
-            let length: u64 = (sample..sample + in_chunk).map(sample_size).sum();
+            let length: u64 = if constant_size != 0 {
+                in_chunk as u64 * u64::from(constant_size)
+            } else {
+                (sample..sample + in_chunk).map(sample_size).sum()
+            };
             sample += in_chunk;
+            // Samples that overlap still fill no byte twice, but a table that
+            // claims more sample bytes than the file holds is not a track.
+            zeroed = zeroed.saturating_add(length);
+            if zeroed > self.mdat_bytes {
+                return Err("a metadata track has more samples than mdat holds");
+            }
             let offset = uint_be(
                 bytes,
                 chunks.body + 8 + (chunk as usize - 1) * offset_size,
@@ -551,14 +564,18 @@ pub(super) fn strip(bytes: &[u8]) -> Walk<Edits> {
     if !top.iter().any(|child| child.kind == MOOV) {
         return Err("has no movie box");
     }
+    let mdats: Vec<(u64, u64)> = top
+        .iter()
+        .filter(|child| child.kind == MDAT)
+        .map(|mdat| (mdat.body as u64, mdat.declared_end))
+        .collect();
     let mut walk = Mp4Walk {
         bytes,
         edits: Edits::default(),
-        mdats: top
+        mdat_bytes: mdats
             .iter()
-            .filter(|child| child.kind == MDAT)
-            .map(|mdat| (mdat.body as u64, mdat.declared_end))
-            .collect(),
+            .fold(0, |sum: u64, (start, end)| sum.saturating_add(end - start)),
+        mdats,
         metadata_tracks: HashSet::new(),
         default_sample_sizes: HashMap::new(),
     };
