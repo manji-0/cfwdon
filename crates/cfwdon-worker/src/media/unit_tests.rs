@@ -1,6 +1,6 @@
 use crate::media::{
     RemoteStatusAttachmentRow, image_dimensions, media_upload_draft, multipart_file_part,
-    parse_media_focus, resolve_upload_content_type,
+    parse_media_focus, resolve_upload_content_type, served_media_headers,
 };
 use crate::statuses::build_remote_status_card_value;
 
@@ -160,11 +160,9 @@ const SCRIPTED_SVG: &[u8] =
 #[test]
 fn media_upload_refuses_svg_whatever_type_the_client_declares() {
     for declared in ["image/svg+xml", "application/octet-stream", "", "text/html"] {
-        let error = media_upload_draft(declared, SCRIPTED_SVG.to_vec(), String::new())
-            .expect_err("an SVG must not be stored");
         assert!(
-            error.starts_with("unsupported media content type"),
-            "{error}"
+            media_upload_draft(declared, SCRIPTED_SVG.to_vec(), String::new()).is_err(),
+            "an SVG declared as {declared:?} must not be stored"
         );
     }
 }
@@ -178,4 +176,56 @@ fn media_upload_refuses_jpeg_xl() {
             assert!(media_upload_draft(declared, bytes.clone(), String::new()).is_err());
         }
     }
+}
+
+fn header<'a>(headers: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|&(_, value)| value)
+}
+
+#[test]
+fn served_media_never_sniffs_and_allows_no_script() {
+    for stored in [
+        "image/png",
+        "video/mp4",
+        "audio/mpeg",
+        "image/svg+xml",
+        "text/html",
+    ] {
+        let headers = served_media_headers(stored);
+        assert_eq!(header(&headers, "X-Content-Type-Options"), Some("nosniff"));
+        assert_eq!(
+            header(&headers, "Content-Security-Policy"),
+            Some("default-src 'none'; form-action 'none'")
+        );
+    }
+}
+
+#[test]
+fn served_media_keeps_accepted_types_inline() {
+    let headers = served_media_headers("image/png");
+    assert_eq!(header(&headers, "Content-Type"), Some("image/png"));
+    assert_eq!(header(&headers, "Content-Disposition"), Some("inline"));
+}
+
+#[test]
+fn served_media_downloads_stored_svg_and_markup_as_octet_stream() {
+    for stored in ["image/svg+xml", "text/html", "application/xml", "image/jxl"] {
+        let headers = served_media_headers(stored);
+        assert_eq!(
+            header(&headers, "Content-Type"),
+            Some("application/octet-stream")
+        );
+        assert_eq!(header(&headers, "Content-Disposition"), Some("attachment"));
+    }
+}
+
+#[test]
+fn media_upload_still_accepts_sniffed_images() {
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89\0\0\0\0IEND\xaeB`\x82";
+    let draft = media_upload_draft("application/octet-stream", png.to_vec(), String::new())
+        .expect("a PNG is accepted");
+    assert_eq!(draft.content_type, "image/png");
 }

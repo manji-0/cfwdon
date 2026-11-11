@@ -3,7 +3,7 @@ use crate::custom_emojis::sanitize_emoji_shortcodes;
 use crate::request_utils::parse_optional_bool;
 use crate::runtime_config::MAX_IMAGE_UPLOAD_BYTES;
 use crate::statuses::normalize_quote_approval_policy;
-use crate::store::media::{MediaKind, classify_media_kind};
+use crate::store::media::{MediaKind, upload_media_kind};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use cfwdon_domain::strip_upload_metadata;
 use serde::Deserialize;
@@ -421,7 +421,7 @@ async fn parse_profile_media_upload(
     if content_type.is_empty() {
         return Err(format!("{object_kind} is missing a content type"));
     }
-    let kind = classify_media_kind(&content_type)
+    let kind = upload_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
     if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));
@@ -483,7 +483,7 @@ fn parse_profile_media_data_url(
     if content_type.is_empty() {
         return Err(format!("{object_kind} is missing a content type"));
     }
-    let kind = classify_media_kind(&content_type)
+    let kind = upload_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
     if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));

@@ -272,6 +272,58 @@ fn r2_object_family(object_key: &str) -> &'static str {
         "unknown"
     }
 }
+/// The types an upload may be stored as: Mastodon's `MediaAttachment`
+/// image, video, and audio types, without `video/x-ms-asf`, plus
+/// `image/jpg`, which some clients declare for JPEG. SVG, HTML, XML, and
+/// JPEG XL are absent: a browser renders the first three as documents that
+/// run script, and JPEG XL has no metadata stripper.
+const UPLOAD_MEDIA_TYPES: [(&str, MediaKind); 28] = [
+    ("image/jpeg", MediaKind::Image),
+    ("image/jpg", MediaKind::Image),
+    ("image/png", MediaKind::Image),
+    ("image/gif", MediaKind::Image),
+    ("image/heic", MediaKind::Image),
+    ("image/heif", MediaKind::Image),
+    ("image/webp", MediaKind::Image),
+    ("image/avif", MediaKind::Image),
+    ("video/webm", MediaKind::Video),
+    ("video/mp4", MediaKind::Video),
+    ("video/quicktime", MediaKind::Video),
+    ("video/ogg", MediaKind::Video),
+    ("audio/wave", MediaKind::Audio),
+    ("audio/wav", MediaKind::Audio),
+    ("audio/x-wav", MediaKind::Audio),
+    ("audio/x-pn-wave", MediaKind::Audio),
+    ("audio/vnd.wave", MediaKind::Audio),
+    ("audio/ogg", MediaKind::Audio),
+    ("audio/vorbis", MediaKind::Audio),
+    ("audio/mpeg", MediaKind::Audio),
+    ("audio/mp3", MediaKind::Audio),
+    ("audio/webm", MediaKind::Audio),
+    ("audio/flac", MediaKind::Audio),
+    ("audio/aac", MediaKind::Audio),
+    ("audio/m4a", MediaKind::Audio),
+    ("audio/x-m4a", MediaKind::Audio),
+    ("audio/mp4", MediaKind::Audio),
+    ("audio/3gpp", MediaKind::Audio),
+];
+
+/// The kind of an upload declared as `content_type`, or `None` when that type
+/// may not be stored. Parameters such as `; charset=...` are ignored.
+pub(crate) fn upload_media_kind(content_type: &str) -> Option<MediaKind> {
+    let essence = content_type.split(';').next().unwrap_or_default().trim();
+    UPLOAD_MEDIA_TYPES
+        .iter()
+        .find(|(accepted, _)| accepted.eq_ignore_ascii_case(essence))
+        .map(|&(_, kind)| kind)
+}
+
+pub(crate) fn upload_media_types() -> impl Iterator<Item = &'static str> {
+    UPLOAD_MEDIA_TYPES
+        .iter()
+        .map(|&(content_type, _)| content_type)
+}
+
 pub(crate) fn classify_media_kind(content_type: &str) -> Option<MediaKind> {
     if content_type.starts_with("image/") {
         Some(MediaKind::Image)

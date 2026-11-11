@@ -1,6 +1,6 @@
 use crate::media::UpdateMediaRequest;
 use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
-use crate::store::media::{MediaKind, MediaUploadDraft, classify_media_kind, media_kind_label};
+use crate::store::media::{MediaKind, MediaUploadDraft, media_kind_label, upload_media_kind};
 use cfwdon_domain::strip_upload_metadata;
 use worker::{FormEntry, Request};
 
@@ -65,7 +65,7 @@ pub(crate) fn media_upload_draft(
     if content_type.is_empty() {
         return Err("uploaded file is missing a content type".to_owned());
     }
-    let kind = classify_media_kind(&content_type)
+    let kind = upload_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported media content type: {content_type}"))?;
 
     let size_limit = max_upload_size(kind);
@@ -158,10 +158,11 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Mastodon trusts file contents over the multipart part's declared type, so
 /// clients that send `application/octet-stream` (or nothing) still upload.
-/// A declared media type is kept; otherwise the magic bytes decide.
+/// A declared type that may be uploaded is kept; otherwise the magic bytes
+/// decide.
 pub(crate) fn resolve_upload_content_type(declared_type: &str, bytes: &[u8]) -> String {
     let declared_type = declared_type.split(';').next().unwrap_or_default().trim();
-    if classify_media_kind(declared_type).is_some() {
+    if upload_media_kind(declared_type).is_some() {
         return declared_type.to_owned();
     }
     sniff_media_content_type(bytes).map_or_else(|| declared_type.to_owned(), str::to_owned)

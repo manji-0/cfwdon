@@ -273,21 +273,6 @@ pub(crate) fn configured_instance_languages(config: &AppConfig) -> Vec<String> {
     }
 }
 
-pub(crate) fn instance_supported_mime_types() -> Vec<&'static str> {
-    vec![
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-        "video/mp4",
-        "video/webm",
-        "audio/mpeg",
-        "audio/mp3",
-        "audio/ogg",
-        "audio/webm",
-    ]
-}
-
 pub(crate) fn public_key_id(config: &AppConfig, username: &str) -> String {
     format!("{}#main-key", actor_url(config, username))
 }

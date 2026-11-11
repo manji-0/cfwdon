@@ -179,6 +179,7 @@ When several blocks cover an address, the strictest one in force applies. The cl
 - Maintain DNS-based SSRF checks for remote resolution paths.
 - Treat private/direct status visibility as a cross-cutting data access concern.
 - Strip location and device metadata from user media before it is stored, as described in [Media Metadata Stripping](#media-metadata-stripping).
+- Accept only image, video, and audio types that cannot run script, and serve stored media so it never renders as a page, as described in [Media Content Types](#media-content-types).
 
 ### Media Metadata Stripping
 
@@ -200,6 +201,20 @@ Timed text goes even when it holds captions a person wrote. DJI drones write the
 Every path that stores user media calls `strip_upload_metadata` before the R2 put: media attachments, avatars and headers, and custom emoji. The bytes decide the container, not the declared type. The upload is refused with 422 when the file is damaged, when a declared image or video type does not match the bytes, or when the file is TIFF, which is EXIF throughout. GIF, audio, and other formats without a stripper are stored as uploaded.
 
 Objects stored before stripping existed are queued once in `media_metadata_backfill` by migration `127`. The hourly cron runs the backfill after all other hourly maintenance. Each run reads up to 200 queued objects, or 64 MiB, rewrites each with a conditional put on the object's etag, then deletes its row. An object is read and written back in chunks, so it costs at most about twice its size in memory, and every object up to the 40 MiB upload limit is stripped. A run counts an attempt before it reads an object. An object that ends the invocation sorts behind the rest, and after 3 attempts it is dequeued and logged as `abandoned`. Objects over 40 MiB, TIFF files, and files that cannot be parsed stay as they are and are logged as `media_metadata_backfill` events with the outcome `too_large`, `unstrippable`, or `unreadable`. Copies already cached by the media domain or by browsers keep their old bytes until they expire or are purged; see [Stripping Metadata From Stored Media](../operations/cloudflare-deploy.md#stripping-metadata-from-stored-media).
+
+### Media Content Types
+
+User-supplied bytes reach R2 through media attachments, avatars and headers, and custom emoji. Remote media is neither cached nor proxied: the API hands clients the remote URL.
+
+Uploads are checked against one allowlist, `UPLOAD_MEDIA_TYPES` in `store::media`. It holds Mastodon's `MediaAttachment` image, video, and audio types, without `video/x-ms-asf`, plus `image/jpg`. `GET /api/v2/instance` advertises the same list as `supported_mime_types`. For a media attachment, a declared type outside the list is replaced by the type the magic bytes show. An avatar or header keeps its declared type. When no accepted type remains, the upload is refused with 422. Custom emoji keep their narrower PNG, GIF, and WebP list.
+
+- SVG is refused. An SVG is an XML document that runs script when a browser opens it, and the Worker has no rasterizer to convert it.
+- HTML, XML, and any other markup type are refused for the same reason.
+- JPEG XL is refused. `cfwdon_domain::media_metadata` has no JPEG XL stripper, so its EXIF and XMP boxes would be stored as uploaded. Mastodon does not accept it either.
+
+The `/media/:id` route serves stored bytes with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; form-action 'none'`, as Mastodon's media domain does. An object whose stored type is on the allowlist keeps that type and `Content-Disposition: inline`. Any other stored type, such as an SVG uploaded before the allowlist existed, is served as `application/octet-stream` with `Content-Disposition: attachment`, so it downloads and never renders. Stored SVG objects are not deleted or converted. Clients show them as broken media.
+
+When `MEDIA_PUBLIC_BASE_URL` is set, `/media/:id` redirects there, and R2 serves objects with their stored metadata. The Worker cannot set headers on that domain; see [Serving Media Safely](../operations/cloudflare-deploy.md#serving-media-safely).
 
 ## Rollout History
 
