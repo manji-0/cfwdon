@@ -6,7 +6,7 @@ use crate::auth::{
 use crate::d1_metrics::reset_d1_request_metrics;
 use crate::deferred::defer;
 use crate::delivery::kick_outbox_process_queue_after_request;
-use crate::federation::install_remote_dns_cache;
+use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
     HttpRequestContext, dispatch_route, ensure_missing_content_type,
@@ -23,6 +23,7 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
+    install_domain_suspensions(&env, &config.database_binding);
 
     let request_context = HttpRequestContext::from_request(&req, &env)?;
     if request_context.is_cors_preflight() {

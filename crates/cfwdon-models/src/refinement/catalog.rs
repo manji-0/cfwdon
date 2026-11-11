@@ -139,25 +139,31 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
             "crates/cfwdon-worker/src/inbox/activity_store.rs",
             "crates/cfwdon-worker/src/inbox.rs",
         ],
-        abstraction: "InboxActivityRecordState per activity id",
+        abstraction: "InboxActivityRecordState + claim holder + applied effect + remote retry state per activity id",
         operations: &[
             OperationMapping {
-                model_action: "Receive",
-                domain_call: "inbox_activity_after_receive",
-                implementation_call: "begin_inbox_activity_processing",
-                worker_guard: "INSERT OR IGNORE returns a row",
+                model_action: "Deliver",
+                domain_call: "inbox_activity_after_receive → InboxClaim",
+                implementation_call: "begin_inbox_activity_processing → process_verified_inbox_activity",
+                worker_guard: "one batch: stale DELETE, INSERT OR IGNORE returns a row, else SELECT processed_at; InFlight answers 503 + Retry-After, AlreadyProcessed 202",
             },
             OperationMapping {
-                model_action: "CompleteSuccess",
+                model_action: "ApplySucceeds",
                 domain_call: "inbox_activity_after_success",
                 implementation_call: "mark_inbox_activity_processed",
                 worker_guard: "in-flight row only",
             },
             OperationMapping {
-                model_action: "CompleteFailure",
+                model_action: "ApplyFails",
                 domain_call: "inbox_activity_after_failure",
                 implementation_call: "release_inbox_activity_processing",
                 worker_guard: "in-flight row with processed_at IS NULL",
+            },
+            OperationMapping {
+                model_action: "CronReclaim",
+                domain_call: "inbox_activity_after_success / inbox_activity_after_failure",
+                implementation_call: "reclaim_stale_inbox_activities",
+                worker_guard: "in-flight row older than 15 minutes; marked processed when its effect is visible, else released",
             },
         ],
     },
@@ -221,7 +227,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "outbox_delivery_pool",
         domain_module: "cfwdon_domain::delivery",
         implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
-        abstraction: "eight OutboundDeliverySlot buckets by attempt_count",
+        abstraction: "eight OutboundDeliverySlot buckets by attempt_count over the last five attempts",
         operations: &[
             OperationMapping {
                 model_action: "SucceedAt",
@@ -407,8 +413,10 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         implementation_sites: &[
             "crates/cfwdon-worker/src/http/request_validation.rs",
             "crates/cfwdon-worker/src/federation/url_guard.rs",
+            "crates/cfwdon-worker/src/federation/domain_suspensions.rs",
+            "crates/cfwdon-worker/src/inbox.rs",
         ],
-        abstraction: "signed-header facts + URL host + date skew",
+        abstraction: "signed-header facts + URL host + date skew + instance domain block",
         operations: &[
             OperationMapping {
                 model_action: "CycleSignedHeaders",
@@ -435,10 +443,16 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 worker_guard: "outbound federation fetch",
             },
             OperationMapping {
-                model_action: "ToggleDateSkew",
+                model_action: "CycleDateSkew",
                 domain_call: "activitypub_date_within_skew",
                 implementation_call: "validate_request_date",
                 worker_guard: "Date header parses",
+            },
+            OperationMapping {
+                model_action: "CycleDomainBlock",
+                domain_call: "host_within_any_blocked_domain",
+                implementation_call: "host_within_blocked_domains",
+                worker_guard: "instance_domain_blocks binding installed",
             },
         ],
     },

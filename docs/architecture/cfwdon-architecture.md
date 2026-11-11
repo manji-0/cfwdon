@@ -103,6 +103,22 @@ Route-level Mastodon coverage is tracked in `docs/mastodon-api-compat/`. That in
 
 ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound rows in D1. A Cloudflare Queue (`OUTBOX_PROCESS_QUEUE`) is kicked after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending; the queue consumer then fans out and delivers. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
 
+Failed deliveries follow Mastodon's retry policy (`cfwdon_domain::delivery`). A 2xx is delivered. A 4xx other than 401, 408 and 429, or a 501, fails the row at once. Anything else is retried with Sidekiq's backoff (`count^4 + 15` seconds plus jitter) for up to 17 attempts, about two days. On a 429 or 503 the remote's `Retry-After` (delta-seconds or HTTP-date) replaces the backoff when it is longer, capped at 12 hours.
+
+### Inbox Claims
+
+Personal and shared inbox deliveries claim the activity id in `inbox_activities` before they apply it. The claim is one D1 batch, so one transaction: it drops a claim older than 15 minutes, inserts a fresh claim if none is held, and reads the row it collided with. The claim has three outcomes (`cfwdon_domain::InboxClaim`):
+
+- `Acquired`: this delivery applies the activity. Success marks the row processed. A failure releases the row and answers an error, so the sender retries.
+- `AlreadyProcessed`: the activity was applied before. The Worker answers `202` and logs `inbox_replay_skipped`.
+- `InFlight`: another delivery holds the claim and has not finished. The Worker answers `503` with `Retry-After: 60` and logs `inbox_activity_in_flight`. A `2xx` here would make the sender stop. If the first apply was cut off (Worker timeout or eviction), nobody would then deliver the activity again, and the activity would be lost.
+
+A claim left by an apply that was cut off goes stale after 15 minutes. The next retry takes the claim over and applies the activity. The hourly cron also reconciles stale claims: it marks a claim processed when the activity's effect is visible and releases a `Create` claim when it is not. Relay deliveries do not claim.
+
+### Instance Domain Blocks
+
+Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Each block acts as a Mastodon `suspend` block on the domain and every subdomain: a block on `example.com` also covers `a.example.com`. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. `GET /api/v1/instance/domain_blocks` lists the blocks publicly, with each domain's SHA-256 digest and `severity: "suspend"`. Each isolate caches the blocked set for 60 seconds, so another isolate applies an admin edit within that time.
+
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 <!-- constrained-by ./web-ui-foreground-resume.md -->
@@ -114,18 +130,18 @@ ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, 
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.
 - Protect user and internal routes with Auth0 settings where required.
-- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
+- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, federation activity retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
 
 ## Observability
 
-`[observability]` logs and traces are enabled in `wrangler.toml.example`. The project prefers structured JSON logs with request IDs, actor IDs, delivery targets, retry counts, and route context. Important event classes include D1 failures, R2 failures, remote fetch failures, signature verification failures, delivery retries, terminal delivery failures, and inbox replay decisions.
+`[observability]` logs and traces are enabled in `wrangler.toml.example`. The project prefers structured JSON logs with request IDs, actor IDs, delivery targets, retry counts, and route context. Important event classes include D1 failures, R2 failures, remote fetch failures, signature verification failures, delivery retries, terminal delivery failures, and inbox replay decisions (`inbox_replay_skipped`, `inbox_activity_in_flight`).
 
 ## Reliability And Failure Modes
 
 - Missing D1/R2 bindings should fail with clear configuration errors.
 - Media writes need recovery paths for partial R2/D1 success.
 - Outbound delivery must remain idempotent across retries.
-- Shared inbox processing must dedupe replayed activity IDs.
+- Inbox processing must dedupe replayed activity IDs, and must not answer `2xx` to a duplicate whose first apply has not finished (see [Inbox Claims](#inbox-claims)).
 - Remote fetches must keep SSRF defenses active for actor, inbox, public key, and status URLs.
 - Private visibility checks must stay centralized enough that API and ActivityPub reads agree.
 

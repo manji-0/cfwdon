@@ -39,7 +39,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `status_draft_publish` | `status::draft` | `request_parsing`, `statuses/status_insert.rs` | yes |
 | `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | yes |
 | `access_provision` | `account::registration` | `auth/account_store` | yes |
-| `federation_request_policy` | `federation` | `http/request_validation.rs`, `federation/url_guard.rs` | yes |
+| `federation_request_policy` | `federation` | `http/request_validation.rs`, `federation/url_guard.rs`, `federation/domain_suspensions.rs`, `inbox.rs` | yes |
 | `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |
 
 ## Worked example: quote approval
@@ -59,6 +59,24 @@ Abstract state tracks `quote_state`, quote-target facts, and policy inputs — t
 
 - Model `next_state` matches domain helpers for every reachable abstract state.
 - Worker guards are subsets of model actions; allowed steps match domain effects.
+
+## Worked example: inbox replay
+
+<!-- derived-from #refinement-relation -->
+<!-- constrained-by ../architecture/cfwdon-architecture.md#inbox-claims -->
+
+The model state per activity id is the `inbox_activities` row state, the holder of the claim (`Nobody`, `Applying`, `CutOff`, `Stale`), whether the effect is applied, and whether the remote still retries. The remote's reaction to each `InboxClaim` mirrors `process_verified_inbox_activity`.
+
+| Model action | Domain call | Worker call | Worker guard |
+| --- | --- | --- | --- |
+| `Deliver` | `inbox_activity_after_receive` → `InboxClaim` | `begin_inbox_activity_processing` | one batch: stale `DELETE`, `INSERT OR IGNORE` returns a row, else `SELECT processed_at` |
+| `ApplySucceeds` | `inbox_activity_after_success` | `mark_inbox_activity_processed` | in-flight row |
+| `ApplyFails` | `inbox_activity_after_failure` | `release_inbox_activity_processing` | in-flight row with `processed_at IS NULL` |
+| `CronReclaim` | `inbox_activity_after_success` or `inbox_activity_after_failure` | `reclaim_stale_inbox_activities` | in-flight row older than 15 minutes |
+
+`CutOffBeforeEffect`, `CutOffAfterEffect`, and `ClaimGoesStale` change no row. They model a Worker that dies mid-apply and the 15-minute stale window.
+
+Stateright's `eventually` only inspects terminal paths, and the retry loops have none. The liveness check (`unrecoverable_states`) walks the state graph instead: from every reachable state, some path must lead to the effect applied and the remote accepted. The model assumes a live apply finishes inside the stale window.
 
 ## Verification
 

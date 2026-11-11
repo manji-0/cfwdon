@@ -1,16 +1,18 @@
 use crate::activitypub::activitypub_primary_type;
 use crate::collections_alpha::{handle_inbox_collection_add, handle_inbox_collection_remove};
 use crate::db_session::bind_request_d1;
-use crate::federation::RemoteActorProfile;
+use crate::federation::{
+    RemoteActorProfile, suspended_instance_domains, url_host_within_blocked_domains,
+};
 use crate::http::{
-    extract_activity_actor_uri, inbox_activity_dedupe_id, verify_incoming_activitypub_delivery,
-    verify_incoming_activitypub_request,
+    extract_activity_actor_uri, inbox_activity_dedupe_id, parse_signature_header,
+    verify_incoming_activitypub_delivery, verify_incoming_activitypub_request,
 };
 use crate::observability::log_federation_event;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::LocalAccount;
+use cfwdon_domain::{InboxClaim, LocalAccount};
 use worker::{Request, Response, Result, RouteContext};
 
 mod activity_store;
@@ -100,15 +102,6 @@ pub(crate) fn shared_inbox_preprocess_outcome(
     } else {
         SharedInboxPreprocessOutcome::Process
     }
-}
-
-async fn begin_inbox_activity_if_needed(
-    db: &D1Database,
-    remote_actor: &RemoteActorProfile,
-    activity_id: &str,
-    activity_type: &str,
-) -> Result<bool> {
-    begin_inbox_activity_processing(db, &remote_actor.actor_uri, activity_id, activity_type).await
 }
 
 async fn finish_inbox_activity_if_needed(
@@ -208,6 +201,95 @@ fn inbox_result_response(result: Result<()>) -> Result<Response> {
     }
 }
 
+/// Seconds a sender should wait before retrying a delivery whose activity
+/// another delivery is still applying.
+const INBOX_IN_FLIGHT_RETRY_AFTER_SECS: u32 = 60;
+
+/// A duplicate whose first delivery has not finished must not get a 2xx: if
+/// that apply was cut off, the sender's retry is what applies the activity
+/// once the claim goes stale.
+fn inbox_in_flight_response() -> Result<Response> {
+    let mut response = Response::error("inbox activity is being processed", 503)?;
+    response
+        .headers_mut()
+        .set("Retry-After", &INBOX_IN_FLIGHT_RETRY_AFTER_SECS.to_string())?;
+    Ok(response)
+}
+
+fn log_inbox_duplicate(
+    event: &str,
+    outcome: &str,
+    activity_type: &str,
+    activity_id: &str,
+    remote_actor: &RemoteActorProfile,
+    target_count: usize,
+) {
+    log_federation_event(
+        event,
+        outcome,
+        format!(
+            "{event}: activity_type={activity_type} actor={} activity_id={activity_id}",
+            remote_actor.actor_uri
+        ),
+        serde_json::json!({
+            "activity_type": activity_type,
+            "activity_id": activity_id,
+            "actor_uri": remote_actor.actor_uri,
+            "target_count": target_count,
+        }),
+    );
+}
+
+/// Whether the signing key or the attributed actor lives on a suspended
+/// domain. Checked before signature verification so no key is fetched from it.
+fn inbox_sender_suspended(
+    key_id: Option<&str>,
+    actor_uri: Option<&str>,
+    suspended_domains: &[String],
+) -> bool {
+    [key_id, actor_uri]
+        .into_iter()
+        .flatten()
+        .any(|url| url_host_within_blocked_domains(url, suspended_domains))
+}
+
+/// Mastodon answers 403 to deliveries from a suspended domain.
+async fn suspended_sender_response(
+    req: &Request,
+    inbox: &str,
+    activity: &serde_json::Value,
+) -> Result<Option<Response>> {
+    let suspended_domains = suspended_instance_domains().await?;
+    if suspended_domains.is_empty() {
+        return Ok(None);
+    }
+    let key_id = req
+        .headers()
+        .get("Signature")?
+        .and_then(|header| parse_signature_header(&header).ok())
+        .map(|parsed| parsed.key_id);
+    let actor_uri = extract_activity_actor_uri(activity).ok();
+    if !inbox_sender_suspended(key_id.as_deref(), actor_uri.as_deref(), &suspended_domains) {
+        return Ok(None);
+    }
+    log_federation_event(
+        "inbox_domain_suspended",
+        "skipped",
+        format!(
+            "{inbox} inbox refused delivery from a suspended domain: activity_type={} actor={}",
+            inbox_activity_type(activity),
+            actor_uri.as_deref().unwrap_or_default()
+        ),
+        serde_json::json!({
+            "inbox": inbox,
+            "activity_type": inbox_activity_type(activity),
+            "actor_uri": actor_uri,
+            "key_id": key_id,
+        }),
+    );
+    Response::error("forbidden domain", 403).map(Some)
+}
+
 fn parse_activitypub_payload(body: &[u8]) -> Result<serde_json::Value, &'static str> {
     if body.is_empty() {
         return Err("invalid activitypub payload");
@@ -226,6 +308,9 @@ pub(crate) async fn shared_inbox_response(
         Ok(activity) => activity,
         Err(message) => return Response::error(message, 400),
     };
+    if let Some(response) = suspended_sender_response(&req, "shared", &activity).await? {
+        return Ok(response);
+    }
 
     let delivery = match verify_incoming_activitypub_delivery(&req, &db, &body, &activity).await {
         Ok(delivery) => delivery,
@@ -343,6 +428,9 @@ pub(crate) async fn handle_inbox_request_for_accounts(
     activity: &serde_json::Value,
     env: Option<&Env>,
 ) -> Result<Response> {
+    if let Some(response) = suspended_sender_response(req, "personal", activity).await? {
+        return Ok(response);
+    }
     let remote_actor = match verify_incoming_activitypub_request(req, db, body, activity).await {
         Ok(remote_actor) => remote_actor,
         Err(error) => {
@@ -376,22 +464,33 @@ async fn process_verified_inbox_activity(
     let remote_actor = &remote_actor;
     let activity_id = activity_id.as_str();
     let activity_type = activity_type.as_str();
-    if !begin_inbox_activity_if_needed(db, remote_actor, activity_id, activity_type).await? {
-        log_federation_event(
-            "inbox_replay_skipped",
-            "replay",
-            format!(
-                "inbox replay skipped: activity_type={activity_type} actor={} activity_id={activity_id}",
-                remote_actor.actor_uri
-            ),
-            serde_json::json!({
-                "activity_type": activity_type,
-                "activity_id": activity_id,
-                "actor_uri": remote_actor.actor_uri,
-                "target_count": accounts.len(),
-            }),
-        );
-        return Ok(Response::empty()?.with_status(202));
+    let claim =
+        begin_inbox_activity_processing(db, &remote_actor.actor_uri, activity_id, activity_type)
+            .await?;
+    match claim {
+        InboxClaim::Acquired => {}
+        InboxClaim::InFlight => {
+            log_inbox_duplicate(
+                "inbox_activity_in_flight",
+                "retry_later",
+                activity_type,
+                activity_id,
+                remote_actor,
+                accounts.len(),
+            );
+            return inbox_in_flight_response();
+        }
+        InboxClaim::AlreadyProcessed => {
+            log_inbox_duplicate(
+                "inbox_replay_skipped",
+                "replay",
+                activity_type,
+                activity_id,
+                remote_actor,
+                accounts.len(),
+            );
+            return Ok(Response::empty()?.with_status(202));
+        }
     }
 
     let result = if accounts.is_empty() {
@@ -457,6 +556,27 @@ async fn process_verified_inbox_activity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inbox_sender_suspended_checks_key_and_actor_hosts() {
+        let suspended = ["blocked.example".to_owned()];
+        assert!(inbox_sender_suspended(
+            Some("https://a.blocked.example/users/bob#main-key"),
+            Some("https://safe.example/users/bob"),
+            &suspended,
+        ));
+        assert!(inbox_sender_suspended(
+            Some("https://relay.example/actor#main-key"),
+            Some("https://blocked.example/users/bob"),
+            &suspended,
+        ));
+        assert!(!inbox_sender_suspended(
+            Some("https://safe.example/users/bob#main-key"),
+            Some("https://safe.example/users/bob"),
+            &suspended,
+        ));
+        assert!(!inbox_sender_suspended(None, None, &suspended));
+    }
 
     #[test]
     fn parse_activitypub_payload_accepts_valid_json() {

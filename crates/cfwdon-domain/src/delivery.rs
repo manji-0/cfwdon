@@ -1,11 +1,17 @@
 //! Pure delivery retry and remote-follow reconciliation rules.
 
-pub const DELIVERY_MAX_ATTEMPTS: u32 = 5;
+/// One attempt and Mastodon's 16 retries (`ActivityPub::DeliveryWorker`, `retry: 16`).
+/// With [`delivery_backoff_seconds`] the retries span about two days.
+pub const DELIVERY_MAX_ATTEMPTS: u32 = 17;
+/// A remote `Retry-After` longer than this (12 hours) is shortened to it.
+pub const RETRY_AFTER_CAP_SECONDS: u64 = 12 * 60 * 60;
 pub const OUTBOX_DELIVERY_CONCURRENCY: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OutboxDeliveryRecordState {
     Queued,
+    /// Terminal for a generic row: its per-inbox rows were created and each
+    /// one carries the payload and its own retry state from here on.
     Expanded,
     Delivered,
     Failed,
@@ -74,19 +80,21 @@ pub enum DeliveryAttemptOutcome {
     Success,
     /// Transient failure — retry with backoff until [`DELIVERY_MAX_ATTEMPTS`].
     Failure,
-    /// Non-retryable remote rejection (typical 4xx except 408/429).
+    /// Non-retryable remote rejection: a 4xx other than 401, 408 and 429, or a 501.
     PermanentFailure,
 }
 
 /// Classifies an HTTP status from a signed ActivityPub inbox POST.
 ///
-/// Aligns with common Mastodon / ActivityPub delivery practice: treat most 4xx as
-/// permanent, keep 408/429 and 5xx retryable, and accept any 2xx as success.
+/// Follows Mastodon's `response_error_unsalvageable?` (`JsonLdHelper`): a 4xx
+/// other than 401, 408 and 429, or a 501, will not change by asking again.
+/// A 401 stays retryable because the remote may not have fetched our key yet.
+/// Any 2xx is success; everything else is retried.
 pub fn delivery_disposition_for_http_status(status: u16) -> DeliveryAttemptOutcome {
     match status {
         200..=299 => DeliveryAttemptOutcome::Success,
-        408 | 429 => DeliveryAttemptOutcome::Failure,
-        400..=499 => DeliveryAttemptOutcome::PermanentFailure,
+        401 | 408 | 429 => DeliveryAttemptOutcome::Failure,
+        400..=499 | 501 => DeliveryAttemptOutcome::PermanentFailure,
         _ => DeliveryAttemptOutcome::Failure,
     }
 }
@@ -98,13 +106,57 @@ pub fn is_delivery_http_status_permanent(status: u16) -> bool {
     )
 }
 
-pub fn delivery_retry_delay_modifier(attempt: u32) -> &'static str {
-    match attempt {
-        1 => "+1 minute",
-        2 => "+5 minutes",
-        3 => "+15 minutes",
-        _ => "+60 minutes",
+/// Whether a retryable inbox answer's `Retry-After` header counts (429 or 503).
+pub fn delivery_status_honors_retry_after(status: u16) -> bool {
+    matches!(status, 429 | 503)
+}
+
+/// Reads a `Retry-After` value as seconds from `now_ms`: delta-seconds, or an
+/// HTTP-date read by `parse_http_date_ms` (a past date is 0). `None` when the
+/// value is neither.
+pub fn retry_after_seconds(
+    value: &str,
+    now_ms: f64,
+    parse_http_date_ms: impl FnOnce(&str) -> Option<f64>,
+) -> Option<u64> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Some(value.parse().unwrap_or(u64::MAX));
     }
+    // An HTTP-date names its day and month; a bare number a lenient date
+    // parser would read as a year is not one.
+    if !value.bytes().any(|byte| byte.is_ascii_alphabetic()) {
+        return None;
+    }
+    let at_ms = parse_http_date_ms(value)?;
+    Some(((at_ms - now_ms) / 1000.0).ceil().max(0.0) as u64)
+}
+
+/// Sidekiq's default retry delay, which Mastodon's `ActivityPub::DeliveryWorker`
+/// uses: `count^4 + 15 + rand(10) * (count + 1)` seconds before retry `count`
+/// (0 for the first). `random` is in [0, 1).
+pub fn delivery_backoff_seconds(retry_count: u32, random: f64) -> u64 {
+    let jitter = ((random * 10.0).floor() as u64).min(9);
+    let count = u64::from(retry_count);
+    count.pow(4) + 15 + jitter * (count + 1)
+}
+
+/// How long to wait after the failed attempt numbered `next_attempt` (1 for the
+/// first attempt): the backoff for its retry, or the remote's `Retry-After`
+/// when that is longer, capped at [`RETRY_AFTER_CAP_SECONDS`].
+pub fn delivery_retry_delay_seconds(
+    next_attempt: u32,
+    random: f64,
+    retry_after_seconds: Option<u64>,
+) -> u64 {
+    let backoff = delivery_backoff_seconds(next_attempt.saturating_sub(1), random);
+    let asked = retry_after_seconds.map_or(0, |seconds| seconds.min(RETRY_AFTER_CAP_SECONDS));
+    backoff.max(asked)
+}
+
+/// SQLite `datetime` modifier that moves a timestamp `delay_seconds` ahead.
+pub fn delivery_retry_delay_modifier(delay_seconds: u64) -> String {
+    format!("+{delay_seconds} seconds")
 }
 
 pub fn next_delivery_attempt_count(attempt_count: i32) -> u32 {
@@ -260,12 +312,61 @@ mod tests {
     }
 
     #[test]
-    fn delivery_retry_delay_modifier_steps_match_worker_schedule() {
-        assert_eq!(delivery_retry_delay_modifier(1), "+1 minute");
-        assert_eq!(delivery_retry_delay_modifier(2), "+5 minutes");
-        assert_eq!(delivery_retry_delay_modifier(3), "+15 minutes");
-        assert_eq!(delivery_retry_delay_modifier(4), "+60 minutes");
-        assert_eq!(delivery_retry_delay_modifier(8), "+60 minutes");
+    fn retry_backoff_follows_sidekiq_schedule() {
+        assert_eq!(delivery_retry_delay_seconds(1, 0.0, None), 15);
+        assert_eq!(delivery_retry_delay_seconds(1, 0.999, None), 15 + 9);
+        assert_eq!(delivery_retry_delay_seconds(2, 0.0, None), 16);
+        assert_eq!(delivery_retry_delay_seconds(3, 0.55, None), 16 + 15 + 5 * 3);
+        assert_eq!(
+            delivery_retry_delay_seconds(DELIVERY_MAX_ATTEMPTS - 1, 0.0, None),
+            15_u64.pow(4) + 15
+        );
+        assert_eq!(delivery_retry_delay_modifier(15), "+15 seconds");
+    }
+
+    #[test]
+    fn retry_schedule_spans_about_two_days() {
+        let fastest: u64 = (1..DELIVERY_MAX_ATTEMPTS)
+            .map(|attempt| delivery_retry_delay_seconds(attempt, 0.0, None))
+            .sum();
+        let slowest: u64 = (1..DELIVERY_MAX_ATTEMPTS)
+            .map(|attempt| delivery_retry_delay_seconds(attempt, 0.999, None))
+            .sum();
+        let day = 24 * 60 * 60;
+        assert!((2 * day..3 * day).contains(&fastest), "{fastest}");
+        assert!((2 * day..3 * day).contains(&slowest), "{slowest}");
+    }
+
+    #[test]
+    fn retry_after_extends_backoff_up_to_cap() {
+        assert_eq!(delivery_retry_delay_seconds(1, 0.0, Some(120)), 120);
+        assert_eq!(delivery_retry_delay_seconds(1, 0.0, Some(3)), 15);
+        assert_eq!(
+            delivery_retry_delay_seconds(1, 0.0, Some(7 * 24 * 60 * 60)),
+            RETRY_AFTER_CAP_SECONDS
+        );
+        assert!(delivery_status_honors_retry_after(429));
+        assert!(delivery_status_honors_retry_after(503));
+        assert!(!delivery_status_honors_retry_after(500));
+    }
+
+    #[test]
+    fn retry_after_reads_delta_seconds_and_http_dates() {
+        let now_ms = 1_000_000.0;
+        let no_date = |_: &str| None;
+        assert_eq!(retry_after_seconds(" 120 ", now_ms, no_date), Some(120));
+        assert_eq!(retry_after_seconds("0", now_ms, no_date), Some(0));
+        assert_eq!(retry_after_seconds("", now_ms, no_date), None);
+        assert_eq!(retry_after_seconds("-5", now_ms, no_date), None);
+        assert_eq!(retry_after_seconds("soon", now_ms, no_date), None);
+
+        let date = "Wed, 21 Oct 2015 07:28:00 GMT";
+        let in_90s = |value: &str| (value == date).then_some(now_ms + 89_500.0);
+        assert_eq!(retry_after_seconds(date, now_ms, in_90s), Some(90));
+        let past = |_: &str| Some(now_ms - 5_000.0);
+        assert_eq!(retry_after_seconds(date, now_ms, past), Some(0));
+        let reads_years = |_: &str| Some(now_ms + 1_000.0);
+        assert_eq!(retry_after_seconds("1.5", now_ms, reads_years), None);
     }
 
     #[test]
@@ -362,18 +463,20 @@ mod tests {
             delivery_disposition_for_http_status(410),
             DeliveryAttemptOutcome::PermanentFailure
         );
-        assert_eq!(
-            delivery_disposition_for_http_status(408),
-            DeliveryAttemptOutcome::Failure
-        );
-        assert_eq!(
-            delivery_disposition_for_http_status(429),
-            DeliveryAttemptOutcome::Failure
-        );
-        assert_eq!(
-            delivery_disposition_for_http_status(503),
-            DeliveryAttemptOutcome::Failure
-        );
+        for status in [400, 403, 404, 410, 422, 501] {
+            assert_eq!(
+                delivery_disposition_for_http_status(status),
+                DeliveryAttemptOutcome::PermanentFailure,
+                "HTTP {status}"
+            );
+        }
+        for status in [401, 408, 429, 500, 502, 503, 504, 302] {
+            assert_eq!(
+                delivery_disposition_for_http_status(status),
+                DeliveryAttemptOutcome::Failure,
+                "HTTP {status}"
+            );
+        }
         assert_eq!(
             delivery_disposition_for_http_status(202),
             DeliveryAttemptOutcome::Success

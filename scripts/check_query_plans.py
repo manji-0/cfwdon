@@ -95,6 +95,25 @@ def assert_remote_home_actor_slices(conn: sqlite3.Connection) -> None:
         raise RuntimeError(f"{label}: cursor bound was not an index range:\n{plan}")
 
 
+def assert_retention_prunes_seek_age(conn: sqlite3.Connection) -> None:
+    """The hourly retention prune (`federation_retention.rs`) must seek old
+    terminal rows by age; a walk of every delivered row costs D1 reads on
+    each cron tick."""
+    for table, age_column, where in [
+        ("outbox_deliveries", "updated_at", "state IN ('delivered', 'failed', 'expanded') AND updated_at"),
+        ("outbound_activities", "updated_at", "state IN ('delivered', 'failed') AND updated_at"),
+        ("inbox_activities", "processed_at", "processed_at"),
+    ]:
+        label = f"{table} retention prune"
+        plan = plan_text(
+            conn,
+            f"SELECT rowid FROM {table} WHERE {where} < datetime(CURRENT_TIMESTAMP, ?) LIMIT ?",
+            ("-30 days", 500),
+        )
+        if f"{age_column}<?" not in plan:
+            raise RuntimeError(f"{label}: expected a seek on {age_column}, got:\n{plan}")
+
+
 def assert_no_null_cursor_disjunction(_plan: str, sql: str, label: str) -> None:
     import re
 
@@ -446,6 +465,7 @@ def main() -> int:
                         assert_seeks_alias(plan, label, alias)
                 assert_no_null_cursor_disjunction(plan, sql, label)
             assert_remote_home_actor_slices(conn)
+            assert_retention_prunes_seek_age(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1

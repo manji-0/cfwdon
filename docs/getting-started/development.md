@@ -154,13 +154,13 @@ A ninth model covers account registration in [`crates/cfwdon-domain/src/account/
 
 A tenth model covers OAuth-style access provisioning in the same module: email resolution, username derivation with collision suffixing, and provisioning defaults for first-time authenticated users.
 
-An eleventh model covers shared inbox replay dedupe in [`crates/cfwdon-domain/src/federation/inbox.rs`](../../crates/cfwdon-domain/src/federation/inbox.rs): first delivery is accepted, in-flight and processed replays are rejected, and failed processing releases the slot.
+An eleventh model covers inbox replay dedupe in [`crates/cfwdon-domain/src/federation/inbox.rs`](../../crates/cfwdon-domain/src/federation/inbox.rs): one activity id, a remote that retries until it gets a `2xx`, a Worker that can be cut off before or after the effect lands, and the 15-minute stale-claim reclaim. It checks that a `2xx` is only answered once the effect is applied, that an in-flight duplicate is never accepted, and that from every reachable state the activity can still be applied. A test runs the pre-fix answer (`202` for an in-flight duplicate) and expects all three checks to fail.
 
 A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/federation/`](../../crates/cfwdon-domain/src/federation/): ActivityPub signed-header requirements, actor keyId matching, static remote URL host policy, and request date skew bounds.
 
 A sixteenth model covers DNS rebinding SSRF defense in [`crates/cfwdon-domain/src/federation/dns.rs`](../../crates/cfwdon-domain/src/federation/dns.rs): hostname resolution must return only public A/AAAA addresses after static host policy passes, matching the async DNS guard in the worker.
 
-A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently.
+A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently. The pool starts at the fifth-to-last attempt so the checker stays small; the refinement check covers the earlier, identical retry steps.
 
 Quote owner approve, reject, and revoke API handlers in the worker now delegate quote-state transitions to [`OwnerQuoteAction`](../../crates/cfwdon-domain/src/quote.rs) and remote status upserts merge quote state through `merged_quote_state_for_remote_upsert`. Approve and reject also emit FEP-044f `Accept`/`Reject` QuoteRequest activities to remote quote authors, fan out `Create QuoteAuthorization` to followers, and serve dereferenceable authorization stamps under `/users/:username/statuses/:id/quote_authorizations/:key`.
 

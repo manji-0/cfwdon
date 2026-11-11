@@ -5,9 +5,9 @@ use crate::activitypub::{
     build_update_person_activity, is_public_activitypub_visibility, local_username_from_actor_uri,
 };
 use crate::domain_blocks::{
-    delivery_inbox_blocked_by_domains, filter_delivery_inboxes_for_domain_blocks,
-    list_all_account_domain_blocks,
+    filter_delivery_inboxes_for_domain_blocks, list_delivery_blocked_domains,
 };
+use crate::federation::url_host_within_blocked_domains;
 use crate::relationship::load_remote_actor_delivery_inbox;
 use crate::statuses::local_status_target_uri;
 use crate::tracked_d1::D1Database;
@@ -120,11 +120,11 @@ pub(crate) async fn queue_remote_actor_activity(
     target_actor_uri: &str,
     payload_json: &str,
 ) -> Result<Option<String>> {
-    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    let blocked_domains = list_delivery_blocked_domains(db, account_id).await?;
     let Some(target_inbox) = load_remote_actor_delivery_inbox(db, target_actor_uri).await? else {
         return Ok(None);
     };
-    if delivery_inbox_blocked(&target_inbox, &blocked_domains) {
+    if url_host_within_blocked_domains(&target_inbox, &blocked_domains) {
         return Ok(None);
     }
     let descriptor = describe_outbound_activity(payload_json)?;
@@ -154,15 +154,11 @@ pub(crate) async fn queue_remote_actor_activity_required(
 
 async fn follower_delivery_inboxes(db: &D1Database, account_id: &str) -> Result<Vec<String>> {
     let inboxes = list_follower_delivery_targets(db, account_id).await?;
-    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    let blocked_domains = list_delivery_blocked_domains(db, account_id).await?;
     Ok(filter_delivery_inboxes_for_domain_blocks(
         inboxes,
         &blocked_domains,
     ))
-}
-
-fn delivery_inbox_blocked(inbox: &str, blocked_domains: &[String]) -> bool {
-    delivery_inbox_blocked_by_domains(inbox, blocked_domains)
 }
 
 async fn merge_author_inbox(
@@ -174,11 +170,11 @@ async fn merge_author_inbox(
     let Some(author_actor_uri) = author_actor_uri else {
         return Ok(inboxes);
     };
-    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    let blocked_domains = list_delivery_blocked_domains(db, account_id).await?;
     let Some(author_inbox) = load_remote_actor_delivery_inbox(db, author_actor_uri).await? else {
         return Ok(inboxes);
     };
-    if delivery_inbox_blocked(&author_inbox, &blocked_domains) {
+    if url_host_within_blocked_domains(&author_inbox, &blocked_domains) {
         return Ok(inboxes);
     }
     if !inboxes.iter().any(|inbox| inbox == &author_inbox) {
@@ -265,7 +261,7 @@ pub(crate) async fn enqueue_status_update_activity(
     status: &LocalStatus,
 ) -> Result<()> {
     let payload_json = build_status_update_activity(db, config, account, status).await?;
-    let blocked_domains = list_all_account_domain_blocks(db, account.id()).await?;
+    let blocked_domains = list_delivery_blocked_domains(db, account.id()).await?;
     let inboxes = match status.visibility {
         Visibility::Public | Visibility::Unlisted | Visibility::FollowersOnly => {
             let mut inboxes = follower_delivery_inboxes(db, account.id()).await?;
@@ -289,7 +285,7 @@ pub(crate) async fn enqueue_status_update_activity(
                         continue;
                     }
                     if let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await?
-                        && !delivery_inbox_blocked(&inbox, &blocked_domains)
+                        && !url_host_within_blocked_domains(&inbox, &blocked_domains)
                         && seen.insert(inbox.clone())
                     {
                         inboxes.push(inbox);
@@ -316,7 +312,7 @@ pub(crate) async fn enqueue_status_update_activity(
                     continue;
                 }
                 if let Some(inbox) = load_remote_actor_delivery_inbox(db, &actor_uri).await?
-                    && !delivery_inbox_blocked(&inbox, &blocked_domains)
+                    && !url_host_within_blocked_domains(&inbox, &blocked_domains)
                     && seen.insert(inbox.clone())
                 {
                     inboxes.push(inbox);

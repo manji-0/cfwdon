@@ -1,7 +1,7 @@
 use cfwdon_domain::{
     ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, activitypub_date_within_skew,
     activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
-    cached_remote_actor_key_matches, remote_url_policy_from_parts,
+    cached_remote_actor_key_matches, host_within_any_blocked_domain, remote_url_policy_from_parts,
 };
 use stateright::Model;
 
@@ -42,6 +42,12 @@ fn worker_cached_key_matches(
 /// Mirrors scheme/host checks applied before `remote_url_policy_from_parts` in `url_guard`.
 fn worker_remote_url_allowed(scheme: &str, host: &str, has_userinfo: bool) -> bool {
     remote_url_policy_from_parts(scheme, host, has_userinfo).is_ok()
+}
+
+/// Mirrors `host_within_blocked_domains` in the worker's `federation::domain_suspensions`,
+/// which the inbox, delivery, and `url_guard` paths share.
+fn worker_host_suspended(host: &str, suspended_domains: &[String]) -> bool {
+    host_within_any_blocked_domain(host, suspended_domains.iter().map(String::as_str))
 }
 
 /// Mirrors `validate_request_date` skew gate (ignoring parse failures).
@@ -126,12 +132,30 @@ pub(crate) fn check_federation_request_policy_refinement() {
         );
     }
 
+    let suspended_domains = ["blocked.example".to_owned()];
+    let domain_block_cases = [
+        ("remote.example", false),
+        ("blocked.example", true),
+        ("a.blocked.example", true),
+        ("BLOCKED.example.", true),
+        ("notblocked.example", false),
+    ];
+    for (host, expected) in domain_block_cases {
+        assert_eq!(
+            worker_host_suspended(host, &suspended_domains),
+            expected,
+            "instance domain block for {host}"
+        );
+    }
+
     let now_ms = 1_000_000.0;
+    let max_age = cfwdon_domain::ACTIVITYPUB_MAX_DATE_AGE_MS;
+    let max_ahead = cfwdon_domain::ACTIVITYPUB_MAX_DATE_AHEAD_MS;
     assert!(worker_date_within_skew(now_ms, now_ms));
-    assert!(!worker_date_within_skew(
-        now_ms + cfwdon_domain::ACTIVITYPUB_MAX_DATE_SKEW_MS + 1.0,
-        now_ms
-    ));
+    assert!(worker_date_within_skew(now_ms - max_age, now_ms));
+    assert!(worker_date_within_skew(now_ms + max_ahead, now_ms));
+    assert!(!worker_date_within_skew(now_ms - max_age - 1.0, now_ms));
+    assert!(!worker_date_within_skew(now_ms + max_ahead + 1.0, now_ms));
 }
 
 #[cfg(test)]

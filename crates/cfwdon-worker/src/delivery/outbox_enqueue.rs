@@ -4,7 +4,7 @@ use crate::activitypub::{
     local_username_from_actor_uri, quote_context_mapping,
 };
 use crate::domain_blocks::{
-    filter_delivery_inboxes_for_domain_blocks, list_all_account_domain_blocks,
+    filter_delivery_inboxes_for_domain_blocks, list_delivery_blocked_domains,
 };
 use crate::identity::actor_url;
 use crate::relationship::load_remote_actor_delivery_inbox;
@@ -119,7 +119,7 @@ async fn remote_addressed_delivery_inboxes(
         }
     }
 
-    let blocked_domains = list_all_account_domain_blocks(db, account_id).await?;
+    let blocked_domains = list_delivery_blocked_domains(db, account_id).await?;
     Ok(filter_delivery_inboxes_for_domain_blocks(
         inboxes,
         &blocked_domains,
