@@ -611,6 +611,14 @@ mod tests {
     }
 
     #[test]
+    fn profile_media_upload_refuses_svg() {
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>";
+        let data_url = format!("data:image/svg+xml;base64,{}", STANDARD.encode(svg));
+        let error = parse_profile_media_data_url(&data_url, "avatar").expect_err("not stored");
+        assert_eq!(error, "unsupported avatar content type: image/svg+xml");
+    }
+
+    #[test]
     fn profile_media_upload_refuses_bytes_that_are_not_the_declared_image() {
         let error = parse_profile_media_data_url("data:image/png;base64,aGVsbG8=", "avatar")
             .expect_err("not a PNG");

@@ -1,6 +1,6 @@
 use crate::media::{
-    RemoteStatusAttachmentRow, image_dimensions, multipart_file_part, parse_media_focus,
-    resolve_upload_content_type,
+    RemoteStatusAttachmentRow, image_dimensions, media_upload_draft, multipart_file_part,
+    parse_media_focus, resolve_upload_content_type,
 };
 use crate::statuses::build_remote_status_card_value;
 
@@ -152,4 +152,30 @@ fn multipart_file_part_reads_file_parts_without_filename() {
     );
     assert!(multipart_file_part("multipart/form-data; boundary=-b-1", body, "missing").is_none());
     assert!(multipart_file_part("multipart/form-data", body, "file").is_none());
+}
+
+const SCRIPTED_SVG: &[u8] =
+    b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(document.domain)</script></svg>";
+
+#[test]
+fn media_upload_refuses_svg_whatever_type_the_client_declares() {
+    for declared in ["image/svg+xml", "application/octet-stream", "", "text/html"] {
+        let error = media_upload_draft(declared, SCRIPTED_SVG.to_vec(), String::new())
+            .expect_err("an SVG must not be stored");
+        assert!(
+            error.starts_with("unsupported media content type"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn media_upload_refuses_jpeg_xl() {
+    let codestream = b"\xFF\x0A\xFA\x7F\x01\x00".to_vec();
+    let container = b"\0\0\0\x0CJXL \r\n\x87\n\0\0\0\x14ftypjxl ".to_vec();
+    for bytes in [codestream, container] {
+        for declared in ["image/jxl", "application/octet-stream"] {
+            assert!(media_upload_draft(declared, bytes.clone(), String::new()).is_err());
+        }
+    }
 }

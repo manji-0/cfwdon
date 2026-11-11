@@ -40,6 +40,22 @@ pub(crate) async fn parse_media_upload(
         }
         None => return Err("file field is required".to_owned()),
     };
+    let description = form
+        .get_field("description")
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    media_upload_draft(&declared_type, bytes, description)
+}
+
+/// The draft to store for an uploaded file: its content type resolved,
+/// checked against the accepted types and size limits, and its metadata
+/// stripped.
+pub(crate) fn media_upload_draft(
+    declared_type: &str,
+    bytes: Vec<u8>,
+    description: String,
+) -> std::result::Result<MediaUploadDraft, String> {
     if bytes.is_empty() {
         return Err("uploaded file must not be empty".to_owned());
     }
@@ -73,11 +89,7 @@ pub(crate) async fn parse_media_upload(
         height: dimensions.map(|(_, height)| height),
         bytes,
         content_type,
-        description: form
-            .get_field("description")
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default(),
+        description,
         kind,
     })
 }
