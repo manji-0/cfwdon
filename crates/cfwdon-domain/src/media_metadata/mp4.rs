@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::bytes::{at, fourcc, u16be, u32be, uint_be};
+use super::edits::Edits;
 use super::heif::{IsoBox, blank_metadata_items};
 
 type Walk<T> = Result<T, &'static str>;
@@ -158,9 +159,9 @@ fn first_child(boxes: &[Mp4Box], kind: u32) -> Option<Mp4Box> {
 }
 
 /// Turn a box into a `free` box of the same size with a zeroed payload.
-fn neutralize(out: &mut [u8], target: Mp4Box) {
-    out[target.start + 4..target.start + 8].copy_from_slice(b"free");
-    out[target.body..target.end].fill(0);
+fn neutralize(edits: &mut Edits, target: Mp4Box) {
+    edits.write(target.start + 4, b"free");
+    edits.fill(target.body..target.end, 0);
 }
 
 fn is_metadata_uuid(bytes: &[u8], target: Mp4Box) -> bool {
@@ -190,10 +191,10 @@ fn full_box_version(bytes: &[u8], target: Mp4Box, fields: impl Fn(u8) -> usize) 
 /// Zero the creation and modification times of `mvhd`, `tkhd` or `mdhd`
 /// (seconds since 1904, 32 bits in version 0, 64 in version 1), as ffmpeg
 /// writes them when the source's `creation_time` is dropped.
-fn zero_times(bytes: &[u8], out: &mut [u8], target: Mp4Box) -> Walk<()> {
+fn zero_times(bytes: &[u8], edits: &mut Edits, target: Mp4Box) -> Walk<()> {
     let width = |version| if version == 1 { 16 } else { 8 };
     let version = full_box_version(bytes, target, width)?;
-    out[target.body + 4..target.body + 4 + width(version)].fill(0);
+    edits.fill(target.body + 4..target.body + 4 + width(version), 0);
     Ok(())
 }
 
@@ -207,7 +208,7 @@ fn meta_handler(bytes: &[u8], meta: Mp4Box) -> Option<u32> {
 
 struct Mp4Walk<'a> {
     bytes: &'a [u8],
-    out: Vec<u8>,
+    edits: Edits,
     /// Top-level `mdat` payloads, in file order, that metadata samples must
     /// lie in; each ends where its header says, which may be past the file's
     /// end.
@@ -237,8 +238,9 @@ impl Mp4Walk<'_> {
             return Err("a metadata sample lies outside mdat");
         }
         // Samples of an mdat cut short are zeroed as far as the file goes.
-        let len = self.out.len() as u64;
-        self.out[start.min(len) as usize..end.min(len) as usize].fill(0);
+        let len = self.bytes.len() as u64;
+        self.edits
+            .fill(start.min(len) as usize..end.min(len) as usize, 0);
         Ok(())
     }
 
@@ -344,9 +346,9 @@ impl Mp4Walk<'_> {
         }
         for child in children(self.bytes, container)? {
             if is_metadata_box(self.bytes, child) {
-                neutralize(&mut self.out, child);
+                neutralize(&mut self.edits, child);
             } else if TIMESTAMPED.contains(&child.kind) {
-                zero_times(self.bytes, &mut self.out, child)?;
+                zero_times(self.bytes, &mut self.edits, child)?;
             } else if child.kind == MDIA || child.kind == MINF {
                 self.walk_container(child, depth + 1)?;
             }
@@ -382,7 +384,7 @@ impl Mp4Walk<'_> {
         if let Some(stbl) = stbl {
             self.zero_track_samples(stbl)?;
         }
-        neutralize(&mut self.out, trak);
+        neutralize(&mut self.edits, trak);
         Ok(())
     }
 
@@ -405,9 +407,9 @@ impl Mp4Walk<'_> {
             if child.kind == TRAK {
                 self.walk_track(child, 1)?;
             } else if is_metadata_box(bytes, child) {
-                neutralize(&mut self.out, child);
+                neutralize(&mut self.edits, child);
             } else if TIMESTAMPED.contains(&child.kind) {
-                zero_times(bytes, &mut self.out, child)?;
+                zero_times(bytes, &mut self.edits, child)?;
             }
         }
         Ok(())
@@ -517,13 +519,13 @@ impl Mp4Walk<'_> {
                     if tfhd.is_some_and(|tfhd| {
                         self.metadata_tracks.contains(&u32be(bytes, tfhd.body + 4))
                     }) {
-                        neutralize(&mut self.out, child);
+                        neutralize(&mut self.edits, child);
                         continue;
                     }
                 }
                 self.walk_container(child, 2)?;
             } else if is_metadata_box(bytes, child) {
-                neutralize(&mut self.out, child);
+                neutralize(&mut self.edits, child);
             }
         }
         Ok(())
@@ -544,14 +546,14 @@ fn flags_of(bytes: &[u8], target: Mp4Box) -> u32 {
     (u32::from(at(bytes, target.body + 1)) << 16) | u32::from(u16be(bytes, target.body + 2))
 }
 
-pub(super) fn strip(bytes: &[u8]) -> Walk<Vec<u8>> {
+pub(super) fn strip(bytes: &[u8]) -> Walk<Edits> {
     let top = boxes(bytes, 0, bytes.len(), true)?;
     if !top.iter().any(|child| child.kind == MOOV) {
         return Err("has no movie box");
     }
     let mut walk = Mp4Walk {
         bytes,
-        out: bytes.to_vec(),
+        edits: Edits::default(),
         mdats: top
             .iter()
             .filter(|child| child.kind == MDAT)
@@ -573,12 +575,12 @@ pub(super) fn strip(bytes: &[u8]) -> Walk<Vec<u8>> {
                 body: child.body,
                 end: child.end,
             };
-            blank_metadata_items(bytes, &mut walk.out, meta)?;
+            blank_metadata_items(bytes, &mut walk.edits, meta)?;
         } else if child.kind == UUID || (child.kind != FTYP && is_metadata_box(bytes, child)) {
             // No top-level `uuid` box is needed to play: XMP, Sony's profile
             // and user metadata, a camera's own blocks.
-            neutralize(&mut walk.out, child);
+            neutralize(&mut walk.edits, child);
         }
     }
-    Ok(walk.out)
+    Ok(walk.edits)
 }

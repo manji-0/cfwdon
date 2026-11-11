@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use super::bytes::{at, end_within, fourcc, starts_with, u16be, u32be, uint_be};
+use super::edits::Edits;
 
 /// An ISOBMFF box: its type, where its payload starts, and where it ends.
 #[derive(Clone, Copy, Debug)]
@@ -240,12 +241,12 @@ fn item_extents(
 /// An EXIF item payload with no tags: a zero TIFF-header offset, then an empty IFD0.
 const EMPTY_EXIF_ITEM: [u8; 18] = *b"\0\0\0\0MM\0\x2a\0\0\0\x08\0\0\0\0\0\0";
 
-/// Overwrite, in `out`, the bytes of the EXIF and XMP items that a
+/// Overwrite the bytes of the EXIF and XMP items that a
 /// HEIF-style `meta` box (a full box holding `iinf` and `iloc`) of `bytes`
 /// lists.
 pub(super) fn blank_metadata_items(
     bytes: &[u8],
-    out: &mut [u8],
+    edits: &mut Edits,
     meta: IsoBox,
 ) -> Result<(), &'static str> {
     let children =
@@ -266,21 +267,20 @@ pub(super) fn blank_metadata_items(
         for range in &ranges {
             let start = usize::try_from(range.start).map_err(|_| "an item runs past the end")?;
             let end =
-                end_within(start, range.length, out.len()).ok_or("an item runs past the end")?;
-            out[start..end].fill(if item == MetadataItem::Xmp { b' ' } else { 0 });
+                end_within(start, range.length, bytes.len()).ok_or("an item runs past the end")?;
+            edits.fill(start..end, if item == MetadataItem::Xmp { b' ' } else { 0 });
         }
         if let Some(first) = ranges.first()
             && item == MetadataItem::Exif
             && first.length >= EMPTY_EXIF_ITEM.len() as u64
         {
-            let start = first.start as usize;
-            out[start..start + EMPTY_EXIF_ITEM.len()].copy_from_slice(&EMPTY_EXIF_ITEM);
+            edits.write(first.start as usize, &EMPTY_EXIF_ITEM);
         }
     }
     Ok(())
 }
 
-pub(super) fn strip(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub(super) fn strip(bytes: &[u8]) -> Result<Edits, &'static str> {
     let top = child_boxes(bytes, 0, bytes.len())
         .filter(|top| top.first().is_some_and(|first| first.kind == FTYP))
         .ok_or("the boxes do not fit the file")?;
@@ -289,7 +289,7 @@ pub(super) fn strip(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
         .copied()
         .find(|child| child.kind == META)
         .ok_or("has no meta box")?;
-    let mut out = bytes.to_vec();
-    blank_metadata_items(bytes, &mut out, meta)?;
-    Ok(out)
+    let mut edits = Edits::default();
+    blank_metadata_items(bytes, &mut edits, meta)?;
+    Ok(edits)
 }

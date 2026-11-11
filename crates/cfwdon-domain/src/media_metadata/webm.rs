@@ -4,6 +4,7 @@
 //! never read.
 
 use super::bytes::{at, u32be};
+use super::edits::Edits;
 
 type Walk<T> = Result<T, &'static str>;
 
@@ -143,17 +144,15 @@ fn element_children(bytes: &[u8], parent: Element) -> Walk<Vec<Element>> {
 /// a zeroed payload. The Void's size field takes the bytes the old ID and
 /// size took, less the one-byte Void ID, up to the eight bytes a size can
 /// have.
-fn void_element(out: &mut [u8], element: Element) -> Walk<()> {
+fn void_element(edits: &mut Edits, element: Element) -> Walk<()> {
     let end = element.end.ok_or("an element of unknown size")? as usize;
     let size_length = (element.body - element.start - 1).min(8);
-    let mut size = (end - element.start - 1 - size_length) as u64;
-    out[element.start] = VOID as u8;
-    out[element.start + 1..end].fill(0);
-    for i in (1..=size_length).rev() {
-        out[element.start + i] = (size & 0xff) as u8;
-        size >>= 8;
-    }
-    out[element.start + 1] |= 0x80 >> (size_length - 1);
+    let size = (end - element.start - 1 - size_length) as u64;
+    let mut header = vec![VOID as u8];
+    header.extend_from_slice(&size.to_be_bytes()[8 - size_length..]);
+    header[1] |= 0x80 >> (size_length - 1);
+    edits.fill(element.start..end, 0);
+    edits.write(element.start, &header);
     Ok(())
 }
 
@@ -161,7 +160,7 @@ fn void_element(out: &mut [u8], element: Element) -> Walk<()> {
 /// which would no longer match. Whether anything changed.
 fn void_children(
     bytes: &[u8],
-    out: &mut [u8],
+    edits: &mut Edits,
     master: Element,
     should_void: impl Fn(Element) -> Walk<bool>,
 ) -> Walk<bool> {
@@ -169,13 +168,13 @@ fn void_children(
     let mut voided = false;
     for &child in &element_children {
         if should_void(child)? {
-            void_element(out, child)?;
+            void_element(edits, child)?;
             voided = true;
         }
     }
     if voided {
         for &crc in element_children.iter().filter(|child| child.id == CRC32) {
-            void_element(out, crc)?;
+            void_element(edits, crc)?;
         }
     }
     Ok(voided)
@@ -227,7 +226,7 @@ fn unknown_cluster_end(bytes: &[u8], cluster: Element, limit: usize) -> Walk<usi
 /// voided. Clusters, Cues, Tracks and Chapters stay. A Cluster cut off by
 /// the end of the file is kept, as a browser plays it as far as it goes.
 /// Where the segment ends.
-fn walk_segment(bytes: &[u8], out: &mut [u8], segment: Element) -> Walk<usize> {
+fn walk_segment(bytes: &[u8], edits: &mut Edits, segment: Element) -> Walk<usize> {
     let limit = segment
         .end
         .map_or(bytes.len(), |end| end.min(bytes.len() as u64) as usize);
@@ -255,10 +254,10 @@ fn walk_segment(bytes: &[u8], out: &mut [u8], segment: Element) -> Walk<usize> {
             .filter(|&end| end <= limit as u64)
             .ok_or("an element runs past the segment")? as usize;
         if METADATA_ELEMENTS.contains(&child.id) {
-            void_element(out, child)?;
+            void_element(edits, child)?;
             changed = true;
         } else if child.id == INFO {
-            changed |= void_children(bytes, out, child, |field| {
+            changed |= void_children(bytes, edits, child, |field| {
                 Ok(INFO_METADATA.contains(&field.id))
             })?;
         } else if child.id == TRACKS {
@@ -267,15 +266,15 @@ fn walk_segment(bytes: &[u8], out: &mut [u8], segment: Element) -> Walk<usize> {
             for entry in element_children(bytes, child)? {
                 if entry.id == TRACK_ENTRY {
                     renamed |=
-                        void_children(bytes, out, entry, |field| Ok(field.id == TRACK_NAME))?;
+                        void_children(bytes, edits, entry, |field| Ok(field.id == TRACK_NAME))?;
                 }
             }
             if renamed {
-                void_children(bytes, out, child, |entry| Ok(entry.id == CRC32))?;
+                void_children(bytes, edits, child, |entry| Ok(entry.id == CRC32))?;
                 changed = true;
             }
         } else if child.id == SEEK_HEAD {
-            changed |= void_children(bytes, out, child, |seek| seeks_metadata(bytes, seek))?;
+            changed |= void_children(bytes, edits, child, |seek| seeks_metadata(bytes, seek))?;
         } else if child.id == CRC32 {
             checksums.push(child);
         }
@@ -286,7 +285,7 @@ fn walk_segment(bytes: &[u8], out: &mut [u8], segment: Element) -> Walk<usize> {
     }
     if changed {
         for crc in checksums {
-            void_element(out, crc)?;
+            void_element(edits, crc)?;
         }
     }
     Ok(limit)
@@ -310,8 +309,8 @@ fn is_matroska_header(bytes: &[u8], header: Element) -> Walk<bool> {
     }))
 }
 
-pub(super) fn strip(bytes: &[u8]) -> Walk<Vec<u8>> {
-    let mut out = bytes.to_vec();
+pub(super) fn strip(bytes: &[u8]) -> Walk<Edits> {
+    let mut edits = Edits::default();
     let mut saw_segment = false;
     let mut pos = 0;
     while pos < bytes.len() {
@@ -320,7 +319,7 @@ pub(super) fn strip(bytes: &[u8]) -> Walk<Vec<u8>> {
         };
         if element.id == SEGMENT {
             saw_segment = true;
-            pos = walk_segment(bytes, &mut out, element)?;
+            pos = walk_segment(bytes, &mut edits, element)?;
             continue;
         }
         let end = element
@@ -339,5 +338,5 @@ pub(super) fn strip(bytes: &[u8]) -> Walk<Vec<u8>> {
     if !saw_segment {
         return Err("has no segment");
     }
-    Ok(out)
+    Ok(edits)
 }

@@ -13,6 +13,7 @@
 //! photo still displays upright.
 
 mod bytes;
+mod edits;
 mod exif;
 mod heif;
 mod jpeg;
@@ -84,11 +85,12 @@ pub struct StrippedMedia {
     pub orientation: Option<ExifOrientation>,
 }
 
-/// What stripping found: a rewritten file, or bytes of no container it knows.
+/// What stripping found: a rewritten file, or bytes of no container it
+/// knows, handed back as they came.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetadataStrip {
     Stripped(StrippedMedia),
-    UnknownFormat,
+    UnknownFormat(Vec<u8>),
 }
 
 /// A file that starts like a known container but cannot be walked to its end.
@@ -103,26 +105,33 @@ pub struct MalformedMedia {
 /// judged by the bytes, not a declared type. `UnknownFormat` for anything
 /// else (GIF, MP3, ...); `MalformedMedia` when the container cannot be
 /// walked, so that nothing is passed on unstripped.
-pub fn strip_media_metadata(bytes: &[u8]) -> Result<MetadataStrip, MalformedMedia> {
-    let Some(container) = MediaContainer::of(bytes) else {
-        return Ok(MetadataStrip::UnknownFormat);
+pub fn strip_media_metadata(mut bytes: Vec<u8>) -> Result<MetadataStrip, MalformedMedia> {
+    let Some(container) = MediaContainer::of(&bytes) else {
+        return Ok(MetadataStrip::UnknownFormat(bytes));
     };
-    let stripped = match container {
-        MediaContainer::Jpeg => jpeg::strip(bytes),
-        MediaContainer::Png => png::strip(bytes),
-        MediaContainer::Webp => webp::strip(bytes),
-        MediaContainer::Heif => heif::strip(bytes).map(|out| (out, None)),
-        MediaContainer::Mp4 => mp4::strip(bytes).map(|out| (out, None)),
-        MediaContainer::Webm => webm::strip(bytes).map(|out| (out, None)),
+    let malformed = |reason| MalformedMedia { container, reason };
+    let (bytes, orientation) = match container {
+        MediaContainer::Jpeg => jpeg::strip(&bytes).map_err(malformed)?,
+        MediaContainer::Png => png::strip(&bytes).map_err(malformed)?,
+        MediaContainer::Webp => webp::strip(&bytes).map_err(malformed)?,
+        // Same-length rewrites, made in the buffer the file arrived in: a
+        // video upload is too large to copy within a Worker's memory.
+        MediaContainer::Heif | MediaContainer::Mp4 | MediaContainer::Webm => {
+            let edits = match container {
+                MediaContainer::Heif => heif::strip(&bytes),
+                MediaContainer::Mp4 => mp4::strip(&bytes),
+                _ => webm::strip(&bytes),
+            }
+            .map_err(malformed)?;
+            edits.apply(&mut bytes);
+            (bytes, None)
+        }
     };
-    match stripped {
-        Ok((bytes, orientation)) => Ok(MetadataStrip::Stripped(StrippedMedia {
-            container,
-            bytes,
-            orientation,
-        })),
-        Err(reason) => Err(MalformedMedia { container, reason }),
-    }
+    Ok(MetadataStrip::Stripped(StrippedMedia {
+        container,
+        bytes,
+        orientation,
+    }))
 }
 
 /// The bytes to write in place of an already stored object, judged by the
@@ -131,7 +140,7 @@ pub fn strip_media_metadata(bytes: &[u8]) -> Result<MetadataStrip, MalformedMedi
 /// upload, the declared type is not checked: the object is already public,
 /// and only its metadata goes.
 pub fn restripped_stored_media(bytes: &[u8]) -> Result<Option<Vec<u8>>, MalformedMedia> {
-    Ok(match strip_media_metadata(bytes)? {
+    Ok(match strip_media_metadata(bytes.to_vec())? {
         MetadataStrip::Stripped(stripped) if stripped.bytes != bytes => Some(stripped.bytes),
         _ => None,
     })
@@ -187,7 +196,7 @@ pub fn strip_upload_metadata(
     let not_declared = || UnstrippableUpload::NotTheDeclaredType {
         content_type: content_type.to_owned(),
     };
-    match strip_media_metadata(&bytes)? {
+    match strip_media_metadata(bytes)? {
         MetadataStrip::Stripped(stripped) => {
             let mismatch = if stripped.container.is_image() {
                 declared_video
@@ -200,12 +209,14 @@ pub fn strip_upload_metadata(
                 Ok(stripped.bytes)
             }
         }
-        MetadataStrip::UnknownFormat
-            if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") =>
-        {
-            Err(UnstrippableUpload::Tiff)
+        MetadataStrip::UnknownFormat(bytes) => {
+            if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+                Err(UnstrippableUpload::Tiff)
+            } else if declared_image || declared_video {
+                Err(not_declared())
+            } else {
+                Ok(bytes)
+            }
         }
-        MetadataStrip::UnknownFormat if declared_image || declared_video => Err(not_declared()),
-        MetadataStrip::UnknownFormat => Ok(bytes),
     }
 }

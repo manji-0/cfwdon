@@ -33,14 +33,16 @@ fn assert_no_secrets(bytes: &[u8]) {
 }
 
 fn stripped(bytes: &[u8]) -> StrippedMedia {
-    match strip_media_metadata(bytes) {
+    match strip_media_metadata(bytes.to_vec()) {
         Ok(MetadataStrip::Stripped(stripped)) => stripped,
         other => panic!("not stripped: {other:?}"),
     }
 }
 
 fn malformed_reason(bytes: &[u8]) -> Option<&'static str> {
-    strip_media_metadata(bytes).err().map(|error| error.reason)
+    strip_media_metadata(bytes.to_vec())
+        .err()
+        .map(|error| error.reason)
 }
 
 /// Stripping its own output changes nothing: the output is a container the
@@ -677,7 +679,8 @@ const FIXTURES: [&[u8]; 8] = [
 fn no_truncation_panics_or_passes_on_metadata() {
     for input in FIXTURES {
         for length in (0..=input.len()).step_by(3) {
-            if let Ok(MetadataStrip::Stripped(out)) = strip_media_metadata(&input[..length]) {
+            if let Ok(MetadataStrip::Stripped(out)) = strip_media_metadata(input[..length].to_vec())
+            {
                 assert_no_secrets(&out.bytes);
             }
         }
@@ -699,7 +702,7 @@ fn corrupted_bytes_never_panic() {
                 let at = next() % corrupted.len();
                 corrupted[at] = next() as u8;
             }
-            let _ = strip_media_metadata(&corrupted);
+            let _ = strip_media_metadata(corrupted);
         }
     }
 }
@@ -708,8 +711,8 @@ fn corrupted_bytes_never_panic() {
 fn other_bytes_are_an_unknown_format() {
     for bytes in [&b""[..], b"\x01\x02\x03", b"GIF89a\x01\0\x01\0", b"ID3\x04"] {
         assert_eq!(
-            strip_media_metadata(bytes),
-            Ok(MetadataStrip::UnknownFormat)
+            strip_media_metadata(bytes.to_vec()),
+            Ok(MetadataStrip::UnknownFormat(bytes.to_vec()))
         );
     }
 }
