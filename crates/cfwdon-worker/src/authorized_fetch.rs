@@ -5,7 +5,7 @@
 
 use crate::domain_blocks::list_all_account_domain_blocks;
 use crate::federation::{RemoteActorProfile, host_within_blocked_domains};
-use crate::response_utils::json_response;
+use crate::response_utils::{json_response, vary_including};
 use crate::store::relationship::is_blocking_actor;
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{FetchAccess, FetchedBody, RESTRICTED_ACTOR_FIELDS, authorized_fetch_body};
@@ -74,25 +74,11 @@ async fn owner_blocks_signer(
 /// The answer depends on the `Signature`, so no shared cache may keep it:
 /// one requester's answer must not reach the next.
 pub(crate) fn mark_signature_dependent(mut response: Response) -> Result<Response> {
-    let vary = with_vary_signature(response.headers().get("Vary")?.as_deref());
+    let vary = vary_including(response.headers().get("Vary")?.as_deref(), "Signature");
     let headers = response.headers_mut();
     headers.set("Cache-Control", "private")?;
     headers.set("Vary", &vary)?;
     Ok(response)
-}
-
-fn with_vary_signature(vary: Option<&str>) -> String {
-    match vary.map(str::trim).filter(|vary| !vary.is_empty()) {
-        Some(vary)
-            if vary
-                .split(',')
-                .any(|name| name.trim().eq_ignore_ascii_case("signature")) =>
-        {
-            vary.to_owned()
-        }
-        Some(vary) => format!("{vary}, Signature"),
-        None => "Signature".to_owned(),
-    }
 }
 
 /// Whether a GET of an actor or a note asks for its HTML page.
@@ -174,16 +160,6 @@ mod tests {
             ]
         );
         assert_eq!(restricted["publicKey"], document["publicKey"]);
-    }
-
-    #[test]
-    fn vary_gains_signature_once() {
-        assert_eq!(with_vary_signature(None), "Signature");
-        assert_eq!(with_vary_signature(Some("Accept")), "Accept, Signature");
-        assert_eq!(
-            with_vary_signature(Some("Accept, signature")),
-            "Accept, signature"
-        );
     }
 
     #[test]

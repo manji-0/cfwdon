@@ -137,7 +137,7 @@ pub(crate) async fn outbox_response(
         };
         let ordered_items = build_outbox_activities(&db, &config, &account, &statuses).await?;
         let next_offset = offset.saturating_add(ordered_items.len() as u32);
-        let next = if (next_offset as u64) < total_items {
+        let next = if !hidden && (next_offset as u64) < total_items {
             Some(format!(
                 "{outbox}?page=true&offset={next_offset}&limit={limit}"
             ))

@@ -67,6 +67,21 @@ fn headers_with_copied_entries(
     Ok(headers)
 }
 
+/// A `Vary` value that names `name`, keeping the names already there.
+pub(crate) fn vary_including(vary: Option<&str>, name: &str) -> String {
+    match vary.map(str::trim).filter(|vary| !vary.is_empty()) {
+        Some(vary)
+            if vary
+                .split(',')
+                .any(|entry| entry.trim().eq_ignore_ascii_case(name)) =>
+        {
+            vary.to_owned()
+        }
+        Some(vary) => format!("{vary}, {name}"),
+        None => name.to_owned(),
+    }
+}
+
 pub(crate) fn json_response<T>(
     value: &T,
     content_type: &str,
@@ -139,6 +154,16 @@ fn cache_control_header(max_age_seconds: u32, stale_while_revalidate_seconds: u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vary_including_appends_a_name_once() {
+        assert_eq!(vary_including(None, "Signature"), "Signature");
+        assert_eq!(vary_including(Some("Accept"), "Origin"), "Accept, Origin");
+        assert_eq!(
+            vary_including(Some("Accept, signature"), "Signature"),
+            "Accept, signature"
+        );
+    }
 
     #[test]
     fn cache_control_header_sets_stale_while_revalidate() {
