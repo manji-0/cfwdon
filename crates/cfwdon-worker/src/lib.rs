@@ -11,7 +11,12 @@ use crate::federation_retention::prune_terminal_federation_activities;
 use crate::inbox::reclaim_stale_inbox_activities;
 use crate::instance::{refresh_instance_activity_cache, refresh_trending_statuses_cache};
 use crate::media_metadata_backfill::run_stored_media_metadata_backfill;
-use crate::observability::log_federation_event;
+use crate::metrics::{
+    begin_invocation, finish_invocation, timed_cron_task, write_queue_batch_metric,
+};
+use crate::observability::{
+    log_federation_event, observability_duration_ms, observability_started_at_ms,
+};
 use crate::polls::process_expired_polls_for_config;
 use crate::relays::purge_stale_public_remote_content;
 use crate::runtime_config::load_config_from_env;
@@ -65,6 +70,7 @@ mod markers;
 mod media;
 mod media_metadata_backfill;
 mod meta_placeholder_routes;
+mod metrics;
 mod notifications;
 mod oauth_apps;
 mod oauth_store;
@@ -128,9 +134,13 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
     if maintenance_mode(&env) {
         return maintenance_response();
     }
+    begin_invocation(&env);
     let response = router::handle_fetch(req, env).await;
     // Loops until empty, so work deferred by a deferred task also runs.
-    ctx.wait_until(deferred::run_deferred_tasks_inline());
+    ctx.wait_until(async {
+        deferred::run_deferred_tasks_inline().await;
+        finish_invocation("fetch");
+    });
     response
 }
 
@@ -160,6 +170,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
 
     reset_d1_request_metrics();
     bind_d1_request_route("scheduled");
+    begin_invocation(&env);
     // Same full env/secret load as fetch and queue so cron can decrypt account keys.
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
@@ -168,7 +179,12 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let result = async {
         let db = D1Database::new(env.d1(&config.database_binding)?);
         if run_hourly {
-            match enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled").await {
+            match timed_cron_task(
+                "outbox_queue_kick",
+                enqueue_outbox_process_queue_if_pending(&env, &db, "scheduled"),
+            )
+            .await
+            {
                 Ok(true) => log_federation_event(
                     "outbox_queue_kick",
                     "ok",
@@ -186,20 +202,36 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
                     }),
                 ),
             }
-            if let Err(error) =
-                revalidate_stale_remote_collection_item_approvals(&db, &config, 50).await
+            if let Err(error) = timed_cron_task(
+                "collection_approvals",
+                revalidate_stale_remote_collection_item_approvals(&db, &config, 50),
+            )
+            .await
             {
                 console_error!("remote collection approval revalidation failed: {error}");
             }
-            if let Err(error) = process_expired_polls_for_config(&db, &config, Some(&env)).await {
+            if let Err(error) = timed_cron_task(
+                "expired_polls",
+                process_expired_polls_for_config(&db, &config, Some(&env)),
+            )
+            .await
+            {
                 console_error!("expired poll processing failed: {error}");
             }
-            if let Err(error) =
-                process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32).await
+            if let Err(error) = timed_cron_task(
+                "scheduled_statuses",
+                process_due_scheduled_statuses_for_config(&db, &config, Some(&env), 32),
+            )
+            .await
             {
                 console_error!("due scheduled status processing failed: {error}");
             }
-            match reclaim_stale_background_jobs(&db, 50).await {
+            match timed_cron_task(
+                "reclaim_background_jobs",
+                reclaim_stale_background_jobs(&db, 50),
+            )
+            .await
+            {
                 Ok(report) if report.requeued > 0 || report.failed > 0 => {
                     log_federation_event(
                         "background_job_stale_reclaim",
@@ -217,10 +249,15 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
                 Ok(_) => {}
                 Err(error) => console_error!("background job stale reclaim failed: {error}"),
             }
-            if let Err(error) = process_due_background_jobs(&db, &config, Some(&env), 48).await {
+            if let Err(error) = timed_cron_task(
+                "background_jobs",
+                process_due_background_jobs(&db, &config, Some(&env), 48),
+            )
+            .await
+            {
                 console_error!("background job processing failed: {error}");
             }
-            match reclaim_stale_inbox_activities(&db, 50).await {
+            match timed_cron_task("reclaim_inbox", reclaim_stale_inbox_activities(&db, 50)).await {
                 Ok(report) if report.marked_processed > 0 || report.released > 0 => {
                     log_federation_event(
                         "inbox_stale_reclaim",
@@ -238,33 +275,65 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
                 Ok(_) => {}
                 Err(error) => console_error!("inbox stale reclaim failed: {error}"),
             }
-            if let Err(error) = purge_expired_mutes(&db).await {
+            if let Err(error) = timed_cron_task("purge_mutes", purge_expired_mutes(&db)).await {
                 console_error!("expired mute purge failed: {error}");
             }
-            if let Err(error) = purge_expired_status_idempotency_keys(&db).await {
+            if let Err(error) = timed_cron_task(
+                "purge_idempotency_keys",
+                purge_expired_status_idempotency_keys(&db),
+            )
+            .await
+            {
                 console_error!("status idempotency key purge failed: {error}");
             }
-            if let Err(error) = purge_stale_public_remote_content(&db).await {
+            if let Err(error) = timed_cron_task(
+                "purge_remote_content",
+                purge_stale_public_remote_content(&db),
+            )
+            .await
+            {
                 console_error!("public remote retention purge failed: {error}");
             }
-            if let Err(error) =
-                prune_terminal_federation_activities(&db, config.federation_activity_retention_days)
-                    .await
+            if let Err(error) = timed_cron_task(
+                "prune_federation_activities",
+                prune_terminal_federation_activities(
+                    &db,
+                    config.federation_activity_retention_days,
+                ),
+            )
+            .await
             {
                 console_error!("federation activity retention prune failed: {error}");
             }
-            if let Err(error) = refresh_instance_activity_cache(&db).await {
+            if let Err(error) = timed_cron_task(
+                "instance_activity_cache",
+                refresh_instance_activity_cache(&db),
+            )
+            .await
+            {
                 console_error!("instance activity cache refresh failed: {error}");
             }
-            if let Err(error) = refresh_public_timeline_cache(&db, &config).await {
+            if let Err(error) = timed_cron_task(
+                "public_timeline_cache",
+                refresh_public_timeline_cache(&db, &config),
+            )
+            .await
+            {
                 console_error!("public timeline cache refresh failed: {error}");
             }
         }
         if run_trends {
-            if let Err(error) = refresh_trending_tags_cache(&db, &config).await {
+            if let Err(error) =
+                timed_cron_task("trending_tags", refresh_trending_tags_cache(&db, &config)).await
+            {
                 console_error!("trending tags cache refresh failed: {error}");
             }
-            if let Err(error) = refresh_trending_statuses_cache(&db, &config).await {
+            if let Err(error) = timed_cron_task(
+                "trending_statuses",
+                refresh_trending_statuses_cache(&db, &config),
+            )
+            .await
+            {
                 console_error!("trending statuses cache refresh failed: {error}");
             }
         }
@@ -279,6 +348,7 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         // Last: an object too costly to strip may end the invocation.
         run_stored_media_metadata_backfill(&env, &config).await;
     }
+    finish_invocation("scheduled");
 }
 
 #[cfg(test)]
@@ -308,8 +378,13 @@ async fn queue(
     if maintenance_mode(&env) {
         return Ok(());
     }
+    begin_invocation(&env);
+    let messages = batch.raw_iter().count();
+    let started_at_ms = observability_started_at_ms();
     let result = consume_outbox_process_queue_batch(batch, env).await;
+    write_queue_batch_metric(messages, observability_duration_ms(started_at_ms));
     deferred::run_deferred_tasks_inline().await;
+    finish_invocation("queue");
     result
 }
 

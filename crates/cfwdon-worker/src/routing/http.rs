@@ -2,6 +2,7 @@ use crate::d1_metrics::{
     bind_d1_request_route, d1_request_route, publish_d1_request_pressure,
     snapshot_d1_request_metrics,
 };
+use crate::metrics::write_http_request_metric;
 use crate::observability::{
     add_log_message, log_json_event, observability_duration_ms, observability_started_at_ms,
 };
@@ -107,13 +108,23 @@ impl HttpRequestContext {
         response: Response,
         error_message: Option<&str>,
     ) -> Result<Response> {
+        let duration_ms = observability_duration_ms(self.started_at_ms);
+        let d1_metrics = snapshot_d1_request_metrics();
+        write_http_request_metric(
+            &self.method,
+            &self.path,
+            response.status_code(),
+            duration_ms,
+            d1_metrics.query_count,
+            d1_metrics.sql_ms_sum,
+        );
         log_api_request(
             self.log_api_requests,
             &self.method,
             &self.path,
             response.status_code(),
             &self.user_agent,
-            observability_duration_ms(self.started_at_ms),
+            duration_ms,
             error_message,
         );
         Ok(response)

@@ -39,6 +39,7 @@ FOUNDATION = {
     "federation",
     "id_utils",
     "identity",
+    "metrics",
     "oauth_store",
     "observability",
     "policy_documents",
